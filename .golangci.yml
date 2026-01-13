@@ -29,32 +29,32 @@ linters:
     - unconvert
     - unparam
     - whitespace
+  settings:
+    gocyclo:
+      min-complexity: 15
+    gocognit:
+      min-complexity: 20
+    dupl:
+      threshold: 100
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+    misspell:
+      locale: US
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - dupl
+          - gosec
+          - gocyclo
+          - errcheck
 
 formatters:
   enable:
     - gofmt
     - goimports
-
-linters-settings:
-  gocyclo:
-    min-complexity: 15
-  gocognit:
-    min-complexity: 20
-  dupl:
-    threshold: 100
-  goconst:
-    min-len: 3
-    min-occurrences: 3
-  misspell:
-    locale: US
-  goimports:
-    local-prefixes: github.com/jobrunner/hostus
-
-issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - dupl
-        - gosec
-        - gocyclo
-        - errcheck
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/jobrunner/hostus

@@ -9,6 +9,9 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [0.1.2] - 2025-01-14
 
+### Fixed
+- Port-Mapping in docker-compose.yml korrigiert (intern und extern dynamisch)
+
 ### Changed
 - docker-compose.yml verwendet jetzt Registry-Image (ghcr.io/jobrunner/hostus:latest)
 - Neues docker-compose.local.yml für lokale Builds

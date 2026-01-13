@@ -28,7 +28,7 @@ type Detail struct {
 func Write(w http.ResponseWriter, status int, code Code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(Response{
+	_ = json.NewEncoder(w).Encode(Response{
 		Error: Detail{
 			Code:    code,
 			Message: message,

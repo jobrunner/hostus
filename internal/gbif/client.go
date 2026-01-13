@@ -60,7 +60,7 @@ func (c *Client) Search(ctx context.Context, params SearchParams) (*SearchRespon
 	if err != nil {
 		return nil, fmt.Errorf("execute request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)

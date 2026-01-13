@@ -29,7 +29,7 @@ func TestSuggestHandler_InvalidQuery_TooShort(t *testing.T) {
 	}
 
 	var resp httperr.Response
-	json.NewDecoder(rec.Body).Decode(&resp)
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
 
 	if resp.Error.Code != httperr.InvalidQuery {
 		t.Errorf("expected error code INVALID_QUERY, got %s", resp.Error.Code)
@@ -90,7 +90,7 @@ func TestSuggestHandler_CacheHit(t *testing.T) {
 	}
 
 	var result []taxonomy.TaxonSuggestion
-	json.NewDecoder(rec.Body).Decode(&result)
+	_ = json.NewDecoder(rec.Body).Decode(&result)
 
 	if len(result) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(result))

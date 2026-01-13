@@ -157,7 +157,7 @@ func GenerateOpenAPISpec() OpenAPISpec {
 		Components: OpenAPIComponents{
 			Schemas: map[string]interface{}{
 				"TaxonSuggestion": map[string]interface{}{
-					"type": "object",
+					"type":     "object",
 					"required": []string{"acceptedKey", "acceptedName", "rank", "family"},
 					"properties": map[string]interface{}{
 						"acceptedKey": map[string]interface{}{
@@ -189,7 +189,7 @@ func GenerateOpenAPISpec() OpenAPISpec {
 					},
 				},
 				"Synonym": map[string]interface{}{
-					"type": "object",
+					"type":     "object",
 					"required": []string{"key", "name", "status"},
 					"properties": map[string]interface{}{
 						"key": map[string]interface{}{
@@ -210,11 +210,11 @@ func GenerateOpenAPISpec() OpenAPISpec {
 					},
 				},
 				"ErrorResponse": map[string]interface{}{
-					"type": "object",
+					"type":     "object",
 					"required": []string{"error"},
 					"properties": map[string]interface{}{
 						"error": map[string]interface{}{
-							"type": "object",
+							"type":     "object",
 							"required": []string{"code", "message"},
 							"properties": map[string]interface{}{
 								"code": map[string]interface{}{
@@ -237,8 +237,8 @@ func GenerateOpenAPISpec() OpenAPISpec {
 	}
 }
 
-func ServeOpenAPI(w http.ResponseWriter, r *http.Request) {
+func ServeOpenAPI(w http.ResponseWriter, _ *http.Request) {
 	spec := GenerateOpenAPISpec()
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(spec)
+	_ = json.NewEncoder(w).Encode(spec)
 }

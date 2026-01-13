@@ -2,7 +2,20 @@
   "permissions": {
     "allow": [
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(git checkout:*)",
+      "Bash(go mod init:*)",
+      "Bash(go mod tidy:*)",
+      "Bash(go build:*)",
+      "Bash(make test:*)",
+      "Bash(make build:*)",
+      "Bash(git push:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(gh run view:*)",
+      "Bash(gofmt:*)",
+      "Bash(make lint:*)",
+      "Bash(golangci-lint help:*)"
     ]
   }
 }

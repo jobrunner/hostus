@@ -1,3 +1,5 @@
+version: "2"
+
 run:
   timeout: 5m
   modules-download-mode: readonly
@@ -5,7 +7,6 @@ run:
 linters:
   enable:
     - errcheck
-    - gosimple
     - govet
     - ineffassign
     - staticcheck
@@ -19,19 +20,20 @@ linters:
     - goconst
     - gocritic
     - gocyclo
-    - gofmt
-    - goimports
     - goprintffuncname
     - gosec
     - misspell
     - nakedret
     - noctx
-    - nolintlint
     - prealloc
-    - revive
     - unconvert
     - unparam
     - whitespace
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
 
 linters-settings:
   gocyclo:
@@ -46,33 +48,8 @@ linters-settings:
   misspell:
     locale: US
   goimports:
-    local-prefixes: github.com/jobrunner/hostus
-  revive:
-    rules:
-      - name: blank-imports
-      - name: context-as-argument
-      - name: context-keys-type
-      - name: dot-imports
-      - name: error-return
-      - name: error-strings
-      - name: error-naming
-      - name: exported
-      - name: if-return
-      - name: increment-decrement
-      - name: var-naming
-      - name: var-declaration
-      - name: package-comments
-      - name: range
-      - name: receiver-naming
-      - name: time-naming
-      - name: unexported-return
-      - name: indent-error-flow
-      - name: errorf
-      - name: empty-block
-      - name: superfluous-else
-      - name: unused-parameter
-      - name: unreachable-code
-      - name: redefines-builtin-id
+    local-prefixes:
+      - github.com/jobrunner/hostus
 
 issues:
   exclude-rules:

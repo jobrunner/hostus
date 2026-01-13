@@ -8,18 +8,18 @@ import (
 )
 
 type Config struct {
-	Port                    int           `mapstructure:"port"`
-	HostName                string        `mapstructure:"host_name"`
-	EnableTLS               bool          `mapstructure:"enable_tls"`
-	CORSOrigins             []string      `mapstructure:"cors_origins"`
-	RateLimit               int           `mapstructure:"rate_limit"`
-	UpstreamErrorThreshold  int           `mapstructure:"upstream_error_threshold"`
-	UpstreamBackoffSeconds  int           `mapstructure:"upstream_backoff_seconds"`
-	CacheTTLSeconds         int           `mapstructure:"cache_ttl_seconds"`
-	LogLevel                string        `mapstructure:"log_level"`
-	GBIFBaseURL             string        `mapstructure:"gbif_base_url"`
-	GBIFTimeoutSeconds      int           `mapstructure:"gbif_timeout_seconds"`
-	RequestTimeoutSeconds   int           `mapstructure:"request_timeout_seconds"`
+	Port                   int      `mapstructure:"port"`
+	HostName               string   `mapstructure:"host_name"`
+	EnableTLS              bool     `mapstructure:"enable_tls"`
+	CORSOrigins            []string `mapstructure:"cors_origins"`
+	RateLimit              int      `mapstructure:"rate_limit"`
+	UpstreamErrorThreshold int      `mapstructure:"upstream_error_threshold"`
+	UpstreamBackoffSeconds int      `mapstructure:"upstream_backoff_seconds"`
+	CacheTTLSeconds        int      `mapstructure:"cache_ttl_seconds"`
+	LogLevel               string   `mapstructure:"log_level"`
+	GBIFBaseURL            string   `mapstructure:"gbif_base_url"`
+	GBIFTimeoutSeconds     int      `mapstructure:"gbif_timeout_seconds"`
+	RequestTimeoutSeconds  int      `mapstructure:"request_timeout_seconds"`
 }
 
 func (c *Config) CacheTTL() time.Duration {
@@ -41,7 +41,27 @@ func (c *Config) RequestTimeout() time.Duration {
 func Load() (*Config, error) {
 	v := viper.New()
 
-	// Defaults
+	setDefaults(v)
+
+	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
+	v.AutomaticEnv()
+
+	v.SetConfigName(".env")
+	v.SetConfigType("env")
+	v.AddConfigPath(".")
+	_ = v.ReadInConfig()
+
+	bindEnvVars(v)
+
+	var cfg Config
+	if err := v.Unmarshal(&cfg); err != nil {
+		return nil, err
+	}
+
+	return &cfg, nil
+}
+
+func setDefaults(v *viper.Viper) {
 	v.SetDefault("port", 8080)
 	v.SetDefault("host_name", "localhost")
 	v.SetDefault("enable_tls", false)
@@ -54,26 +74,6 @@ func Load() (*Config, error) {
 	v.SetDefault("gbif_base_url", "https://api.gbif.org/v1")
 	v.SetDefault("gbif_timeout_seconds", 10)
 	v.SetDefault("request_timeout_seconds", 30)
-
-	// Environment variables
-	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
-	v.AutomaticEnv()
-
-	// .env file
-	v.SetConfigName(".env")
-	v.SetConfigType("env")
-	v.AddConfigPath(".")
-	_ = v.ReadInConfig() // Ignore error if .env doesn't exist
-
-	// Bind environment variables explicitly
-	bindEnvVars(v)
-
-	var cfg Config
-	if err := v.Unmarshal(&cfg); err != nil {
-		return nil, err
-	}
-
-	return &cfg, nil
 }
 
 func bindEnvVars(v *viper.Viper) {
@@ -91,40 +91,48 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("request_timeout_seconds", "REQUEST_TIMEOUT_SECONDS")
 }
 
-func LoadWithFlags(flags map[string]interface{}) (*Config, error) {
+func LoadWithFlags(flags map[string]any) (*Config, error) {
 	cfg, err := Load()
 	if err != nil {
 		return nil, err
 	}
 
-	// CLI flags override everything
-	if v, ok := flags["port"].(int); ok && v != 0 {
-		cfg.Port = v
-	}
-	if v, ok := flags["host-name"].(string); ok && v != "" {
-		cfg.HostName = v
-	}
-	if v, ok := flags["enable-tls"].(bool); ok {
-		cfg.EnableTLS = v
-	}
-	if v, ok := flags["cors-origins"].(string); ok && v != "" {
-		cfg.CORSOrigins = strings.Split(v, ",")
-	}
-	if v, ok := flags["rate-limit"].(int); ok && v != 0 {
-		cfg.RateLimit = v
-	}
-	if v, ok := flags["upstream-error-threshold"].(int); ok && v != 0 {
-		cfg.UpstreamErrorThreshold = v
-	}
-	if v, ok := flags["upstream-backoff-seconds"].(int); ok && v != 0 {
-		cfg.UpstreamBackoffSeconds = v
-	}
-	if v, ok := flags["cache-ttl-seconds"].(int); ok && v != 0 {
-		cfg.CacheTTLSeconds = v
-	}
-	if v, ok := flags["log-level"].(string); ok && v != "" {
-		cfg.LogLevel = v
-	}
-
+	applyFlags(cfg, flags)
 	return cfg, nil
+}
+
+func applyFlags(cfg *Config, flags map[string]any) {
+	applyIntFlag(flags, "port", &cfg.Port)
+	applyStringFlag(flags, "host-name", &cfg.HostName)
+	applyBoolFlag(flags, "enable-tls", &cfg.EnableTLS)
+	applyCORSFlag(flags, "cors-origins", &cfg.CORSOrigins)
+	applyIntFlag(flags, "rate-limit", &cfg.RateLimit)
+	applyIntFlag(flags, "upstream-error-threshold", &cfg.UpstreamErrorThreshold)
+	applyIntFlag(flags, "upstream-backoff-seconds", &cfg.UpstreamBackoffSeconds)
+	applyIntFlag(flags, "cache-ttl-seconds", &cfg.CacheTTLSeconds)
+	applyStringFlag(flags, "log-level", &cfg.LogLevel)
+}
+
+func applyIntFlag(flags map[string]any, key string, target *int) {
+	if v, ok := flags[key].(int); ok && v != 0 {
+		*target = v
+	}
+}
+
+func applyStringFlag(flags map[string]any, key string, target *string) {
+	if v, ok := flags[key].(string); ok && v != "" {
+		*target = v
+	}
+}
+
+func applyBoolFlag(flags map[string]any, key string, target *bool) {
+	if v, ok := flags[key].(bool); ok {
+		*target = v
+	}
+}
+
+func applyCORSFlag(flags map[string]any, key string, target *[]string) {
+	if v, ok := flags[key].(string); ok && v != "" {
+		*target = strings.Split(v, ",")
+	}
 }

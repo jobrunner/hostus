@@ -46,9 +46,9 @@ func NewRouter(h *Handler) *mux.Router {
 	r.Handle("/metrics", promhttp.Handler()).Methods(http.MethodGet)
 
 	// Health check
-	r.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	r.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		_, _ = w.Write([]byte("OK"))
 	}).Methods(http.MethodGet)
 
 	return r

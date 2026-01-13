@@ -95,8 +95,8 @@ func main() {
 	logger.Info("server stopped")
 }
 
-func parseFlags() map[string]interface{} {
-	flags := make(map[string]interface{})
+func parseFlags() map[string]any {
+	flags := make(map[string]any)
 
 	port := flag.Int("port", 0, "Server port")
 	hostName := flag.String("host-name", "", "Host name")

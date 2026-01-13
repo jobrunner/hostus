@@ -20,11 +20,11 @@ const (
 
 // Re-export error functions
 var (
-	WriteError             = httperr.Write
-	InvalidQueryError      = httperr.InvalidQueryError
-	RateLimitError         = httperr.RateLimitError
+	WriteError              = httperr.Write
+	InvalidQueryError       = httperr.InvalidQueryError
+	RateLimitError          = httperr.RateLimitError
 	UpstreamOverloadedError = httperr.UpstreamOverloadedError
-	GBIFTimeoutError       = httperr.GBIFTimeoutError
-	GBIFUnavailableError   = httperr.GBIFUnavailableError
-	InternalError          = httperr.InternalError
+	GBIFTimeoutError        = httperr.GBIFTimeoutError
+	GBIFUnavailableError    = httperr.GBIFUnavailableError
+	InternalError           = httperr.InternalError
 )

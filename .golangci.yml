@@ -48,8 +48,7 @@ linters-settings:
   misspell:
     locale: US
   goimports:
-    local-prefixes:
-      - github.com/jobrunner/hostus
+    local-prefixes: github.com/jobrunner/hostus
 
 issues:
   exclude-rules:

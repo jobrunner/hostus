@@ -7,6 +7,15 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-06-13
+
+### Changed
+- `docker-compose.yml` verwendet jetzt Registry-Image (`ghcr.io/jobrunner/hostus:latest`)
+
+### Added
+- `docker-compose.local.yml` als Override für lokale Image-Builds
+- Make-Targets: `start` (Registry-Image), `start-local` (lokaler Build), `stop`
+
 ## [0.2.2] - 2026-06-13
 
 ### Changed

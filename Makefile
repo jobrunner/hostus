@@ -1,4 +1,4 @@
-.PHONY: build test lint security clean run docker-build docker-push help
+.PHONY: build test lint security clean run docker-build docker-push start start-local stop help
 
 VERSION := $(shell cat VERSION)
 BINARY := hostus
@@ -59,6 +59,18 @@ docker-push:
 ## docker-run: Run Docker container locally
 docker-run:
 	docker run --rm -p 8080:8080 ghcr.io/jobrunner/hostus:latest
+
+## start: Start service using registry image
+start:
+	docker compose up -d
+
+## start-local: Build and start service using local image
+start-local:
+	docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+
+## stop: Stop running containers
+stop:
+	docker compose down
 
 ## all: Run all checks and build
 all: fmt lint vet security test build

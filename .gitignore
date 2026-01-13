@@ -1,0 +1,26 @@
+# Direnv
+.direnv/
+
+# Go
+.go/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+!example.env
+
+# Build artifacts
+/hostus
+/dist/

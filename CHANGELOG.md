@@ -7,6 +7,15 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2025-01-14
+
+### Fixed
+- golangci-lint v2 Konfigurationsformat korrigiert
+- CI-Pipeline auf golangci-lint-action v7 aktualisiert
+
+### Changed
+- Claude Code lokale Einstellungen in .gitignore aufgenommen
+
 ## [0.1.0] - 2025-01-13
 
 ### Added

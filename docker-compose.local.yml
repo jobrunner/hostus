@@ -1,0 +1,6 @@
+services:
+  hostus:
+    image: hostus:local
+    build:
+      context: .
+      dockerfile: Dockerfile

@@ -107,6 +107,13 @@ Frontend → hostus (this service) → GBIF REST API
 
 Required error codes: `INVALID_QUERY`, `RATE_LIMIT_EXCEEDED`, `UPSTREAM_OVERLOADED`, `GBIF_TIMEOUT`, `GBIF_UNAVAILABLE`, `INTERNAL_ERROR`
 
+## Git Workflow
+
+1. **Always create a feature branch** for new tasks (`feature/...`)
+2. After PR is merged and CI is green: `git checkout master && git pull`
+3. Then create new feature branch for next task
+4. Never commit directly to master
+
 ## CI/CD Rules
 
 - **VERSION and CHANGELOG.md must be updated in every PR**

@@ -17,6 +17,9 @@
 *.swp
 *.swo
 
+# Claude Code
+.claude/*.local.json
+
 # Environment
 .env
 !example.env

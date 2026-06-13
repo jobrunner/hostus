@@ -9,7 +9,7 @@ on:
       - '!.github/workflows/release.yml'
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:

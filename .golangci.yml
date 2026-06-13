@@ -49,6 +49,12 @@ linters:
           - gosec
           - gocyclo
           - errcheck
+          - goconst
+          - noctx
+      # OpenAPI-Spec ist Datenliteral; wiederholte JSON-Schlüssel sind kein Code-Smell.
+      - path: internal/api/openapi\.go
+        linters:
+          - goconst
 
 formatters:
   enable:

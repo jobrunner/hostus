@@ -1,5 +1,7 @@
 package gbif
 
+const StatusAccepted = "ACCEPTED"
+
 type SearchResponse struct {
 	Offset  int     `json:"offset"`
 	Limit   int     `json:"limit"`
@@ -40,7 +42,7 @@ type Taxon struct {
 }
 
 func (t *Taxon) IsAccepted() bool {
-	return t.TaxonomicStatus == "ACCEPTED"
+	return t.TaxonomicStatus == StatusAccepted
 }
 
 func (t *Taxon) IsSynonym() bool {

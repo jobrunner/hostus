@@ -12,7 +12,7 @@
         pkgs = nixpkgs.legacyPackages.${system};
 
         # Go Version (aktuell stabil)
-        go = pkgs.go_1_24;
+        go = pkgs.go_1_26;
 
         # Entwicklungswerkzeuge
         devTools = with pkgs; [
@@ -98,7 +98,7 @@
         # Packages
         packages.default = pkgs.buildGoModule {
           pname = "hostus";
-          version = "0.1.0";
+          version = "0.2.0";
           src = ./.;
 
           # Wird beim ersten Build aktualisiert

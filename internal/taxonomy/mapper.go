@@ -68,7 +68,7 @@ func createPlaceholderTaxon(t *gbif.Taxon) *gbif.Taxon {
 		CanonicalName:   t.Accepted,
 		Rank:            t.Rank,
 		Family:          t.Family,
-		TaxonomicStatus: "ACCEPTED",
+		TaxonomicStatus: gbif.StatusAccepted,
 	}
 }
 

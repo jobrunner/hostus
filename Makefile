@@ -27,8 +27,8 @@ security:
 
 ## fmt: Format code
 fmt:
-	gofmt -s -w .
-	goimports -w -local github.com/jobrunner/hostus .
+	gofmt -s -w cmd internal
+	goimports -w -local github.com/jobrunner/hostus cmd internal
 
 ## vet: Run go vet
 vet:

@@ -15,7 +15,7 @@ Uses Nix flakes for reproducible development. Enter the dev shell with:
 direnv allow   # or: nix develop
 ```
 
-Go version: **1.24** (via `pkgs.go_1_24`)
+Go version: **1.26** (via `pkgs.go_1_26`)
 
 ## Build Commands
 

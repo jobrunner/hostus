@@ -2,7 +2,7 @@
 
 ## Voraussetzungen
 
-- Go 1.24+
+- Go 1.26+
 - Make
 - Docker (optional)
 
@@ -17,7 +17,7 @@ nix develop
 ```
 
 Die Nix-Entwicklungsumgebung enthält alle benötigten Tools:
-- Go 1.24
+- Go 1.26
 - golangci-lint
 - govulncheck
 - staticcheck

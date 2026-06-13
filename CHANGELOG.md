@@ -7,6 +7,20 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-06-13
+
+### Changed
+- GitHub Actions auf Node-24-fähige Major-Versionen angehoben (GitHub erzwingt Node 24 ab 2026-06-16):
+  - `actions/checkout`: v4 → v6
+  - `actions/setup-go`: v5 → v6
+  - `actions/upload-artifact`: v4 → v7
+  - `golangci/golangci-lint-action`: v7 → v9
+  - `docker/setup-qemu-action`: v3 → v4
+  - `docker/setup-buildx-action`: v3 → v4
+  - `docker/login-action`: v3 → v4
+  - `docker/build-push-action`: v6 → v7
+  - `softprops/action-gh-release`: v2 → v3
+
 ## [0.2.1] - 2026-06-13
 
 ### Fixed

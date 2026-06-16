@@ -11,6 +11,7 @@ on:
 permissions:
   contents: write
   packages: write
+  security-events: write
 
 jobs:
   release:
@@ -37,6 +38,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -47,6 +49,39 @@ jobs:
             ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          sbom: true
+          provenance: mode=max
+
+      - name: Trivy Image Scan (CRITICAL,HIGH)
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
+          format: sarif
+          output: trivy-image.sarif
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
+      - name: Generate SBOM (CycloneDX)
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
+          format: cyclonedx
+          output: sbom.cyclonedx.json
+
+      - name: Generate SBOM (SPDX)
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
+          format: spdx-json
+          output: sbom.spdx.json
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
@@ -55,5 +90,8 @@ jobs:
           name: Release v${{ steps.version.outputs.version }}
           generate_release_notes: true
           make_latest: true
+          files: |
+            sbom.cyclonedx.json
+            sbom.spdx.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

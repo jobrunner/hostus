@@ -1,0 +1,5 @@
+# Akzeptierte Trivy-Findings.
+# Format: CVE-ID (optional <expiry-date YYYY-MM-DD>)
+# Beispiel: CVE-2024-12345 exp:2026-12-31
+#
+# Eintrag NUR mit Begründung im Commit oder Comment. Bei Möglichkeit lieber upgraden.

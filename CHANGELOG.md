@@ -7,6 +7,19 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-06-16
+
+### Added
+- **CI**: Trivy-Filesystem-Scan im Security-Job (`go.sum`, Dockerfile, IaC). Schwellwert: HIGH/CRITICAL, ignoriert unfixable Findings, blockt PR bei Treffern
+- **Release**: Trivy-Image-Scan post-build (HIGH/CRITICAL → Release kippt)
+- **Release**: Automatische SBOM-Generierung im CycloneDX- und SPDX-Format, angehängt als Release-Asset
+- **Release**: BuildKit-Attestationen (`sbom: true`, `provenance: mode=max`) als OCI-Manifest am Image — abrufbar via `docker buildx imagetools inspect`
+- **CI/Release**: SARIF-Upload der Trivy-Findings nach GitHub Security ("Code scanning alerts")
+- `.trivyignore`-Datei (leer) für künftige bewusst akzeptierte Findings
+
+### Changed
+- Permissions `security-events: write` in `ci.yml` und `release.yml` (SARIF-Upload)
+
 ## [0.2.3] - 2026-06-13
 
 ### Fixed

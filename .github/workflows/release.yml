@@ -53,7 +53,7 @@ jobs:
           provenance: mode=max
 
       - name: Trivy Image Scan (CRITICAL,HIGH)
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
           format: sarif
@@ -70,14 +70,14 @@ jobs:
           category: trivy-image
 
       - name: Generate SBOM (CycloneDX)
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
           format: cyclonedx
           output: sbom.cyclonedx.json
 
       - name: Generate SBOM (SPDX)
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
           format: spdx-json

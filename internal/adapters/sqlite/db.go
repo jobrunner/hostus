@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
-	"errors"
 	"fmt"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (CGO-free, FTS5 built in) — see ADR-0010
@@ -15,11 +14,6 @@ import (
 
 //go:embed schema.sql
 var schemaSQL string
-
-// errNotImplemented marks the read methods (Concept, ConceptByXref,
-// MatchExact) that Task 3 implements; this task only wires up the schema,
-// Open, BackboneVersions, and the ingest side of output.Repository.
-var errNotImplemented = errors.New("sqlite: not implemented yet")
 
 // DB is a modernc.org/sqlite-backed output.Repository.
 type DB struct {
@@ -95,23 +89,6 @@ func (db *DB) BeginIngest(ctx context.Context, bv domain.BackboneVersion) (outpu
 		return nil, fmt.Errorf("sqlite: recording backbone_version %q: %w", bv.ID, err)
 	}
 	return &ingestTx{ctx: ctx, tx: tx}, nil
-}
-
-// Concept resolves a taxon_concept by id. Implemented in Task 3.
-func (db *DB) Concept(_ context.Context, _ string) (*domain.Concept, []domain.Name, []domain.Xref, []domain.Distribution, error) {
-	return nil, nil, nil, nil, errNotImplemented
-}
-
-// ConceptByXref resolves a taxon_concept via an external cross-reference.
-// Implemented in Task 3.
-func (db *DB) ConceptByXref(_ context.Context, _, _ string) (*domain.Concept, error) {
-	return nil, errNotImplemented
-}
-
-// MatchExact returns every name whose canonical form equals canon.
-// Implemented in Task 3.
-func (db *DB) MatchExact(_ context.Context, _ string) ([]output.MatchCandidate, error) {
-	return nil, errNotImplemented
 }
 
 // ingestTx implements output.IngestTx over a single *sql.Tx.

@@ -260,29 +260,5 @@ func TestIngestTx_UpsertNameWithDanglingBasionymFKFails(t *testing.T) {
 	}
 }
 
-func TestConcept_ReturnsNotImplementedStub(t *testing.T) {
-	db := openTestDB(t)
-	concept, names, xrefs, dists, err := db.Concept(context.Background(), "c1")
-	if err == nil {
-		t.Fatal("Concept: expected errNotImplemented, got nil (implemented ahead of Task 3?)")
-	}
-	if concept != nil || names != nil || xrefs != nil || dists != nil {
-		t.Fatalf("Concept stub: want all-nil results alongside the error, got %v %v %v %v", concept, names, xrefs, dists)
-	}
-}
-
-func TestConceptByXref_ReturnsNotImplementedStub(t *testing.T) {
-	db := openTestDB(t)
-	_, err := db.ConceptByXref(context.Background(), "powo", "396681-1")
-	if err == nil {
-		t.Fatal("ConceptByXref: expected errNotImplemented, got nil (implemented ahead of Task 3?)")
-	}
-}
-
-func TestMatchExact_ReturnsNotImplementedStub(t *testing.T) {
-	db := openTestDB(t)
-	_, err := db.MatchExact(context.Background(), "corynephorus canescens")
-	if err == nil {
-		t.Fatal("MatchExact: expected errNotImplemented, got nil (implemented ahead of Task 3?)")
-	}
-}
+// Concept, ConceptByXref, and MatchExact are exercised in read_test.go
+// against the real database, seeded from testdata/seed.sql (Task 3).

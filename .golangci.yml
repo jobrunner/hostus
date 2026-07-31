@@ -124,6 +124,7 @@ linters:
         adapters:
           files:
             - "**/internal/adapters/**"
+            - "!**/internal/adapters/mcp/**"
           deny:
             - pkg: github.com/jobrunner/hostus/internal/application
               desc: "adapters talk to the core only through ports"
@@ -131,6 +132,23 @@ linters:
               desc: "adapters do not know about the composition root"
             - pkg: github.com/jobrunner/hostus/internal/adapters
               desc: "no adapter-to-adapter imports (cross-coupling); shared logic belongs in domain/ports"
+        # Task S10 debug MCP: an explicit, narrow exception to the "no
+        # adapter-to-adapter imports" rule above. mcp.NewServer's signature
+        # (telemetry.RingLog, telemetry.MemoryExporter — see the S7/S10 task
+        # briefs) is the whole point of the package: it must read S7's
+        # telemetry ring buffers directly. Only that one sibling import is
+        # allowed; every other cross-adapter/cross-layer boundary still
+        # applies.
+        adapters-mcp:
+          files:
+            - "**/internal/adapters/mcp/**"
+          deny:
+            - pkg: github.com/jobrunner/hostus/internal/application
+              desc: "adapters talk to the core only through ports"
+            - pkg: github.com/jobrunner/hostus/internal/app
+              desc: "adapters do not know about the composition root"
+            - pkg: github.com/jobrunner/hostus/internal/adapters/http
+              desc: "no cross-adapter coupling to the HTTP adapter"
 
     # Module blocklist (see CLAUDE.md "Allowed Libraries Only"): guards against
     # dependency bloat by naming frameworks/ORMs that must never be imported

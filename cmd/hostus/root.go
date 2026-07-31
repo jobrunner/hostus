@@ -40,6 +40,7 @@ Running hostus with no subcommand is equivalent to "hostus serve".`,
 
 	root.AddCommand(newVersionCmd())
 	root.AddCommand(newServeCmd())
+	root.AddCommand(newMCPCmd())
 	root.AddCommand(newIngestCmd())
 	root.AddCommand(newValidateCmd())
 	root.AddCommand(newBundleCmd())

@@ -180,7 +180,7 @@ git commit -m "poc(P3): verify GBIF v2 match honors COL-XR checklistKey"
 
 - [ ] **Step 1: Probe with the real key**
 
-Read the key from env `HOSTUS_PLANTNET_API_KEY`. POST a reference flower image to `https://my-api.plantnet.org/v2/identify/k-central-europe?api-key=$HOSTUS_PLANTNET_API_KEY`. Guard: if the env var is empty, print a clear "set HOSTUS_PLANTNET_API_KEY" message and exit non-zero.
+Read the key + endpoint from env `PLANTNET_API_KEY` and `PLANTNET_API_ENDPOINT` (both live in `.envrc.local`, loaded by direnv). POST a reference flower image to `${PLANTNET_API_ENDPOINT}/v2/identify/k-central-europe?api-key=${PLANTNET_API_KEY}` (fall back to `https://my-api.plantnet.org` if the endpoint var is unset). Guard: if `PLANTNET_API_KEY` is empty, print a clear "set PLANTNET_API_KEY in .envrc.local" message and exit non-zero.
 
 - [ ] **Step 2: Run it**
 
@@ -252,7 +252,7 @@ Copy ortus `flake.nix` structure. Adaptations: `pname = "hostus"`; drop `libspat
 
 - [ ] **Step 3: Port .envrc**
 
-`.envrc`: `use flake` + `dotenv_if_exists .envrc.local`. Create `.envrc.local.sample` documenting `HOSTUS_PLANTNET_API_KEY=` (used only by PoCs).
+`.envrc`: `use flake` + `dotenv_if_exists .envrc.local`. Create `.envrc.local.sample` documenting `PLANTNET_API_KEY=` and `PLANTNET_API_ENDPOINT=https://my-api.plantnet.org` (used only by PoCs; real values live in the git-ignored `.envrc.local`).
 
 - [ ] **Step 4: Verify the shell**
 
@@ -335,19 +335,18 @@ git commit -m "build: verify gate + tech-debt ratchet trio (ex ortus)"
 
 **Files:**
 - Modify: `.golangci.yml`
-- Create: `internal/application/boundary_test.go`
 - Reference-port from: ortus `.golangci.yml`
 
 **Interfaces:**
 - Produces: lint config where `depguard` forbids `adapters`→`application`-internal and enforces the hexagon; `gomodguard_v2` blocklists heavy deps.
 
+> **Pre-flight ruling (2026-07-31):** the originally-planned assertion-free `internal/application/boundary_test.go` is **struck** — a test that only compiles and asserts nothing is a review defect. The depguard rule plus the temporary-violation check in Step 3 IS the boundary verification. Do not create that file.
+
 - [ ] **Step 1: Port config**
 
 Adapt ortus `.golangci.yml` (v2 schema): enable `errcheck staticcheck bodyclose gocognit gocyclo gosec revive depguard gomodguard nolintlint`. `depguard` rules: `domain` may import nothing internal; `application` may import `domain`+`ports` only; `adapters` may not import other `adapters` or `app`. **Test files are linted** (per Global Constraints DoD): do NOT blanket-exempt `_test.go`. Only narrowly relax where genuinely test-only: allow `depguard` cross-boundary imports in `_test.go` (tests legitimately wire adapters together) and permit table-test complexity by raising `gocyclo`/`gocognit` thresholds for `_test.go` rather than disabling them. `gosec` stays on for tests. Document each relaxation with a comment naming the reason.
 
-- [ ] **Step 2: Write a boundary guard test (negative)**
-
-Add `internal/domain/forbidden_probe.go.txt` note is not needed; instead assert the rule exists: create `internal/application/boundary_test.go` that simply documents the intent and compiles. Real enforcement is the linter.
+- [ ] **Step 2: (struck — see pre-flight ruling above; no boundary_test.go)**
 
 - [ ] **Step 3: Verify depguard rejects a violation**
 

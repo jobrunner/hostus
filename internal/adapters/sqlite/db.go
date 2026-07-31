@@ -100,13 +100,14 @@ func (db *DB) BeginIngest(ctx context.Context, bv domain.BackboneVersion) (outpu
 		_ = tx.Rollback()
 		return nil, fmt.Errorf("sqlite: recording backbone_version %q: %w", bv.ID, err)
 	}
-	return &ingestTx{ctx: ctx, tx: tx}, nil
+	return &ingestTx{ctx: ctx, tx: tx, backboneID: bv.ID}, nil
 }
 
 // ingestTx implements output.IngestTx over a single *sql.Tx.
 type ingestTx struct {
-	ctx context.Context
-	tx  *sql.Tx
+	ctx        context.Context
+	tx         *sql.Tx
+	backboneID string
 }
 
 var _ output.IngestTx = (*ingestTx)(nil)
@@ -188,6 +189,79 @@ func (t *ingestTx) AddDistribution(conceptID string, d domain.Distribution) erro
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: adding distribution %s/%s for concept %q: %w", d.AreaScheme, d.AreaCode, conceptID, err)
+	}
+	return nil
+}
+
+// nameCanonicalPair is one (concept_id, name.canonical) row collected by
+// Finalize before it starts writing fts_name/fts_name_map, so the write
+// loop never runs concurrently with an open *sql.Rows on the same
+// transaction.
+type nameCanonicalPair struct {
+	conceptID string
+	canonical string
+}
+
+// Finalize builds the FTS5 autosuggest index for every name this
+// transaction's backbone has linked to a concept — both the accepted name
+// and every synonym, via concept_name — so a prefix search on a synonym's
+// canonical resolves back to its accepted concept (fts_name_map only
+// stores concept_id, not which specific name matched, so Suggest always
+// reports the accepted name's own canonical/rank/status; indexing the
+// synonym text here is what makes it findABLE at all).
+//
+// Known limitation: fts_name is a contentless FTS5 table (content=”,
+// schema.sql), and contentless tables reject plain DELETE ("cannot DELETE
+// from contentless fts5 table") unless the table opts into
+// contentless_delete=1, which schema.sql does not set. Finalize therefore
+// cannot clean up a backbone's previously-indexed rows before re-adding
+// them, so re-running Ingest for the same backbone_id (BeginIngest itself
+// is documented as INSERT OR REPLACE, a supported operation) will append a
+// second set of fts_name/fts_name_map rows alongside the first rather than
+// replacing them. This does not affect Suggest's correctness — it
+// GROUP BYs on tc.id, so duplicate index entries for the same concept
+// simply collapse back into one result — only the index's on-disk size
+// under repeated re-ingestion of the same backbone.
+func (t *ingestTx) Finalize() error {
+	rows, err := t.tx.QueryContext(t.ctx, `
+		SELECT cn.concept_id, n.canonical
+		FROM concept_name cn
+		JOIN name n ON n.id = cn.name_id
+		JOIN taxon_concept tc ON tc.id = cn.concept_id
+		WHERE tc.backbone_id = ?`, t.backboneID)
+	if err != nil {
+		return fmt.Errorf("sqlite: querying concept_name for FTS indexing (backbone %q): %w", t.backboneID, err)
+	}
+	var pairs []nameCanonicalPair
+	for rows.Next() {
+		var p nameCanonicalPair
+		if err := rows.Scan(&p.conceptID, &p.canonical); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("sqlite: scanning concept_name row for FTS indexing (backbone %q): %w", t.backboneID, err)
+		}
+		pairs = append(pairs, p)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("sqlite: iterating concept_name rows for FTS indexing (backbone %q): %w", t.backboneID, err)
+	}
+	_ = rows.Close()
+
+	for _, p := range pairs {
+		res, err := t.tx.ExecContext(t.ctx, `INSERT INTO fts_name_map (concept_id) VALUES (?)`, p.conceptID)
+		if err != nil {
+			return fmt.Errorf("sqlite: inserting fts_name_map for concept %q: %w", p.conceptID, err)
+		}
+		rowID, err := res.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("sqlite: reading fts_name_map rowid for concept %q: %w", p.conceptID, err)
+		}
+		// vernacular_de is left empty: SP1 does not ingest vernacular
+		// names yet (see the task brief); a later ingest can populate it
+		// once that data source exists.
+		if _, err := t.tx.ExecContext(t.ctx, `INSERT INTO fts_name (rowid, canonical, vernacular_de) VALUES (?, ?, '')`, rowID, p.canonical); err != nil {
+			return fmt.Errorf("sqlite: inserting fts_name for concept %q: %w", p.conceptID, err)
+		}
 	}
 	return nil
 }

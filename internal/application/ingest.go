@@ -155,6 +155,10 @@ func ingestBackbone(ctx context.Context, b Backbone, manifestSHA string, rs RowS
 		_ = tx.Rollback()
 		return report, err
 	}
+	if err := tx.Finalize(); err != nil {
+		_ = tx.Rollback()
+		return report, fmt.Errorf("application: finalizing FTS index for backbone %q: %w", b.ID, err)
+	}
 
 	if err := tx.Commit(); err != nil {
 		return report, fmt.Errorf("application: committing backbone %q: %w", b.ID, err)

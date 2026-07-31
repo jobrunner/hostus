@@ -1,0 +1,21 @@
+{
+  "_comment": "Ratchet config for scripts/codecharta-ratchet.py (not yet added — see codecharta.yml, which treats the ratchet gate as non-blocking until that script lands), run against the CodeCharta map (hostus.cc.json.gz). Seeded permissive/empty on the SP0 skeleton; ratchet down (tighten caps, add baselines) as the ratchet script and real code land.",
+  "complexity": {
+    "metric": "complexity",
+    "default_cap": 50,
+    "_default_cap_note": "Per-file SUM of function complexity. Every file not listed below must stay <= this.",
+    "baseline": {}
+  },
+  "function_complexity": {
+    "metric": "max_complexity_per_function",
+    "default_cap": 15,
+    "_default_cap_note": "The single most complex FUNCTION in a file (McCabe). New functions must stay <= this; tighten as the codebase grows.",
+    "baseline": {}
+  },
+  "hotspot": {
+    "_note": "A file is a hotspot when it is complex AND under-tested; new hotspots fail the build.",
+    "min_complexity": 40,
+    "min_coverage": 70,
+    "allow": []
+  }
+}

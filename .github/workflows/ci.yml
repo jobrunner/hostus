@@ -1,3 +1,4 @@
+# CI Pipeline für hostus
 name: CI
 
 on:
@@ -6,134 +7,408 @@ on:
   pull_request:
     branches: [master]
 
+env:
+  GO_VERSION: '1.26.3'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+# Least-privilege default. Individual jobs override (e.g. docker-security
+# adds security-events: write for SARIF upload) but everyone starts with
+# read-only repo access. Without this, GITHUB_TOKEN inherits the
+# repo-wide default which is broader than necessary for most jobs.
 permissions:
   contents: read
-  security-events: write
 
 jobs:
+  # =============================================================================
+  # Version Validation
+  # =============================================================================
+  version:
+    name: Validate Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # Full history for diff comparison
+
+      - name: Validate VERSION file
+        id: version
+        run: |
+          if [[ ! -f VERSION ]]; then
+            echo "❌ VERSION file not found"
+            exit 1
+          fi
+
+          VERSION=$(head -n1 VERSION | awk '{print $1}')
+          SEMVER_REGEX='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?$'
+
+          if [[ ! "$VERSION" =~ $SEMVER_REGEX ]]; then
+            echo "❌ Invalid version format: '$VERSION'"
+            echo "   Expected semver format: MAJOR.MINOR.PATCH"
+            exit 1
+          fi
+
+          echo "✅ Version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check CHANGELOG entry
+        run: |
+          VERSION=$(head -n1 VERSION | awk '{print $1}')
+          if ! grep -q "\[$VERSION\]" CHANGELOG.md && ! grep -q "\[Unreleased\]" CHANGELOG.md; then
+            echo "⚠️  Version $VERSION not found in CHANGELOG.md"
+            echo "   Make sure to document changes before release."
+          fi
+
+      # Versioning + CHANGELOG are owned by release-please (release-please.yml):
+      # feature PRs no longer hand-bump VERSION/CHANGELOG — they just use
+      # Conventional Commits, and release-please opens a release PR that bumps
+      # VERSION and cuts the CHANGELOG.
+
+  # =============================================================================
+  # Go Linting
+  # =============================================================================
   lint:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
+          go-version: ${{ env.GO_VERSION }}
 
-      - name: golangci-lint
+      - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
           args: --timeout=5m
 
+  # =============================================================================
+  # Go Tests
+  # hostus is CGO-free (CGO_ENABLED=0, see flake.nix) — no C dependencies
+  # (e.g. SpatiaLite) need installing before the test run.
+  # =============================================================================
   test:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Run tests
-        run: go test -v -race -coverprofile=coverage.out ./...
+        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
 
-      - name: Upload coverage
-        uses: actions/upload-artifact@v7
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7
         with:
-          name: coverage
-          path: coverage.out
+          file: ./coverage.out
+          fail_ci_if_error: false
 
+      - name: Coverage floors (ratchet)
+        run: ./scripts/coverage-gate.sh coverage.out
+
+  # =============================================================================
+  # Benchmarks. Running them is a hard gate (they must compile + execute — no
+  # bit-rot). Timing-regression detection is intentionally NOT a hard gate:
+  # shared CI runners are too noisy for a reliable per-PR threshold. Instead we
+  # post a benchstat PR-vs-base delta (same runner cancels machine variance) to
+  # the job summary for human review.
+  # =============================================================================
+  bench:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Benchmarks (this branch)
+        run: make bench | tee new.txt
+
+      - name: Benchmarks (base) + benchstat delta
+        if: github.event_name == 'pull_request'
+        run: |
+          go install golang.org/x/perf/cmd/benchstat@latest
+          # new.txt/old.txt are untracked, so they survive the checkouts below.
+          git checkout --quiet "${{ github.event.pull_request.base.sha }}"
+          make bench > old.txt 2>/dev/null || echo "base: no comparable benchmarks" > old.txt
+          git checkout --quiet -
+          {
+            echo '### Benchmark delta (base → PR)'
+            echo '```'
+            benchstat old.txt new.txt 2>&1 || echo "no comparable results (e.g. the PR that first adds these benchmarks)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # =============================================================================
+  # Security Scanning (Go)
+  # =============================================================================
   security:
     name: Security
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
-
-      - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Run govulncheck
-        run: govulncheck ./...
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
-      - name: Install staticcheck
-        run: go install honnef.co/go/tools/cmd/staticcheck@latest
+  # =============================================================================
+  # License compliance. Fails if a shipped (cmd/hostus) dependency carries a
+  # license outside the permissive allowlist. First-party packages are ignored
+  # (the repo isn't classified).
+  # =============================================================================
+  licenses:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
 
-      - name: Run staticcheck
-        run: staticcheck ./...
-
-      - name: Trivy Filesystem Scan (CRITICAL,HIGH)
-        uses: aquasecurity/trivy-action@v0.36.0
+      - name: Set up Go
+        uses: actions/setup-go@v7
         with:
-          scan-type: fs
-          scan-ref: .
-          severity: CRITICAL,HIGH
-          exit-code: '1'
-          ignore-unfixed: true
-          format: sarif
-          output: trivy-fs.sarif
+          go-version: ${{ env.GO_VERSION }}
 
-      - name: Upload Trivy SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
+      - name: Check dependency licenses
+        run: |
+          go install github.com/google/go-licenses@latest
+          make licenses
+
+  # =============================================================================
+  # Docs. Builds the Diátaxis site with `mkdocs build --strict`, which fails on
+  # broken internal links, missing nav entries, or unresolved references.
+  # NOTE: hostus has no mkdocs.yml yet on the SP0 skeleton — skip gracefully
+  # until a later task adds the docs site, rather than failing every CI run.
+  # =============================================================================
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Build docs (strict)
+        run: |
+          if [[ ! -f mkdocs.yml ]]; then
+            echo "::notice::no mkdocs.yml yet — skipping docs build (a later task adds the docs site)."
+            exit 0
+          fi
+          uvx --with mkdocs-material mkdocs build --strict
+
+  # =============================================================================
+  # Secret scanning. gitleaks-action scans the git history of the event's
+  # commit range (the PR commits on a PR, github.event.before..after on push) —
+  # so a secret added and removed within the range is still caught. Config +
+  # allowlist live in .gitleaks.toml.
+  # =============================================================================
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
         with:
-          sarif_file: trivy-fs.sarif
-          category: trivy-fs
+          fetch-depth: 0 # gitleaks needs history to diff the scanned commit range
 
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # =============================================================================
+  # Architecture & debt harness — drift + technical-debt gates.
+  # The hexagonal import-boundary rules (depguard) and module blocklist
+  # (gomodguard) run inside the Lint job (golangci-lint ./...). This job adds
+  # the go.mod/go.sum tidiness gate plus the debt ratchet (suppression budget,
+  # debt markers, coverage floors).
+  # =============================================================================
+  architecture:
+    name: Architecture
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: go.mod tidiness
+        run: go mod tidy -diff
+
+      - name: Debt ratchet (suppressions, markers)
+        run: ./scripts/debt-guard.sh
+
+  # =============================================================================
+  # Go Build
+  # =============================================================================
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [lint, test, security]
+    needs: [lint, test, version]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Build
-        run: make build
+        run: go build -v -o hostus ./cmd/hostus
 
       - name: Verify binary
-        run: ./hostus --help || true
+        run: ./hostus version
 
-  version-check:
-    name: Version Check
+  # =============================================================================
+  # Dockerfile Linting
+  # =============================================================================
+  docker-lint:
+    name: Docker Lint
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
+
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.3.0
         with:
-          fetch-depth: 0
+          dockerfile: Dockerfile
+          failure-threshold: error
 
-      - name: Check VERSION update
+  # =============================================================================
+  # GitHub Actions Workflow Linting
+  # =============================================================================
+  actions-lint:
+    name: Actions Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # actionlint catches workflow-level bugs (typos, invalid expressions,
+      # bad shell scripts, action input validation) AND a handful of
+      # security issues like script-injection via untrusted github.event
+      # fields. Cheap to run on every PR; downloads a ~5MB static binary.
+      #
+      # shellcheck integration is filtered to severity=error so style
+      # suggestions like SC2086 ("quote to prevent word splitting") don't
+      # gate every PR. Real bugs and security issues are still caught.
+      - name: Run actionlint
         run: |
-          if ! git diff --name-only origin/master...HEAD | grep -q "^VERSION$"; then
-            echo "::error::VERSION file must be updated in every PR"
+          curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash \
+            | bash -s -- 1.7.12
+          ./actionlint -color -shellcheck="-S error"
+
+      # Drift guard: an action version tag written into a *comment* silently goes
+      # stale when Dependabot bumps the real `uses:` line. The version belongs
+      # only on the `uses:` line Dependabot manages — never in prose. Fail if any
+      # comment pins one.
+      - name: No action versions in workflow comments
+        run: |
+          # Best-effort heuristic (not a YAML/shell parser): flag a version tag
+          # that follows a '#' at line start or after whitespace. Distinguish "no
+          # match" (ok) from a grep error.
+          matches=$(grep -rnE '(^|[[:space:]])#.*@v[0-9]' .github/workflows/) && rc=0 || rc=$?
+          if [ "$rc" = 0 ]; then
+            echo "$matches"
+            echo "::error::Action version pinned in a comment above — it will drift on the next bump. Drop the version tag from the comment (keep it only on the 'uses:' line)."
             exit 1
+          elif [ "$rc" != 1 ]; then
+            echo "::error::drift guard: grep failed with status $rc"
+            exit "$rc"
           fi
 
-      - name: Check CHANGELOG update
-        run: |
-          if ! git diff --name-only origin/master...HEAD | grep -q "^CHANGELOG.md$"; then
-            echo "::error::CHANGELOG.md must be updated in every PR"
-            exit 1
-          fi
+  # =============================================================================
+  # Docker Build (without push)
+  # PRs: smoke-test on native linux/amd64 only (fast — no QEMU). push to
+  # master: full amd64 + arm64 matrix, since the release image is multi-arch
+  # and must be verified before a release cut.
+  # =============================================================================
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [docker-lint, build, version]
+    strategy:
+      matrix:
+        platform: ${{ github.event_name == 'pull_request' && fromJSON('["linux/amd64"]') || fromJSON('["linux/amd64", "linux/arm64"]') }}
+    steps:
+      - uses: actions/checkout@v7
 
-      - name: Validate VERSION format
-        run: |
-          VERSION=$(cat VERSION)
-          if ! echo "$VERSION" | grep -qE "^[0-9]+\.[0-9]+\.[0-9]+$"; then
-            echo "::error::VERSION must be in SemVer format (X.Y.Z)"
-            exit 1
-          fi
+      # QEMU is only needed to build a foreign architecture (arm64 on an amd64
+      # host); native amd64 builds skip it.
+      - name: Set up QEMU
+        if: matrix.platform == 'linux/arm64'
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # =============================================================================
+  # Docker Security Scan
+  # =============================================================================
+  docker-security:
+    name: Docker Security Scan
+    runs-on: ubuntu-latest
+    needs: [docker-lint]
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image for scanning
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: hostus:scan
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: 'hostus:scan'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'

@@ -1,0 +1,87 @@
+# Mutation testing with gremlins — a HARD GATE on the packages listed below.
+# Coverage tells you a line executed; mutation testing tells you a test would
+# actually CATCH a bug in it. Runs per-package via `make mutation PKG=...`,
+# which reads thresholds from .gremlins.yaml.
+#
+# On the SP0 skeleton, .gremlins.yaml keeps threshold-efficacy/threshold-mcover
+# at 0 (there is no logic yet to mutate) — these gates are effectively no-ops
+# until real logic lands per task. Ratchet .gremlins.yaml (and this job, if
+# per-package overrides are added there) up as tests improve; don't hardcode
+# stricter numbers here than the shared config uses, or the two will drift.
+name: Mutation Testing
+
+on:
+  # Runs on every PR to master (not path-filtered) so it can be a REQUIRED
+  # status check — a path-filtered check that skips would leave the
+  # requirement permanently unsatisfied and block unrelated PRs.
+  pull_request:
+    branches: [master]
+  schedule:
+    - cron: '0 3 * * 1' # Monday 03:00 UTC
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.26.3'
+  GREMLINS_VERSION: 'v0.5.1'
+
+permissions:
+  contents: read
+
+jobs:
+  mutation:
+    name: gremlins (core packages)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install gremlins
+        run: go install github.com/go-gremlins/gremlins/cmd/gremlins@${{ env.GREMLINS_VERSION }}
+
+      # Each package must meet its (currently permissive) baseline in
+      # .gremlins.yaml, or gremlins exits non-zero and the job fails. All
+      # packages run (so the report shows every one) before the job fails.
+      - name: Run mutation testing
+        run: |
+          set -uo pipefail
+          fail=0
+          run_pkg() {
+            local pkg="$1"
+            echo "===== gremlins: $pkg =====" | tee -a mutation.log
+            if ! make mutation PKG="$pkg" 2>&1 | tee -a mutation.log; then
+              echo "::error::Mutation gate FAILED for $pkg — score below the .gremlins.yaml baseline. Add tests that kill the LIVED mutants in mutation.log, or (last resort) adjust the baseline in .gremlins.yaml with justification."
+              fail=1
+            fi
+          }
+          run_pkg ./internal/config
+          run_pkg ./internal/httperr
+          run_pkg ./internal/adapters/telemetry
+          run_pkg ./internal/adapters/http
+          run_pkg ./internal/app
+          run_pkg ./internal/adapters/mcp
+          run_pkg ./cmd/hostus
+          exit "$fail"
+
+      - name: Summary
+        if: always()
+        run: |
+          summary=$(grep -iE 'gremlins:|Killed:|Test efficacy:|Mutator coverage:|LIVED|NOT COVERED' mutation.log 2>/dev/null | tail -60)
+          {
+            echo '### Mutation testing (gremlins) — config, httperr, telemetry, http, app, mcp, cmd/hostus'
+            echo '```'
+            echo "${summary:-no summary captured}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation-report
+          path: mutation.log
+          if-no-files-found: ignore

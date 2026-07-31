@@ -1,0 +1,20 @@
+# Conventional Commits validation. Critical for release-please: it derives the
+# next version + CHANGELOG from these commit types (feat → minor, fix → patch,
+# `!`/BREAKING CHANGE → major). Non-conventional commits would mis-version.
+extends:
+  - '@commitlint/config-conventional'
+rules:
+  # Repo commits occasionally carry a scope + parenthetical; allow headroom.
+  header-max-length: [2, always, 120]
+  # Allow the types the repo actually uses (config-conventional set + our usage).
+  type-enum:
+    - 2
+    - always
+    - [build, chore, ci, docs, feat, fix, perf, refactor, revert, style, test]
+  # Warning, not error: Dependabot's auto-generated commit bodies routinely exceed
+  # 100 chars per line (release-note/compat lines it writes), which would otherwise
+  # fail the required commitlint check on every safe dependency PR. Body line length
+  # is cosmetic — release-please derives versions from type/header, not the body —
+  # so a warning keeps a gentle nudge for humans without blocking bot updates.
+  # (The action's failOnWarnings default is false, so level-1 rules never fail CI.)
+  body-max-line-length: [1, always, 100]

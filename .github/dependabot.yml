@@ -1,0 +1,81 @@
+# Dependabot configuration. See:
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# Three ecosystems:
+#   1. github-actions — bumps actions/checkout, actions/setup-go, etc.
+#   2. gomod          — bumps Go modules AND the `toolchain` directive in
+#                       go.mod. This is what keeps us off the next round of
+#                       stdlib CVEs without manual work.
+#   3. gitsubmodule   — bumps the third_party/claude-skills pin (added in a
+#                       later task) to the latest of its tracked branch.
+#
+# The CI workflows themselves still pin GO_VERSION explicitly; Dependabot
+# does NOT update that. The vuln-scan workflow runs weekly to alert if it
+# drifts behind the toolchain directive.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    groups:
+      # All GitHub Actions bumps in ONE PR. They're independent, CI-only and
+      # low-risk; a single PR avoids per-file rebase churn.
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - go
+    groups:
+      # OTel ecosystem updates as one PR — they release in lockstep and
+      # individual bumps usually break version-compat between sibling
+      # packages.
+      opentelemetry:
+        patterns:
+          - "go.opentelemetry.io/*"
+      # Everything else: remaining minor/patch bumps in ONE PR per week, so
+      # go.mod/go.sum changes don't serialize into conflicting single-module
+      # PRs. A dependency lands in the first matching group above, so a
+      # lockstep group still captures its own bumps INCLUDING majors
+      # (intentional — siblings must move together). Only a *major* bump of a
+      # dependency matching none of those groups falls outside this
+      # minor/patch catch-all and gets its own individual PR for review.
+      go-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # git submodules — bumps the third_party/claude-skills pin to the latest of
+  # its tracked branch (main, per .gitmodules) as a reviewed PR, so hostus's
+  # CI validates the new skills version before it lands. Keeps the submodule
+  # pinned (reproducible) while still updating regularly. Manual on-demand
+  # run: Insights → Dependency graph → Dependabot → "Check for updates" (or
+  # the "Update skills submodule" workflow_dispatch action).
+  # NOTE: claude-skills is private; Dependabot needs access to it (same-owner
+  # repos are reachable by default) or the PR won't appear. The submodule
+  # itself is added in a later task (S13) — this entry is a no-op until then.
+  - package-ecosystem: gitsubmodule
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - skills

@@ -1,0 +1,48 @@
+# dataset.yaml — Beispiel-Manifest für hostus 2.0 (Artefaktvertrag, Spec §D.2 / §4.4).
+#
+# Dieses Manifest pinnt jeden Backbone- und Trait-Vokabular-Import mit
+# fester Version/Lizenz — nie "latest". hostus validiert diese Datei beim
+# Ingest doppelt: gegen ein eingebettetes JSON-Schema (2020-12) UND per
+# strikter YAML-Dekodierung (unbekannte Felder -> Fehler).
+
+backbones:
+  # WCVP (World Checklist of Vascular Plants) — Kew, liefert die IPNI/POWO-IDs.
+  - id: wcvp
+    version: "2026-06-15" # Datumsversion des WCVP-Dumps, niemals "latest"
+    license: CC-BY-4.0
+    source: https://sftp.kew.org/pub/data-repositories/WCVP/
+    path: ./backbones/wcvp # lokaler Pfad zum entpackten DwC-A-Bundle
+
+  # Catalogue of Life (ColDP-Export) — globaler Cross-Reference-Anschluss.
+  - id: colxr
+    version: "2026-06-15"
+    license: CC-BY-4.0
+    source: https://download.checklistbank.org/col/
+    path: ./backbones/colxr
+
+  # Euro+Med PlantBase — regionale Konzepte für Mitteleuropa.
+  - id: euromed
+    version: "2024-12-01"
+    path: ./backbones/euromed
+
+  # FloraVeg.EU — Namensraum für ESy-Vegetationsklassifikation.
+  - id: floraveg
+    version: "2021-06-01"
+    path: ./backbones/floraveg
+    note: "ESy-Namensraum, gepinnt — nicht mit EIVE/EuroSL verwechseln"
+
+trait_vocabularies:
+  # Ellenberg-type Indicator Values for Europe.
+  - id: eive
+    version: "1.0"
+    taxonomy: euromed-via-eurosl
+
+  # Zeigerwerte nach Tichý et al. 2023, im FloraVeg-Namensraum.
+  - id: tichy2023
+    version: "1.0"
+    taxonomy: floraveg
+
+  # Zeigerwerte nach Midolo et al. 2023, ebenfalls FloraVeg-Namensraum.
+  - id: midolo2023
+    version: "1.0"
+    taxonomy: floraveg

@@ -22,6 +22,15 @@
 - Load-test stack is explicitly **out of scope**.
 - ortus is the porting source of truth at `/Users/jbrunner/work/projects/ortus`; adapt module name → hostus, env prefix → `HOSTUS_`, drop SpatiaLite/CGO, keep distroless.
 
+### Definition of Done for every TDD task (mutation + test-lint gate)
+
+Applies to every task that produces Go logic (S5, S6, S7, S8, S9, S10, and all SP1+ logic). In addition to "tests pass", a task is only done when both hold:
+
+1. **Mutation-green:** run `make mutation PKG=<the touched package>` (gremlins). The package must meet its configured efficacy/coverage thresholds — surviving mutants mean the tests don't pin behavior; add assertions until green. This runs *after* the unit tests pass, before the commit.
+2. **Tests are linted:** `_test.go` files pass `golangci-lint` too. `.golangci.yml` (Task S4) must NOT blanket-exempt tests — only narrowly exempt what is genuinely test-only noise (documented per rule). `make lint` covering test files is part of the task's final check.
+
+Pure scaffolding/config tasks (S1–S4, S11–S15) have no logic to mutate; the mutation gate does not apply, but any Go files they add still pass lint. Each TDD task's final step sequence is therefore: run tests (pass) → `make mutation PKG=...` (green) → `make lint` incl. tests (clean) → commit.
+
 ---
 
 # Part 1 — Investigation (Phase R + Phase 0)
@@ -292,15 +301,15 @@ git commit -m "refactor: remove GBIF proxy, establish hexagonal skeleton"
 ## Task S3: Makefile verify gate + tech-debt ratchet trio
 
 **Files:**
-- Create/Modify: `Makefile`, `.debt-budget`, `.coverage-floors`, `scripts/debt-guard.sh`, `scripts/coverage-gate.sh`
-- Reference-port from: ortus `Makefile`, `scripts/debt-guard.sh`, `scripts/coverage-gate.sh`, `.coverage-floors`
+- Create/Modify: `Makefile`, `.debt-budget`, `.coverage-floors`, `.gremlins.yaml`, `scripts/debt-guard.sh`, `scripts/coverage-gate.sh`
+- Reference-port from: ortus `Makefile`, `scripts/debt-guard.sh`, `scripts/coverage-gate.sh`, `.coverage-floors`, `.gremlins.yaml`
 
 **Interfaces:**
 - Produces: `make verify` = `fmt-check vet lint test arch debt-guard` + `go build ./...`; `make build/test/lint/security/bench/fmt` targets.
 
 - [ ] **Step 1: Port the Makefile**
 
-Adapt ortus Makefile: `MODULE := github.com/jobrunner/hostus`, binary `hostus` from `./cmd/hostus`, `GOTEST := gotestsum --format testdox --`. Keep `build build-all test test-unit test-integration test-coverage test-race bench fmt fmt-check vet lint lint-fix arch security-check vuln-check gosec licenses check verify hooks help`. Drop load-test targets.
+Adapt ortus Makefile: `MODULE := github.com/jobrunner/hostus`, binary `hostus` from `./cmd/hostus`, `GOTEST := gotestsum --format testdox --`. Keep `build build-all test test-unit test-integration test-coverage test-race bench fmt fmt-check vet lint lint-fix arch security-check vuln-check gosec licenses check verify hooks help`. Drop load-test targets. Keep `mutation` and make it **package-scoped and green-required** for the per-task DoD: `mutation: ; gremlins unleash --dry-run=false $(if $(PKG),$(PKG),./...)` (installs `github.com/go-gremlins/gremlins/cmd/gremlins@v0.5.1`); `.gremlins.yaml` holds per-package efficacy/coverage thresholds so a non-green run exits non-zero.
 
 - [ ] **Step 2: Port debt-guard**
 
@@ -334,7 +343,7 @@ git commit -m "build: verify gate + tech-debt ratchet trio (ex ortus)"
 
 - [ ] **Step 1: Port config**
 
-Adapt ortus `.golangci.yml` (v2 schema): enable `errcheck staticcheck bodyclose gocognit gocyclo gosec revive depguard gomodguard nolintlint`. `depguard` rules: `domain` may import nothing internal; `application` may import `domain`+`ports` only; `adapters` may not import other `adapters` or `app`. Exempt `_test.go` from `gosec,gocyclo,gocognit,depguard`.
+Adapt ortus `.golangci.yml` (v2 schema): enable `errcheck staticcheck bodyclose gocognit gocyclo gosec revive depguard gomodguard nolintlint`. `depguard` rules: `domain` may import nothing internal; `application` may import `domain`+`ports` only; `adapters` may not import other `adapters` or `app`. **Test files are linted** (per Global Constraints DoD): do NOT blanket-exempt `_test.go`. Only narrowly relax where genuinely test-only: allow `depguard` cross-boundary imports in `_test.go` (tests legitimately wire adapters together) and permit table-test complexity by raising `gocyclo`/`gocognit` thresholds for `_test.go` rather than disabling them. `gosec` stays on for tests. Document each relaxation with a comment naming the reason.
 
 - [ ] **Step 2: Write a boundary guard test (negative)**
 

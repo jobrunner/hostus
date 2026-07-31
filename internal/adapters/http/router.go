@@ -123,7 +123,7 @@ func NewRouter(deps Deps) *mux.Router {
 	r.Use(middleware.Metrics)
 
 	r.HandleFunc("/health/live", handleHealthLive).Methods(http.MethodGet)
-	r.HandleFunc("/health/ready", handleHealthReady).Methods(http.MethodGet)
+	r.HandleFunc("/health/ready", handleHealthReady(deps.Repo)).Methods(http.MethodGet)
 	r.Handle("/metrics", promhttp.Handler()).Methods(http.MethodGet)
 
 	if deps.Repo != nil {

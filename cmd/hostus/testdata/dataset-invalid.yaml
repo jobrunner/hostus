@@ -1,0 +1,5 @@
+backbones:
+  - id: wcvp
+    version: "2026-06-15"
+    path: ../../../internal/adapters/wcvp/testdata/wcvp-sample
+    unexpected_field: not-allowed-by-schema

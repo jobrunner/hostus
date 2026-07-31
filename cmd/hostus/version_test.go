@@ -45,23 +45,36 @@ func TestVersionCommandContainsBuildInfo(t *testing.T) {
 	}
 }
 
-func TestIngestReturnsNotImplemented(t *testing.T) {
+// TestIngestWithoutFlagsFailsFast documents that "ingest" is no longer the
+// SP0 errNotImplemented stub (see ingest_test.go for its real behavior):
+// invoked bare it now fails because --dataset/--db are required, not
+// because the command is unimplemented.
+func TestIngestWithoutFlagsFailsFast(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetOut(new(bytes.Buffer))
 	cmd.SetArgs([]string{ingestCmdName})
 	err := cmd.Execute()
-	if !errors.Is(err, errNotImplemented) {
-		t.Fatalf("got %v, want errNotImplemented", err)
+	if err == nil {
+		t.Fatal("want an error when --dataset/--db are missing, got nil")
+	}
+	if errors.Is(err, errNotImplemented) {
+		t.Fatalf("got errNotImplemented, want the real --dataset-required error (see ingest_test.go)")
 	}
 }
 
-func TestValidateReturnsNotImplemented(t *testing.T) {
+// TestValidateWithoutFlagsFailsFast is validate's counterpart to
+// TestIngestWithoutFlagsFailsFast (see validate_test.go for its real
+// behavior).
+func TestValidateWithoutFlagsFailsFast(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetOut(new(bytes.Buffer))
-	cmd.SetArgs([]string{"validate"})
+	cmd.SetArgs([]string{validateCmdName})
 	err := cmd.Execute()
-	if !errors.Is(err, errNotImplemented) {
-		t.Fatalf("got %v, want errNotImplemented", err)
+	if err == nil {
+		t.Fatal("want an error when --dataset is missing, got nil")
+	}
+	if errors.Is(err, errNotImplemented) {
+		t.Fatalf("got errNotImplemented, want the real --dataset-required error (see validate_test.go)")
 	}
 }
 

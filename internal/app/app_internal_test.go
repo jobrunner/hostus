@@ -45,6 +45,23 @@ func TestShutdownAggregatesTelemetryError(t *testing.T) {
 	}
 }
 
+// TestShutdownAggregatesCloseRepoError pins Shutdown's closeRepo
+// error-aggregation branch (the `if err != nil` around closeRepo, mirroring
+// TestShutdownAggregatesTelemetryError above): a stub that always errors
+// must have its error surfaced in Shutdown's aggregate, not swallowed.
+func TestShutdownAggregatesCloseRepoError(t *testing.T) {
+	a, err := New(whiteboxTestConfig())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	sentinel := errors.New("boom")
+	a.closeRepo = func() error { return sentinel }
+
+	if err := a.Shutdown(context.Background()); !errors.Is(err, sentinel) {
+		t.Fatalf("got %v, want an error wrapping %v", err, sentinel)
+	}
+}
+
 // TestShutdownSkipsNilTelemetryFunc pins the nil-check branch: a nil
 // shutdownTelemetry (which New never actually produces, but Shutdown must
 // stay defensive against) must not panic and must not fabricate an error.

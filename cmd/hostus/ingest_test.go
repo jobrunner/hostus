@@ -1,0 +1,92 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+// TestIngestCommand_FixtureManifest_PrintsReport drives "hostus ingest
+// --dataset <fixture> --db <temp file>" end to end through the real cobra
+// wiring and asserts it reports per-backbone counts a human (or T9's
+// downstream automation) can read, rather than just silently succeeding.
+func TestIngestCommand_FixtureManifest_PrintsReport(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
+
+	cmd := newIngestCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--dataset=testdata/dataset.yaml", "--db=" + dbPath})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("Execute: unexpected error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "wcvp") {
+		t.Errorf("report %q, want it to mention backbone %q", got, "wcvp")
+	}
+	// 20 taxon rows in the wcvp-sample fixture, every one gets a Name row
+	// (see internal/application/ingest_test.go's TestIngest_WCVPFixture_ReportCounts,
+	// which pins the same fixture's exact counts).
+	if !strings.Contains(got, strconv.Itoa(20)) {
+		t.Errorf("report %q, want it to mention the Names count %d", got, 20)
+	}
+}
+
+// TestIngestCommand_MissingDatasetFlag_ReturnsError pins the "not
+// implemented" stub's old exit-1 behavior (see main_test.go's TestRun,
+// which invokes "hostus ingest" with no flags at all and expects exit 1):
+// the real implementation must still fail, just for a different reason
+// (--dataset is required), not silently succeed against an empty path.
+func TestIngestCommand_MissingDatasetFlag_ReturnsError(t *testing.T) {
+	cmd := newIngestCmd()
+	cmd.SetOut(new(bytes.Buffer))
+
+	if err := cmd.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("Execute: want an error when --dataset is missing, got nil")
+	}
+}
+
+// TestIngestCommand_MissingDBFlag_ReturnsError confirms --db is likewise
+// required: ingest must never silently pick an implicit database location.
+func TestIngestCommand_MissingDBFlag_ReturnsError(t *testing.T) {
+	cmd := newIngestCmd()
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetArgs([]string{"--dataset=testdata/dataset.yaml"})
+
+	if err := cmd.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("Execute: want an error when --db is missing, got nil")
+	}
+}
+
+// TestIngestCommand_InvalidManifest_ReturnsError confirms a manifest that
+// fails schema validation is rejected before any database write is
+// attempted.
+func TestIngestCommand_InvalidManifest_ReturnsError(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
+
+	cmd := newIngestCmd()
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetArgs([]string{"--dataset=testdata/dataset-invalid.yaml", "--db=" + dbPath})
+
+	if err := cmd.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("Execute: want an error for an invalid manifest, got nil")
+	}
+}
+
+// TestIngestCommand_RegisteredOnRoot confirms "hostus ingest" is wired into
+// the command tree, not just constructible in isolation.
+func TestIngestCommand_RegisteredOnRoot(t *testing.T) {
+	root := newRootCmd()
+	cmd, _, err := root.Find([]string{ingestCmdName})
+	if err != nil {
+		t.Fatalf("Find(ingest): %v", err)
+	}
+	if cmd.Use != ingestCmdName {
+		t.Fatalf("got command %q, want %q", cmd.Use, ingestCmdName)
+	}
+}

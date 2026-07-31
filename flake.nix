@@ -51,13 +51,20 @@
 
           shellHook = ''
             # Go Umgebung
-            export GOPATH="$PWD/.go"
+            # WICHTIG: Caches liegen AUSSERHALB des Arbeitsbaums (nicht $PWD/.go).
+            # Grund: Tools wie gremlins (mutation testing) kopieren das gesamte
+            # Modulverzeichnis inkl. .go/ in ein temporäres Arbeitsverzeichnis, um
+            # Mutationen anzuwenden. Die im Go-Modul-Cache enthaltenen Dateien sind
+            # read-only (Modus 0444); eine Kopie davon innerhalb des Repos brach
+            # diesen Kopiervorgang. Ablage unter XDG_CACHE_HOME entspricht zudem
+            # dem üblichen Go-Setup.
+            export GOPATH="''${XDG_CACHE_HOME:-$HOME/.cache}/hostus/go"
             export GOBIN="$GOPATH/bin"
             export PATH="$GOBIN:$PATH"
 
             # Cache Verzeichnisse
-            export GOCACHE="$PWD/.go/cache"
-            export GOMODCACHE="$PWD/.go/mod"
+            export GOCACHE="$GOPATH/cache"
+            export GOMODCACHE="$GOPATH/mod"
 
             # Erstelle Verzeichnisse falls nicht vorhanden
             mkdir -p "$GOPATH" "$GOBIN" "$GOCACHE" "$GOMODCACHE"

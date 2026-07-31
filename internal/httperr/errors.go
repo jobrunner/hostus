@@ -14,6 +14,8 @@ const (
 	GBIFTimeout        Code = "GBIF_TIMEOUT"
 	GBIFUnavailable    Code = "GBIF_UNAVAILABLE"
 	Internal           Code = "INTERNAL_ERROR"
+	NotFound           Code = "NOT_FOUND"
+	Unresolvable       Code = "UNRESOLVABLE"
 )
 
 type Response struct {

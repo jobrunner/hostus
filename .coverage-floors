@@ -1,0 +1,7 @@
+# Per-package statement-coverage floors — a RATCHET (raise only, never lower
+# without justification). Enforced by scripts/coverage-gate.sh in CI.
+# Starting permissive on the empty skeleton (SP0): only TOTAL is floored, at
+# 0%. Real per-package floors get added and tightened as logic lands (S5+).
+#
+# package                          floor(%)
+TOTAL                               0

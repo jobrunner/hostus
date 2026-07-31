@@ -11,11 +11,16 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	if err := app.Run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "hostus: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }

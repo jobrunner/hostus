@@ -1,0 +1,11 @@
+# gremlins mutation-testing config. `make mutation` is package-scoped and
+# green-required: it runs `gremlins unleash --dry-run=false` against PKG (or
+# ./... by default). Per-package efficacy/mutator-coverage thresholds live
+# here so a non-green run exits non-zero.
+#
+# These globals stay 0 on the empty skeleton (SP0): there is no logic yet to
+# mutate. Add per-package overrides (or raise these globals) as real logic
+# lands per task, per the per-task mutation-green DoD.
+unleash:
+  threshold-efficacy: 0
+  threshold-mcover: 0

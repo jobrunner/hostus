@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"math"
+	"sync"
 	"testing"
 	"time"
 
@@ -252,6 +253,100 @@ func TestRingLogWrapsAtCapacity(t *testing.T) {
 		if got[i].Msg != w {
 			t.Errorf("Records()[%d].Msg = %q, want %q (newest-first order after wrap)", i, got[i].Msg, w)
 		}
+	}
+}
+
+// TestRingLogWithAttrsSharesParentRing verifies that a handler derived via
+// WithAttrs (the slog.Logger.With(...) path) writes into the SAME ring as
+// its parent, per slog.Handler's contract: .With(...) returns a handler for
+// the same sink, only its preformatted attrs differ. An earlier
+// implementation cloned buf/next/count per derived handler, so the parent
+// and a derived logger raced on two independent mutexes over one backing
+// array — records from one silently clobbered or hid records from the
+// other. Here, both the parent and a derived logger write, and both
+// records must be visible, in write order, from the parent's Records().
+func TestRingLogWithAttrsSharesParentRing(t *testing.T) {
+	rl := telemetry.NewRingLog(16)
+	parent := slog.New(rl)
+	child := parent.With("request_id", "abc123")
+
+	parent.Info("from parent")
+	child.Info("from child")
+	parent.Info("from parent again")
+
+	got := rl.Records(slog.LevelDebug, 0)
+	if len(got) != 3 {
+		t.Fatalf("want 3 records visible from the parent RingLog (shared ring), got %d: %+v", len(got), got)
+	}
+	// Records() is newest-first.
+	wantMsgs := []string{"from parent again", "from child", "from parent"}
+	for i, w := range wantMsgs {
+		if got[i].Msg != w {
+			t.Errorf("Records()[%d].Msg = %q, want %q", i, got[i].Msg, w)
+		}
+	}
+	if got[1].Attrs["request_id"] != "abc123" {
+		t.Errorf("child record missing derived attr: %+v", got[1].Attrs)
+	}
+	// The parent-written records must not have picked up the child's attr.
+	if _, ok := got[0].Attrs["request_id"]; ok {
+		t.Errorf("parent record must not carry the child's derived attr: %+v", got[0].Attrs)
+	}
+}
+
+// TestRingLogWithGroupSharesParentRing is WithAttrs's sibling for
+// WithGroup: a handler derived via WithGroup must also share the parent's
+// ring rather than getting its own independent (and thus invisible-to-
+// Records()) copy.
+func TestRingLogWithGroupSharesParentRing(t *testing.T) {
+	rl := telemetry.NewRingLog(16)
+	parent := slog.New(rl)
+	child := parent.WithGroup("http")
+
+	parent.Info("from parent")
+	child.Info("from child")
+
+	got := rl.Records(slog.LevelDebug, 0)
+	if len(got) != 2 {
+		t.Fatalf("want 2 records visible from the parent RingLog (shared ring), got %d: %+v", len(got), got)
+	}
+}
+
+// TestRingLogConcurrentParentAndDerivedWrites runs the parent handler and a
+// WithAttrs-derived handler concurrently from multiple goroutines. Run with
+// -race: the earlier per-handler-clone implementation raced on two
+// independent mutexes guarding the same backing array here.
+func TestRingLogConcurrentParentAndDerivedWrites(t *testing.T) {
+	rl := telemetry.NewRingLog(256)
+	parent := slog.New(rl)
+	child := parent.With("k", "v")
+
+	const writers = 8
+	const perWriter = 50
+
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for j := 0; j < perWriter; j++ {
+				if i%2 == 0 {
+					parent.Info("parent msg")
+				} else {
+					child.Info("child msg")
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	got := rl.Records(slog.LevelDebug, 0)
+	want := writers * perWriter
+	if want > 256 {
+		want = 256
+	}
+	if len(got) != want {
+		t.Fatalf("want %d records retained, got %d", want, len(got))
 	}
 }
 

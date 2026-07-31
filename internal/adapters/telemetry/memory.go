@@ -124,18 +124,30 @@ func toSpanRecord(s sdktrace.ReadOnlySpan) SpanRecord {
 	}
 }
 
-// RingLog is a slog.Handler backed by a fixed-capacity ring buffer of log
-// records. It injects trace_id/span_id from the record's context when a
-// valid span is present, so a log line can be correlated back to a trace
-// captured by MemoryExporter.
-type RingLog struct {
+// ringLogCore holds the ring buffer storage and its mutex. RingLog and every
+// handler derived from it via WithAttrs/WithGroup share a single *ringLogCore
+// pointer, so all of them write into the same synchronized ring — matching
+// slog.Handler's contract that .With(...) returns a handler for the same
+// underlying sink, only preformatted attrs/groups differ. Cloning buf/next/
+// count per-handler (as an earlier version of this file did) let a parent
+// and a derived handler race on two independent mutexes over one backing
+// array, silently corrupting/losing records; see the S7 review fix.
+type ringLogCore struct {
 	mu       sync.RWMutex
 	capacity int
 	buf      []LogRecord
 	next     int
 	count    int
-	attrs    []slog.Attr
-	groups   []string
+}
+
+// RingLog is a slog.Handler backed by a fixed-capacity ring buffer of log
+// records. It injects trace_id/span_id from the record's context when a
+// valid span is present, so a log line can be correlated back to a trace
+// captured by MemoryExporter.
+type RingLog struct {
+	core   *ringLogCore
+	attrs  []slog.Attr
+	groups []string
 }
 
 // NewRingLog creates a RingLog that retains up to capacity log records.
@@ -145,8 +157,10 @@ func NewRingLog(capacity int) *RingLog {
 		capacity = 1
 	}
 	return &RingLog{
-		capacity: capacity,
-		buf:      make([]LogRecord, capacity),
+		core: &ringLogCore{
+			capacity: capacity,
+			buf:      make([]LogRecord, capacity),
+		},
 	}
 }
 
@@ -180,62 +194,57 @@ func (r *RingLog) Handle(ctx context.Context, rec slog.Record) error {
 		Attrs:   attrs,
 	}
 
-	r.mu.Lock()
-	r.buf[r.next] = lr
-	r.next = (r.next + 1) % r.capacity
-	if r.count < r.capacity {
-		r.count++
+	c := r.core
+	c.mu.Lock()
+	c.buf[c.next] = lr
+	c.next = (c.next + 1) % c.capacity
+	if c.count < c.capacity {
+		c.count++
 	}
-	r.mu.Unlock()
+	c.mu.Unlock()
 	return nil
 }
 
-// WithAttrs implements slog.Handler.
+// WithAttrs implements slog.Handler. The returned handler shares this
+// RingLog's core (same buffer, same mutex) and only carries its own
+// preformatted attrs, so records logged through either handler land in the
+// same ring, in write order.
 func (r *RingLog) WithAttrs(attrs []slog.Attr) slog.Handler {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	next := &RingLog{
-		capacity: r.capacity,
-		buf:      r.buf,
-		next:     r.next,
-		count:    r.count,
-		attrs:    append(append([]slog.Attr(nil), r.attrs...), attrs...),
-		groups:   r.groups,
+	return &RingLog{
+		core:   r.core,
+		attrs:  append(append([]slog.Attr(nil), r.attrs...), attrs...),
+		groups: r.groups,
 	}
-	return next
 }
 
 // WithGroup implements slog.Handler. hostus does not currently nest
 // attributes under groups for the debug ring; the group name is tracked but
 // does not prefix keys, keeping Records() output flat and simple to query.
+// The returned handler shares this RingLog's core, for the same reason as
+// WithAttrs.
 func (r *RingLog) WithGroup(name string) slog.Handler {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	next := &RingLog{
-		capacity: r.capacity,
-		buf:      r.buf,
-		next:     r.next,
-		count:    r.count,
-		attrs:    r.attrs,
-		groups:   append(append([]string(nil), r.groups...), name),
+	return &RingLog{
+		core:   r.core,
+		attrs:  r.attrs,
+		groups: append(append([]string(nil), r.groups...), name),
 	}
-	return next
 }
 
 // Records returns up to limit retained log records at or above min level,
 // newest first. limit <= 0 means unlimited.
 func (r *RingLog) Records(min slog.Level, limit int) []LogRecord {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	c := r.core
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
-	out := make([]LogRecord, 0, r.count)
-	start := r.next - r.count
-	for i := r.count - 1; i >= 0; i-- {
-		idx := (start + i) % r.capacity
+	out := make([]LogRecord, 0, c.count)
+	start := c.next - c.count
+	for i := c.count - 1; i >= 0; i-- {
+		idx := (start + i) % c.capacity
 		if idx < 0 {
-			idx += r.capacity
+			idx += c.capacity
 		}
-		rec := r.buf[idx]
+		rec := c.buf[idx]
 		lvl, err := parseLevel(rec.Level)
 		if err != nil || lvl < min {
 			continue

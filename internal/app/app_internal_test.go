@@ -1,8 +1,11 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,6 +109,42 @@ func TestRunPropagatesNewError(t *testing.T) {
 
 	if err := Run(context.Background(), cfg); err == nil {
 		t.Fatal("want New's error propagated, got nil")
+	}
+}
+
+// TestNewLoggerFansOutToStderrWriterAndRingLog pins New's fan-out wiring:
+// a.Logger must deliver every record to BOTH serveLogWriter (stderr in
+// production, redirected here to a buffer so the test doesn't depend on the
+// real process stderr) and the RingLog telemetry.Setup always installs
+// (which the debug MCP reads from). Losing either sink is the exact defect
+// this task fixes: `hostus serve` being silent on the terminal, or the MCP
+// losing visibility into logs.
+func TestNewLoggerFansOutToStderrWriterAndRingLog(t *testing.T) {
+	var buf bytes.Buffer
+	orig := serveLogWriter
+	serveLogWriter = &buf
+	defer func() { serveLogWriter = orig }()
+
+	a, err := New(whiteboxTestConfig())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	a.Logger.Info("probe-message")
+
+	if !strings.Contains(buf.String(), "probe-message") {
+		t.Fatalf("want stderr sink to receive the record, got %q", buf.String())
+	}
+
+	recs := a.Telemetry.Log.Records(slog.LevelInfo, 10)
+	found := false
+	for _, r := range recs {
+		if r.Msg == "probe-message" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("want RingLog to also receive the record (debug MCP visibility)")
 	}
 }
 

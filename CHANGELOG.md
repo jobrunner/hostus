@@ -7,6 +7,14 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+hostus wird vom zustandslosen GBIF-Autosuggest-Proxy zum lokalen
+Multi-Backbone-Namens- und Merkmalsservice umgebaut (siehe
+`docs/superpowers/specs/2026-07-31-hostus-2.0-architecture.md`). Dieser
+Abschnitt sammelt den Abschluss von **SP0 (Harness & Skelett)**: die
+Architektur-Inversion selbst (Multi-Backbone-Index, SQLite/FTS5, Ingest) ist
+noch nicht implementiert und folgt in SP1+. `release-please` cuttet daraus
+das nächste `2.0.0-alpha.N`-Release; bis dahin akkumulieren PRs hier.
+
 ### Fixed
 - `google.golang.org/grpc` auf v1.82.1 angehoben (behebt GO-2026-6061 in der
   OTLP-gRPC-Exporter-Kette von `internal/adapters/telemetry`).
@@ -15,15 +23,21 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   (GO-2026-5856 `crypto/tls`, GO-2026-5039 `net/textproto`, GO-2026-5037
   `crypto/x509`). `govulncheck ./...` meldet danach 0 aufrufbare
   Vulnerabilities; `make security-check` ist grün.
-
-## [2.0.0-alpha.0] - 2026-07-31
-
-hostus wird vom zustandslosen GBIF-Autosuggest-Proxy zum lokalen
-Multi-Backbone-Namens- und Merkmalsservice umgebaut (siehe
-`docs/superpowers/specs/2026-07-31-hostus-2.0-architecture.md`). Dieser
-Alpha-Tag markiert den Abschluss von **SP0 (Harness & Skelett)**: die
-Architektur-Inversion selbst (Multi-Backbone-Index, SQLite/FTS5, Ingest) ist
-noch nicht implementiert und folgt in SP1+.
+- v1-GBIF-Proxy-Wortlaut aus operator-/user-facing Oberflächen entfernt
+  (CLI-Hilfetext, CORS-Kommentar, README/OpenAPI/Docs, gomodguard-
+  Begründungen), die dem SP1-SQLite-Plan widersprachen.
+- `example.env`/`docker-compose.yml` auf die tatsächlichen `HOSTUS_*`-Keys
+  umgestellt; `docker-compose.yml`s Port-Mapping (`HOSTUS_SERVER_PORT`)
+  reparlert, das zuvor mit dem falschen `PORT`-Var auseinanderlief.
+- Tote v1-Prometheus-Metriken (`hostus_cache_hits_total`,
+  `hostus_cache_misses_total`, `hostus_gbif_errors_total`) entfernt, die nie
+  inkrementiert wurden; `hostus_rate_limit_rejects_total` und
+  `hostus_load_shedding_active` an die aktive Rate-Limit-/Load-Shed-
+  Middleware angeschlossen, statt dauerhaft bei Null zu stehen.
+- Totes `internal/cache` (kein Importer, ungestoppter Cleanup-Ticker/
+  Goroutine-Leak) entfernt — passte nicht zum SP1-SQLite-Design.
+- `hostus serve` loggt jetzt zusätzlich zum RingLog (MCP) auch auf stderr,
+  inkl. einer Startzeile mit der Listen-Adresse.
 
 ### Added
 - Hexagonales Skelett (`internal/domain`, `application`, `ports/{input,output}`,
@@ -37,7 +51,8 @@ noch nicht implementiert und folgt in SP1+.
   `tail_errors`, `get_trace`, `list_spans` — read-only Logs/Spans für Claude Code
 - Cobra-CLI (`serve` als Default, `version`, sowie Stubs für `ingest`,
   `validate`, `bundle` — Implementierung folgt in SP1/SP2)
-- viper-Konfiguration mit `HOSTUS_`-Präfix, Priorität `.env` < Env < CLI
+- viper-Konfiguration mit `HOSTUS_`-Präfix, Priorität `config.yaml` <
+  `HOSTUS_*`-Env-Var < CLI-Flag (kein Dotenv-Loader im Binary)
 - Fehler-Envelope um `NOT_FOUND` und `UNRESOLVABLE` erweitert (für die
   künftigen `/v1/concept`, `/v1/match`, `/v1/xref`-Endpunkte)
 - `verify`-Gate (`fmt-check vet lint test arch debt-guard` + Compile-Check) als

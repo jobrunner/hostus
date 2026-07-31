@@ -4,14 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	httpx "github.com/jobrunner/hostus/internal/adapters/http"
 	"github.com/jobrunner/hostus/internal/adapters/telemetry"
 	"github.com/jobrunner/hostus/internal/config"
 )
+
+// serveLogWriter is the second sink for the app logger's fan-out handler,
+// alongside the always-on RingLog telemetry.Setup always installs. It's a
+// var (not a hardcoded os.Stderr reference in New) so internal tests can
+// redirect it to a buffer instead of the process's real stderr.
+var serveLogWriter io.Writer = os.Stderr
 
 // shutdownTimeoutSeconds bounds how long App.Serve waits for in-flight
 // requests to drain and telemetry to flush once shutdown starts.
@@ -64,7 +72,13 @@ func New(cfg *config.Config) (*App, error) {
 		return nil, fmt.Errorf("setting up telemetry: %w", err)
 	}
 
-	logger := slog.New(providers.Log)
+	// Fan out every log record to both the always-on RingLog (so the debug
+	// MCP keeps seeing logs) and stderr (so `hostus serve` is not silent on
+	// the terminal).
+	logger := slog.New(telemetry.NewFanoutHandler(
+		providers.Log,
+		slog.NewTextHandler(serveLogWriter, nil),
+	))
 
 	router := httpx.NewRouter(httpx.Deps{
 		Logger:             logger,
@@ -91,6 +105,8 @@ func (a *App) Serve(ctx context.Context) error {
 		ReadTimeout:  a.Config.Server.ReadTimeout,
 		WriteTimeout: a.Config.Server.WriteTimeout,
 	}
+
+	a.Logger.Info("listening", "addr", a.server.Addr)
 
 	serveErr := make(chan error, 1)
 	go func() {

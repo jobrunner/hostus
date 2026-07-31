@@ -2,9 +2,13 @@
 
 hostus liest Konfiguration mit folgender Priorität (niedrig → hoch):
 
-1. `.env`-Datei
-2. Umgebungsvariablen
-3. CLI-Parameter (z. B. `--port=443`, `--rate-limit=20`)
+1. `config.yaml` (optional, siehe `config.yaml.example`)
+2. `HOSTUS_`-Umgebungsvariablen
+3. CLI-Flags (z. B. `--port=443`, `--log-level=debug`)
+
+Es gibt keinen Dotenv-Loader im Binary: `.env`/`example.env` sind eine
+Convenience für `docker-compose` (`env_file:`), das sie als normale
+Prozess-Umgebungsvariablen injiziert — sie bilden keine eigene Prioritätsstufe.
 
 Alle Konfigurationsschlüssel haben eingebaute Defaults (siehe `Defaults()` in
 `internal/config/config.go`). Umgebungsvariablen verwenden den Präfix

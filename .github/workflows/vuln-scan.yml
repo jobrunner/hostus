@@ -24,6 +24,11 @@ permissions:
   contents: read
   issues: write   # to open / comment on the security issue
 
+env:
+  # Pinned (supply-chain hardening): see ci.yml's GOVULNCHECK_VERSION for
+  # the same rationale. Bump deliberately, not implicitly via @latest.
+  GOVULNCHECK_VERSION: 'v1.6.0'
+
 jobs:
   scan:
     name: govulncheck
@@ -41,7 +46,7 @@ jobs:
       - name: Run govulncheck (JSON)
         id: vuln
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }}
           # -json emits structured output even on findings. Exit codes:
           #   0 — no vulnerabilities
           #   3 — vulnerabilities found

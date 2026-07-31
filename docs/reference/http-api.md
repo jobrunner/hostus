@@ -1,10 +1,12 @@
 # HTTP-API
 
 !!! note "Stand"
-    Dies beschreibt den aktuellen SP0-Skeleton-Stand. Der eigentliche
-    Autosuggest-Endpunkt (`GET /api/v1/taxa/suggest`) sowie `/openapi` folgen
-    in SP1+; die OpenAPI-Baseline dafür liegt bereits unter
-    `api/openapi/openapi.yaml` und wird dann code-generiert erweitert.
+    Dies beschreibt den aktuellen SP0-Skeleton-Stand. Die eigentlichen
+    `/v1/*`-Endpunkte (`suggest`, `match`, `concept/{id}`, `xref`,
+    `concept/{id}/traits`, `concept/{id}/synonyms`, `translate`) sowie
+    `/openapi` folgen in SP1+ (siehe CLAUDE.md für den Build-Plan); die
+    OpenAPI-Baseline dafür liegt bereits unter `api/openapi/openapi.yaml`
+    und wird dann code-generiert erweitert.
 
 ## Health-Endpunkte
 
@@ -40,11 +42,13 @@ zurückgegeben:
 }
 ```
 
-| Code                  | HTTP | Beschreibung                       |
-|-----------------------|------|-------------------------------------|
-| `INVALID_QUERY`       | 400  | Ungültiger Query-Parameter          |
-| `RATE_LIMIT_EXCEEDED` | 429  | Rate-Limit überschritten            |
-| `UPSTREAM_OVERLOADED` | 503  | Load-Shedding aktiv                 |
-| `GBIF_TIMEOUT`        | 504  | GBIF-Anfrage Timeout                |
-| `GBIF_UNAVAILABLE`    | 502  | GBIF nicht erreichbar               |
-| `INTERNAL_ERROR`      | 500  | Interner Serverfehler               |
+| Code                  | HTTP | Beschreibung                                          |
+|-----------------------|------|--------------------------------------------------------|
+| `INVALID_QUERY`       | 400  | Ungültiger Query-Parameter                             |
+| `RATE_LIMIT_EXCEEDED` | 429  | Rate-Limit überschritten                                |
+| `UPSTREAM_OVERLOADED` | 503  | Load-Shedding aktiv                                     |
+| `NOT_FOUND`           | 404  | Unbekannte Concept-/Xref-ID                             |
+| `UNRESOLVABLE`        | (SP1+) | Verbatim-Name lässt sich keinem Concept zuordnen; HTTP-Status wird mit dem jeweiligen Endpunkt in SP1+ festgelegt |
+| `GBIF_TIMEOUT`        | 504  | GBIF-Anfrage Timeout (nur Ingest-/Enrichment-Pfad)      |
+| `GBIF_UNAVAILABLE`    | 502  | GBIF nicht erreichbar (nur Ingest-/Enrichment-Pfad)     |
+| `INTERNAL_ERROR`      | 500  | Interner Serverfehler                                   |

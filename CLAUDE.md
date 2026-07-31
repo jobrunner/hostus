@@ -138,9 +138,13 @@ live runtime dependency for serving requests:
 - Ranks: FAMILY, GENUS, SPECIES, SUBSPECIES
 
 ### Configuration Priority (low → high)
-1. `.env` file
-2. Environment variables
-3. CLI parameters (`--port=443`, `--rate-limit=20`, etc.)
+1. `config.yaml` (optional file, see `config.yaml.example`)
+2. `HOSTUS_`-prefixed environment variables
+3. CLI flags (`--port=443`, `--log-level=debug`, etc.)
+
+There is no dotenv (`.env`) loader in the binary. `example.env`/`.env` are a
+convenience for `docker-compose` (`env_file:`), which injects them as plain
+process environment variables — they don't add a separate precedence tier.
 
 ## Code Style
 
@@ -185,6 +189,13 @@ are retained only for the ingest/enrichment path where GBIF is still called
 
 ## CI/CD Rules
 
-- **VERSION and CHANGELOG.md must be updated in every PR**
+- **`VERSION` and `CHANGELOG.md` are owned by `release-please`**
+  (`release-please-config.json`, release-type `simple`, `VERSION` listed as
+  an `extra-files` target). Do not hand-edit `VERSION` or move CHANGELOG
+  entries out of `[Unreleased]` in a feature PR — release-please does that
+  when it cuts a release PR/tag.
+- PRs land their changes under CHANGELOG's `## [Unreleased]` section using
+  Conventional Commits messages (`feat:`, `fix:`, ...); release-please reads
+  those commits to generate the next release's changelog and version bump.
 - Releases only on feature branch merges (not on push to main)
 - Docker images pushed to ghcr.io with `latest` and SemVer tags

@@ -1,19 +1,22 @@
 # Architektur
 
-hostus ist ein Go-Backend-Service, der als schreibgeschützter
-Taxonomie-Gateway zwischen einem Frontend-Autosuggest-Feld und der
-GBIF-REST-API vermittelt:
+hostus ist ein Go-Backend-Service: ein lokaler Namens- und Merkmalsdienst für
+Gefäßpflanzen auf Basis eines eigenen Multi-Backbone-Index, kein zustandsloser
+Proxy vor einer einzelnen Upstream-API:
 
 ```
-Frontend → hostus (dieser Service) → GBIF-REST-API
+Frontend → hostus (dieser Service, lokaler SQLite/FTS5-Index) → optionale
+           Ingest-/Enrichment-Quellen (COL XR, WCVP/POWO, Euro+Med,
+           FloraVeg.EU, GBIF, ...) — nur im Ingest-Pfad, nicht zur Laufzeit
 ```
 
 ## Kernverantwortlichkeiten
 
-- Proxy-Zugriff auf GBIF `/v1/species/search`
-- In-Memory-Caching mit TTL
+- Bedienung eines lokalen, versionierten Multi-Backbone-Index (SQLite/FTS5),
+  gespeist aus fixierten Backbone-/Trait-Artefakten — kein Live-Passthrough
 - Gruppierung von Synonymen unter akzeptierten Taxa
-- Rate-Limiting und Load-Shedding zum Schutz des Upstreams
+- Rate-Limiting und Load-Shedding zum Schutz der Ingest-/Enrichment-Pfade,
+  die weiterhin externe APIs aufrufen
 
 ## Hexagonale Struktur
 
@@ -22,9 +25,12 @@ Der Code folgt Ports & Adapters:
 - `internal/domain` — Domänenmodelle, frei von Infrastruktur-Details
 - `internal/ports/input` / `internal/ports/output` — Schnittstellen nach außen bzw. zu Abhängigkeiten
 - `internal/application` — Use Cases, die Domäne und Ports orchestrieren
+- `internal/adapters/sqlite` — SQLite/FTS5-Repository für den lokalen Index (`modernc.org/sqlite`)
+- `internal/adapters/coldp` — ColDP-Importer für den Ingest-Pfad
 - `internal/adapters/http` — HTTP-Adapter (Router, Health, Metrics)
 - `internal/adapters/mcp` — MCP-Adapter (Model Context Protocol)
 - `internal/adapters/telemetry` — Tracing/Metrics-Adapter
+- `internal/adapters/bundle` — Offline-Bundle-Export (gefilterte SQLite-Kopie)
 - `internal/app` — verdrahtet alle Bausteine zur laufenden Anwendung zusammen
 
 ## Middleware-Kette
@@ -41,17 +47,19 @@ Die Reihenfolge ist eine bewusste, unveränderliche Randbedingung:
 
 ## Synonym-Gruppierung (SP1+)
 
-GBIF liefert eine flache Liste von Taxa. Die künftige Mapper-Logik:
+Der Ingest-Pfad importiert Concept-/Name-Relationen (homotypisch/heterotypisch)
+aus den Backbone-Quellen in den lokalen Index. Die künftige Mapper-Logik:
 
-1. gruppiert alle Taxa nach `acceptedKey`,
-2. macht Taxa mit `status=ACCEPTED` zu Haupteinträgen,
+1. gruppiert alle Namen nach akzeptiertem Concept,
+2. macht den akzeptierten Namen zum Haupteintrag,
 3. bettet Synonyme unter ihrem akzeptierten Taxon ein.
 
 ## Load-Shedding
 
-Schützt vor Kaskadenfehlern:
+Schützt die Ingest-/Enrichment-Pfade (die weiterhin externe APIs aufrufen)
+vor Kaskadenfehlern:
 
-1. zählt aufeinanderfolgende GBIF-Fehler,
+1. zählt aufeinanderfolgende Upstream-Fehler,
 2. ab einem Schwellwert: Fail-Fast ohne Upstream-Call → `503`,
 3. nach einem Backoff: ein Probe-Request wird wieder zugelassen,
 4. bei Erfolg: Reset des Zählers.

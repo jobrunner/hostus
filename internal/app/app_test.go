@@ -2,8 +2,10 @@ package app_test
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,6 +112,44 @@ func TestServeReturnsErrorOnBindFailure(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Serve did not report the bind failure in time")
+	}
+}
+
+// TestServeLogsListeningAddress pins the startup log line Serve must emit
+// before it starts accepting connections: an operator running `hostus
+// serve` needs to see that the process is up and which address it bound,
+// not just silence until the first request. It asserts against the RingLog
+// (rather than stderr) so the test doesn't depend on the process's real
+// stderr descriptor; TestNewLoggerFansOutToStderrWriterAndRingLog already
+// pins that every record reaches stderr too.
+func TestServeLogsListeningAddress(t *testing.T) {
+	cfg := testConfig()
+	a, err := app.New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- a.Serve(ctx) }()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not shut down in time")
+	}
+
+	recs := a.Telemetry.Log.Records(slog.LevelInfo, 100)
+	found := false
+	for _, r := range recs {
+		if strings.Contains(r.Msg, "listening") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("want a 'listening' log record before/around Serve's shutdown")
 	}
 }
 

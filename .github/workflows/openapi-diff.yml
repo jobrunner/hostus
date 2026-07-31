@@ -22,6 +22,9 @@ permissions:
 
 env:
   SPEC_PATH: 'api/openapi/openapi.yaml'
+  # Pinned (supply-chain hardening): see ci.yml's GOVULNCHECK_VERSION for
+  # the same rationale.
+  OASDIFF_VERSION: 'v1.27.0'
 
 jobs:
   breaking:
@@ -50,7 +53,7 @@ jobs:
 
       - name: Install oasdiff
         if: steps.spec.outputs.exists == 'true'
-        run: go install github.com/oasdiff/oasdiff@latest
+        run: go install github.com/oasdiff/oasdiff@${{ env.OASDIFF_VERSION }}
 
       - name: Breaking-change check vs base
         if: steps.spec.outputs.exists == 'true'

@@ -12,8 +12,10 @@ info:
   title: hostus API
   description: >-
     Multi-Backbone-Namens- und Merkmalsdienst für Gefäßpflanzen-Taxonomie.
-    Schreibgeschützter Taxonomie-Gateway für ein Frontend-Autosuggest-Feld,
-    der Anfragen an die GBIF-REST-API proxied.
+    Lokaler, schreibgeschützter Namens- und Merkmalsdienst für ein
+    Frontend-Autosuggest-Feld, gespeist aus einem eigenen SQLite/FTS5-Index
+    (COL XR, WCVP/POWO, Euro+Med, FloraVeg.EU). GBIF ist höchstens eine von
+    mehreren Ingest-/Enrichment-Quellen, kein Laufzeit-Provider.
   version: 0.2.4
   license:
     name: MIT

@@ -156,7 +156,7 @@ linters:
     gomodguard_v2:
       blocked:
         - module: gorm.io/gorm
-          reason: "No ORM allowed; hostus talks to GBIF over plain HTTP, no database layer."
+          reason: "No ORM allowed; the local index uses modernc.org/sqlite directly (see ADR-0010), no ORM layer."
         - module: github.com/gin-gonic/gin
           reason: "Only gorilla/mux is allowed as HTTP router/framework (CLAUDE.md)."
         - module: github.com/labstack/echo
@@ -164,7 +164,7 @@ linters:
         - module: github.com/gofiber/fiber
           reason: "Only gorilla/mux is allowed as HTTP router/framework (CLAUDE.md)."
         - module: go.mongodb.org/mongo-driver
-          reason: "hostus is a stateless read-through cache/proxy; no database driver is needed."
+          reason: "hostus's local index is SQLite/FTS5 (modernc.org/sqlite, see ADR-0010); no other database driver is needed."
 
   exclusions:
     rules:

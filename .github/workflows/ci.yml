@@ -10,6 +10,13 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # Pinned `go install ...@latest` tool versions (supply-chain hardening:
+  # an unpinned @latest can silently change what CI runs between runs).
+  # x/perf has no tagged releases, so BENCHSTAT_VERSION is a pseudo-version
+  # (`go list -m -json golang.org/x/perf@latest`), not a semver tag.
+  BENCHSTAT_VERSION: 'v0.0.0-20260709024250-82a0b07e230d'
+  GOVULNCHECK_VERSION: 'v1.6.0'
+  GO_LICENSES_VERSION: 'v1.6.0'
 
 # Least-privilege default. Individual jobs override (e.g. docker-security
 # adds security-events: write for SARIF upload) but everyone starts with
@@ -139,7 +146,7 @@ jobs:
       - name: Benchmarks (base) + benchstat delta
         if: github.event_name == 'pull_request'
         run: |
-          go install golang.org/x/perf/cmd/benchstat@latest
+          go install golang.org/x/perf/cmd/benchstat@${{ env.BENCHSTAT_VERSION }}
           # new.txt/old.txt are untracked, so they survive the checkouts below.
           git checkout --quiet "${{ github.event.pull_request.base.sha }}"
           make bench > old.txt 2>/dev/null || echo "base: no comparable benchmarks" > old.txt
@@ -167,7 +174,7 @@ jobs:
 
       - name: Run govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }}
           govulncheck ./...
 
   # =============================================================================
@@ -188,7 +195,7 @@ jobs:
 
       - name: Check dependency licenses
         run: |
-          go install github.com/google/go-licenses@latest
+          go install github.com/google/go-licenses@${{ env.GO_LICENSES_VERSION }}
           make licenses
 
   # =============================================================================
@@ -398,6 +405,10 @@ jobs:
           load: true
           tags: hostus:scan
 
+      # Visibility-only: no `exit-code` is set, so this never fails the PR
+      # (aquasecurity/trivy-action defaults exit-code to 0). Findings are
+      # surfaced via the SARIF upload below (GitHub Security tab), not by
+      # gating merges.
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@v0.36.0
         with:

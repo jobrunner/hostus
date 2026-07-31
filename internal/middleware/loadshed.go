@@ -33,6 +33,7 @@ func (ls *LoadShedder) RecordError() {
 
 	if ls.consecutiveErrors >= ls.threshold {
 		ls.shedding = true
+		LoadSheddingActive.Set(1)
 	}
 }
 
@@ -42,6 +43,7 @@ func (ls *LoadShedder) RecordSuccess() {
 
 	ls.consecutiveErrors = 0
 	ls.shedding = false
+	LoadSheddingActive.Set(0)
 }
 
 func (ls *LoadShedder) ShouldShed() bool {

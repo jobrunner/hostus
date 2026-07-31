@@ -25,9 +25,12 @@ var cfgFile string
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   hostusCmdName,
-		Short: "hostus - read-only taxonomy gateway for vascular plants (GBIF proxy)",
-		Long: `hostus proxies and caches GBIF species-search requests for a frontend
-autosuggest field, grouping synonyms under their accepted taxa.
+		Short: "hostus - local naming and trait service for vascular plants",
+		Long: `hostus serves a local, versioned multi-backbone taxonomy and trait
+index (COL XR, WCVP/POWO, Euro+Med, FloraVeg.EU) for a frontend autosuggest
+field, grouping synonyms under their accepted taxa. It is backed by an
+on-disk SQLite/FTS5 index fed by pinned ingest artifacts, not a live
+pass-through to any single upstream source.
 
 Running hostus with no subcommand is equivalent to "hostus serve".`,
 		RunE:          runServe,

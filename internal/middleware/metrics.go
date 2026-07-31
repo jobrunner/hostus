@@ -27,27 +27,6 @@ var (
 		[]string{"method", "path"},
 	)
 
-	CacheHits = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Name: "hostus_cache_hits_total",
-			Help: "Total number of cache hits",
-		},
-	)
-
-	CacheMisses = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Name: "hostus_cache_misses_total",
-			Help: "Total number of cache misses",
-		},
-	)
-
-	GBIFErrors = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Name: "hostus_gbif_errors_total",
-			Help: "Total number of GBIF upstream errors",
-		},
-	)
-
 	RateLimitRejects = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "hostus_rate_limit_rejects_total",

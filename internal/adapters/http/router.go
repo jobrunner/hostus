@@ -57,9 +57,9 @@ type Deps struct {
 	Timeout time.Duration
 
 	// CORSAllowedOrigins lists origins allowed to call the API. Empty
-	// falls back to permissive "*" (safe here: hostus proxies a
-	// read-only, public GBIF taxonomy search, so a permissive default
-	// doesn't expose anything sensitive).
+	// falls back to permissive "*" (safe here: hostus serves a read-only,
+	// public taxonomy/trait index with no auth or user data, so a
+	// permissive default doesn't expose anything sensitive).
 	CORSAllowedOrigins []string
 }
 

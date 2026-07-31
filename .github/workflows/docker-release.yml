@@ -132,6 +132,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Visibility-only: no `exit-code` is set, so this never fails the
+      # release (aquasecurity/trivy-action defaults exit-code to 0).
+      # Findings are surfaced via the SARIF upload below (GitHub Security
+      # tab), not by blocking the already-published image/release.
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@v0.36.0
         with:

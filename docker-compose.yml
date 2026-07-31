@@ -19,6 +19,11 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+    # Exec-form CMD (no shell needed, works against the distroless static
+    # image). This is a process-liveness smoke check only, not an HTTP probe:
+    # the image has no shell/curl/wget to hit GET /health/live from inside
+    # the container. Orchestrators (Kubernetes, ECS, ...) should probe
+    # GET /health/live directly over HTTP instead.
     healthcheck:
       test: ["CMD", "/hostus", "--help"]
       interval: 30s

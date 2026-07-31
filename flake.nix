@@ -26,6 +26,7 @@
           # Linting & Analyse
           golangci-lint            # Meta-Linter
           govulncheck              # Vulnerability Scanner
+          hadolint                 # Dockerfile Linter
 
           # Testing
           gotestsum                # Bessere Test-Ausgabe

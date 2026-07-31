@@ -1,0 +1,46 @@
+# Version control
+.git
+.github
+
+# Go build/module caches and coverage artifacts (see flake.nix: GOPATH/GOCACHE
+# live outside the repo under .go/ for local tooling like gremlins)
+.go
+build/
+coverage/
+*.out
+*.test
+
+# Local build output (built inside the image instead)
+hostus
+
+# Nix / direnv
+.direnv
+.envrc
+.envrc.local
+.envrc.local.sample
+result
+result-*
+
+# Docs, planning and non-runtime artifacts not needed in the image
+.superpowers
+docs/
+architecture/
+README.md
+README.dev.md
+CHANGELOG.md
+*.md
+
+# Local/manual test data and PoC assets
+poc/data
+
+# Secrets and local env overrides
+.env
+.env.*
+!example.env
+config.yaml
+config.yaml.local
+
+# IDE / OS cruft
+.vscode
+.idea
+.DS_Store

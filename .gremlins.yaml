@@ -6,6 +6,17 @@
 # These globals stay 0 on the empty skeleton (SP0): there is no logic yet to
 # mutate. Add per-package overrides (or raise these globals) as real logic
 # lands per task, per the per-task mutation-green DoD.
+#
+# timeout-coefficient is raised from gremlins' default here because
+# internal/app and its cmd/hostus caller pull in the OpenTelemetry SDK
+# (otelmux, otlptrace/otlpmetric exporters): per-mutant recompilation of
+# that dependency graph is slow enough that gremlins' default timeout
+# (derived from the initial, cache-warm coverage-gathering run) produces
+# spurious TIMED OUT verdicts unrelated to any actual test hang — observed
+# firsthand on task S9: the same suite alternated between "10/10 timed out
+# in 1.5s" and "9 killed / 1 lived in 8s" purely based on default vs. a
+# raised coefficient. 50 was confirmed sufficient locally.
 unleash:
   threshold-efficacy: 0
   threshold-mcover: 0
+  timeout-coefficient: 50

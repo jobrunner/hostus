@@ -4,8 +4,10 @@
 # path so a newly discovered crash never flakes an unrelated PR. Crashers are
 # uploaded and should be committed as permanent regression seeds.
 #
-# NOTE: the SP0 skeleton has no Fuzz* targets yet — they land in SP1. The
-# discovery step below makes this a no-op (not a failure) until then.
+# NOTE: the SP0 skeleton has no Fuzz* targets yet — they land in SP1. `make
+# fuzz` discovers Fuzz* targets at runtime and no-ops cleanly when there are
+# none, so this job can call it unconditionally without failing in the
+# meantime.
 name: Fuzz
 
 on:
@@ -16,9 +18,6 @@ on:
       fuzztime:
         description: 'Fuzz time per target (e.g. 3m, 10m)'
         default: '3m'
-
-env:
-  GO_VERSION: '1.26.3'
 
 permissions:
   contents: read
@@ -33,22 +32,9 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: ${{ env.GO_VERSION }}
-
-      - name: Discover fuzz targets
-        id: discover
-        run: |
-          targets=$(go test -list '^Fuzz' ./... 2>/dev/null | grep '^Fuzz' || true)
-          if [ -z "$targets" ]; then
-            echo "found=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::No Fuzz* targets yet (they land in SP1) — skipping fuzz run."
-          else
-            echo "found=true" >> "$GITHUB_OUTPUT"
-            echo "$targets"
-          fi
+          go-version-file: go.mod
 
       - name: Fuzz
-        if: steps.discover.outputs.found == 'true'
         # Pass the dispatch input via env (not inline ${{ }}), and let the Makefile
         # read + validate $FUZZTIME from the environment. Avoids template-injection
         # in this run block (zizmor) AND make-level `$(FUZZTIME)` expansion.

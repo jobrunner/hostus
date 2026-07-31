@@ -9,9 +9,11 @@
 #   3. gitsubmodule   — bumps the third_party/claude-skills pin (added in a
 #                       later task) to the latest of its tracked branch.
 #
-# The CI workflows themselves still pin GO_VERSION explicitly; Dependabot
-# does NOT update that. The vuln-scan workflow runs weekly to alert if it
-# drifts behind the toolchain directive.
+# The CI workflows read the Go version via `go-version-file: go.mod` (the
+# `toolchain` directive), so go.mod is the single source of truth — Dependabot
+# bumping `gomod` keeps CI and the Dockerfile builder in sync automatically.
+# The vuln-scan workflow runs weekly to alert if it drifts behind the toolchain
+# directive.
 
 version: 2
 updates:

@@ -2,7 +2,7 @@
 # Alle Standardaufgaben für Entwicklung und CI/CD
 
 .PHONY: all build build-all install run clean help
-.PHONY: test test-unit test-integration test-coverage test-race bench mutation
+.PHONY: test test-unit test-integration test-coverage test-race bench mutation fuzz
 .PHONY: lint lint-go lint-fix vet
 .PHONY: security-check vuln-check gosec licenses
 .PHONY: fmt format fmt-check
@@ -73,6 +73,27 @@ bench: ## Benchmarks ausführen
 mutation: ## Mutation-Testing (gremlins) — package-scoped, green-required (PKG=./internal/... überschreibbar)
 	@command -v gremlins >/dev/null 2>&1 || $(GO) install github.com/go-gremlins/gremlins/cmd/gremlins@v0.5.1
 	gremlins unleash --dry-run=false $(if $(PKG),$(PKG),./...)
+
+# Fuzzt alle Fuzz*-Targets im Modul (FUZZTIME je Target überschreibbar, default
+# 30s). Targets werden zur Laufzeit per `go test -list` entdeckt — keine
+# statische Paketliste zu pflegen. No-op (exit 0), solange es noch keine
+# Fuzz*-Funktionen gibt (SP0-Skeleton; echte Targets landen in SP1).
+fuzz: ## Fuzz alle Fuzz*-Targets (FUZZTIME überschreibbar, default 30s) — no-op ohne Targets
+	@set -e; \
+	ft="$${FUZZTIME:-30s}"; \
+	case "$$ft" in ''|*[!0-9smhun]*) echo "FUZZTIME ungueltig (z.B. 30s, 3m)"; exit 1;; esac; \
+	found=0; \
+	for pkg in $$($(GO) list ./...); do \
+		targets=$$($(GO) test -list '^Fuzz' "$$pkg" 2>/dev/null | grep '^Fuzz' || true); \
+		for fn in $$targets; do \
+			found=1; \
+			echo "==> fuzz $$fn ($$pkg) for $$ft"; \
+			$(GO) test "$$pkg" -run='^$$' -fuzz="^$${fn}$$" -fuzztime="$$ft"; \
+		done; \
+	done; \
+	if [ "$$found" -eq 0 ]; then \
+		echo "no Fuzz* targets yet — nothing to do (they land in SP1)"; \
+	fi
 
 ## Lint & Analyse Targets
 lint: lint-go ## Führe alle Linter aus (Alias für lint-go)

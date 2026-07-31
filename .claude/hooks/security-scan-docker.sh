@@ -44,13 +44,13 @@ echo "🔒 Security scanning Dockerfile: $FILE_PATH" >&2
 # Determine image tag based on Dockerfile name
 DOCKERFILE_NAME=$(basename "$FILE_PATH")
 if [[ "$DOCKERFILE_NAME" == "Dockerfile" ]]; then
-    IMAGE_TAG="ortus:local-test"
+    IMAGE_TAG="hostus:local-test"
 elif [[ "$DOCKERFILE_NAME" == "Dockerfile.alpine" ]]; then
-    IMAGE_TAG="ortus:local-test-alpine"
+    IMAGE_TAG="hostus:local-test-alpine"
 elif [[ "$DOCKERFILE_NAME" == "Dockerfile.ubuntu" ]]; then
-    IMAGE_TAG="ortus:local-test-ubuntu"
+    IMAGE_TAG="hostus:local-test-ubuntu"
 else
-    IMAGE_TAG="ortus:local-test-${DOCKERFILE_NAME}"
+    IMAGE_TAG="hostus:local-test-${DOCKERFILE_NAME}"
 fi
 
 echo "   Building image for security scan..." >&2

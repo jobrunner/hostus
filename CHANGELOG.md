@@ -7,6 +7,15 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Fixed
+- `google.golang.org/grpc` auf v1.82.1 angehoben (behebt GO-2026-6061 in der
+  OTLP-gRPC-Exporter-Kette von `internal/adapters/telemetry`).
+- Go-Toolchain auf 1.26.5 angehoben (`go.mod` toolchain-Direktive,
+  Dockerfile-Builder-Image) — behebt drei aufrufbare Standardbibliotheks-CVEs
+  (GO-2026-5856 `crypto/tls`, GO-2026-5039 `net/textproto`, GO-2026-5037
+  `crypto/x509`). `govulncheck ./...` meldet danach 0 aufrufbare
+  Vulnerabilities; `make security-check` ist grün.
+
 ## [2.0.0-alpha.0] - 2026-07-31
 
 hostus wird vom zustandslosen GBIF-Autosuggest-Proxy zum lokalen

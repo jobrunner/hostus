@@ -322,7 +322,7 @@ Adapt ortus Makefile: `MODULE := github.com/jobrunner/hostus`, binary `hostus` f
 - [ ] **Step 4: Verify the gate is green on the empty skeleton**
 
 Run: `make verify`
-Expected: PASS (fmt/vet/lint/test/arch/debt-guard all green on stubs).
+Expected: fmt/vet/lint/test/debt-guard/build green on stubs. **Known cross-task dependency (ruling 2026-07-31):** the `arch` sub-step force-enables `depguard`, which under golangci-lint v2 denies all non-stdlib imports until rules are configured — those rules are Task S4's deliverable and S3 must not touch `.golangci.yml`. Therefore `make verify` goes fully green only after S4. S3 delivers the Makefile + ratchet trio + gremlins config; the green-`verify` acceptance is a JOINT S3+S4 checkpoint, validated at the end of S4.
 
 - [ ] **Step 5: Commit**
 
@@ -352,10 +352,9 @@ Adapt ortus `.golangci.yml` (v2 schema): enable `errcheck staticcheck bodyclose 
 
 Temporarily add `import _ "github.com/jobrunner/hostus/internal/adapters/http"` into `internal/domain/doc.go`, run `make lint`, expect a depguard error, then revert.
 
-- [ ] **Step 4: Verify clean lint**
+- [ ] **Step 4: Verify clean lint AND the joint S3+S4 verify gate**
 
-Run: `make lint`
-Expected: PASS after revert.
+Run: `make lint` → PASS after revert. Then run `make verify` and confirm it is now **fully green including the `arch` sub-step** (S4's depguard rules unblock the arch gate that S3 left red). This is the joint S3+S4 green-`verify` checkpoint.
 
 - [ ] **Step 5: Commit**
 

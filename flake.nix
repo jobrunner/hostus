@@ -41,9 +41,6 @@
           # Utilities
           jq                       # JSON Verarbeitung
           sqlite                   # SQLite CLI (für Debugging)
-
-          # Geospatial
-          libspatialite            # SpatiaLite Extension für SQLite
         ];
 
       in
@@ -61,9 +58,6 @@
             # Cache Verzeichnisse
             export GOCACHE="$PWD/.go/cache"
             export GOMODCACHE="$PWD/.go/mod"
-
-            # SpatiaLite Library Pfad
-            export SPATIALITE_LIBRARY_PATH="${pkgs.libspatialite}/lib/mod_spatialite"
 
             # Erstelle Verzeichnisse falls nicht vorhanden
             mkdir -p "$GOPATH" "$GOBIN" "$GOCACHE" "$GOMODCACHE"
@@ -91,8 +85,8 @@
             fi
           '';
 
-          # CGO für SQLite
-          CGO_ENABLED = "1";
+          # Pure-Go via modernc.org/sqlite - keine CGO-Abhängigkeit, distroless-fähig
+          CGO_ENABLED = "0";
         };
 
         # Packages
@@ -104,7 +98,7 @@
           # Wird beim ersten Build aktualisiert
           vendorHash = null;
 
-          CGO_ENABLED = 1;
+          CGO_ENABLED = 0;
 
           meta = with pkgs.lib; {
             description = "Hostus - Taxonomy gateway service";

@@ -1,0 +1,96 @@
+<?xml version='1.0' encoding='utf-8'?>
+<!--
+  Trimmed fixture for the SP1 WCVP importer tests. This is a faithful excerpt
+  of the real eml.xml shipped in sftp.kew.org/pub/data-repositories/WCVP/wcvp_dwca.zip
+  (pubDate 2026-06-04). The full document additionally lists ~150
+  <associatedParty> "family reviewer" entries, which carry no information
+  relevant to the importer (name/status/rank/distribution parsing) and were
+  removed here to keep the fixture small. All fields the importer actually
+  needs (title, intellectualRights/license, pubDate, gbif/col version block)
+  are preserved verbatim, including the real CC BY 3.0 vs. GBIF-catalog CC BY
+  4.0 license discrepancy noted in docs/research/quellenregister.md.
+-->
+<eml:eml xmlns:eml="eml://ecoinformatics.org/eml-2.0.1"
+    xmlns:md="eml://ecoinformatics.org/methods-2.0.1"
+    xmlns:proj="eml://ecoinformatics.org/project-2.0.1"
+    xmlns:d="eml://ecoinformatics.org/dataset-2.0.1"
+    xmlns:res="eml://ecoinformatics.org/resource-2.0.1"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:dc="http://purl.org/dc/terms/"
+    packageId="http://sftp.kew.org/pub/data-repositories/WCVP/wcvp_dwca.zip" system="URL" scope="system">
+    <dataset>
+        <title>The World Checklist of Vascular Plants (WCVP)</title>
+        <shortName>WCVP</shortName>
+        <creator>
+            <individualName>
+                  <givenName>Rafaël</givenName>
+                  <surName>Govaerts</surName>
+            </individualName>
+            <organizationName>The Royal Botanic Gardens, Kew</organizationName>
+            <address>
+                <city>London</city>
+                <postalCode>TW93AE</postalCode>
+                <country>UK</country>
+            </address>
+            <onlineUrl>https://www.kew.org/</onlineUrl>
+            <userId directory="http://orcid.org/">0000-0003-2991-5282</userId>
+        </creator>
+        <!-- ~150 <associatedParty> "family reviewer" entries omitted for fixture brevity -->
+        <pubDate>2026-06-04</pubDate>
+        <language>en</language>
+        <abstract>
+            <para>The World Checklist of Vascular Plants (WCVP) is a global consensus view of all known vascular plant species (flowering plants, conifers, ferns, clubmosses and firmosses).</para>
+            <para>WCVP aims to represent a global consensus view of current plant taxonomy by reflecting the latest published taxonomies while incorporating the opinions of taxonomists based around the world.</para>
+            <para>WCVP is built on the nomenclatural data provided by the International Plant Names Index (IPNI), which is the product of a collaboration between The Royal Botanic Gardens, Kew, The Harvard University Herbaria, and the Australian National Herbarium, combined with the taxonomic data provided by an international collaborative programme with a large number of contributors from around the world. Our thanks go to the compilers, editors and reviewers of IPNI and WCVP and in particular the thousands of users who have contributed corrections over the past decades, improving those data for the global user community.</para>
+        </abstract>
+        <keywordSet>
+        	<keyword>Kew</keyword>
+        	<keyword>WCVP</keyword>
+          <keyword>Plants</keyword>
+          <keyword>World</keyword>
+          <keyword>Taxonomy</keyword>
+        </keywordSet>
+        <intellectualRights>
+            <para>This work is licensed under a <ulink url="https://creativecommons.org/licenses/by/3.0/"><citetitle>Creative Commons Attribution 3.0 Unported (CC BY 3.0) License</citetitle></ulink>.</para>
+        </intellectualRights>
+        <distribution scope="document">
+            <online>
+                <url function="information">http://sftp.kew.org/pub/data-repositories/WCVP/</url>
+            </online>
+        </distribution>
+        <coverage>
+            <geographicCoverage>
+                <geographicDescription>Global</geographicDescription>
+            </geographicCoverage>
+            <taxonomicCoverage>
+                <generalTaxonomicCoverage>Vascular Plants</generalTaxonomicCoverage>
+            </taxonomicCoverage>
+        </coverage>
+        <contact>
+            <organizationName>Digital Revolution, Kew</organizationName>
+            <electronicMailAddress>bi@kew.org</electronicMailAddress>
+        </contact>
+        <publisher>
+            <organizationName>The Royal Botanic Gardens, Kew,</organizationName>
+            <address>
+                <city>London</city>
+                <postalCode>TW9 3AE</postalCode>
+                <country>UK</country>
+            </address>
+            <onlineUrl>https://www.kew.org/</onlineUrl>
+        </publisher>
+    </dataset>
+    <additionalMetadata>
+        <metadata>
+            <gbif>
+                <dateStamp>2026-06-04T15:07:11Z</dateStamp>
+                <citation>The World Checklist of Vascular Plants (WCVP) Facilitated by the Royal Botanic Gardens, Kew. Published on the Internet; https://doi.org/10.34885/egs6-cp24 Retrieved 04 Jun 2026.</citation>
+                <resourceLogoUrl>https://api.checklistbank.org/image/2232/logo?size=ORIGINAL</resourceLogoUrl>
+            </gbif>
+            <col>
+                <completeness>95</completeness>
+                <version>16.0</version>
+            </col>
+        </metadata>
+    </additionalMetadata>
+</eml:eml>

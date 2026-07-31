@@ -125,6 +125,7 @@ linters:
           files:
             - "**/internal/adapters/**"
             - "!**/internal/adapters/mcp/**"
+            - "!**/internal/adapters/http/**"
           deny:
             - pkg: github.com/jobrunner/hostus/internal/application
               desc: "adapters talk to the core only through ports"
@@ -149,6 +150,30 @@ linters:
               desc: "adapters do not know about the composition root"
             - pkg: github.com/jobrunner/hostus/internal/adapters/http
               desc: "no cross-adapter coupling to the HTTP adapter"
+        # Task SP1-T7: another explicit, narrow exception, same shape as
+        # adapters-mcp above. POST /v1/match's whole job is to run T6's
+        # application.MatchNames use case against the injected
+        # output.Repository (there is no ports-level "match" method to call
+        # instead — MatchNames *is* the use case); the http adapter is this
+        # use case's only caller in SP1. Every other cross-adapter/
+        # cross-layer boundary (no internal/app, no sibling adapters) still
+        # applies.
+        adapters-http:
+          files:
+            - "**/internal/adapters/http/**"
+          deny:
+            # NOTE the trailing "/" on internal/app/: depguard's pkg match
+            # is a plain string-prefix check with no path-segment boundary,
+            # so a bare "internal/app" entry would ALSO match
+            # "internal/application" (confirmed empirically — the intended
+            # exception for T7's application.MatchNames import would
+            # otherwise be silently blocked again by this very rule). The
+            # trailing slash anchors the prefix to the real subpackage
+            # boundary.
+            - pkg: github.com/jobrunner/hostus/internal/app/
+              desc: "adapters do not know about the composition root"
+            - pkg: github.com/jobrunner/hostus/internal/adapters
+              desc: "no adapter-to-adapter imports (cross-coupling); shared logic belongs in domain/ports"
 
     # Module blocklist (see CLAUDE.md "Allowed Libraries Only"): guards against
     # dependency bloat by naming frameworks/ORMs that must never be imported

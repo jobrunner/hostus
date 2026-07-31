@@ -135,3 +135,14 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts_name USING fts5(
   content='',                       -- external content, ids via rowid mapping
   tokenize='unicode61 remove_diacritics 2'
 );
+
+-- Bundle provenance. Created (empty) in every database this schema is
+-- applied to, but only ever populated by an offline bundle export (see
+-- internal/adapters/sqlite/bundle.go) — the server-side hostus.sqlite this
+-- schema also backs simply never gets a row here.
+CREATE TABLE IF NOT EXISTS bundle_meta (
+  snapshot_version     TEXT NOT NULL,
+  area                 TEXT NOT NULL,
+  created_at           TEXT NOT NULL,  -- RFC3339 timestamp
+  source_manifest_sha  TEXT NOT NULL
+);

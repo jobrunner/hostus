@@ -6,9 +6,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// errNotImplemented is returned by the ingest/validate/bundle stubs. Their
-// real implementations land in SP1/SP2; until then they must fail loudly
-// rather than silently succeed.
+// errNotImplemented was returned by the SP0-era ingest/validate/bundle
+// command stubs before their SP1/SP2 implementations landed. It is kept
+// (and still asserted against in version_test.go) so those tests keep
+// documenting that the real commands no longer hit the old stub path.
 var errNotImplemented = errors.New("not implemented yet (planned for SP1/SP2)")
 
 // hostusCmdName is shared with tests so the "hostus" literal only needs to

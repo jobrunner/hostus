@@ -192,13 +192,16 @@ func (db *DB) ConceptByXref(ctx context.Context, authority, extID string) (*doma
 
 // MatchExact returns every name (accepted or synonym) whose canonical form
 // equals canon, together with the concept it belongs to and the role it
-// plays there. It binds domain.Canonicalize(canon) — not the raw input —
-// into the SQL filter, so whitespace runs are collapsed before compare;
-// the SQL LOWER() comparison is a cheap ASCII prefilter, and the
-// authoritative check re-applies domain.Canonicalize per row so
-// diacritic-folding stays in lockstep with the FTS5 tokenizer parity
-// established in fts_parity_internal_test.go, rather than depending on
-// SQLite's own (ASCII-only) LOWER() for that part.
+// plays there. The match happens on the stored name.canonical_fold column
+// — domain.Canonicalize(canonical), populated by IngestTx.UpsertName at
+// write time — compared by plain equality against domain.Canonicalize(canon)
+// computed here. This is diacritic-correct by construction: SQLite's own
+// LOWER() only folds ASCII case, so filtering on LOWER(n.canonical)
+// directly would silently miss diacritic-bearing names (the exact
+// Central-European names this system exists for). The per-row
+// domain.Canonicalize recheck below is belt-and-suspenders in case a
+// canonical_fold value is ever stale or unpopulated (e.g. a row written
+// outside IngestTx.UpsertName).
 func (db *DB) MatchExact(ctx context.Context, canon string) ([]output.MatchCandidate, error) {
 	want := domain.Canonicalize(canon)
 
@@ -211,7 +214,7 @@ func (db *DB) MatchExact(ctx context.Context, canon string) ([]output.MatchCandi
 		JOIN taxon_concept tc ON tc.id = cn.concept_id
 		JOIN name an ON an.id = tc.accepted_name
 		JOIN backbone_version bv ON bv.id = tc.backbone_id
-		WHERE LOWER(n.canonical) = LOWER(?)
+		WHERE n.canonical_fold = ?
 		ORDER BY tc.id, n.id`, want)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: querying MatchExact %q: %w", canon, err)

@@ -9,16 +9,26 @@
 --   * Jacobaea vulgaris Gaertn. — accepted, one synonym (Senecio jacobaea
 --     L.), one xref (powo). No distribution rows, to exercise the
 --     "concept with an empty distribution slice" path.
+--
+-- The Weingaertneria synonym's `canonical` is deliberately stored with a
+-- mix of diacritics and non-ASCII casing ("Wéingaertneria canéscens")
+-- while its `canonical_fold` is the plain-ASCII fold ("weingaertneria
+-- canescens") domain.Canonicalize produces — this is what
+-- MatchExact_*Diacritic* regression tests key off, to prove matches are
+-- found via canonical_fold rather than SQLite's ASCII-only LOWER().
+-- canonical_fold values below must equal domain.Canonicalize(canonical);
+-- they are NOT derived by SQLite (see schema.sql's comment on the name
+-- table for why).
 
 INSERT INTO backbone_version (id, version, license, source_url, ingested_at, manifest_sha)
 VALUES ('wcvp', '2026-06-15', 'CC-BY-4.0', 'https://example.org/wcvp.zip', '2026-07-31T00:00:00Z', 'deadbeef');
 
-INSERT INTO name (id, canonical, authorship, rank, ipni_id, published_in, nom_status, basionym_id) VALUES
-  ('n-aira-canescens',           'aira canescens',           'L.',           'SPECIES', NULL, NULL, NULL, NULL),
-  ('n-corynephorus-canescens',   'corynephorus canescens',   '(L.) P.Beauv.','SPECIES', 'urn:lsid:ipni.org:names:391847-1', NULL, NULL, 'n-aira-canescens'),
-  ('n-weingaertneria-canescens', 'weingaertneria canescens', '(L.) Bernh.',  'SPECIES', NULL, NULL, NULL, 'n-aira-canescens'),
-  ('n-jacobaea-vulgaris',        'jacobaea vulgaris',        'Gaertn.',      'SPECIES', NULL, NULL, NULL, NULL),
-  ('n-senecio-jacobaea',         'senecio jacobaea',         'L.',           'SPECIES', NULL, NULL, NULL, NULL);
+INSERT INTO name (id, canonical, canonical_fold, authorship, rank, ipni_id, published_in, nom_status, basionym_id) VALUES
+  ('n-aira-canescens',           'aira canescens',           'aira canescens',           'L.',           'SPECIES', NULL, NULL, NULL, NULL),
+  ('n-corynephorus-canescens',   'corynephorus canescens',   'corynephorus canescens',   '(L.) P.Beauv.','SPECIES', 'urn:lsid:ipni.org:names:391847-1', NULL, NULL, 'n-aira-canescens'),
+  ('n-weingaertneria-canescens', 'Wéingaertneria canéscens', 'weingaertneria canescens', '(L.) Bernh.',  'SPECIES', NULL, NULL, NULL, 'n-aira-canescens'),
+  ('n-jacobaea-vulgaris',        'jacobaea vulgaris',        'jacobaea vulgaris',        'Gaertn.',      'SPECIES', NULL, NULL, NULL, NULL),
+  ('n-senecio-jacobaea',         'senecio jacobaea',         'senecio jacobaea',         'L.',           'SPECIES', NULL, NULL, NULL, NULL);
 
 INSERT INTO taxon_concept (id, backbone_id, accepted_name, rank, parent_id, sec_reference, status) VALUES
   ('c-corynephorus-canescens', 'wcvp', 'n-corynephorus-canescens', 'SPECIES', NULL, 'WCVP (2026)', 'ACCEPTED'),

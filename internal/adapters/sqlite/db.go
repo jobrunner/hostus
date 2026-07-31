@@ -114,9 +114,9 @@ func nullableFK(id string) any {
 
 func (t *ingestTx) UpsertName(n domain.Name) error {
 	_, err := t.tx.ExecContext(t.ctx, `
-		INSERT OR REPLACE INTO name (id, canonical, authorship, rank, ipni_id, published_in, nom_status, basionym_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		n.ID, n.Canonical, n.Authorship, string(n.Rank), n.IPNIID, n.PublishedIn, n.NomStatus, nullableFK(n.BasionymID),
+		INSERT OR REPLACE INTO name (id, canonical, canonical_fold, authorship, rank, ipni_id, published_in, nom_status, basionym_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.ID, n.Canonical, domain.Canonicalize(n.Canonical), n.Authorship, string(n.Rank), n.IPNIID, n.PublishedIn, n.NomStatus, nullableFK(n.BasionymID),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: upserting name %q: %w", n.ID, err)

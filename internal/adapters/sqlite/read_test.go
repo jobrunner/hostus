@@ -257,6 +257,36 @@ func TestMatchExact_SynonymReturnsSynonymCandidateCarryingAcceptedConcept(t *tes
 	}
 }
 
+// TestMatchExact_FoldsDiacriticsAndMixedCase is the regression test for the
+// bug the fold-column fix addresses: the seeded Weingaertneria synonym's
+// stored `canonical` deliberately carries diacritics and non-ASCII casing
+// ("Wéingaertneria canéscens" — see testdata/seed.sql), so this only
+// passes if matching goes through canonical_fold rather than SQLite's
+// ASCII-only LOWER() on canonical directly. Both a plain-ASCII query and a
+// diacritic-bearing query must resolve to the same candidate.
+func TestMatchExact_FoldsDiacriticsAndMixedCase(t *testing.T) {
+	db := openSeededDB(t)
+
+	for _, query := range []string{
+		"Weingaertneria canescens", // plain ASCII, mixed case
+		"wéingaertneria canéscens", // diacritic-bearing, lower case
+		"WÉINGAERTNERIA CANÉSCENS", // diacritic-bearing, upper case
+	} {
+		t.Run(query, func(t *testing.T) {
+			got, err := db.MatchExact(context.Background(), query)
+			if err != nil {
+				t.Fatalf("MatchExact(%q): unexpected error: %v", query, err)
+			}
+			if len(got) != 1 {
+				t.Fatalf("MatchExact(%q) = %v, want exactly 1 candidate", query, got)
+			}
+			if got[0].Role != "synonym" || got[0].MatchedName.ID != "n-weingaertneria-canescens" || got[0].Concept.ID != corynephorusID {
+				t.Errorf("MatchExact(%q) candidate = %+v, want role=synonym, matched=n-weingaertneria-canescens, concept=%q", query, got[0], corynephorusID)
+			}
+		})
+	}
+}
+
 func TestMatchExact_BasionymSynonymAlsoMatches(t *testing.T) {
 	db := openSeededDB(t)
 

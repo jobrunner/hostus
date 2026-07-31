@@ -16,16 +16,29 @@ CREATE TABLE IF NOT EXISTS backbone_version (
 );
 
 -- Nomenclature.
+--
+-- canonical_fold stores domain.Canonicalize(canonical): lower-cased,
+-- whitespace-collapsed, diacritic-folded per the same table the FTS5
+-- unicode61 tokenizer uses (see fts_parity_internal_test.go). It is a
+-- plain stored column, not a SQLite GENERATED column, because the fold
+-- logic needs domain.Canonicalize's Go-side diacritic table (see
+-- read.go/db.go); every writer of this table (IngestTx.UpsertName) must
+-- populate it. Exact-match lookups (MatchExact) key on this column
+-- instead of canonical directly, because SQLite's own LOWER() only folds
+-- ASCII case and would silently miss diacritic-bearing names.
 CREATE TABLE IF NOT EXISTS name (
-  id            TEXT PRIMARY KEY,
-  canonical     TEXT NOT NULL,
-  authorship    TEXT,
-  rank          TEXT NOT NULL,      -- FAMILY|GENUS|SPECIES|SUBSPECIES|VARIETY|FORM
-  ipni_id       TEXT,
-  published_in  TEXT,
-  nom_status    TEXT,               -- NULL|nom_nud|nom_superfl|pro_syn|...
-  basionym_id   TEXT REFERENCES name(id)
+  id             TEXT PRIMARY KEY,
+  canonical      TEXT NOT NULL,
+  canonical_fold TEXT NOT NULL DEFAULT '',
+  authorship     TEXT,
+  rank           TEXT NOT NULL,      -- FAMILY|GENUS|SPECIES|SUBSPECIES|VARIETY|FORM
+  ipni_id        TEXT,
+  published_in   TEXT,
+  nom_status     TEXT,               -- NULL|nom_nud|nom_superfl|pro_syn|...
+  basionym_id    TEXT REFERENCES name(id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_name_canonical_fold ON name(canonical_fold);
 
 -- Taxonomy.
 CREATE TABLE IF NOT EXISTS taxon_concept (

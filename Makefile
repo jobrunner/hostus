@@ -7,6 +7,7 @@
 .PHONY: security-check vuln-check gosec licenses
 .PHONY: fmt format fmt-check
 .PHONY: check verify hooks arch debt debt-guard debt-coverage
+.PHONY: doc doc-drift
 .PHONY: deps deps-update deps-verify
 
 # Variablen
@@ -175,6 +176,13 @@ hooks: ## Installiere git pre-commit Hook (.githooks)
 	git config core.hooksPath .githooks
 	@chmod +x .githooks/pre-commit
 	@echo "✅ pre-commit Hook aktiv (core.hooksPath=.githooks)."
+
+## Dokumentation
+doc: ## Baue die MkDocs-Dokumentation strikt (bricht bei kaputten Links/Nav ab)
+	uvx --with mkdocs-material mkdocs build --strict
+
+doc-drift: ## Doku-Drift-Harness: prüft OpenAPI-Baseline ↔ Docs (0 = keine Drift)
+	@bash scripts/doc-drift-check.sh
 
 ## Clean
 clean: ## Räume Build-Artefakte auf

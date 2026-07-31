@@ -28,3 +28,6 @@
 # Build artifacts
 /hostus
 /dist/
+
+# MkDocs build output
+/site/

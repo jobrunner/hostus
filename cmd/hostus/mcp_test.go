@@ -118,3 +118,54 @@ func TestRunMCPSurfacesHTTPErrorWhenStdioIsClean(t *testing.T) {
 		t.Fatal("mcp command did not shut down in time")
 	}
 }
+
+// TestRunMCPSurfacesHTTPErrorPromptlyWhileStdioStaysOpen is the regression
+// test for the concurrency bug found in review: the HTTP listener failing
+// (port already bound) MUST be noticed and returned promptly even while a
+// real MCP client is still connected over stdio (stdin deliberately left
+// open here, not EOF'd) — the normal shape of a long-lived Claude Code
+// session. Before the fix, runMCP only read the buffered HTTP error AFTER
+// ServeStdio returned, so a bind failure during an open stdio session sat
+// unnoticed until the client eventually disconnected. This test fails (by
+// timing out) against that old, sequential implementation.
+func TestRunMCPSurfacesHTTPErrorPromptlyWhileStdioStaysOpen(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("could not reserve a port to occupy: %v", err)
+	}
+	defer func() { _ = l.Close() }()
+	port := l.Addr().(*net.TCPAddr).Port
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origStdin := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() {
+		os.Stdin = origStdin
+		_ = w.Close() // unblock/clean up the still-open write end
+	})
+	// Deliberately do NOT close w: stdin stays open, as it would for a real,
+	// still-connected MCP client that simply hasn't sent anything yet.
+
+	cmd := newMCPCmd()
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetArgs([]string{"--host=127.0.0.1", "--port=" + strconv.Itoa(port)})
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.ExecuteContext(context.Background()) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("want the HTTP bind failure to be surfaced, got nil")
+		}
+		if !strings.Contains(err.Error(), "bind") && !strings.Contains(err.Error(), "address already in use") {
+			t.Fatalf("want a bind-failure error, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("mcp command did not surface the HTTP bind error promptly while stdio stayed open — " +
+			"the HTTP and stdio failure paths are not being watched concurrently")
+	}
+}

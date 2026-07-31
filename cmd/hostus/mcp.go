@@ -42,9 +42,14 @@ diagnostic output goes to stderr instead.`,
 
 // runMCP loads config exactly like runServe, then builds one App shared by
 // both transports: the HTTP listener (Serve, backgrounded) and the stdio
-// MCP server (ServeStdio, foregrounded/blocking). Canceling ctx — via the
-// stdio transport reaching EOF, or the process receiving a shutdown signal
-// (wired in main.go) — tears both down through the same App.Shutdown path.
+// MCP server (ServeStdio, also backgrounded). Both run concurrently and are
+// watched via a select, so whichever one fails or ends first — the HTTP
+// listener failing to bind while a real MCP client stays connected over
+// stdio is the case that matters most — is noticed immediately, not only
+// once stdio happens to end. Whichever finishes first cancels the shared
+// ctx so the other transport unwinds via graceful shutdown too, and runMCP
+// waits for both before returning, so App.Shutdown has always actually run
+// by the time this function returns.
 func runMCP(cmd *cobra.Command, _ []string) error {
 	cfg, err := config.Load(cfgFile)
 	if err != nil {
@@ -66,22 +71,42 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
 
-	httpErr := make(chan error, 1)
-	go func() { httpErr <- a.Serve(ctx) }()
+	httpErrCh := make(chan error, 1)
+	go func() { httpErrCh <- a.Serve(ctx) }()
 
 	stderrLog.Info("starting debug MCP over stdio", "http_address", cfg.Server.Address())
 	mcpServer := mcpAdapter.NewServer(a.Telemetry.Log, a.Telemetry.Memory)
-	stdioErr := mcpServer.ServeStdio(ctx)
+	stdioErrCh := make(chan error, 1)
+	go func() { stdioErrCh <- mcpServer.ServeStdio(ctx) }()
 
-	// The stdio session ending (client disconnect/EOF, or ctx already
-	// canceled by a signal) is this command's cue to shut the HTTP listener
-	// down too, rather than leaving it running headless.
+	var httpErr, stdioErr error
+	var httpDone, stdioDone bool
+
+	// Whichever transport ends first — cleanly or not — is the signal to
+	// tear the other one down too, rather than waiting for it to notice on
+	// its own (which, for a long-lived stdio session with a connected
+	// client, could be never).
+	select {
+	case httpErr = <-httpErrCh:
+		httpDone = true
+	case stdioErr = <-stdioErrCh:
+		stdioDone = true
+	}
 	cancel()
-	if err := <-httpErr; err != nil {
-		stderrLog.Error("http listener stopped with error", "error", err)
-		if stdioErr == nil {
-			return err
-		}
+
+	if !httpDone {
+		httpErr = <-httpErrCh
+	}
+	if !stdioDone {
+		stdioErr = <-stdioErrCh
+	}
+
+	// A real HTTP-listener failure (e.g. the port was already in use) is
+	// the more actionable error and takes priority over stdioErr, which in
+	// this branch is just the induced context-cancellation unwind.
+	if httpErr != nil {
+		stderrLog.Error("http listener stopped with error", "error", httpErr)
+		return httpErr
 	}
 	return stdioErr
 }

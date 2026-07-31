@@ -134,20 +134,32 @@ func Canonicalize(name string) string {
 // "Allowed Libraries Only" constraint. It covers the Latin-1 Supplement and
 // the common Latin Extended-A range; it is not a complete Unicode
 // decomposition.
+//
+// It deliberately EXCLUDES 'ß', 'ł', 'ø', 'đ': these are not base+combining-
+// mark decompositions in Unicode (there is no plain "s"/"l"/"o"/"d" +
+// diacritic to strip), so SQLite's FTS5 `unicode61 remove_diacritics 2`
+// tokenizer — used to index fts_name (see adapters/sqlite/schema.sql) — does
+// NOT fold them either (verified empirically; see
+// internal/adapters/sqlite/fts_parity_test.go). Folding them here anyway
+// would make Canonicalize's comparison keys diverge from the ones the FTS5
+// index computes at query time, breaking exact-match lookups keyed by
+// canonical name. Confirmed via the same probe: every OTHER letter in this
+// table (a/e/i/u/y/n/c/z/r/t/g families and 'ď') does fold under unicode61
+// remove_diacritics=2, matching this table's coverage.
 var diacriticFold = map[rune]rune{
 	'à': 'a', 'á': 'a', 'â': 'a', 'ã': 'a', 'ä': 'a', 'å': 'a', 'ā': 'a', 'ă': 'a', 'ą': 'a',
 	'è': 'e', 'é': 'e', 'ê': 'e', 'ë': 'e', 'ē': 'e', 'ĕ': 'e', 'ė': 'e', 'ę': 'e', 'ě': 'e',
 	'ì': 'i', 'í': 'i', 'î': 'i', 'ï': 'i', 'ĩ': 'i', 'ī': 'i', 'ĭ': 'i', 'į': 'i',
-	'ò': 'o', 'ó': 'o', 'ô': 'o', 'õ': 'o', 'ö': 'o', 'ø': 'o', 'ō': 'o', 'ŏ': 'o', 'ő': 'o',
+	'ò': 'o', 'ó': 'o', 'ô': 'o', 'õ': 'o', 'ö': 'o', 'ō': 'o', 'ŏ': 'o', 'ő': 'o',
 	'ù': 'u', 'ú': 'u', 'û': 'u', 'ü': 'u', 'ũ': 'u', 'ū': 'u', 'ŭ': 'u', 'ů': 'u', 'ű': 'u', 'ų': 'u',
 	'ý': 'y', 'ÿ': 'y',
 	'ñ': 'n', 'ń': 'n', 'ņ': 'n', 'ň': 'n',
 	'ç': 'c', 'ć': 'c', 'ĉ': 'c', 'ċ': 'c', 'č': 'c',
-	'ß': 's', 'ś': 's', 'ŝ': 's', 'ş': 's', 'š': 's',
+	'ś': 's', 'ŝ': 's', 'ş': 's', 'š': 's',
 	'ź': 'z', 'ż': 'z', 'ž': 'z',
-	'ł': 'l', 'ĺ': 'l', 'ļ': 'l', 'ľ': 'l',
+	'ĺ': 'l', 'ļ': 'l', 'ľ': 'l',
 	'ř': 'r', 'ŕ': 'r', 'ŗ': 'r',
-	'ď': 'd', 'đ': 'd',
+	'ď': 'd',
 	'ť': 't', 'ţ': 't',
 	'ğ': 'g', 'ģ': 'g',
 }

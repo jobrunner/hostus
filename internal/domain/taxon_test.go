@@ -88,6 +88,16 @@ func TestCanonicalize(t *testing.T) {
 		{"", ""},
 		{"   ", ""},
 		{"Ångström", "angstrom"},
+		// ß/ł/ø/đ are NOT decomposable diacritics in Unicode (no plain
+		// base letter + combining mark to strip), so SQLite's FTS5
+		// `unicode61 remove_diacritics 2` tokenizer does not fold them
+		// either (verified in internal/adapters/sqlite/fts_parity_test.go).
+		// Canonicalize must leave them as-is so its comparison keys match
+		// the ones the FTS5 index computes at query time.
+		{"Straße", "straße"},
+		{"Włodzimierz", "włodzimierz"},
+		{"Øster", "øster"},
+		{"Đorđe", "đorđe"},
 	}
 	for _, c := range cases {
 		got := domain.Canonicalize(c.in)

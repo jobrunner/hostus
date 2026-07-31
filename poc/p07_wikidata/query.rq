@@ -1,0 +1,20 @@
+# PoC P7 (Phase 0, Task 0.7): Wikidata xref properties for SP4 enrichment.
+#
+# For a given taxon item, fetch the values of the candidate cross-reference
+# properties named in spec §7 SP4 / D.3 step 5, plus a few extra "useful"
+# ones (IPNI, POWO, WFO), and pull each property's current rdfs:label so we
+# can confirm the Pxxxx IDs in the spec are actually the databases they
+# claim to be (not deprecated/renamed).
+#
+# Run against https://query.wikidata.org/sparql?format=json with the taxon
+# QID substituted for ?taxon (see probe.sh for the two reference taxa:
+# Q159953 = Corynephorus canescens, Q159749 = Jacobaea vulgaris).
+
+SELECT ?taxonLabel ?propLabel ?prop ?value WHERE {
+  VALUES ?taxon { wd:Q159953 wd:Q15630491 }
+  VALUES ?prop { wd:P14607 wd:P846 wd:P10585 wd:P12380 wd:P12100 wd:P961 wd:P5037 wd:P8244 }
+  ?taxon ?propDirect ?value .
+  ?prop wikibase:directClaim ?propDirect .
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+}
+ORDER BY ?taxonLabel ?prop

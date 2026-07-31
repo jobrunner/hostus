@@ -3,34 +3,35 @@ package cache
 import (
 	"sync"
 	"time"
-
-	"github.com/jobrunner/hostus/internal/taxonomy"
 )
 
-type entry struct {
-	data      []taxonomy.TaxonSuggestion
+type entry[T any] struct {
+	data      T
 	expiresAt time.Time
 }
 
-type Cache struct {
+// Cache is a generic in-memory TTL cache, safe for concurrent use.
+type Cache[T any] struct {
 	mu      sync.RWMutex
-	entries map[string]entry
+	entries map[string]entry[T]
 	ttl     time.Duration
 
 	hits   int64
 	misses int64
 }
 
-func New(ttl time.Duration) *Cache {
-	c := &Cache{
-		entries: make(map[string]entry),
+func New[T any](ttl time.Duration) *Cache[T] {
+	c := &Cache[T]{
+		entries: make(map[string]entry[T]),
 		ttl:     ttl,
 	}
 	go c.cleanup()
 	return c
 }
 
-func (c *Cache) Get(key string) ([]taxonomy.TaxonSuggestion, bool) {
+func (c *Cache[T]) Get(key string) (T, bool) {
+	var zero T
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -41,7 +42,7 @@ func (c *Cache) Get(key string) ([]taxonomy.TaxonSuggestion, bool) {
 		c.misses++
 		c.mu.Unlock()
 		c.mu.RLock()
-		return nil, false
+		return zero, false
 	}
 
 	if time.Now().After(e.expiresAt) {
@@ -50,7 +51,7 @@ func (c *Cache) Get(key string) ([]taxonomy.TaxonSuggestion, bool) {
 		c.misses++
 		c.mu.Unlock()
 		c.mu.RLock()
-		return nil, false
+		return zero, false
 	}
 
 	c.mu.RUnlock()
@@ -62,23 +63,23 @@ func (c *Cache) Get(key string) ([]taxonomy.TaxonSuggestion, bool) {
 	return e.data, true
 }
 
-func (c *Cache) Set(key string, data []taxonomy.TaxonSuggestion) {
+func (c *Cache[T]) Set(key string, data T) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.entries[key] = entry{
+	c.entries[key] = entry[T]{
 		data:      data,
 		expiresAt: time.Now().Add(c.ttl),
 	}
 }
 
-func (c *Cache) Stats() (hits, misses int64) {
+func (c *Cache[T]) Stats() (hits, misses int64) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.hits, c.misses
 }
 
-func (c *Cache) cleanup() {
+func (c *Cache[T]) cleanup() {
 	ticker := time.NewTicker(c.ttl)
 	defer ticker.Stop()
 

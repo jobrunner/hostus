@@ -3,15 +3,18 @@ package cache
 import (
 	"testing"
 	"time"
-
-	"github.com/jobrunner/hostus/internal/taxonomy"
 )
 
-func TestCache_SetAndGet(t *testing.T) {
-	c := New(time.Minute)
+type testItem struct {
+	Key  int
+	Name string
+}
 
-	data := []taxonomy.TaxonSuggestion{
-		{AcceptedKey: 1, AcceptedName: "Test"},
+func TestCache_SetAndGet(t *testing.T) {
+	c := New[[]testItem](time.Minute)
+
+	data := []testItem{
+		{Key: 1, Name: "Test"},
 	}
 
 	c.Set("key1", data)
@@ -23,13 +26,13 @@ func TestCache_SetAndGet(t *testing.T) {
 	if len(result) != 1 {
 		t.Errorf("expected 1 item, got %d", len(result))
 	}
-	if result[0].AcceptedKey != 1 {
-		t.Errorf("expected AcceptedKey 1, got %d", result[0].AcceptedKey)
+	if result[0].Key != 1 {
+		t.Errorf("expected Key 1, got %d", result[0].Key)
 	}
 }
 
 func TestCache_Miss(t *testing.T) {
-	c := New(time.Minute)
+	c := New[[]testItem](time.Minute)
 
 	_, ok := c.Get("nonexistent")
 	if ok {
@@ -38,10 +41,10 @@ func TestCache_Miss(t *testing.T) {
 }
 
 func TestCache_Expiration(t *testing.T) {
-	c := New(50 * time.Millisecond)
+	c := New[[]testItem](50 * time.Millisecond)
 
-	data := []taxonomy.TaxonSuggestion{
-		{AcceptedKey: 1, AcceptedName: "Test"},
+	data := []testItem{
+		{Key: 1, Name: "Test"},
 	}
 
 	c.Set("key1", data)
@@ -62,10 +65,10 @@ func TestCache_Expiration(t *testing.T) {
 }
 
 func TestCache_Stats(t *testing.T) {
-	c := New(time.Minute)
+	c := New[[]testItem](time.Minute)
 
-	data := []taxonomy.TaxonSuggestion{
-		{AcceptedKey: 1, AcceptedName: "Test"},
+	data := []testItem{
+		{Key: 1, Name: "Test"},
 	}
 
 	c.Set("key1", data)

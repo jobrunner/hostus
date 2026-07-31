@@ -55,8 +55,8 @@ test: ## Führe alle Tests aus
 test-unit: ## Nur Unit-Tests
 	$(GOTEST) -short ./...
 
-test-integration: ## Nur Integrationstests
-	$(GOTEST) -run Integration ./...
+test-integration: ## Nur Integrationstests (build-tag `integration`)
+	$(GOTEST) -tags=integration -run Integration ./...
 
 test-coverage: ## Tests mit Coverage-Report
 	@mkdir -p $(COVERAGE_DIR)

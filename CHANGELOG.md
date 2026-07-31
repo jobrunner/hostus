@@ -10,10 +10,16 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 hostus wird vom zustandslosen GBIF-Autosuggest-Proxy zum lokalen
 Multi-Backbone-Namens- und Merkmalsservice umgebaut (siehe
 `docs/superpowers/specs/2026-07-31-hostus-2.0-architecture.md`). Dieser
-Abschnitt sammelt den Abschluss von **SP0 (Harness & Skelett)**: die
-Architektur-Inversion selbst (Multi-Backbone-Index, SQLite/FTS5, Ingest) ist
-noch nicht implementiert und folgt in SP1+. `release-please` cuttet daraus
-das nächste `2.0.0-alpha.N`-Release; bis dahin akkumulieren PRs hier.
+Abschnitt sammelt den Abschluss von **SP0 (Harness & Skelett)** und **SP1
+(Foundation)**: SP1 liefert das lokale SQLite/FTS5-Rückgrat selbst — Ingest
+eines WCVP/POWO-DwC-A-Manifests (`hostus ingest`) in eine versionierte
+lokale Datenbank, gruppiert nach akzeptierten Concepts mit ihren Synonymen,
+sowie die ersten drei `/v1`-Leseendpunkte (`GET /v1/concept/{id}`, `GET
+/v1/xref`, `POST /v1/match`) darauf, an die `/health/ready` jetzt gekoppelt
+ist. Weitere Backbones (COL XR, Euro+Med, FloraVeg.EU) sowie `suggest`,
+`traits`, `translate` und `/openapi` folgen in SP2+. `release-please`
+cuttet daraus das nächste `2.0.0-alpha.N`-Release; bis dahin akkumulieren
+PRs hier.
 
 ### Fixed
 - `google.golang.org/grpc` auf v1.82.1 angehoben (behebt GO-2026-6061 in der
@@ -75,6 +81,29 @@ das nächste `2.0.0-alpha.N`-Release; bis dahin akkumulieren PRs hier.
   stdio-Debug-MCP
 - `.goreleaser.yml` (portiert aus ortus, `release.mode: append`, CGO-frei,
   linux/darwin × amd64/arm64)
+- **SP1**: lokales SQLite/FTS5-Rückgrat (`internal/adapters/sqlite`):
+  `taxon_concept`/`taxon_name`/`concept_name`/`xref`/`distribution`/
+  `backbone_version`-Schema, `output.Repository`-Port (`Concept`,
+  `ConceptByXref`, `MatchExact`, `BackboneVersions`, `BeginIngest`/`IngestTx`)
+- **SP1**: versionierter Dataset-Manifest-Adapter (`internal/adapters/manifest`,
+  `dataset.yaml`, schema-validiert, SHA-inhaltsadressiert) und WCVP/POWO-
+  DwC-A-Reader (`internal/adapters/wcvp`)
+- **SP1**: `application.Ingest` — liest ein Manifest-Backbone in zwei Durchgängen
+  ein (Namen + akzeptierte Concepts, dann Synonym-Verknüpfung unter ihr
+  akzeptiertes Concept), meldet `names`/`concepts`/`synonyms`/`orphaned`
+  je Backbone; `hostus ingest --dataset <manifest> --db <file>` als CLI-Einstieg
+- **SP1**: `application.MatchNames` — klassifiziert verbatime Namen als
+  `exact`, `exact_author`, `aggregate_alias` oder `unresolvable`
+  (Autoren-Mehrdeutigkeit liefert Kandidaten statt Fehlklassifikation)
+- **SP1**: `GET /v1/concept/{id}`, `GET /v1/xref`, `POST /v1/match` auf dem
+  neuen Repository; `GET /health/ready` jetzt an das Vorhandensein
+  mindestens eines eingelesenen Backbones gekoppelt (vorher immer 200)
+- **SP1**: `internal/app/integration_test.go` (`integration`-Build-Tag,
+  `make test-integration`) — treibt den kompletten Ingest→Serve→Query-Fluss
+  über einen echten `httptest.Server` end-to-end
+- **SP1**: OpenAPI-Baseline (`api/openapi/openapi.yaml`) und
+  `docs/reference/http-api.md` um die drei neuen `/v1`-Endpunkte ergänzt
+  (Concept-/Match-DTOs, Fehler-Envelope-Schema)
 
 ### Changed
 - `Dockerfile`: Build-Stage injiziert `main.Version`/`main.Commit`/`main.BuildDate` per Ldflags (statt `main.version` aus `VERSION`-Datei) — identische Variablenpfade wie im Makefile, damit `hostus version` im Image echte Build-Infos zeigt

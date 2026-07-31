@@ -1,0 +1,62 @@
+# GoReleaser Konfiguration für hostus
+# Dokumentation: https://goreleaser.com
+# Portiert aus ortus (.goreleaser.yml), angepasst: CGO-frei (modernc.org/sqlite,
+# kein spatialite), kein Windows-Build (Server-Deployment-Ziel ist
+# linux/darwin), release.mode: append (release-please besitzt den
+# GitHub-Release-Eintrag inkl. Changelog).
+
+version: 2
+
+project_name: hostus
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: hostus
+    main: ./cmd/hostus
+    binary: hostus
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.Commit={{.ShortCommit}}
+      - -X main.BuildDate={{.Date}}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-dev"
+
+# Release notes are owned by release-please (it writes CHANGELOG.md and the
+# GitHub Release body). goreleaser only builds + attaches binaries, so it does
+# not generate its own changelog.
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: jobrunner
+    name: hostus
+  # release-please has already created the tagged GitHub Release; append the
+  # build artifacts to it instead of creating a (draft) duplicate.
+  mode: append

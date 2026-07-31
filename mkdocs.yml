@@ -65,3 +65,9 @@ nav:
       - Architektur: explanation/architecture.md
       - Entscheidungen (ADRs):
           - explanation/decisions/index.md
+          - "ADR-0009: Lokaler Multi-Backbone-Index": explanation/decisions/0009-local-multibackbone-index.md
+          - "ADR-0010: SQLite/FTS5-Persistenz": explanation/decisions/0010-sqlite-fts5-persistence.md
+          - "ADR-0011: Versionierter Artefaktvertrag": explanation/decisions/0011-versioned-artifact-contract.md
+          - "ADR-0012: Hexagonale Architektur": explanation/decisions/0012-hexagonal-architecture.md
+          - "ADR-0013: OpenTelemetry von Tag 1": explanation/decisions/0013-opentelemetry-from-day-one.md
+          - "ADR-0014: stdio Debug-MCP": explanation/decisions/0014-stdio-debug-mcp.md

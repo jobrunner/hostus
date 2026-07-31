@@ -5,6 +5,8 @@
       "release-type": "simple",
       "changelog-path": "CHANGELOG.md",
       "include-component-in-tag": false,
+      "prerelease": true,
+      "prerelease-type": "alpha",
       "extra-files": [
         { "type": "generic", "path": "VERSION" }
       ]

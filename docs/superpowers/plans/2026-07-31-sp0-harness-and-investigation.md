@@ -26,7 +26,7 @@
 
 Applies to every task that produces Go logic (S5, S6, S7, S8, S9, S10, and all SP1+ logic). In addition to "tests pass", a task is only done when both hold:
 
-1. **Mutation-green:** run `make mutation PKG=<the touched package>` (gremlins). The package must meet its configured efficacy/coverage thresholds — surviving mutants mean the tests don't pin behavior; add assertions until green. This runs *after* the unit tests pass, before the commit.
+1. **Mutation-green:** run `make mutation PKG=<the touched package>` (gremlins). **Green means ZERO surviving mutants in the touched package** — not merely "meets the configured threshold". The global `.gremlins.yaml` thresholds are seeded permissively (0) as a ratchet start, so they are toothless on their own; the operative gate is the reported mutation run showing no survivors. Surviving mutants mean the tests don't pin behavior; add assertions until none survive. If a mutant is provably equivalent/unkillable, justify it explicitly in the report (and only then may it remain). This runs *after* the unit tests pass, before the commit.
 2. **Tests are linted:** `_test.go` files pass `golangci-lint` too. `.golangci.yml` (Task S4) must NOT blanket-exempt tests — only narrowly exempt what is genuinely test-only noise (documented per rule). `make lint` covering test files is part of the task's final check.
 
 Pure scaffolding/config tasks (S1–S4, S11–S15) have no logic to mutate; the mutation gate does not apply, but any Go files they add still pass lint. Each TDD task's final step sequence is therefore: run tests (pass) → `make mutation PKG=...` (green) → `make lint` incl. tests (clean) → commit.

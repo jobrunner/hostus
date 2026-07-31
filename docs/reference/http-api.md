@@ -64,6 +64,17 @@ GET /v1/concept/wcvp:concept:405825
     { "canonical": "Corynephorus canescens f. pallidus", "authorship": "(Beckh.) Soó" },
     { "canonical": "Corynephorus canescens var. montana", "authorship": "Cout." },
     { "canonical": "Corynephorus canescens subsp. maritimus", "authorship": "(Godr.) Rivas Mart." }
+  ],
+  "distribution": [
+    { "area_scheme": "wgsrpd_l3", "area_code": "AUT" },
+    { "area_scheme": "wgsrpd_l3", "area_code": "BGM" },
+    { "area_scheme": "wgsrpd_l3", "area_code": "BLR" },
+    { "area_scheme": "wgsrpd_l3", "area_code": "BLT" },
+    { "area_scheme": "wgsrpd_l3", "area_code": "BRC" },
+    { "area_scheme": "wgsrpd_l3", "area_code": "CNT" },
+    { "area_scheme": "wgsrpd_l3", "area_code": "CZE" },
+    { "area_scheme": "wgsrpd_l3", "area_code": "DEN" },
+    { "area_scheme": "wgsrpd_l3", "area_code": "RUC" }
   ]
 }
 ```
@@ -71,7 +82,10 @@ GET /v1/concept/wcvp:concept:405825
 `vernacular_de` (deutscher Trivialname) und `classification`
 (Klassifikationskette) sind Teil der DTO, aber in SP1 immer leer/omitted —
 die Vernakular-Tabelle bzw. Eltern-Verknüpfungen werden noch nicht
-ingestiert.
+ingestiert. `distribution` (Referenzgebiets-Zuordnungen, z. B. WGSRPD L3)
+wird dagegen bereits von `hostus ingest` befüllt und ausgeliefert; das
+Feld ist leer, wenn der Backbone für dieses Concept keine Distribution
+liefert.
 
 Unbekannte IDs liefern `404 NOT_FOUND` im [Fehlerformat](#fehlerformat).
 

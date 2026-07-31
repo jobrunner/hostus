@@ -222,6 +222,18 @@ components:
             Aktuell nie gesetzt (SP1 ingestiert diese Information noch
             nicht); für spätere SPs reserviert.
 
+    Distribution:
+      type: object
+      required: [area_scheme, area_code]
+      properties:
+        area_scheme:
+          type: string
+          description: 'Referenzgebiets-Schema, z. B. `wgsrpd_l3`.'
+          example: wgsrpd_l3
+        area_code:
+          type: string
+          example: GER
+
     Concept:
       type: object
       required: [concept_id, display, canonical, rank, status, backbone, synonyms]
@@ -266,6 +278,14 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Synonym'
+        distribution:
+          type: array
+          description: >-
+            Referenzgebiets-Zuordnungen (WGSRPD L3 o. ä.), ungeordnet nach
+            Schema/Code. Leer, wenn der Backbone keine Distribution für
+            dieses Concept liefert.
+          items:
+            $ref: '#/components/schemas/Distribution'
 
     ErrorResponse:
       type: object

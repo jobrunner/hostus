@@ -76,14 +76,65 @@ func TestOpen_CreatesAllSchemaTables(t *testing.T) {
 	}
 }
 
+// TestOpen_ForeignKeysEnabled proves FK enforcement is genuinely active on
+// the connection Open() returns, not just that the pragma value reads back
+// as 1 (which modernc.org/sqlite would also report on a connection where
+// the pragma silently failed to take effect, or on a *different* pooled
+// connection than the one that ran it — foreign_keys is per-connection).
+// It does so by attempting a write that violates taxon_concept's
+// backbone_id FK and asserting SQLite rejects it.
 func TestOpen_ForeignKeysEnabled(t *testing.T) {
 	db := openTestDB(t)
-	var on int
-	if err := db.sql.QueryRow(`PRAGMA foreign_keys`).Scan(&on); err != nil {
-		t.Fatalf("querying foreign_keys pragma: %v", err)
+	ctx := context.Background()
+
+	_, err := db.sql.ExecContext(ctx, `
+		INSERT INTO taxon_concept (id, backbone_id, accepted_name, rank, status)
+		VALUES ('c-orphan', 'does-not-exist', 'n-does-not-exist', 'SPECIES', 'ACCEPTED')`)
+	if err == nil {
+		t.Fatal("insert referencing a non-existent backbone_id: expected a foreign-key constraint error, got nil (PRAGMA foreign_keys is not effectively ON)")
 	}
-	if on != 1 {
-		t.Fatalf("PRAGMA foreign_keys = %d, want 1 (on)", on)
+}
+
+// TestOpen_SingleConnectionPool pins down the fix for the FK-pragma bug:
+// Open must cap the pool at exactly one physical connection. foreign_keys
+// is a per-connection SQLite pragma and path=":memory:" gives each
+// physical connection its own private database, so any pool size above 1
+// would let some connections silently bypass FK enforcement (or see an
+// empty database) depending on which connection database/sql happened to
+// hand out.
+func TestOpen_SingleConnectionPool(t *testing.T) {
+	db := openTestDB(t)
+	if got := db.sql.Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("Stats().MaxOpenConnections = %d, want 1 (single-writer; FK pragma and :memory: isolation are per-connection)", got)
+	}
+}
+
+// TestOpen_MemoryDatabaseIsSharedAcrossQueries proves a ":memory:" DB
+// behaves as one shared database, not one private database per pooled
+// connection: a write via BeginIngest/Commit must be visible to a
+// completely separate subsequent query against the same *DB.
+func TestOpen_MemoryDatabaseIsSharedAcrossQueries(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	bv := domain.BackboneVersion{ID: "wcvp", Version: "v1", IngestedAt: "2026-07-31T00:00:00Z", ManifestSHA: "x"}
+	tx, err := db.BeginIngest(ctx, bv)
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+
+	// A fresh query, independent of the transaction above: if :memory:
+	// were not shared across the pool, this could hit a different,
+	// empty private database and see nothing.
+	got, err := db.BackboneVersions(ctx)
+	if err != nil {
+		t.Fatalf("BackboneVersions: unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "wcvp" {
+		t.Fatalf("BackboneVersions() = %+v, want exactly one entry for %q (write from an earlier transaction must be visible on a later, independent query)", got, "wcvp")
 	}
 }
 

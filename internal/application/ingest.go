@@ -173,11 +173,16 @@ func (st *ingestState) pass1AcceptedAndNames(taxa []TaxonRow, report *BackboneRe
 			return fmt.Errorf("application: backbone %q, taxon %q: %w", b.ID, row.TaxonID, err)
 		}
 
+		// POWOID IS the IPNI id (POWO mints its taxon ids in IPNI's own
+		// namespace, e.g. "396681-1") — spec §A.1's nomenclatural anchor —
+		// so every name's ipni_id is populated straight from it, not just
+		// the accepted row's powo xref.
 		name := domain.Name{
 			ID:         nameID(b.ID, row.TaxonID),
 			Canonical:  row.Canonical,
 			Authorship: row.Authorship,
 			Rank:       rank,
+			IPNIID:     row.POWOID,
 		}
 		if err := st.tx.UpsertName(name); err != nil {
 			return fmt.Errorf("application: backbone %q: %w", b.ID, err)

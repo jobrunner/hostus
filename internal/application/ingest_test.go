@@ -208,6 +208,12 @@ func assertCorynephorusConcept(t *testing.T, concept *domain.Concept) {
 	if concept.Status != domain.StatusAccepted {
 		t.Errorf("concept.Status = %q, want %q", concept.Status, domain.StatusAccepted)
 	}
+	// POWOID ("396681-1") IS the IPNI id (spec §A.1's nomenclatural
+	// anchor); Ingest must populate Name.IPNIID from it, not leave it
+	// empty just because the powo xref already carries the same value.
+	if concept.AcceptedName.IPNIID != "396681-1" {
+		t.Errorf("concept.AcceptedName.IPNIID = %q, want %q", concept.AcceptedName.IPNIID, "396681-1")
+	}
 }
 
 func assertCorynephorusSynonyms(t *testing.T, synonyms []domain.Name) {

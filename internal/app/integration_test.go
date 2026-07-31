@@ -71,6 +71,10 @@ type integrationConceptResponse struct {
 		Canonical  string `json:"canonical"`
 		Authorship string `json:"authorship"`
 	} `json:"synonyms"`
+	Distribution []struct {
+		AreaScheme string `json:"area_scheme"`
+		AreaCode   string `json:"area_code"`
+	} `json:"distribution"`
 }
 
 type integrationMatchResponse struct {
@@ -196,6 +200,13 @@ func assertConceptByID(t *testing.T, client *http.Client, baseURL string) {
 	}
 	if len(concept.Synonyms) < 3 {
 		t.Errorf("len(synonyms) = %d, want >= 3 (the fixture's four Corynephorus canescens synonyms)", len(concept.Synonyms))
+	}
+	// The WCVP fixture's Corynephorus canescens carries nine WGSRPD-L3
+	// distribution rows (see wcvp_distribution.csv); assert they survive
+	// the full ingest -> serve -> HTTP round trip, not just the in-process
+	// handler test.
+	if len(concept.Distribution) != 9 {
+		t.Errorf("len(distribution) = %d, want %d", len(concept.Distribution), 9)
 	}
 }
 

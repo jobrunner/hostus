@@ -38,6 +38,14 @@ type synonymDTO struct {
 	Homotypic  *bool  `json:"homotypic,omitempty"`
 }
 
+// distributionDTO is one reference-area assignment for a concept, per
+// spec §4.3's distribution table (area_scheme, area_code — e.g.
+// {"area_scheme": "wgsrpd_l3", "area_code": "GER"}).
+type distributionDTO struct {
+	AreaScheme string `json:"area_scheme"`
+	AreaCode   string `json:"area_code"`
+}
+
 // conceptDTO is the wire shape for GET /v1/concept/{id} and GET /v1/xref,
 // per spec §B. It is kept in the http adapter (not domain) since it is a
 // response-rendering concern, not a domain concept.
@@ -59,14 +67,15 @@ type conceptDTO struct {
 	// so there is no parent chain to walk. Rendering a fabricated or
 	// single-element chain would misrepresent data the backbone never
 	// supplied; this field is reserved for when parent linkage is ingested.
-	Classification []string     `json:"classification,omitempty"`
-	Synonyms       []synonymDTO `json:"synonyms"`
+	Classification []string          `json:"classification,omitempty"`
+	Synonyms       []synonymDTO      `json:"synonyms"`
+	Distribution   []distributionDTO `json:"distribution,omitempty"`
 }
 
 // conceptToDTO renders a resolved concept (as returned by
 // Repository.Concept) into the wire shape shared by /v1/concept/{id} and
 // /v1/xref.
-func conceptToDTO(c *domain.Concept, synonyms []domain.Name, xrefs []domain.Xref) conceptDTO {
+func conceptToDTO(c *domain.Concept, synonyms []domain.Name, xrefs []domain.Xref, distribution []domain.Distribution) conceptDTO {
 	display := c.AcceptedName.Canonical
 	if c.AcceptedName.Authorship != "" {
 		display = display + " " + c.AcceptedName.Authorship
@@ -85,15 +94,24 @@ func conceptToDTO(c *domain.Concept, synonyms []domain.Name, xrefs []domain.Xref
 		syns[i] = synonymDTO{Canonical: s.Canonical, Authorship: s.Authorship}
 	}
 
+	var dists []distributionDTO
+	if len(distribution) > 0 {
+		dists = make([]distributionDTO, len(distribution))
+		for i, d := range distribution {
+			dists[i] = distributionDTO{AreaScheme: d.AreaScheme, AreaCode: d.AreaCode}
+		}
+	}
+
 	return conceptDTO{
-		ConceptID: c.ID,
-		Display:   display,
-		Canonical: c.AcceptedName.Canonical,
-		Rank:      string(c.Rank),
-		Status:    string(c.Status),
-		Backbone:  backboneRefDTO{ID: c.BackboneID, Version: c.BackboneVersion},
-		Xrefs:     xrefMap,
-		Synonyms:  syns,
+		ConceptID:    c.ID,
+		Display:      display,
+		Canonical:    c.AcceptedName.Canonical,
+		Rank:         string(c.Rank),
+		Status:       string(c.Status),
+		Backbone:     backboneRefDTO{ID: c.BackboneID, Version: c.BackboneVersion},
+		Xrefs:        xrefMap,
+		Synonyms:     syns,
+		Distribution: dists,
 	}
 }
 
@@ -146,7 +164,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // endpoints render the identical concept shape from the identical query
 // path.
 func writeConcept(w http.ResponseWriter, r *http.Request, repo output.Repository, id string) {
-	c, synonyms, xrefs, _, err := repo.Concept(r.Context(), id)
+	c, synonyms, xrefs, distribution, err := repo.Concept(r.Context(), id)
 	if errors.Is(err, domain.ErrNotFound) {
 		httperr.Write(w, http.StatusNotFound, httperr.NotFound, "concept not found")
 		return
@@ -155,7 +173,7 @@ func writeConcept(w http.ResponseWriter, r *http.Request, repo output.Repository
 		httperr.InternalError(w)
 		return
 	}
-	writeJSON(w, http.StatusOK, conceptToDTO(c, synonyms, xrefs))
+	writeJSON(w, http.StatusOK, conceptToDTO(c, synonyms, xrefs, distribution))
 }
 
 // handleConcept serves GET /v1/concept/{id}.

@@ -121,6 +121,22 @@ type conceptResponse struct {
 		Canonical  string `json:"canonical"`
 		Authorship string `json:"authorship"`
 	} `json:"synonyms"`
+	Distribution []struct {
+		AreaScheme string `json:"area_scheme"`
+		AreaCode   string `json:"area_code"`
+	} `json:"distribution"`
+}
+
+func hasDistributionArea(dists []struct {
+	AreaScheme string `json:"area_scheme"`
+	AreaCode   string `json:"area_code"`
+}, areaScheme, areaCode string) bool {
+	for _, d := range dists {
+		if d.AreaScheme == areaScheme && d.AreaCode == areaCode {
+			return true
+		}
+	}
+	return false
 }
 
 func hasSynonym(syns []struct {
@@ -172,6 +188,16 @@ func TestHandleConcept_KnownID_ReturnsConcept(t *testing.T) {
 	if !hasSynonym(got.Synonyms, "Weingaertneria") {
 		t.Errorf("synonyms = %+v, want an entry starting with %q", got.Synonyms, "Weingaertneria")
 	}
+	// The WCVP fixture's Corynephorus canescens (405825) carries nine
+	// WGSRPD-L3 distribution rows (see wcvp_distribution.csv); assert at
+	// least one lands on the wire so /v1/concept doesn't silently drop
+	// distribution (spec §B.1/§4.3).
+	if len(got.Distribution) != 9 {
+		t.Fatalf("len(distribution) = %d, want %d", len(got.Distribution), 9)
+	}
+	if !hasDistributionArea(got.Distribution, "wgsrpd_l3", "AUT") {
+		t.Errorf("distribution = %+v, want an entry {wgsrpd_l3 AUT}", got.Distribution)
+	}
 }
 
 func TestHandleConcept_UnknownID_Returns404NotFound(t *testing.T) {
@@ -213,6 +239,11 @@ func TestHandleXref_KnownAuthorityAndID_ReturnsConcept(t *testing.T) {
 	}
 	if got.Canonical != "Corynephorus canescens" {
 		t.Errorf("canonical = %q, want %q", got.Canonical, "Corynephorus canescens")
+	}
+	// /v1/xref renders via the same writeConcept path as /v1/concept/{id};
+	// confirm distribution is not dropped here either.
+	if len(got.Distribution) != 9 {
+		t.Fatalf("len(distribution) = %d, want %d", len(got.Distribution), 9)
 	}
 }
 

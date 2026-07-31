@@ -31,6 +31,18 @@ func Open(path string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: open %q: %w", path, err)
 	}
+	// SP1 is single-writer, so pin the pool to exactly one physical
+	// connection. This matters for two reasons beyond avoiding write
+	// contention: `PRAGMA foreign_keys=ON` (set by schema.sql, below) is
+	// per-connection in SQLite, not a database-wide setting — with a
+	// multi-connection pool, only the connection that happened to run the
+	// schema would have FK enforcement on, and any other pooled connection
+	// would silently accept FK-violating writes. And for path=":memory:",
+	// each physical connection gets its OWN private, empty in-memory
+	// database — a second connection would see a database missing every
+	// table the first one just created. Capping the pool at one connection
+	// makes both FK enforcement and :memory: state deterministic.
+	sqlDB.SetMaxOpenConns(1)
 	if _, err := sqlDB.ExecContext(context.Background(), schemaSQL); err != nil {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("sqlite: applying schema: %w", err)

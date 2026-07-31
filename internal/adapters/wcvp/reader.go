@@ -30,7 +30,7 @@ type TaxonRow struct {
 	Authorship           string // from the typo'd "scientfiicnameauthorship" column
 	Rank                 string
 	Status               string
-	AcceptedNameUsageID  string // empty => this row is accepted; else points at the accepted taxonid
+	AcceptedNameUsageID  string // never empty; self-referential (== TaxonID) for accepted rows, else points at the accepted taxonid (see IsAccepted)
 	ParentNameUsageID    string
 	OriginalNameUsageID  string // basionym link
 	PublishedIn          string
@@ -39,6 +39,16 @@ type TaxonRow struct {
 	ScientificNameID     string // unreliable IPNI-id source; prefer POWOID()
 	DynamicProperties    string // raw JSON, see POWOID()
 	References           string
+}
+
+// IsAccepted reports whether this row is the accepted name: WCVP marks
+// accepted rows by self-reference (AcceptedNameUsageID == TaxonID), not by
+// leaving AcceptedNameUsageID empty — it is never empty. This is the
+// reliable primary signal per poc/P02-findings.md §7, independent of the
+// free-text Status column (which also carries Illegitimate/Invalid values
+// that are neither cleanly accepted nor synonym).
+func (t TaxonRow) IsAccepted() bool {
+	return t.AcceptedNameUsageID == t.TaxonID
 }
 
 // POWOID parses the DynamicProperties JSON blob and returns its "powoid"

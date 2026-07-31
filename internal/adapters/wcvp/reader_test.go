@@ -63,6 +63,12 @@ func TestRead_AcceptedTaxon(t *testing.T) {
 	if got, want := corynephorus.Status, "Accepted"; got != want {
 		t.Errorf("Status = %q, want %q", got, want)
 	}
+	if got, want := corynephorus.AcceptedNameUsageID, corynephorus.TaxonID; got != want {
+		t.Errorf("AcceptedNameUsageID = %q, want %q (accepted rows self-reference, they are never empty)", got, want)
+	}
+	if !corynephorus.IsAccepted() {
+		t.Error("IsAccepted() = false, want true for a self-referential accepted row")
+	}
 	if got, want := corynephorus.POWOID(), "396681-1"; got != want {
 		t.Errorf("POWOID() = %q, want %q", got, want)
 	}
@@ -74,6 +80,12 @@ func TestRead_SynonymTaxon(t *testing.T) {
 
 	if got, want := synonym.AcceptedNameUsageID, "405825"; got != want {
 		t.Errorf("AcceptedNameUsageID = %q, want %q", got, want)
+	}
+	if synonym.AcceptedNameUsageID == synonym.TaxonID {
+		t.Errorf("AcceptedNameUsageID (%q) == TaxonID (%q), want them to differ for a synonym row", synonym.AcceptedNameUsageID, synonym.TaxonID)
+	}
+	if synonym.IsAccepted() {
+		t.Error("IsAccepted() = true, want false for a synonym row pointing at a different taxonid")
 	}
 }
 

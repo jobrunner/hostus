@@ -219,6 +219,51 @@ Die resultierenden DB-Größen (`plain` / `indexed`): 23,9/28,4 MB (50k),
 47,3/56,1 MB (100k), 97,7/114,9 MB (200k) — die Indizes kosten rund 18 %
 Speicher.
 
+### M1.2a Nach Hardening (Task 2): dieselbe Messung mit dem reparierten Serienschema
+
+Hardening Task 2 (`internal/adapters/sqlite/schema.sql`, Branch
+`feature/hardening`) fügt genau die FK-Kindspalten-Indizes aus
+`poc/measure/fk_indexes.sql` (acht Stück) direkt ins Serienschema ein
+(plus Herleitung/Begründung, welche der 13 REFERENCES-Spalten schon durch
+die führende PK-Spalte ihrer Tabelle abgedeckt waren und deshalb keinen
+eigenen Index brauchten). Das macht `plain` (`hostus bundle` legt jetzt
+direkt das reparierte Schema an) und `indexed` (zusätzlich
+`fk_indexes.sql` — jetzt redundant, da dieselben Spalten schon indiziert
+sind, nur unter anderem Indexnamen) erwartungsgemäß nahezu identisch
+schnell:
+
+```bash
+nix develop -c make build   # bindet das neue schema.sql ein
+nix develop -c bash poc/measure/scaling.sh 50000 100000 200000
+```
+
+| Taxon-Zeilen | vorher: Serienschema (`plain`, ohne Indizes) | **nachher: Serienschema (`plain`, mit den neuen Indizes)** | mit zusätzlichem `fk_indexes.sql` (`indexed`, jetzt redundant) |
+|---:|---:|---:|---:|
+| 50.000 | 65 s | **6 s** | 6 s |
+| 100.000 | 293 s | **11 s** | 14 s |
+| 200.000 | 1.338 s (22 min 18 s) | **24 s** | 30 s |
+
+Skalierung bei Verdopplung, nachher (`plain`, gemessen): 6 → 11 s
+(**×1,83**) → 24 s (**×2,18**) — beides klar im linearen Bereich (~2×),
+nicht im quadratischen (~4,5×) der vorherigen Messung. Die nachher-Zahlen
+dieser Messung liegen sogar leicht UNTER der ursprünglichen `indexed`-Spalte
+(5/11/25 s), weil `poc/measure/fk_indexes.sql` in dieser Messung nur noch
+für die `indexed`-Spalte läuft und dort — da die Spalten bereits über die
+schema.sql-eigenen Indizes abgedeckt sind — zusätzliche, redundante Indizes
+unter anderem Namen anlegt (sichtbar an den etwas größeren `indexed`-DB-Größen
+unten, nicht an einem Geschwindigkeitsunterschied).
+
+DB-Größen (`plain` mit den neuen schema.sql-Indizes / `indexed` mit den
+zusätzlichen, jetzt redundanten `fk_indexes.sql`-Indizes): 28,5/33,0 MB
+(50k), 56,3/65,1 MB (100k), 115,3/133,0 MB (200k).
+
+**Verdikt: hält.** Das reparierte Serienschema erreicht am selben
+Mess-Harness dieselbe lineare Skalierung, die M1.2 vorher nur mit
+Ad-hoc-Indizes zeigen konnte — ohne dass ein Aufrufer noch manuell
+`fk_indexes.sql` einspielen müsste. Der volle WCVP-Ingest (M1.3) mit
+diesem Schema ist Aufgabe von Task 3/6 dieses Hardening-Zyklus, nicht
+dieser Messung.
+
 ### M1.3 Voller Ingest MIT den zusätzlichen Indizes
 
 Alle weiteren Messungen (M2–M6) laufen gegen diese Datenbank. Sie entsteht

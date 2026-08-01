@@ -47,6 +47,43 @@ CREATE TABLE IF NOT EXISTS name (
 );
 
 CREATE INDEX IF NOT EXISTS idx_name_canonical_fold ON name(canonical_fold);
+CREATE INDEX IF NOT EXISTS idx_name_basionym_id ON name(basionym_id);
+
+-- Hardening Task 2 (2026-08-01): FK child-column indexes.
+--
+-- Every REFERENCES column below was, until this task, unindexed except
+-- idx_name_canonical_fold (which isn't even on an FK). With
+-- `INSERT OR REPLACE` (an implicit DELETE+INSERT) and
+-- `PRAGMA foreign_keys=ON`, SQLite must find every row in every
+-- referencing table that points at the deleted parent key before it can
+-- allow the delete — without an index on the child column, that's a full
+-- table scan per insert, and the scanned table grows with every row
+-- ingested: quadratic total cost. Measured on the real WCVP backbone
+-- (docs/research/reality-check.md, "nach Hardening" has the post-fix
+-- numbers): 50k/100k/200k taxa took 65 s / 293 s / 1.338 s without these
+-- indexes (×4.5 per doubling — quadratic) vs. 5 s / 11 s / 25 s with them
+-- (×2.2 per doubling — linear). The full WCVP ingest was manually killed
+-- after 22 min 48 s without a single committed row on the unindexed
+-- schema; with these indexes it completes in 276.70 s.
+--
+-- The honest cost side: an index is extra B-tree pages written on every
+-- insert and extra bytes on disk — the reality-check measurement put
+-- that at ~18% larger DB files (23.9→28.4 MB at 50k rows, 97.7→114.9 MB
+-- at 200k rows). That cost is real but is dwarfed by the FK-scan cost it
+-- removes (a ~50× wall-clock win at 200k rows), so it is not a close
+-- call.
+--
+-- Not every REFERENCES column needs its own index: a column that is
+-- already the LEADING column of that table's PRIMARY KEY already has a
+-- SQLite-maintained B-tree keyed on it, so a second single-column index
+-- would be pure write/space cost with no read benefit. Skipped for that
+-- reason: concept_name.concept_id (PK is (concept_id, name_id)),
+-- distribution.concept_id (PK is (concept_id, area_scheme, area_code)),
+-- vernacular.concept_id (PK is (concept_id, lang, name)),
+-- trait_value.concept_id (PK is (concept_id, vocab, vocab_version, dim)),
+-- and concept_relation.from_concept (PK is
+-- (from_concept, to_concept, source)). Every other FK child column gets
+-- an explicit index below, next to the table it lives on.
 
 -- Taxonomy.
 CREATE TABLE IF NOT EXISTS taxon_concept (
@@ -64,6 +101,10 @@ CREATE TABLE IF NOT EXISTS taxon_concept (
   rank_verbatim  TEXT
 );
 
+CREATE INDEX IF NOT EXISTS idx_taxon_concept_backbone_id ON taxon_concept(backbone_id);
+CREATE INDEX IF NOT EXISTS idx_taxon_concept_accepted_name ON taxon_concept(accepted_name);
+CREATE INDEX IF NOT EXISTS idx_taxon_concept_parent_id ON taxon_concept(parent_id);
+
 -- Concept <-> name (accepted + synonyms, typed).
 CREATE TABLE IF NOT EXISTS concept_name (
   concept_id   TEXT NOT NULL REFERENCES taxon_concept(id),
@@ -73,6 +114,11 @@ CREATE TABLE IF NOT EXISTS concept_name (
   PRIMARY KEY (concept_id, name_id)
 );
 
+-- concept_id is already the PK's leading column (skipped, see comment
+-- above); name_id is not, so the ingest's FK check on name deletes would
+-- scan concept_name in full without this.
+CREATE INDEX IF NOT EXISTS idx_concept_name_name_id ON concept_name(name_id);
+
 -- Cross-references to external authorities.
 CREATE TABLE IF NOT EXISTS xref (
   concept_id   TEXT NOT NULL REFERENCES taxon_concept(id),
@@ -80,6 +126,10 @@ CREATE TABLE IF NOT EXISTS xref (
   ext_id       TEXT NOT NULL,
   PRIMARY KEY (authority, ext_id)
 );
+
+-- concept_id is NOT the PK's leading column here (PK is
+-- (authority, ext_id)), so it needs its own index.
+CREATE INDEX IF NOT EXISTS idx_xref_concept_id ON xref(concept_id);
 
 -- Vernacular names (German per Buttler et al. 2018 or similar).
 CREATE TABLE IF NOT EXISTS vernacular (
@@ -139,6 +189,10 @@ CREATE TABLE IF NOT EXISTS concept_relation (
   PRIMARY KEY (from_concept, to_concept, source)
 );
 
+-- from_concept is the PK's leading column (skipped, see comment above);
+-- to_concept is not, so it needs its own index.
+CREATE INDEX IF NOT EXISTS idx_concept_relation_to_concept ON concept_relation(to_concept);
+
 -- Full-text/prefix search.
 --
 -- fts_name is a "contentless" FTS5 table (content=''): FTS5 stores only the
@@ -161,6 +215,10 @@ CREATE TABLE IF NOT EXISTS fts_name_map (
   rowid       INTEGER PRIMARY KEY,
   concept_id  TEXT NOT NULL REFERENCES taxon_concept(id)
 );
+
+-- rowid IS the table's own INTEGER PRIMARY KEY, but concept_id is a
+-- separate, unindexed FK column — needs its own index.
+CREATE INDEX IF NOT EXISTS idx_fts_name_map_concept_id ON fts_name_map(concept_id);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS fts_name USING fts5(
   canonical, vernacular_de,

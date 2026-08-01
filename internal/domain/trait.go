@@ -145,24 +145,26 @@ type TraitSet struct {
 // 4.2: they are on different scales even though the field type is the same
 // float64.
 //
-//   - EIVE M/N/R/L/T:                       (0, 10, true)  — uniform, normalized.
-//   - Tichý L/T/M/R/N:                      (1, 9, false)  — classic Ellenberg-
-//     compatible range, NOT normalized.
-//   - Tichý S (Salinity):                   (-3, 3, false) — a documented
-//     default range (Salinity is a signed scale centered on 0;
-//     poc/P06-findings.md observed roughly -0.02 to 0 in the sampled sheet
-//     but did not exhaustively confirm the full range). The authoritative
-//     range for any given value is the one the ingest pipeline records
-//     from the source data; this is only a fallback default, deliberately
-//     distinct from Midolo's (0,0) "no fixed scale" sentinel below.
-//   - Midolo disturbance dims:              (0, 0, false) — continuous,
-//     unbounded, no fixed scale. (0, 0, false) is the sentinel for "no
-//     fixed scale", not "the value is confined to exactly zero".
-//   - Any other (vocab, dim) combination     that is not meaningful for that
-//     (e.g. Midolo+M, EIVE+S, EIVE+a          vocabulary (the vocabulary simply
-//     disturbance dim):                      does not define that dimension) —
-//     the same (0, 0, false) "no fixed scale" sentinel, handled explicitly
-//     rather than falling through to a zero value by accident.
+// The (0, 0, false) result is a sentinel meaning "no fixed scale
+// established here — do not render this as a bounded scale", not "the
+// value is confined to exactly zero". It is returned for:
+//
+//   - Midolo disturbance dims: genuinely continuous/unbounded, no fixed
+//     scale by definition.
+//   - Tichý S (Salinity): PoC P6 only observed a narrow sample range
+//     (roughly -0.02 to 0) and did not confirm the full range, so no
+//     min/max is hardcoded here. The real range is recorded by the T2
+//     ingest pipeline from the actual data, not invented in this function.
+//   - Any (vocab, dim) combination the vocabulary simply does not define
+//     (e.g. Midolo+M, EIVE+S, EIVE+a disturbance dim) — handled by
+//     explicit case arms per vocabulary (not a bare fallthrough) so the
+//     `exhaustive` linter enforces every TraitDim is accounted for.
+//
+// The non-sentinel results are:
+//
+//   - EIVE M/N/R/L/T:  (0, 10, true) — uniform, normalized.
+//   - Tichý L/T/M/R/N: (1, 9, false) — classic Ellenberg-compatible range,
+//     NOT normalized.
 func ScaleFor(v TraitVocab, d TraitDim) (min, max float64, normalized bool) {
 	switch v {
 	case VocabEIVE:
@@ -178,9 +180,10 @@ func ScaleFor(v TraitVocab, d TraitDim) (min, max float64, normalized bool) {
 		case DimL, DimT, DimM, DimR, DimN:
 			return 1, 9, false
 		case DimS:
-			// Documented fallback default; see the ScaleFor doc comment
-			// above for why -3/3 and why this is not the (0,0) sentinel.
-			return -3, 3, false
+			// Deliberately the (0,0,false) "no fixed scale established"
+			// sentinel, not a guessed numeric range — see the ScaleFor
+			// doc comment above.
+			return 0, 0, false
 		case DimDisturbanceSeverity, DimDisturbanceFrequency, DimMowingFrequency, DimGrazingPressure, DimSoilDisturbance:
 			// Tichý defines none of the Midolo disturbance dimensions.
 			return 0, 0, false

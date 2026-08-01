@@ -99,20 +99,15 @@ func TestScaleFor_Tichy(t *testing.T) {
 }
 
 func TestScaleFor_TichySalinity(t *testing.T) {
-	// Salinity's real range is data-dependent (recorded by the pipeline);
-	// ScaleFor documents a fixed default and is never normalized.
+	// PoC P6 only observed a narrow sample range (roughly -0.02 to 0) for
+	// Tichý Salinity and did not confirm the full range, so ScaleFor must
+	// NOT invent a numeric range here — it reports the same (0,0,false)
+	// "no fixed scale established" sentinel used for Midolo's genuinely
+	// unbounded dims. The real range is recorded by the T2 ingest pipeline
+	// from the actual data, not hardcoded in this function.
 	min, max, normalized := ScaleFor(VocabTichy, DimS)
-	if normalized {
-		t.Fatalf("ScaleFor(Tichy, S) normalized = true, want false")
-	}
-	// Pin the exact documented default (tichySalinityDefaultMin/Max in
-	// trait.go) rather than just "not (0,0)", so a mutation of either
-	// constant's literal value is caught.
-	if min != -3.0 || max != 3.0 {
-		t.Fatalf("ScaleFor(Tichy, S) = (%v,%v), want (-3,3)", min, max)
-	}
-	if min == 0 && max == 0 {
-		t.Fatalf("ScaleFor(Tichy, S) = (0,0), want a documented non-degenerate default distinct from the Midolo 'no fixed scale' sentinel")
+	if min != 0 || max != 0 || normalized {
+		t.Fatalf("ScaleFor(Tichy, S) = (%v,%v,%v), want (0,0,false)", min, max, normalized)
 	}
 }
 

@@ -23,7 +23,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jobrunner/hostus/internal/adapters/sqlite"
 	"github.com/jobrunner/hostus/internal/app"
+	"github.com/jobrunner/hostus/internal/application"
 	"github.com/jobrunner/hostus/internal/domain"
 )
 
@@ -145,6 +147,7 @@ func TestIntegration_EndToEndIngestServeQuery(t *testing.T) {
 	assertConceptByID(t, client, ts.URL)
 	assertConceptByXref(t, client, ts.URL)
 	assertMatchBatch(t, client, ts.URL, aggConceptID)
+	assertSuggest(t, client, ts.URL)
 	assertMetricsExposed(t, client, ts.URL)
 }
 
@@ -313,5 +316,152 @@ func assertMetricsExposed(t *testing.T, client *http.Client, baseURL string) {
 	}
 	if !strings.Contains(metricsBody.String(), "hostus_http_requests_total") {
 		t.Error("/metrics: want hostus_http_requests_total to be exposed after the calls above")
+	}
+	// assertSuggest (above) drove GET /v1/suggest at least twice (a 200 and
+	// a 400); path is recorded verbatim (r.URL.Path, no route templating —
+	// see internal/middleware/metrics.go), so the counter series for the
+	// suggest endpoint must be present too, not just the metric family
+	// name.
+	if !strings.Contains(metricsBody.String(), `path="/v1/suggest"`) {
+		t.Error(`/metrics: want a hostus_http_requests_total series with path="/v1/suggest" after assertSuggest's calls`)
+	}
+}
+
+// integrationSuggestResponse mirrors internal/adapters/http.suggestResponseDTO
+// (see suggest.go), trimmed to the fields this test asserts on.
+type integrationSuggestResponse struct {
+	BackboneVersions map[string]string `json:"backbone_versions"`
+	Results          []struct {
+		ConceptID string `json:"concept_id"`
+		Canonical string `json:"canonical"`
+		InArea    bool   `json:"in_area"`
+	} `json:"results"`
+}
+
+// assertSuggest drives GET /v1/suggest over real HTTP: q=coryn&area=AUT
+// must resolve to 200 with the Corynephorus canescens concept ranked in
+// (in_area:true) — AUT is the only WGSRPD-L3 area the WCVP fixture
+// actually carries for concept 405825 (see corynephorusConceptID's doc
+// comment and internal/adapters/http/suggest_test.go's identical
+// fixture-area note; the fixture has no GER distribution row). A missing
+// `q` must 400.
+func assertSuggest(t *testing.T, client *http.Client, baseURL string) {
+	t.Helper()
+
+	resp, err := client.Get(baseURL + "/v1/suggest?q=coryn&area=AUT")
+	if err != nil {
+		t.Fatalf("GET /v1/suggest: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /v1/suggest: status = %d, want 200", resp.StatusCode)
+	}
+	var suggest integrationSuggestResponse
+	if err := json.NewDecoder(resp.Body).Decode(&suggest); err != nil {
+		t.Fatalf("decoding /v1/suggest response: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	if suggest.BackboneVersions["wcvp"] != "2026-06-15" {
+		t.Errorf("backbone_versions[wcvp] = %q, want %q", suggest.BackboneVersions["wcvp"], "2026-06-15")
+	}
+	var coryn *struct {
+		ConceptID string `json:"concept_id"`
+		Canonical string `json:"canonical"`
+		InArea    bool   `json:"in_area"`
+	}
+	for i := range suggest.Results {
+		if suggest.Results[i].ConceptID == corynephorusConceptID {
+			coryn = &suggest.Results[i]
+			break
+		}
+	}
+	if coryn == nil {
+		t.Fatalf("results = %+v, want an entry for %q", suggest.Results, corynephorusConceptID)
+	}
+	if coryn.Canonical != "Corynephorus canescens" {
+		t.Errorf("canonical = %q, want %q", coryn.Canonical, "Corynephorus canescens")
+	}
+	if !coryn.InArea {
+		t.Error("in_area = false, want true for area=AUT (the fixture's only distributed area for this concept)")
+	}
+
+	missingQ, err := client.Get(baseURL + "/v1/suggest")
+	if err != nil {
+		t.Fatalf("GET /v1/suggest (no q): %v", err)
+	}
+	_ = missingQ.Body.Close()
+	if missingQ.StatusCode != http.StatusBadRequest {
+		t.Fatalf("GET /v1/suggest (no q): status = %d, want 400", missingQ.StatusCode)
+	}
+}
+
+// TestIntegration_OfflineBundleServesSuggestOffline proves the SP2 offline
+// field-use capability end to end: export a `sqlite.ExportBundle` (the
+// exact path `hostus bundle` uses, see internal/app/bundle.go) scoped to
+// area=AUT from the just-ingested database into a standalone bundle file,
+// then open ONLY that bundle file via sqlite.Open — never touching the
+// original database again — and call application.Suggest (the same use
+// case GET /v1/suggest's handler calls) directly against it. No HTTP
+// server, no upstream, no original database: if this resolves Corynephorus
+// canescens, the bundle is genuinely self-contained and field-usable
+// without connectivity.
+func TestIntegration_OfflineBundleServesSuggestOffline(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "hostus.sqlite")
+	bundlePath := filepath.Join(dir, "bundle.sqlite")
+
+	if _, err := app.Ingest(ctx, "testdata/dataset.yaml", dbPath); err != nil {
+		t.Fatalf("app.Ingest: unexpected error: %v", err)
+	}
+
+	src, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open(source): unexpected error: %v", err)
+	}
+
+	report, err := sqlite.ExportBundle(ctx, src, bundlePath, sqlite.BundleOpts{Area: "AUT", SnapshotVersion: "v1"})
+	if err != nil {
+		_ = src.Close()
+		t.Fatalf("sqlite.ExportBundle: unexpected error: %v", err)
+	}
+	if err := src.Close(); err != nil {
+		t.Fatalf("closing source db: %v", err)
+	}
+	if report.Concepts == 0 {
+		t.Fatal("sqlite.ExportBundle: report.Concepts = 0, want at least the AUT-scoped Corynephorus canescens concept")
+	}
+
+	// Open ONLY the bundle from here on — dbPath is never referenced again,
+	// proving the bundle file alone is queryable.
+	bundle, err := sqlite.Open(bundlePath)
+	if err != nil {
+		t.Fatalf("sqlite.Open(bundle): unexpected error: %v", err)
+	}
+	defer func() { _ = bundle.Close() }()
+
+	resp, err := application.Suggest(ctx, bundle, application.SuggestRequest{Q: "coryn", Area: "AUT"})
+	if err != nil {
+		t.Fatalf("application.Suggest against bundle: unexpected error: %v", err)
+	}
+	if resp.BackboneVersions["wcvp"] != "2026-06-15" {
+		t.Errorf("bundle backbone_versions[wcvp] = %q, want %q", resp.BackboneVersions["wcvp"], "2026-06-15")
+	}
+
+	var coryn *domain.SuggestItem
+	for i := range resp.Results {
+		if resp.Results[i].ConceptID == corynephorusConceptID {
+			coryn = &resp.Results[i]
+			break
+		}
+	}
+	if coryn == nil {
+		t.Fatalf("bundle results = %+v, want an entry for %q (offline suggest)", resp.Results, corynephorusConceptID)
+	}
+	if coryn.Canonical != "Corynephorus canescens" {
+		t.Errorf("bundle canonical = %q, want %q", coryn.Canonical, "Corynephorus canescens")
+	}
+	if !coryn.InArea {
+		t.Error("bundle in_area = false, want true for area=AUT")
 	}
 }

@@ -9,6 +9,10 @@
     `/openapi` folgen in späteren SPs. Die maßgebliche OpenAPI-Spezifikation
     liegt unter `api/openapi/openapi.yaml`.
 
+    Der Offline-Export (`hostus bundle`) ist kein HTTP-Endpunkt und daher
+    nicht Teil dieser Seite oder der OpenAPI-Spezifikation — siehe
+    [Offline-Bundle exportieren](../how-to/offline-bundle.md).
+
 ## Health-Endpunkte
 
 ### `GET /health/live`

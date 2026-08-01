@@ -103,6 +103,21 @@ Vegetationsaufnahme-Importe mit Tippfehlern:
   exakt aufgelösten Konzepte je Vokabular entspricht damit wieder exakt der
   Baseline (11.000 / 7.072 / 4.963), die Normalisierung ist auf
   Konzeptebene beweisbar rein additiv.
+- **`selectTraitWinners` rangiert normalisiert-gegen-normalisiert jetzt
+  explizit** (`application.ruleRank`), statt bei einem Slot-Konflikt
+  zwischen zwei normalisierten Zeilen einfach die CSV-Zeilenreihenfolge
+  entscheiden zu lassen — derselbe Defekt eine Ebene unter dem oben
+  beschriebenen exakt-vs-normalisiert-Fix: exakt > jede ungeflaggte
+  Regel (reine Schreibweise) > jede geflaggte Regel (Aggregat→Nominatart,
+  Autonym→Art), mit der `NameCandidates`-Reihenfolge als Tiebreak.
+  Gemessen (`poc/measure/bridge --a1diff` gegen die Task-5-DB): 10 von
+  117.153 gespeicherten `trait_value`-Zeilen ändern den Gewinner, alle bei
+  EIVE, alle geflaggt→ungeflaggt.
+- **Die Behauptung „exakt aufgelöste Konzepte == M2'-Baseline" ist jetzt
+  maschinell nachvollziehbar statt nur behauptet**: `poc/measure/stats.sql`
+  bekommt eine `resolution`-Aufschlüsselung je Vokabular
+  (`GROUP BY vocab, resolution`), bestätigt gegen die echte Datenbank
+  11.000/7.072/4.963 exakt.
 - **Bewusster Lizenz-Scope-Schnitt (PoC R1)**: Euro+Med PlantBase,
   GermanSL, EuroSL und die FloraVeg.EU-Downloads werden NICHT ingestiert —
   für keine der vier Quellen ließ sich eine belastbare
@@ -111,6 +126,31 @@ Vegetationsaufnahme-Importe mit Tippfehlern:
   gegen den WCVP/POWO-Backbone, nicht über eine dieser vier Quellen als
   Vermittlungsschicht — dokumentiert in
   `docs/how-to/trait-ingest.md`, nicht stillschweigend übergangen.
+
+- **Hardening-Zyklus (Tasks 1–6) abgeschlossen**: die in der
+  Reality-Check-Volldaten-Messkampagne (siehe „Reality-Check T2–T4" oben)
+  gefundenen Defekte sind behoben und am selben unveränderten
+  WCVP-Volldatensatz (1.448.984 Zeilen) nachgemessen — konsolidierte
+  Vorher/Nachher-Tabelle und aktualisierte Verdikte in
+  `docs/research/reality-check.md`, Abschnitt „Task 6: konsolidierte
+  Vorher/Nachher-Übersicht". Kernzahlen: Ingest läuft jetzt durch
+  (vorher: Absturz nach 5,37 s bzw. quadratischer Abbruch nach 22:48 min)
+  in 281,27 s mit linearer Skalierung (6/11/24 s statt 65/293/1.338 s bei
+  50k/100k/200k Zeilen); Taxon-Ebenen-Crosswalk-Auflösbarkeit steigt durch
+  Namensnormalisierung auf 97,96/98,82/99,11 % (vorher 87,84/95,73/96,41 %);
+  Mehrgebiets-Bundle-Export und der Parameterlimit-Bug beim Voll-Export
+  sind behoben, das Deutschland-Bundle schrumpft von 103,8 auf 81,05 MiB
+  (gzip 19,24 MiB, unter der 20-MB-Spec-Obergrenze). Eine Regression bleibt
+  offen und wird ehrlich als solche ausgewiesen: Suggest-p95 steigt um
+  25–27 % (220,2→274,37 ms ohne `area`, 253,8→321,57 ms mit `area=GER`),
+  Ursache mit den Mitteln dieses Zyklus nicht isoliert (Kandidaten:
+  Query-Plan-Wechsel durch die neuen FK-Indizes, zusätzliche
+  OTHER-Rang-Zeilen, Maschinen-Varianz). Die Lizenz-Zurückstellungs-
+  Empfehlung aus M6 ist nach der Normalisierung STÄRKER geworden, nicht nur
+  bestätigt: der real brückbare Gewinn der vier lizenzunklaren Quellen
+  schrumpft von 51/3/2 auf **2/1/1 Taxa** (EIVE/Tichý/Midolo), weil
+  Normalisierung fast alles bereits einsammelt, was die Brücken sonst
+  beigetragen hätten (`poc/measure/bridge --normbridge`).
 
 Weitere Backbones (COL XR) sowie `translate` und `/openapi` als generierte
 Spezifikation folgen in SP4+. `release-please` cuttet daraus das nächste

@@ -271,6 +271,22 @@ so: leere DB mit dem **Serienschema** anlegen (`hostus bundle` öffnet die
 `--db`-Datei und legt das Schema an), dann `poc/measure/fk_indexes.sql`
 einspielen, dann den echten `hostus ingest` laufen lassen.
 
+**Klarstellung (Task 6), weil das leicht misszuverstehen ist:** „legt das
+Schema an" gilt nur für eine **neue, leere** `--db`-Datei.
+`internal/adapters/sqlite/schema.sql` ist durchgehend
+`CREATE TABLE IF NOT EXISTS` (und ebenso `CREATE INDEX IF NOT EXISTS`) —
+genau die Begründung im Schema-Kopf selbst, „Applied verbatim … so Open()
+can apply it idempotently against an already-initialized database". Für
+eine **bereits existierende** DB-Datei aus einem älteren hostus-Stand
+passiert beim Öffnen mit einem neueren Binary **nichts**: eine Spalte wie
+`rank_verbatim` (Task 2) oder `trait_value.resolution` (Task 5) wird nicht
+nachträglich ergänzt, ein fehlender FK-Index nicht nachträglich angelegt.
+Es gibt keinen Migrationspfad — eine ältere DB-Datei bleibt auf ihrem
+Stand, und die einzige Art, eine Datenbank auf den neuen Schema-/Datenstand
+zu bringen, ist ein neuer `hostus ingest` gegen eine neue, leere Datei. Jede
+Datenbank in diesem Dokument (M1'/M2'/T5/…) ist deshalb ein vollständiger
+Neu-Ingest, keine migrierte Kopie einer älteren.
+
 ```bash
 nix develop -c bash poc/measure/run.sh m2
 ```
@@ -609,7 +625,9 @@ zuerst probiert wird).
 | **alle Regeln zusammen** | **+1.270** | **+231** | **+231** | **+44** | **+142** | **+30** |
 
 ⚑ = botanische Ermessensentscheidung, im Ingest-Report als `flagged`
-ausgewiesen (siehe T5.4).
+ausgewiesen (Einordnung/Begründung in T5.4; der Walk-back — warum die
+per-Regel-Zahlen dieser Tabelle NAMENSAUFLÖSUNG messen, nicht gespeicherte
+Zeilen, und wie sich das unterscheidet — steht in T5.5).
 
 Die Summe der Einzelregeln (EIVE 1.302, Midolo 144) liegt über dem
 Gesamtwert (1.270 / 142), weil sich einige Namen über mehr als eine Regel
@@ -669,7 +687,9 @@ Normalisierung bringt für EIVE **+10,12 Prozentpunkte auflösbar**
 
 **Laufzeit:** 277,26 s gegenüber 281,27 s in M1' — die Kandidatenleiter
 kostet **nichts** Messbares, weil sie nur bei Namen betreten wird, die der
-exakte Schlüssel ohnehin verloren hätte.
+exakte Schlüssel ohnehin verloren hätte. (Das ist die Laufzeit VOR dem
+Fix-Runde-1-Fix aus T5.5; die aktuelle Zahl NACH diesem Fix steht dort:
+285,80 s — ebenfalls nicht messbar teurer als M1'.)
 
 ### T5.4 Was die Zahlen kosten: Mehrdeutigkeit und zwei Ermessensfälle
 
@@ -869,10 +889,18 @@ Der Grund ist auszählbar — nur **19 EIVE-Taxa** (Tichý 0, Midolo 0) sind
 überhaupt reihenfolgeempfindlich, also von beiden Regelklassen betroffen,
 und für **keines** davon löst der Genitivschlüssel in WCVP auf:
 
-```bash
-# Zählskript siehe .superpowers/sdd/2026-08-01-hardening/task-5-report.md
-# eive: 19 reihenfolgeempfindlich, davon 0 mit auflösendem Genitivschlüssel
 ```
+# eive: 19 reihenfolgeempfindlich, davon 0 mit auflösendem Genitivschlüssel
+# tichy: 0 / 0   midolo: 0 / 0
+```
+
+(Korrektur Task 6: dieser Zählwert stammt aus einem Ad-hoc-Skript, das nur
+im Task-5-Report als Ausgabe zitiert wurde, nie als Datei existierte und
+deshalb hier nicht mehr referenziert wird. Das dahinterstehende Invariant
+— die Genitivregel steht in `NameCandidates` vor den beiden geflaggten
+Regeln — ist seither durch einen eingecheckten Test gepinnt
+(`internal/domain`, „genitive variant is offered before the flagged
+autonym collapse"), nicht durch das Ad-hoc-Skript.)
 
 Der Fix ist damit eine Korrektheitsreparatur an einer latenten Falle, kein
 Abdeckungsgewinn — gemessener Delta: **0**. Ebenfalls in dieser Runde:
@@ -1529,3 +1557,294 @@ Priorisiert nach Aufwand/Nutzen, mit dem gemessenen Trade-off je Punkt:
 | Ungescoptes Voll-Bundle | Schlägt am SQLite-Parameterlimit fehl (M5.1). |
 | Trefferquote der Brücken **nach** einem echten Brücken-Ingest | Es gibt keinen Reader für GermanSL/EuroSL; M6 misst die Obergrenze über reine Namens-/Akzeptiert-Link-Auflösung. |
 | Suggest-Durchsatz (req/s) | Der Server begrenzt hart auf 20 req/s; gemessen wurde Latenz, nicht Durchsatz. |
+
+---
+
+## Nach Hardening (Task 6): zwei Nachzügler aus Task 5 behoben
+
+Task 6 schließt zwei offene Punkte aus der Task-5-Nachmessung, bevor unten
+die Gesamtbilanz gezogen wird.
+
+### A1 — `selectTraitWinners` rangierte normalisiert-gegen-normalisiert nicht
+
+T5.5 hatte bereits behoben, dass ein **exakter** Treffer immer einen
+**normalisierten** schlägt (siehe oben) — aber unter mehreren normalisierten
+Zeilen, die auf dasselbe `(concept, dim)`-Slot treffen, entschied bislang
+schlicht die CSV-Zeilenreihenfolge. Das ist derselbe Fehlerklasse eine Ebene
+tiefer: eine **geflaggte** Regel (`aggregate_to_nominate`, `autonym` — diese
+setzen zwei Umgrenzungen gleich, die nicht identisch sind) konnte eine
+**ungeflaggte**, reine Schreibweisen-Regel (`hybrid_spacing`,
+`hybrid_marker_*`, `orthography_genitive` — Umgrenzung unverändert) rein
+durch Zeilenreihenfolge schlagen.
+
+**Fix** (`internal/application/traits_ingest.go`, `ruleRank`): die
+Rangfolge ist jetzt explizit — `exact` > jede ungeflaggte normalisierte
+Regel > jede geflaggte — mit der Reihenfolge aus `domain.NameCandidates`
+als Tiebreak zwischen unterschiedlichen Regeln; nur zwei Zeilen, die über
+**dieselbe** Regel aufgelöst haben, fallen auf die Zeilenreihenfolge
+zurück. Getestet in beiden Zeilenreihenfolgen
+(`TestIngestTraits_UnflaggedNormalisedRuleWinsOverFlaggedRegardlessOfRowOrder`,
+Konzept `Cardamine plumieri` über `orthography_genitive` vs. `autonym`) plus
+eine Invariante, dass jede bekannte `domain.NormalizationRule` einen
+Rang trägt und jede geflaggte Regel strikt über jeder ungeflaggten liegt
+(`TestRuleRank_CoversEveryNormalizationRuleAndRespectsFlagged`,
+`internal/application/traits_ingest_internal_test.go`).
+
+**Gemessener Effekt auf gespeicherte Werte** (`poc/measure/bridge --a1diff`
+gegen `poc/measure/out/t5real.sqlite`, dieselbe DB, die T5 vermessen hat):
+
+```bash
+nix develop -c bash -c 'cd poc && go build -o ../poc/measure/out/bridge ./measure/bridge'
+./poc/measure/out/bridge --a1diff --db poc/measure/out/t5real.sqlite \
+  --vocab eive=pipelines/eive/output/eive-canonical.csv \
+  --vocab tichy=pipelines/tichy/output/tichy-canonical.csv \
+  --vocab midolo=pipelines/midolo/output/midolo-canonical.csv
+```
+
+| Vokabular | resolved rows | umkämpfte Slots (≥2 Kandidaten) | Slots, deren Gewinner sich ändert | davon geflaggt→ungeflaggt |
+|---|---:|---:|---:|---:|
+| EIVE | 60.860 | 4.749 | **10** | 10 |
+| Tichý | 37.693 | 658 | **0** | 0 |
+| Midolo | 25.695 | 170 | **0** | 0 |
+
+(`resolved rows` reproduziert T5.2s `matched`-Zeilen exakt — 60.860 / 37.693
+/ 25.695 —, das ist die Fidelity-Prüfung dieser Sonde, dieselbe Rolle wie
+`poc/measure/bridge --norm`s exact-Zeile in T5.)
+
+**10 von 117.153 gespeicherten `trait_value`-Zeilen ändern sich** — alle bei
+EIVE, alle geflaggt→ungeflaggt (ein `aggregate_to_nominate`- oder
+`autonym`-Wert räumt den Slot für einen `hybrid_spacing`-,
+`hybrid_marker_*`- oder `orthography_genitive`-Wert). Tichý und Midolo
+ändern sich **nicht** — kein Slot dort hat einen ungeflaggt-vs-geflaggt-
+Konflikt. Das ist eine kleine, aber echte Korrektheitsreparatur: 10
+EIVE-Werte trugen bislang einen vermeidbar geflaggten (Umgrenzung
+gleichgesetzt) statt eines verfügbaren, ungeflaggten (reine Schreibweise)
+Werts, rein weil eine CSV-Zeile zufällig zuerst kam.
+
+`nix develop -c make lint` (0 Issues) und
+`nix develop -c make mutation PKG=./internal/application` sind grün: 117
+Killed / 8 Lived, beide Lived-Mutanten vorbestehend und bereits als
+beweisbare Äquivalente dokumentiert (Sortier-Komparator über eine Menge
+distinkter Regeln in `traits_ingest.go:427`, `sortedSample`-Cap in
+`traits_ingest.go:542`) — keiner davon in den Zeilen, die dieser Fix
+berührt.
+
+### A2 — die stärkste Behauptung aus T5.5 war unüberprüfbar
+
+T5.5/T5.9 behaupteten, die Zahl der **exakt** aufgelösten Konzepte je
+Vokabular entspreche nach der Normalisierung exakt der M2'-Baseline
+(11.000 / 7.072 / 4.963) — als Prosa, ohne dass ein Test oder das
+Mess-Harness diese Zahl erzeugte.
+
+**Fix:** `poc/measure/stats.sql` bekommt eine `resolution`-Aufschlüsselung
+je Vokabular (`GROUP BY vocab, resolution`, `NULL` = exakt). Gegen
+`poc/measure/out/t5real.sqlite` (dieselbe Task-5-DB) gemessen:
+
+```bash
+sqlite3 poc/measure/out/t5real.sqlite < poc/measure/stats.sql | grep resolution
+```
+
+```
+resolution_eive_exact|11000
+resolution_eive_aggregate_to_nominate|6
+resolution_eive_autonym|4
+resolution_eive_hybrid_marker_added|44
+resolution_eive_hybrid_marker_dropped|4
+resolution_eive_hybrid_spacing|353
+resolution_eive_orthography_genitive|16
+resolution_midolo2023_exact|4963
+resolution_midolo2023_aggregate_to_nominate|105
+resolution_midolo2023_autonym|1
+resolution_midolo2023_hybrid_marker_added|16
+resolution_midolo2023_hybrid_spacing|11
+resolution_midolo2023_orthography_genitive|8
+resolution_tichy2023_exact|7072
+resolution_tichy2023_aggregate_to_nominate|152
+resolution_tichy2023_hybrid_marker_added|30
+resolution_tichy2023_orthography_genitive|13
+```
+
+`resolution_*_exact` ist **11.000 / 7.072 / 4.963** — exakt die M2'-Baseline.
+Die Behauptung ist damit maschinell nachvollziehbar, nicht mehr nur
+behauptet. Zusätzlich pinnt ein Fixture-Regressionstest dieselbe Eigenschaft
+auf Unit-Test-Ebene, ohne die 440k-DB zu brauchen: [siehe unten, ergänzt in
+`internal/application/traits_ingest_test.go`] — Normalisierung reduziert nie
+die Menge der exakt aufgelösten Konzepte, weil `selectTraitWinners`
+(A1-Fix) einen exakten Treffer niemals verdrängt
+(`TestIngestTraits_ExactMatchWinsTheSlotRegardlessOfRowOrder`, bereits
+vorhanden aus T5.5, deckt beide Zeilenreihenfolgen ab) — kombiniert mit
+`TestRuleRank_CoversEveryNormalizationRuleAndRespectsFlagged` (A1) ist die
+Invariante „Normalisierung verdrängt nie einen exakten Treffer" jetzt an
+zwei Stellen gepinnt: Fixture-Test UND die maschinenlesbare
+`resolution`-Aufschlüsselung gegen die echte DB.
+
+---
+
+## Task 6: konsolidierte Vorher/Nachher-Übersicht
+
+Eine Tabelle, jede Zahl mit dem Abschnitt, der sie erzeugt hat — keine Zahl
+hier ist neu gemessen, jede stammt aus M1–M6/T5 oben.
+
+| Kennzahl | Vorher (Serienstand) | Nachher (Hardening) | Quelle |
+|---|---|---|---|
+| Ingest, unverändertes WCVP-Archiv | **bricht ab** nach 5,37 s (unbekannter Rang) | **läuft durch**, 281,27 s | M1.0 / M1' |
+| Ingest, gefiltertes Archiv, Serienschema | quadratisch, nach 22 min 48 s manuell abgebrochen, 0 Zeilen persistiert | — (per M1.2a durch FK-Indizes ersetzt) | M1.1 |
+| Skalierung 50k/100k/200k Taxon-Zeilen (Serienschema) | 65 / 293 / 1.338 s | **6 / 11 / 24 s** | M1.2 / M1.2a |
+| WCVP-Konzepte (`taxon_concept`) | 440.098 (gefiltertes Archiv) | **440.534** (unverändertes Archiv, +436) | M1.3 / M1' |
+| Crosswalk auflösbar, Taxon-Ebene — EIVE | 87,84 % (13.026/14.830) | **97,96 %** (14.527/14.830) | M2' / T5.3 |
+| Crosswalk auflösbar, Taxon-Ebene — Tichý | 95,73 % (8.527/8.907) | **98,82 %** (8.802/8.907) | M2' / T5.3 |
+| Crosswalk auflösbar, Taxon-Ebene — Midolo | 96,41 % (6.153/6.382) | **99,11 %** (6.325/6.382) | M2' / T5.3 |
+| Unmatched-Zeilen — EIVE | 8.830 (12,39 %) | **1.445** (−83,6 %) | M2' / T5.2 |
+| Unmatched-Zeilen — Tichý | 1.868 (4,10 %) | **526** (−71,8 %) | M2' / T5.2 |
+| Unmatched-Zeilen — Midolo | 1.145 (3,59 %) | **285** (−75,1 %) | M2' / T5.2 |
+| Ambiguous-Zeilen — EIVE | 7.824 | **8.961** (+1.137 — jedes vorher unmatched) | M2' / T5.2 |
+| Ambiguous-Zeilen — Tichý | 7.170 | **7.373** (+203) | M2' / T5.2 |
+| Ambiguous-Zeilen — Midolo | 5.780 | **5.930** (+150) | M2' / T5.2 |
+| Bundle GER (entpackt) | 108,9 MB (103,8 MiB) | **84.987.904 Byte (81,05 MiB)** | M5.2 / M5.3 |
+| Bundle GER (`gzip -9`) | 20,5 MiB | **19,24 MiB** | M5.2 / M5.3 |
+| Bundle Mitteleuropa DE/AT/CH (entpackt) | nicht ausdrückbar (`--area` nur Einzelwert) | **93.450.240 Byte (89,1 MiB)** | M5.1 / M5.3 |
+| Bundle Mitteleuropa DE/AT/CH (`gzip -9`) | — | **21.953.315 Byte (20,9 MiB)** | M5.3 |
+| Voll-Bundle (ungescopt) | scheitert am SQLite-Parameterlimit, 0 Byte | **erfolgreich, 928.059.392 Byte (885,2 MiB), 986,65 s** | M5.1 / M5.3 |
+| Suggest p50 (ohne `area`) | 36,4 ms | 38,59 ms | M4 / M3' |
+| Suggest p95 (ohne `area`) | 220,2 ms | 274,37 ms (**+25 %**, Ursache offen) | M4 / M3' |
+| Suggest p50 (`area=GER`) | 38,7 ms | 40,81 ms | M4 / M3' |
+| Suggest p95 (`area=GER`) | 253,8 ms | 321,57 ms (**+27 %**, Ursache offen) | M4 / M3' |
+| Lizenzbrücken, real nutzbarer Gewinn — EIVE | 51 Taxa (0,34 % von 14.830) *vor* Normalisierung | **2 Taxa** (0,01 %) *nach* Normalisierung, gegen die auf 303 geschrumpfte Restmenge | M6 / Task 6 §„Lizenzempfehlung" unten |
+| Lizenzbrücken, real nutzbarer Gewinn — Tichý | 3 Taxa | **1 Taxon**, gegen 105 verbleibende | M6 / Task 6 |
+| Lizenzbrücken, real nutzbarer Gewinn — Midolo | 2 Taxa | **1 Taxon**, gegen 57 verbleibende | M6 / Task 6 |
+| A1: gespeicherte `trait_value`-Zeilen, die sich durch die explizite Regel-Rangfolge ändern | (Defekt bestand seit T5.5) | **10 von 117.153** (alle EIVE, alle geflaggt→ungeflaggt) | Task 6 §A1 oben |
+| A2: exakt aufgelöste Konzepte je Vokabular nach Normalisierung == M2'-Baseline | unbelegte Behauptung (T5.5 Prosa) | **maschinell bestätigt**: 11.000 / 7.072 / 4.963 | Task 6 §A2 oben |
+
+## Task 6: Verdikte nach Hardening
+
+Frühere Verdikte bleiben als Historie sichtbar; „→" markiert den Stand nach
+diesem Task.
+
+- **M1 (Voller Ingest).** Vorher: **hält nicht** (M1.0/M1.1: Absturz bzw.
+  quadratischer Abbruch, 0 Zeilen persistiert). Nach Task 2/3 (M1.2a/M1'):
+  **hält** — derselbe unveränderte WCVP-Volldatensatz läuft in 281,27 s
+  durch, mit linearer statt quadratischer Skalierung (6/11/24 s statt
+  65/293/1.338 s) und ohne manuellen Zwischenschritt. **→ hält.**
+- **M2 (Crosswalk-Trefferquote).** Vorher: **hält mit Auflagen**
+  (87,76–96,41 % auflösbar, Ambiguous-Anteil als Auflage benannt). Nach
+  Task 5 (Normalisierung, T5.3): 97,96–99,11 % auflösbar — die Auflage
+  „strukturelle Nichttreffer" ist zum großen Teil eingelöst, die zweite
+  Auflage (Ambiguous-Anteil, jetzt sogar leicht gestiegen, weil
+  Normalisierung auch neue Mehrdeutigkeiten aufdeckt, siehe T5.4) bleibt
+  bestehen: der Dienst rät weiterhin nicht bei mehrdeutiger Auflösung, das
+  kostet Abdeckung, kauft aber Korrektheit. **→ hält mit Auflagen** (die
+  verbleibende Auflage ist jetzt Ambiguous, nicht mehr strukturelle
+  Nichttreffer).
+- **M3 (Alternative Auflösungsziele / Lizenzbrücken, Namensebene).** Vorher:
+  **hält nicht als eigenständiges Argument** (Obergrenze, keine Prognose;
+  siehe M6). Nach Normalisierung unverändert methodisch fragwürdig als
+  Namensebene-Zahl — und durch M6 (Task 6, unten) inhaltlich noch schwächer
+  geworden, weil der M6-Gewinn selbst eingebrochen ist. **→ hält nicht.**
+- **M4 (Suggest-Latenz).** Vorher: **hält** (p50 36,4 ms, p95 220,2 ms).
+  Nach Hardening (M3'): p50 bleibt praktisch unverändert (38,59/40,81 ms),
+  **p95 steigt sichtbar** um 25 % (220,2→274,37 ms) bzw. 27 % mit
+  `area=GER` (253,8→321,57 ms). Die Ursache ist mit den Mitteln dieser
+  Aufgabe **nicht isoliert** (Kandidaten: Query-Plan-Änderung durch die
+  neuen FK-Indizes, zusätzliche OTHER-Rang-Zeilen aus T1, unquantifizierte
+  Maschinen-Varianz — ein Wiederholungslauf zeigte ~10 % Schwankung ohne
+  Codeänderung, aber das erklärt nicht die volle Differenz, und die
+  Baseline hat keinen eigenen Wiederholungslauf zum Vergleich). Ein p95 von
+  274 ms ist für Feld-Autosuggest weiterhin nutzbar (p50 bleibt komfortabel
+  unter 100 ms), aber eine 25–27-%-Verschlechterung ohne geklärte Ursache
+  ehrlich als **offen** auszuweisen ist wichtiger als das Ergebnis
+  schönzureden. **→ hält mit Auflagen** (nicht mehr uneingeschränkt „hält" —
+  die Auflage ist die ungeklärte p95-Regression, nicht mehr nur die
+  Präfixlänge).
+- **M5 (Bundle-Größe).** Vorher: **hält nicht** (108,9 MB statt 10–20 MB,
+  Faktor 5,4; Mehrgebiets-Export und Voll-Export unmöglich). Nach Task 4:
+  Mehrgebiets-Scoping (`--area DE,AT,CH`) und das Parameterlimit sind
+  vollständig behoben (beide Bugs vorher „hält nicht", jetzt geschlossen).
+  Die Größen-Erwartung „10–20 MB" hält weiterhin nicht (GER entpackt jetzt
+  81,05 MiB statt 103,8 MiB — eine reale Verbesserung von ~22 %, aber immer
+  noch Faktor ~4–4,5 über der Spec-Zahl), doch die Lücke ist jetzt gemessen
+  und ursächlich auf einen expliziten Kompromiss zurückgeführt (Synonyme/
+  Namen bleiben vollständig, das ist eine reale UC1-Fähigkeit, keine
+  Verschnitt-Verschwendung), nicht mehr eine unerklärte Abweichung.
+  Komprimiert (`gzip -9`) liegt GER bei 19,24 MiB — **unter** der
+  20-MB-Obergrenze; Mitteleuropa (DE/AT/CH) bei 20,9 MiB — knapp **darüber**.
+  **→ hält mit Auflagen** (beide vorherigen „hält nicht"-Bugs behoben; die
+  Größen-Erwartung selbst ist als Design-Kompromiss dokumentiert statt
+  offen, aber die 10–20-MB-Zahl bleibt unerreicht für die entpackte
+  On-Device-Größe).
+- **M6 (Lizenzbrücken, Konzept-Ebene — die belastbare Zahl).** Vorher:
+  **hält nicht als Rechtfertigung für die Lizenzgespräche** (realer Gewinn
+  51/3/2 Taxa, 0,34 % von EIVE). Nach Normalisierung (Task 6, neu
+  gemessen, siehe unten): der reale Gewinn schrumpft weiter auf 2/1/1 Taxa
+  — nicht weil die Brücken schlechter geworden wären, sondern weil
+  Normalisierung fast alles bereits eingesammelt hat, was die Brücken
+  vorher beigetragen hätten. **→ hält nicht — und die Lücke zum
+  „lohnt sich" ist jetzt noch größer als vorher gemessen.**
+
+## Task 6: was jetzt zu entscheiden ist (aktualisiert)
+
+1. **Die zwei Ingest-Blocker: erledigt.** Task 2/3 haben sie behoben und
+   M1' bestätigt es am unveränderten WCVP-Volldatensatz. Kein offener
+   Punkt mehr.
+2. **Bundle-Größe/Mehrgebiets-Scoping: erledigt, mit dokumentiertem
+   Rest-Trade-off.** Task 4 hat beide Bugs (Einzelwert-`--area`,
+   Parameterlimit) behoben und die Größe um ~22 % gesenkt. Offen bleibt
+   eine reine Produktentscheidung, kein Bug: ob ein synonymfreies
+   „schlankes" Bundle-Profil als ZUSÄTZLICHE Option angeboten werden soll
+   (kostet die UC1-Fähigkeit, einen Synonymnamen einzutippen) — das ist
+   hier bewusst nicht entschieden, weil es eine Scope-Frage ist, keine
+   Reparatur.
+3. **p95-Latenzregression: weiterhin offen, jetzt priorisiert.** Die
+   einzige Kennzahl, die sich messbar verschlechtert hat (+25–27 %), ohne
+   dass diese Aufgabe die Ursache isolieren konnte. Nächster Schritt, falls
+   das angegangen wird: `EXPLAIN QUERY PLAN` für den Suggest-Pfad
+   (`internal/adapters/sqlite/suggest.go`) gegen eine identische, aber
+   unindizierte Vergleichs-DB, um Kandidat (a) aus M3' (Query-Plan-Wechsel
+   durch die neuen FK-Indizes) tatsächlich zu bestätigen oder
+   auszuschließen — das ist mit den Mitteln dieses Hardening-Zyklus nicht
+   mehr geleistet worden und bleibt der klarste Restpunkt des gesamten
+   Berichts.
+4. **Residuale Unmatched/Ambiguous-Zeilen: kleiner, aber nicht null.**
+   Nach Normalisierung bleiben 1.445/526/285 Zeilen unmatched (meist
+   binäre Hybridformeln, nicht-nominate Unterarten ohne WCVP-Zeile, echte
+   Nichtvorkommen, Fuzzy-Territorium — siehe T5.7) und 8.961/7.373/5.930
+   ambiguous (T5.4: Löwenanteil aus dem Aggregat-Rückfall). Der
+   Ambiguous-Anteil ist jetzt größer als der Unmatched-Anteil bei allen
+   drei Vokabularen — die in M2 identifizierte Review-Warteschlange
+   (Spec §D.4) ist real und durch Normalisierung nicht kleiner geworden,
+   sondern (T5.4) leicht gewachsen, weil neue Kandidatenschlüssel auch neue
+   Mehrdeutigkeiten aufdecken können. Das ist kein Rückschritt — die vorher
+   unmatched-Zeilen wurden nie geraten und werden es weiterhin nicht — aber
+   der nächste Hebel für Abdeckung liegt jetzt eher in Disambiguierung
+   (Rang-/Autorschaftsabgleich, wie M6 unten schon andeutete) als in
+   weiterer Namensnormalisierung.
+5. **Das Lizenzgespräch: die Zurückstellungs-Empfehlung ist jetzt
+   STÄRKER, nicht nur bestätigt.** M6 hatte den realen Brücken-Gewinn vor
+   Normalisierung mit 51 EIVE-/3 Tichý-/2 Midolo-Taxa beziffert (gegen die
+   damalige Restmenge von 1.815/380/229 unaufgelösten Taxa) und empfohlen,
+   das Lizenzgespräch zurückzustellen, weil Normalisierung der günstigere
+   Hebel sei. Diese Empfehlung wurde jetzt **nachgemessen, nicht nur
+   bestätigt**: gegen die auf 303/105/57 geschrumpfte Restmenge (T5.3, nach
+   Normalisierung) liefern dieselben vier Quellen nur noch **2 EIVE-, 1
+   Tichý-, 1 Midolo-Taxon** real bis zu einem WCVP-Konzept brückbar
+   (`poc/measure/bridge --normbridge`, siehe Befehl unten). Normalisierung
+   hat also nicht nur selbst Abdeckung gebracht, sondern **fast den
+   gesamten Betrag eingesammelt, den die Lizenzbrücken sonst beigetragen
+   hätten** — von 51 auf 2 bei EIVE, dem mit Abstand größten Kandidaten.
+   **Die Empfehlung aus M6 ist damit deutlich stärker geworden**: das
+   Lizenzgespräch für Euro+Med/EuroSL/GermanSL/FloraVeg als
+   Datenqualitäts-Hebel zu führen, lohnt sich nach diesem Befund noch
+   weniger als vorher — der noch offene Rest ist so klein (2/1/1 Taxa),
+   dass selbst ein erfolgreiches Lizenzgespräch für alle vier Quellen
+   praktisch keinen messbaren Effekt mehr hätte. Reproduktion:
+
+   ```bash
+   nix develop -c bash -c 'cd poc && go build -o ../poc/measure/out/bridge ./measure/bridge'
+   ./poc/measure/out/bridge --normbridge --db poc/measure/out/t5real.sqlite \
+     --vocab eive=pipelines/eive/output/eive-canonical.csv \
+     --vocab tichy=pipelines/tichy/output/tichy-canonical.csv \
+     --vocab midolo=pipelines/midolo/output/midolo-canonical.csv \
+     --list euromed=pipelines/euromed/output/euromed-canonical.csv \
+     --list eurosl=pipelines/eurosl/output/eurosl-canonical.csv \
+     --list germansl=pipelines/germansl/output/germansl-canonical.csv \
+     --list floraveg=pipelines/floraveg/output/floraveg-canonical.csv
+   ```

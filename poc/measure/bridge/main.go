@@ -45,12 +45,30 @@ func main() {
 	var vocabs, lists pathList
 	db := flag.String("db", "", "path to the ingested hostus SQLite database")
 	norm := flag.Bool("norm", false, "Hardening Task 5 mode: measure the marginal gain of each name-normalisation rule (see norm.go) instead of the M3 bridge-list probe")
+	a1diff := flag.Bool("a1diff", false, "Hardening Task 6 (A1) mode: measure how many (concept,dim) slots' winner changes under the explicit exact>unflagged>flagged precedence (see a1diff.go) vs the pre-fix first-row-wins rule")
+	normbridge := flag.Bool("normbridge", false, "Hardening Task 6 mode: re-measure M6's licensing-bridge gain against the POST-normalisation unresolved set (see normbridge.go)")
 	flag.Var(&vocabs, "vocab", "trait vocabulary as name=path/to/canonical.csv (repeatable)")
 	flag.Var(&lists, "list", "alternative name list as name=path/to/canonical.csv (repeatable)")
 	flag.Parse()
 
 	if *norm {
 		if err := runNorm(*db, vocabs); err != nil {
+			fmt.Fprintln(os.Stderr, "bridge:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *a1diff {
+		if err := runA1Diff(*db, vocabs); err != nil {
+			fmt.Fprintln(os.Stderr, "bridge:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *normbridge {
+		if err := runNormBridge(*db, vocabs, lists); err != nil {
 			fmt.Fprintln(os.Stderr, "bridge:", err)
 			os.Exit(1)
 		}

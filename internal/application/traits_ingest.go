@@ -237,6 +237,39 @@ type traitSlot struct {
 	dim       string
 }
 
+// ruleRank orders every domain.NormalizationRule for selectTraitWinners'
+// slot-contention decision. It mirrors domain.NameCandidates' emission
+// order exactly (see that function's doc comment): RuleExact first, then
+// the pure-spelling rewrites in the order NameCandidates tries them, then
+// the two flagged circumscription judgements last. A lower rank always
+// wins a contested slot.
+//
+// This is the fix for the defect one level below the one selectTraitWinners
+// already guards: an exact match beating a normalised one was fixed first
+// (see the Hardening Task 5 walk-back), but among normalised rules the
+// code fell back to plain row order — meaning a FLAGGED rule
+// (aggregate_to_nominate, autonym: these equate two circumscriptions that
+// are not identical) could beat an UNFLAGGED, pure-spelling rule
+// (hybrid_spacing, hybrid_marker_*, orthography_genitive: circumscription
+// unchanged) purely because the flagged row happened to appear first in
+// the CSV. ruleRank makes the precedence explicit: exact > unflagged
+// normalised > flagged normalised, with row order only breaking a tie
+// between two rows that resolved via the IDENTICAL rule.
+//
+// If domain.NameCandidates' rule set ever grows, this map must grow with
+// it — TestRuleRank_CoversEveryNormalizationRule pins that as a compile
+// -time-adjacent invariant (a table-driven test over every known rule).
+var ruleRank = map[domain.NormalizationRule]int{
+	domain.RuleExact:               0,
+	domain.RuleHybridSpacing:       1,
+	domain.RuleHybridMarkerDropped: 2,
+	domain.RuleHybridMarkerAdded:   3,
+	domain.RuleOrthographyGenitive: 4,
+	domain.RuleAggregate:           5,
+	domain.RuleAggregateToNominate: 6,
+	domain.RuleAutonym:             7,
+}
+
 // selectTraitWinners decides, for every (concept, dim) slot, WHICH of the
 // rows resolving to it actually gets stored — returning the set of winning
 // row indices.
@@ -262,6 +295,12 @@ type traitSlot struct {
 // A row whose Dim does not parse is always treated as a winner, so the write
 // loop still reaches it and still fails the ingest with the same error as
 // before rather than having it quietly filtered out here.
+//
+// Precedence among CONTENDING rows is ruleRank, not "first row wins": an
+// exact match always outranks every normalised one, and among normalised
+// rules an unflagged (pure spelling) rule always outranks a flagged
+// (circumscription-changing) one. Only two rows resolved via the identical
+// rule fall back to row order — see ruleRank's doc comment.
 func selectTraitWinners(rows []TraitRow, resolved map[string]traitResolution) map[int]bool {
 	best := make(map[traitSlot]int, len(rows))
 	winners := make(map[int]bool, len(rows))
@@ -282,11 +321,12 @@ func selectTraitWinners(rows []TraitRow, resolved map[string]traitResolution) ma
 			winners[i] = true
 			continue
 		}
-		// Only an exact match may displace an incumbent, and only when the
-		// incumbent is not itself exact — otherwise the first row keeps the
-		// slot.
+		// A challenger displaces the incumbent only if it strictly outranks
+		// it (ruleRank); a tie (both rows resolved via the same rule) keeps
+		// the incumbent, so the first row in CSV order still wins the
+		// ordinary case of a vocabulary listing the same taxon twice.
 		prevRule := resolved[domain.Canonicalize(rows[prev].Taxon)].rule
-		if res.rule == domain.RuleExact && prevRule != domain.RuleExact {
+		if ruleRank[res.rule] < ruleRank[prevRule] {
 			delete(winners, prev)
 			best[slot] = i
 			winners[i] = true

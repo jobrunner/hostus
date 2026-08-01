@@ -1025,3 +1025,73 @@ func TestIngestTraits_TwoNormalisedRowsOnOneSlotCreditExactlyOne(t *testing.T) {
 		t.Errorf("Traits = %+v, want the FIRST row's value (7.0) to own the slot", sets)
 	}
 }
+
+// TestIngestTraits_UnflaggedNormalisedRuleWinsOverFlaggedRegardlessOfRowOrder
+// is Hardening Task 6's A1 fix: selectTraitWinners previously ranked
+// contending NORMALISED rows purely by CSV row order, so a FLAGGED rule
+// (aggregate_to_nominate, autonym — these equate two circumscriptions that
+// are not identical) could beat an UNFLAGGED, pure-spelling rule
+// (hybrid_spacing, hybrid_marker_*, orthography_genitive — circumscription
+// unchanged) purely because it happened to appear first in the source CSV.
+//
+// Both rows here resolve to the SAME backbone concept ("Cardamine
+// plumieri") through two DIFFERENT normalised rules:
+//   - "Cardamine plumierii" -> orthography_genitive (unflagged, pure
+//     spelling: -ii/-i alternation).
+//   - "Cardamine plumieri subsp. plumieri" -> autonym (flagged: equates an
+//     infraspecific autonym to its species).
+//
+// The unflagged row must win the slot in BOTH row orders.
+func TestIngestTraits_UnflaggedNormalisedRuleWinsOverFlaggedRegardlessOfRowOrder(t *testing.T) {
+	genitiveRow := application.TraitRow{Taxon: "Cardamine plumierii", Vocab: "eive", VocabVersion: "1.0", Dim: "M", Value: 1.0}
+	autonymRow := application.TraitRow{Taxon: "Cardamine plumieri subsp. plumieri", Vocab: "eive", VocabVersion: "1.0", Dim: "M", Value: 9.0}
+
+	for _, tc := range []struct {
+		name string
+		rows []application.TraitRow
+	}{
+		{"genitive first", []application.TraitRow{genitiveRow, autonymRow}},
+		{"autonym first", []application.TraitRow{autonymRow, genitiveRow}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { assertUnflaggedOwnsTheSlot(t, tc.rows) })
+	}
+}
+
+// assertUnflaggedOwnsTheSlot runs one row order of
+// TestIngestTraits_UnflaggedNormalisedRuleWinsOverFlaggedRegardlessOfRowOrder.
+func assertUnflaggedOwnsTheSlot(t *testing.T, rows []application.TraitRow) {
+	t.Helper()
+	repo := seededMatchRepo(t)
+	ids := seedBackboneNames(t, repo, "test-slot3", "Cardamine plumieri")
+	ctx := context.Background()
+
+	report, err := application.IngestTraits(ctx, repo, fakeTraitRowSource{rows: rows}, eiveMeta)
+	if err != nil {
+		t.Fatalf("IngestTraits: unexpected error: %v", err)
+	}
+	if report.Matched != 2 {
+		t.Errorf("report.Matched = %d, want 2 (both rows resolve)", report.Matched)
+	}
+	want := []application.RuleCount{{Rule: domain.RuleOrthographyGenitive, Rows: 1, Taxa: 1}}
+	if len(report.Normalized) != 1 || report.Normalized[0] != want[0] {
+		t.Errorf("report.Normalized = %+v, want %+v — the flagged autonym row must not be credited, it stored nothing", report.Normalized, want)
+	}
+	if len(report.FlaggedSample) != 0 {
+		t.Errorf("report.FlaggedSample = %v, want empty — the flagged row lost the slot, so it must not surface as a judgement call actually applied", report.FlaggedSample)
+	}
+
+	sets, err := repo.Traits(ctx, ids["Cardamine plumieri"], nil)
+	if err != nil {
+		t.Fatalf("Traits: unexpected error: %v", err)
+	}
+	if len(sets) != 1 || len(sets[0].Values) != 1 {
+		t.Fatalf("Traits = %+v, want exactly one stored value", sets)
+	}
+	got := sets[0].Values[0]
+	if got.Value != 1.0 {
+		t.Errorf("stored value = %v, want 1.0 (the unflagged genitive match, never the flagged autonym's 9.0)", got.Value)
+	}
+	if got.Resolution != string(domain.RuleOrthographyGenitive) {
+		t.Errorf("stored Resolution = %q, want %q", got.Resolution, domain.RuleOrthographyGenitive)
+	}
+}

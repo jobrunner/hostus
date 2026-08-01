@@ -29,3 +29,17 @@ SELECT 'concepts_with_all_three', COUNT(*) FROM (
 SELECT 'concepts_rank_'||rank, COUNT(*) FROM taxon_concept GROUP BY rank;
 SELECT 'names_rank_'||rank, COUNT(*) FROM name GROUP BY rank;
 SELECT 'concepts_in_GER', COUNT(DISTINCT concept_id) FROM distribution WHERE area_code='GER';
+
+-- Resolution breakdown per vocabulary (Hardening Task 6, A2): re-derives
+-- the "exactly-resolved concepts equal the M2' baseline" claim from
+-- docs/research/reality-check.md T5.5/T5.9 directly from the database,
+-- instead of leaving it as unchecked prose. resolution IS NULL is an exact
+-- match (see domain.TraitValue.Resolution / traitValueFor in
+-- internal/application/traits_ingest.go); a non-NULL value names one of
+-- domain.NormalizationRule's flagged or unflagged rewrite rules. Compare
+-- the 'exact' rows below against reality-check.md's M2' baseline
+-- (11.000 / 7.072 / 4.963 for eive / tichy2023 / midolo2023): equal means
+-- normalisation displaced no exact match; the claim is checkable, not
+-- asserted.
+SELECT 'resolution_'||vocab||'_'||COALESCE(resolution,'exact'), COUNT(DISTINCT concept_id)
+  FROM trait_value GROUP BY vocab, resolution ORDER BY vocab, resolution;

@@ -25,6 +25,22 @@ type Repository interface {
 	// BackboneVersions lists every ingested backbone artifact.
 	BackboneVersions(ctx context.Context) ([]domain.BackboneVersion, error)
 
+	// Traits returns every domain.TraitSet hostus holds for conceptID,
+	// grouped PER VOCABULARY — TraitSets are never merged across
+	// vocabularies, since PoC P10 found their Taxonomy namespaces genuinely
+	// diverge (see domain.TraitSet's doc comment). Each returned TraitSet
+	// carries the VocabVersion/Taxonomy joined from trait_vocabulary, and
+	// its Values are ordered by Dim for a deterministic result. vocabs
+	// restricts which vocabularies are returned; nil or empty means every
+	// vocabulary the concept has values in. Returns domain.ErrNotFound
+	// (wrapped) if conceptID is unknown; a concept with no ingested trait
+	// values (but which does exist) returns an empty, non-nil-error slice —
+	// callers must not conflate the two.
+	Traits(ctx context.Context, conceptID string, vocabs []domain.TraitVocab) ([]domain.TraitSet, error)
+	// TraitVocabularies lists every ingested (vocab, version) metadata row,
+	// for API/response provenance.
+	TraitVocabularies(ctx context.Context) ([]domain.TraitVocabMeta, error)
+
 	// Suggest returns FTS5 prefix-match candidates for q (an autosuggest
 	// query fragment), scored but UNRANKED: the application layer runs
 	// domain.RankSuggestions over the result and truncates to opts.Limit
@@ -79,6 +95,14 @@ type IngestTx interface {
 	LinkName(conceptID, nameID, role string, homotypic *bool) error
 	AddXref(conceptID string, x domain.Xref) error
 	AddDistribution(conceptID string, d domain.Distribution) error
+	// AddTraitValue writes one trait_value row for conceptID. A nil
+	// tv.NicheWidth/tv.NSystems must be persisted as SQL NULL, not as a
+	// 0/0.0 literal — see domain.TraitValue's doc comment on why nil and
+	// zero are never interchangeable here.
+	AddTraitValue(conceptID string, tv domain.TraitValue) error
+	// UpsertTraitVocabulary records one (vocab, version) metadata row,
+	// joined onto trait_value reads by Repository.Traits.
+	UpsertTraitVocabulary(meta domain.TraitVocabMeta) error
 	// Finalize (re)builds the FTS5 autosuggest index (fts_name/fts_name_map)
 	// for every name this transaction has linked to a concept (both the
 	// accepted name and its synonyms), so Suggest can find them. Callers

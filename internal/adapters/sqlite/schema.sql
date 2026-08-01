@@ -86,16 +86,34 @@ CREATE TABLE IF NOT EXISTS distribution (
 );
 
 -- Indicator/trait values (pointer to concept + vocabulary version, not the
--- numbers as ground truth). Created here but unused until SP3/SP5.
+-- numbers as ground truth). value is always present (domain.TraitValue.Value
+-- is a plain float64, never a pointer); niche_width/n_systems are nullable
+-- because EIVE provides them and Tichý/Midolo do not — NULL there means "this
+-- vocabulary does not provide this datum", never a stand-in for 0 (see
+-- domain.TraitValue's doc comment).
 CREATE TABLE IF NOT EXISTS trait_value (
   concept_id    TEXT NOT NULL REFERENCES taxon_concept(id),
   vocab         TEXT NOT NULL,      -- eive|tichy2023|midolo2023
   vocab_version TEXT NOT NULL,
   dim           TEXT NOT NULL,      -- M|N|R|L|T|S
-  value         REAL,
-  niche_width   REAL,               -- EIVE only
-  n_systems     INTEGER,
+  value         REAL NOT NULL,
+  niche_width   REAL,               -- EIVE only; NULL for Tichý/Midolo
+  n_systems     INTEGER,            -- EIVE only; NULL for Tichý/Midolo
   PRIMARY KEY (concept_id, vocab, vocab_version, dim)
+);
+
+-- Trait-vocabulary provenance metadata: one row per ingested (vocab,
+-- version) pair, joined onto trait_value reads to surface VocabVersion and
+-- the Taxonomy namespace (see domain.TraitSet.Taxonomy) each vocabulary's
+-- values are harmonized against.
+CREATE TABLE IF NOT EXISTS trait_vocabulary (
+  vocab         TEXT NOT NULL,      -- eive|tichy2023|midolo2023
+  version       TEXT NOT NULL,
+  taxonomy      TEXT NOT NULL,      -- euromed-aligned|floraveg-eunis-aligned|...
+  license       TEXT,
+  source_url    TEXT,
+  ingested_at   TEXT NOT NULL,
+  PRIMARY KEY (vocab, version)
 );
 
 -- Concept relations (UC6). Created here but unused until SP3/SP5.

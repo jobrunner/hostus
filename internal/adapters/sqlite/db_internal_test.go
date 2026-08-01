@@ -20,6 +20,7 @@ var wantTables = []string{
 	"vernacular",
 	"distribution",
 	"trait_value",
+	"trait_vocabulary",
 	"concept_relation",
 	"fts_name_map",
 	"fts_name",

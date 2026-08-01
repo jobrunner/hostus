@@ -226,6 +226,84 @@ func TestExportBundle_EmptyArea_IncludesEverything(t *testing.T) {
 	}
 }
 
+// TestExportBundle_CarriesTraitValuesAndVocabularyMetadata proves the
+// offline bundle gap the Task 3 brief calls out is closed: trait_value and
+// trait_vocabulary rows survive ExportBundle, and the exported file's own
+// Traits/TraitVocabularies work against them through a fresh sqlite.Open —
+// the offline field app needs trait data, not just taxonomy.
+func TestExportBundle_CarriesTraitValuesAndVocabularyMetadata(t *testing.T) {
+	ctx := context.Background()
+	src := ingestWCVPFixture(t)
+
+	bvs, err := src.BackboneVersions(ctx)
+	if err != nil || len(bvs) == 0 {
+		t.Fatalf("BackboneVersions: unexpected error/empty result: %v / %+v", err, bvs)
+	}
+
+	const conceptID = "wcvp:concept:405825" // Corynephorus canescens, in AUT scope
+	tx, err := src.BeginIngest(ctx, bvs[0])
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	niche := 2.5
+	nsys := 12
+	if err := tx.AddTraitValue(conceptID, domain.TraitValue{
+		Vocab: domain.VocabEIVE, VocabVersion: "1.0", Dim: domain.DimM, Value: 5.5,
+		NicheWidth: &niche, NSystems: &nsys,
+	}); err != nil {
+		t.Fatalf("AddTraitValue: unexpected error: %v", err)
+	}
+	if err := tx.UpsertTraitVocabulary(domain.TraitVocabMeta{
+		Vocab: domain.VocabEIVE, Version: "1.0", Taxonomy: "euromed-aligned", License: "CC-BY-4.0",
+	}); err != nil {
+		t.Fatalf("UpsertTraitVocabulary: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+
+	out := filepath.Join(t.TempDir(), "bundle-traits.sqlite")
+	if _, err := sqlite.ExportBundle(ctx, src, out, sqlite.BundleOpts{
+		Area: "AUT", SnapshotVersion: "v1", Now: func() time.Time { return fixedBundleClock },
+	}); err != nil {
+		t.Fatalf("ExportBundle: unexpected error: %v", err)
+	}
+
+	bundle, err := sqlite.Open(out)
+	if err != nil {
+		t.Fatalf("sqlite.Open(bundle): unexpected error: %v", err)
+	}
+	defer func() { _ = bundle.Close() }()
+
+	assertBundleTraits(t, bundle, conceptID)
+	assertBundleTraitVocabularies(t, bundle)
+}
+
+func assertBundleTraits(t *testing.T, bundle *sqlite.DB, conceptID string) {
+	t.Helper()
+	sets, err := bundle.Traits(context.Background(), conceptID, nil)
+	if err != nil {
+		t.Fatalf("bundle.Traits: unexpected error: %v", err)
+	}
+	if len(sets) != 1 || sets[0].Vocab != domain.VocabEIVE || sets[0].Taxonomy != "euromed-aligned" {
+		t.Fatalf("bundle.Traits(%q) = %+v, want one eive set with Taxonomy=euromed-aligned", conceptID, sets)
+	}
+	if len(sets[0].Values) != 1 || sets[0].Values[0].NicheWidth == nil || *sets[0].Values[0].NicheWidth != 2.5 {
+		t.Fatalf("bundle.Traits(%q) values = %+v, want one M value with NicheWidth=2.5", conceptID, sets[0].Values)
+	}
+}
+
+func assertBundleTraitVocabularies(t *testing.T, bundle *sqlite.DB) {
+	t.Helper()
+	metas, err := bundle.TraitVocabularies(context.Background())
+	if err != nil {
+		t.Fatalf("bundle.TraitVocabularies: unexpected error: %v", err)
+	}
+	if len(metas) != 1 || metas[0].Vocab != domain.VocabEIVE {
+		t.Fatalf("bundle.TraitVocabularies() = %+v, want one eive entry", metas)
+	}
+}
+
 // TestExportBundle_AreaWithNoMatchingConcepts_ProducesEmptyBundle exercises
 // the "GER does not exist in the fixture" case the task brief calls out: no
 // concept has a GER distribution row, so the bundle must come out empty

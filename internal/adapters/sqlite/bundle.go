@@ -171,27 +171,7 @@ func populateBundle(ctx context.Context, src, bundle *DB, conceptIDs []string, o
 	}
 	report.Concepts = concepts
 
-	if _, err := copyRows(ctx, src, bundle,
-		`SELECT concept_id, name_id, role, homotypic FROM concept_name WHERE concept_id IN (`+placeholders+`)`, args,
-		`INSERT INTO concept_name (concept_id, name_id, role, homotypic) VALUES (?,?,?,?)`); err != nil {
-		return report, err
-	}
-
-	if _, err := copyRows(ctx, src, bundle,
-		`SELECT concept_id, authority, ext_id FROM xref WHERE concept_id IN (`+placeholders+`)`, args,
-		`INSERT INTO xref (concept_id, authority, ext_id) VALUES (?,?,?)`); err != nil {
-		return report, err
-	}
-
-	if _, err := copyRows(ctx, src, bundle,
-		`SELECT concept_id, area_scheme, area_code FROM distribution WHERE concept_id IN (`+placeholders+`)`, args,
-		`INSERT INTO distribution (concept_id, area_scheme, area_code) VALUES (?,?,?)`); err != nil {
-		return report, err
-	}
-
-	if _, err := copyRows(ctx, src, bundle,
-		`SELECT concept_id, lang, name, preferred FROM vernacular WHERE concept_id IN (`+placeholders+`)`, args,
-		`INSERT INTO vernacular (concept_id, lang, name, preferred) VALUES (?,?,?,?)`); err != nil {
+	if err := copyConceptScopedTables(ctx, src, bundle, placeholders, args); err != nil {
 		return report, err
 	}
 
@@ -211,6 +191,53 @@ func populateBundle(ctx context.Context, src, bundle *DB, conceptIDs []string, o
 		return report, err
 	}
 	return report, nil
+}
+
+// copyConceptScopedTables copies every remaining concept_id-keyed table
+// (concept_name, xref, distribution, vernacular, trait_value) scoped by
+// placeholders/args, plus trait_vocabulary in full (metadata, not
+// concept-scoped — the offline field app needs the Taxonomy/license/source
+// provenance for every trait_value row copied above). Split out of
+// populateBundle purely to keep that function's cyclomatic complexity down;
+// it carries no logic of its own beyond sequencing copyRows calls.
+func copyConceptScopedTables(ctx context.Context, src, bundle *DB, placeholders string, args []any) error {
+	if _, err := copyRows(ctx, src, bundle,
+		`SELECT concept_id, name_id, role, homotypic FROM concept_name WHERE concept_id IN (`+placeholders+`)`, args,
+		`INSERT INTO concept_name (concept_id, name_id, role, homotypic) VALUES (?,?,?,?)`); err != nil {
+		return err
+	}
+
+	if _, err := copyRows(ctx, src, bundle,
+		`SELECT concept_id, authority, ext_id FROM xref WHERE concept_id IN (`+placeholders+`)`, args,
+		`INSERT INTO xref (concept_id, authority, ext_id) VALUES (?,?,?)`); err != nil {
+		return err
+	}
+
+	if _, err := copyRows(ctx, src, bundle,
+		`SELECT concept_id, area_scheme, area_code FROM distribution WHERE concept_id IN (`+placeholders+`)`, args,
+		`INSERT INTO distribution (concept_id, area_scheme, area_code) VALUES (?,?,?)`); err != nil {
+		return err
+	}
+
+	if _, err := copyRows(ctx, src, bundle,
+		`SELECT concept_id, lang, name, preferred FROM vernacular WHERE concept_id IN (`+placeholders+`)`, args,
+		`INSERT INTO vernacular (concept_id, lang, name, preferred) VALUES (?,?,?,?)`); err != nil {
+		return err
+	}
+
+	if _, err := copyRows(ctx, src, bundle,
+		`SELECT concept_id, vocab, vocab_version, dim, value, niche_width, n_systems FROM trait_value WHERE concept_id IN (`+placeholders+`)`, args,
+		`INSERT INTO trait_value (concept_id, vocab, vocab_version, dim, value, niche_width, n_systems) VALUES (?,?,?,?,?,?,?)`); err != nil {
+		return err
+	}
+
+	if _, err := copyRows(ctx, src, bundle,
+		`SELECT vocab, version, taxonomy, license, source_url, ingested_at FROM trait_vocabulary`, nil,
+		`INSERT INTO trait_vocabulary (vocab, version, taxonomy, license, source_url, ingested_at) VALUES (?,?,?,?,?,?)`); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // backboneVersionScopeQuery builds the query copyBackboneVersions runs to

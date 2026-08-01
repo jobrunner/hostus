@@ -138,6 +138,19 @@ type TraitSet struct {
 	Values       []TraitValue
 }
 
+// TraitVocabMeta is the provenance record for one ingested (vocab, version)
+// pair: license/source/ingestion metadata plus the Taxonomy namespace its
+// TraitValue rows are harmonized against (see TraitSet.Taxonomy). It backs
+// output.Repository.TraitVocabularies and the Taxonomy/VocabVersion fields
+// output.Repository.Traits joins onto each TraitSet.
+type TraitVocabMeta struct {
+	Vocab     TraitVocab
+	Version   string
+	Taxonomy  string
+	License   string
+	SourceURL string
+}
+
 // ScaleFor reports the value range and normalization state of one
 // (vocabulary, dimension) combination, so callers can tell whether two
 // TraitValue.Value numbers are even comparable. It is the guard against

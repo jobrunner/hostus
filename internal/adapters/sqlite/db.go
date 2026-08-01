@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	"time"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (CGO-free, FTS5 built in) — see ADR-0010
 
@@ -273,6 +274,59 @@ func (t *ingestTx) Finalize() error {
 		if _, err := t.tx.ExecContext(t.ctx, `INSERT INTO fts_name (rowid, canonical, vernacular_de) VALUES (?, ?, '')`, rowID, p.canonical); err != nil {
 			return fmt.Errorf("sqlite: inserting fts_name for concept %q: %w", p.conceptID, err)
 		}
+	}
+	return nil
+}
+
+// nullableFloat converts an optional *float64 into a driver value SQLite
+// treats as NULL when the pointer is nil. This is the write-side of the nil
+// vs 0.0 distinction domain.TraitValue documents: a nil NicheWidth must
+// become SQL NULL, never a literal 0.0.
+func nullableFloat(f *float64) any {
+	if f == nil {
+		return nil
+	}
+	return *f
+}
+
+// nullableInt converts an optional *int into a driver value SQLite treats
+// as NULL when the pointer is nil (the int counterpart of nullableFloat,
+// for TraitValue.NSystems).
+func nullableInt(i *int) any {
+	if i == nil {
+		return nil
+	}
+	return *i
+}
+
+// AddTraitValue writes one trait_value row for conceptID. tv.NicheWidth and
+// tv.NSystems are written as SQL NULL when nil, per the pointer semantics
+// domain.TraitValue documents — never coerced to 0/0.0.
+func (t *ingestTx) AddTraitValue(conceptID string, tv domain.TraitValue) error {
+	_, err := t.tx.ExecContext(t.ctx, `
+		INSERT OR REPLACE INTO trait_value (concept_id, vocab, vocab_version, dim, value, niche_width, n_systems)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		conceptID, string(tv.Vocab), tv.VocabVersion, string(tv.Dim), tv.Value, nullableFloat(tv.NicheWidth), nullableInt(tv.NSystems),
+	)
+	if err != nil {
+		return fmt.Errorf("sqlite: adding trait value %s/%s/%s for concept %q: %w", tv.Vocab, tv.VocabVersion, tv.Dim, conceptID, err)
+	}
+	return nil
+}
+
+// UpsertTraitVocabulary records one (vocab, version) metadata row. ingested_at
+// is stamped with the current time here rather than taken from meta (which
+// carries no such field) — this mirrors ExportBundle's bundle_meta pattern,
+// where provenance/timing metadata is orthogonal to the domain-level fields
+// callers construct.
+func (t *ingestTx) UpsertTraitVocabulary(meta domain.TraitVocabMeta) error {
+	_, err := t.tx.ExecContext(t.ctx, `
+		INSERT OR REPLACE INTO trait_vocabulary (vocab, version, taxonomy, license, source_url, ingested_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		string(meta.Vocab), meta.Version, meta.Taxonomy, meta.License, meta.SourceURL, time.Now().UTC().Format(time.RFC3339),
+	)
+	if err != nil {
+		return fmt.Errorf("sqlite: upserting trait vocabulary %s/%s: %w", meta.Vocab, meta.Version, err)
 	}
 	return nil
 }

@@ -175,3 +175,51 @@ func TestIngestCommand_RegisteredOnRoot(t *testing.T) {
 		t.Fatalf("got command %q, want %q", cmd.Use, ingestCmdName)
 	}
 }
+
+// TestPrintTraitReports_NormalisationVisibleAndFlagged is Hardening Task 5's
+// "visible, not silent" requirement at the CLI layer: a normalised match
+// must be attributed to its rule, and the two rules that equate two
+// circumscriptions (aggregate-to-nominate-species, autonym-to-species) must
+// additionally be marked as flagged and name their taxa — otherwise a
+// judgement call would be indistinguishable from an exact hit in the only
+// output an operator ever sees.
+func TestPrintTraitReports_NormalisationVisibleAndFlagged(t *testing.T) {
+	reports := []application.TraitIngestReport{{
+		Vocab: "eive", Rows: 3, Matched: 3,
+		Normalized: []application.RuleCount{
+			{Rule: "aggregate_to_nominate", Rows: 2, Taxa: 1, Flagged: true},
+			{Rule: "hybrid_spacing", Rows: 1, Taxa: 1},
+		},
+		FlaggedSample: []string{"Acer opalus aggr."},
+	}}
+
+	var buf bytes.Buffer
+	printTraitReports(&buf, reports)
+	got := buf.String()
+
+	for _, want := range []string{
+		"normalized aggregate_to_nominate: rows=2 taxa=1",
+		"flagged",
+		"normalized hybrid_spacing: rows=1 taxa=1",
+		"flagged sample: Acer opalus aggr.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("report %q, want it to contain %q", got, want)
+		}
+	}
+	// The unflagged rule's line must NOT carry the flag marker.
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(line, "hybrid_spacing") && strings.Contains(line, "flagged") {
+			t.Errorf("line %q marks an unflagged rule as flagged", line)
+		}
+	}
+}
+
+func TestPrintTraitReports_ExactOnlyVocabularyPrintsNoNormalisationLines(t *testing.T) {
+	var buf bytes.Buffer
+	printTraitReports(&buf, []application.TraitIngestReport{{Vocab: "eive", Rows: 1, Matched: 1}})
+	got := buf.String()
+	if strings.Contains(got, "normalized") || strings.Contains(got, "flagged") {
+		t.Errorf("report %q, want no normalisation lines when nothing was normalised", got)
+	}
+}

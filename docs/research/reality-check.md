@@ -539,6 +539,254 @@ Präambel oben); das ist Aufgabe von Task 6.
 
 ---
 
+## Nach Hardening (Task 5): deterministische Namensnormalisierung
+
+> Diese Sektion misst die Wirkung von Task 5
+> (`internal/domain/normalize.go`, verdrahtet in
+> `application.IngestTraits`) auf **genau die Kennzahl aus M2'/M2.2**.
+> Bezugsgröße ist durchgängig die Task-3-Messung (M2'), nicht die
+> Ur-Baseline M2.1. Die Baseline-Zahlen oben bleiben unverändert stehen.
+> Verdikte liefert Task 6.
+>
+> Anlass ist der Befund aus M2.4: die Nichttreffer sind überwiegend
+> **strukturell**. Task 5 hat das nicht an einer 20er-Stichprobe, sondern an
+> den **vollständigen** Nichttrefferlisten
+> (`poc/measure/out/unmatched-{eive,tichy,midolo}.txt`, 1.804 / 380 / 229
+> Taxa) nachgezählt: Aggregatmarker 664 / 229 / 134 Namen, Hybridmarker
+> 452 / 136 / 83, infraspezifische Autonyme 356 / 0 / 5.
+
+### Was gemessen wurde und womit
+
+Zwei unabhängige Wege, die zueinander passen müssen:
+
+1. **Regel-Sonde** (`poc/measure/bridge --norm`, Quelle `poc/measure/bridge/norm.go`).
+   Reine Namensauflösung gegen die fertige M1'-Datenbank, Sekunden statt
+   Minuten — dadurch lässt sich **jede Regel einzeln** ein- und ausschalten.
+   Die Sonde ist keine Nachbildung: `Canonicalize` und `NameCandidates`
+   werden von `poc/measure/gen_canonicalize.sh` bzw.
+   `poc/measure/gen_normalize.sh` **zeilengenau** aus
+   `internal/domain/` kopiert (`--check` verifiziert die Kopie), der Index
+   ist `canonical_fold → COUNT(DISTINCT concept_id)` über
+   `name JOIN concept_name` — genau das, was `sqlite.MatchExact` auflöst —
+   und die Klassifikation ist die von `application.resolveTraitName`.
+   **Gültigkeitsnachweis:** die `exact`-Zeile der Sonde reproduziert die
+   M2'-Zahlen zeilengenau (EIVE 54.612 / 8.830 / 7.824, Tichý
+   36.554 / 1.868 / 7.170, Midolo 24.985 / 1.145 / 5.780) und die
+   M2.2-Taxonzahlen exakt (13.026 / 8.527 / 6.153). Ohne diese Deckung
+   wären die Deltas darunter wertlos.
+2. **Voller Ingest** (`run.sh t5ingest`), derselbe Lauf wie M1'/M2', nur mit
+   der Normalisierung — die Gegenprobe im echten Codepfad.
+
+```bash
+nix develop -c bash poc/measure/run.sh t5          # Regel-Sonde, ~8 s
+nix develop -c bash poc/measure/run.sh t5ingest    # voller Ingest, 277 s
+```
+
+Binary: `nix develop -c make build` (`hostus` v0.2.4-91-g2a8c270-dirty).
+Rohdaten: `poc/measure/out/t5-norm.txt`, `poc/measure/out/t5-ingest.log`,
+`poc/measure/out/t5-stats.txt`.
+
+**Die beiden Wege stimmen überein:** der volle Ingest liefert für alle drei
+Vokabulare exakt die `ALL RULES`-Zeilen der Sonde.
+
+### T5.1 Marginaler Zugewinn je Regel (Taxon-Ebene, jede Regel allein)
+
+Jede Zeile ist ein eigener Lauf: nur der exakte Schlüssel **plus diese eine
+Regel**. „+matched" sind eindeutig aufgelöste Taxa, „+ambig" die zusätzlich
+mehrdeutig gewordenen (beides kam vorher aus `unmatched`; eine Regel kann
+kein vorher aufgelöstes Taxon umlenken, weil der exakte Schlüssel immer
+zuerst probiert wird).
+
+| Regel | EIVE +matched | EIVE +ambig | Tichý +matched | Tichý +ambig | Midolo +matched | Midolo +ambig |
+|---|---:|---:|---:|---:|---:|---:|
+| `hybrid_spacing` (`Acer ×coriaceum` → `acer × coriaceum`) | **+360** | +1 | 0 | 0 | +11 | 0 |
+| `hybrid_marker_dropped` (`Anacamptis ×albertii` → `anacamptis albertii`) | +43 | +5 | 0 | 0 | +2 | 0 |
+| `hybrid_marker_added` (`Abies borisii-regis` → `abies × borisii-regis`) | +51 | 0 | +32 | 0 | +16 | 0 |
+| `aggregate` (nur echte Aggregatkonzepte) | **0** | 0 | **0** | 0 | **0** | 0 |
+| `aggregate_to_nominate` (`Acer opalus aggr.` → `acer opalus`) ⚑ | **+554** | +158 | **+186** | +44 | **+106** | +27 |
+| `autonym` (`Acer obtusatum subsp. obtusatum` → `acer obtusatum`) ⚑ | **+277** | +72 | 0 | 0 | +1 | +3 |
+| `orthography_genitive` (`Cardamine plumierii` → `cardamine plumieri`) | +17 | 0 | +13 | 0 | +8 | 0 |
+| **alle Regeln zusammen** | **+1.270** | **+231** | **+231** | **+44** | **+142** | **+30** |
+
+⚑ = botanische Ermessensentscheidung, im Ingest-Report als `flagged`
+ausgewiesen (siehe T5.4).
+
+Die Summe der Einzelregeln (EIVE 1.302, Midolo 144) liegt über dem
+Gesamtwert (1.270 / 142), weil sich einige Namen über mehr als eine Regel
+erreichen lassen; Tichý ist überschneidungsfrei (32 + 186 + 13 = 231).
+
+**Der Nullbefund gehört dazu:** die Regel `aggregate` — die ein
+*tatsächliches* Aggregatkonzept sucht, statt auf die Nominatart
+auszuweichen — bringt in allen drei Vokabularen **exakt null** Treffer. Der
+Grund ist nachgemessen und nicht vermutet:
+
+```bash
+sqlite3 poc/measure/out/m1real.sqlite \
+  "SELECT count(*) FROM name WHERE canonical_fold LIKE '% agg.%' OR canonical_fold LIKE '% aggr.%' OR canonical_fold LIKE '%s.l.%'"
+# 0
+```
+
+WCVP führt **keinen einzigen** aggregatmarkierten Namen. Ohne den Rückfall
+auf die Nominatart ist bei Aggregaten also nichts zu holen — genau das macht
+den Rückfall zur Entscheidung und nicht zur Formalie.
+
+### T5.2 Zeilenebene, kumulativ (voller Ingest, Gegenprobe)
+
+| Vokabular | Zeilen | matched (M2') | **matched (T5)** | unmatched (M2') | **unmatched (T5)** | ambiguous (M2') | **ambiguous (T5)** |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `eive` | 71.266 | 54.612 (76,64 %) | **60.860 (85,40 %)** | 8.830 | **1.445** (−83,6 %) | 7.824 | **8.961** (+1.137) |
+| `tichy2023` | 45.592 | 36.554 (80,17 %) | **37.693 (82,68 %)** | 1.868 | **526** (−71,8 %) | 7.170 | **7.373** (+203) |
+| `midolo2023` | 31.910 | 24.985 (78,30 %) | **25.695 (80,52 %)** | 1.145 | **285** (−75,1 %) | 5.780 | **5.930** (+150) |
+
+### T5.3 Taxon-Ebene (die Bezugsgröße aus M2.2)
+
+M2.2 zählt „in WCVP auflösbar" = der Name findet im Index **überhaupt** ein
+Konzept (eindeutig **oder** mehrdeutig). Beide Lesarten stehen hier, damit
+der Zugewinn nicht durch die Wahl der Kennzahl geschönt wird:
+
+| Vokabular | distinkte Taxa | auflösbar M2' | **auflösbar T5** | *eindeutig* M2' | ***eindeutig* T5** |
+|---|---:|---:|---:|---:|---:|
+| EIVE | 14.830 | 13.026 (87,84 %) | **14.527 (97,96 %)** | 11.420 (77,01 %) | **12.690 (85,57 %)** |
+| Tichý | 8.907 | 8.527 (95,73 %) | **8.802 (98,82 %)** | 7.162 (80,41 %) | **7.393 (83,00 %)** |
+| Midolo | 6.382 | 6.153 (96,41 %) | **6.325 (99,11 %)** | 4.997 (78,30 %) | **5.139 (80,52 %)** |
+
+Zum Vergleich der Größenordnungen: die **gesamte** Lizenzroute (M3,
+Vereinigung aller vier Brückenlisten, Obergrenze) erreichte für EIVE
++6,09 %, und M6 zeigte, dass davon real ~0,34 % ankommen. Die
+Normalisierung bringt für EIVE **+10,12 Prozentpunkte auflösbar**
+(87,84 → 97,96 %) — rund eine Größenordnung mehr, ohne Lizenzgespräch.
+
+**Trait-Abdeckung der Konzepte** (`poc/measure/out/t5-stats.txt`):
+
+| Kennzahl | M2' | **T5** |
+|---|---:|---:|
+| Konzepte mit irgendeinem Trait-Wert | 11.648 | **12.080** |
+| … mit EIVE | 11.000 | **11.426** |
+| … mit Tichý | 7.072 | **7.215** |
+| … mit Midolo | 4.963 | **5.104** |
+| … mit EIVE UND Tichý | 6.671 | **6.810** |
+| … mit allen dreien | 4.251 | **4.373** |
+
+**Laufzeit:** 277,26 s gegenüber 281,27 s in M1' — die Kandidatenleiter
+kostet **nichts** Messbares, weil sie nur bei Namen betreten wird, die der
+exakte Schlüssel ohnehin verloren hätte.
+
+### T5.4 Was die Zahlen kosten: Mehrdeutigkeit und zwei Ermessensfälle
+
+**Die Mehrdeutigkeit steigt** — das ist keine Nebenwirkung, die man
+verschweigen darf: EIVE +231 Taxa (1.606 → 1.837), Tichý +44
+(1.365 → 1.409), Midolo +30 (1.156 → 1.186); auf Zeilenebene
++1.137 / +203 / +150. **Jedes** dieser Taxa war vorher `unmatched`; kein
+vorher aufgelöstes Taxon ist mehrdeutig geworden, weil `NameCandidates` den
+unveränderten `Canonicalize`-Schlüssel immer zuerst probiert und die
+Leiter beim ersten antwortenden Schlüssel abbricht. Mehrdeutig heißt
+weiterhin: **nichts** wird geschrieben, es wird nicht geraten. Der Löwenanteil
+stammt aus dem Aggregat-Rückfall (EIVE 158 von 231).
+
+Zwei Regeln setzen zwei Umgrenzungen gleich, die nicht identisch sind. Sie
+sind deshalb `Flagged` (`domain.NormalizationRule.Flagged`), werden im
+Ingest-Report getrennt gezählt und namentlich bemustert:
+
+```
+  eive: rows=71266 matched=60860 unmatched=1445 ambiguous=8961
+    normalized aggregate_to_nominate: rows=2758 taxa=554 [flagged: circumscriptions equated, not identical]
+    normalized autonym: rows=1350 taxa=277 [flagged: circumscriptions equated, not identical]
+    normalized hybrid_marker_added: rows=249 taxa=51
+    normalized hybrid_marker_dropped: rows=55 taxa=11
+    normalized hybrid_spacing: rows=1751 taxa=360
+    normalized orthography_genitive: rows=85 taxa=17
+    flagged sample: Acer obtusatum subsp. obtusatum, Acer opalus aggr., …
+```
+
+- **Autonym → Art.** Ein Autonym ist die Nominat-Unterart und damit *enger*
+  als die Art. Der Grund, warum es hier überhaupt unaufgelöst ankommt, ist
+  aber gerade, dass das Rückgrat die infraspezifische Gliederung **nicht
+  führt**: WCVP hat keine Zeile `Acer obtusatum subsp. obtusatum`, nur die
+  Art. In dieser Umgrenzung *ist* die Art das Taxon, das die Quelle
+  „Autonym" nennt. Führte das Rückgrat die Gliederung, löste der exakte
+  Schlüssel auf und die Regel käme nie zum Zug. Gleichgesetzt — aber
+  markiert, weil das Argument an diesem Rückgrat hängt, nicht allgemein gilt.
+- **Aggregat → Nominatart.** Das ist der schwächere Fall und zeigt in die
+  *andere* Richtung: das Aggregat ist **weiter** als die Nominatart
+  (`Acer opalus aggr.` umfasst auch *A. obtusatum* u. a.), ein
+  Aggregat-Mittelwert landet also auf einem einzelnen Mitglied. Angewandt
+  wird er trotzdem, weil die gemessene Alternative schlechter ist (siehe
+  T5.1: WCVP führt null Aggregatnamen, ein Verzicht verwirft 664 / 229 / 134
+  Vokabular-Taxa ersatzlos) und weil die Nominatart das Taxon ist, das ein
+  Nutzer beim Suchen nach dem Aggregat tatsächlich nachschlägt. Markiert,
+  damit ein Konsument diese Werte ausschließen kann.
+
+**Offene Auflage:** die Markierung lebt im **Ingest-Report**, nicht in
+`trait_value`. Eine Spalte `trait_value.resolution` wäre der richtige Ort,
+setzt aber einen Migrationsmechanismus voraus, den `schema.sql`
+(`CREATE TABLE IF NOT EXISTS`, kein ALTER-Pfad) heute nicht hat — das ist
+bewusst offengelassen und keine erledigte Sache.
+
+### T5.5 Orthographie: was aufgenommen wurde und was nicht
+
+`domain.Canonicalize` wurde **nicht** angefasst. Es ist der *gespeicherte*
+Schlüssel (`name.canonical_fold`) und paritätsgeprüft gegen SQLites
+`unicode61 remove_diacritics 2` (`internal/adapters/sqlite/fts_parity_test.go`);
+eine Verbreiterung dort bräche diesen Vertrag und veränderte stillschweigend
+jeden gespeicherten Fold. Orthographie ist deshalb ein **zusätzlicher
+Kandidatenschlüssel**, kein weiterer Fold.
+
+Am gemessenen Rest (nach Aggregat/Hybrid/Autonym: 320 / 118 / 65 Taxa)
+aufgenommen:
+
+- **`-ii`/`-i`-Genitivalternation** (ICN Art. 60.8 / Rec. 60C), beide
+  Richtungen: +17 / +13 / +8 Taxa. Belege: `Cardamine plumierii` ↔ WCVP
+  `plumieri`, `Cota triumfettii` ↔ `triumfetti`, `Plantago cornutii` ↔
+  `cornuti`, `Polygala edmundi` ↔ `edmundii`,
+  `Crocus biflorus subsp. adamii` ↔ `adami`.
+
+Bewusst **nicht** aufgenommen, jeweils mit gemessener Begründung:
+
+- **Genus-Kongruenz des Epithetons** (ICN Art. 23.5, `arctostaphylos alpinus`
+  ↔ WCVP `alpina`, `echinochloa colonum` ↔ `colona`): gemessener Zugewinn
+  3 / 2 / 2 Taxa bei je **einem** zusätzlich mehrdeutigen Treffer. Das
+  Umschreiben der Endung `-us`/`-a`/`-um` kann ein *anderes*, real
+  existierendes Epitheton erzeugen und den Wert damit auf das falsche
+  Konzept legen — ein schlechter Tausch für sieben Taxa insgesamt.
+- **`-ae`/`-iae`-Alternation**: ein einziger Treffer. Zu wenig für eine Regel.
+- **Angehängtes ASCII-`x` als Hybridmarker** (`acer xcoriaceum`): in den
+  vollständigen Nichttrefferlisten aller drei Vokabulare **null** Vorkommen,
+  während `x` ein legitimer Epithetonbuchstabe ist (`Rosa xanthina`,
+  `Xanthium strumarium`). Gemessener Preis des Verzichts: null.
+- **Echte Schreibfehler** (`Artemisia siversiana` ↔ WCVP `sieversiana`,
+  `Paeonia broteroi` ↔ `broteri`): keine deterministischen Umschreibungen.
+  Dafür existiert der Fuzzy-Pfad, der absichtlich `requires_review` liefert.
+
+### T5.6 Was übrig bleibt
+
+Der Rest ist substanziell, nicht mehr strukturell (`unmatched sample` aus
+`poc/measure/out/t5-ingest.log`):
+
+- **Binäre Hybridformeln** (25 EIVE-Taxa): `Abies alba × nordmanniana`,
+  `Alchemilla glacialis × pentaphyllea`, `Alnus incana subsp. incana × viridis`.
+  Eine Formel benennt kein Nothospecies-Konzept; es gibt keinen
+  deterministischen Weg von ihr zu einem WCVP-Konzept. Bewusst kein
+  erfundener Kandidat.
+- **Nicht-nominate Unterarten ohne WCVP-Zeile**:
+  `Allium circinatum subsp. peloponnesiacum` — korrekt **nicht** auf die Art
+  zusammengelegt (eigener Testfall).
+- **In WCVP wirklich nicht vorhanden**: `Acacia retinoides`,
+  `Achillea styriaca`, `Acuston lunarioides`.
+- **Schreibfehler** (Fuzzy-Territorium): `Artemisia siversiana`,
+  `Alchemilla rhodondendrophila`, `Aconitum lycotonum subsp. vulparia`.
+
+### T5.7 Regressionen
+
+Keine. `MatchNames` (§B.2-Batch), das Suggest-Ranking und das
+`requires_review`-Verhalten des Fuzzy-Pfads sind unverändert — Task 5 fasst
+nur den Trait-Crosswalk an, und dort ist der erste Kandidat immer der
+unveränderte `Canonicalize`-Schlüssel. `make verify`, `make test-integration`
+und `make mutation` für alle drei berührten Pakete sind grün
+(`internal/domain`: 0 Überlebende in `normalize.go` bei 100 %
+Mutator-Abdeckung; die 6 verbleibenden Überlebenden in `match.go`/`suggest.go`
+sind die bereits vorher dokumentierten beweisbaren Äquivalente).
+---
+
 ## M2 — Crosswalk-Trefferquote (die Kernzahl)
 
 ### M2.1 Pro Vokabular, auf Zeilenebene

@@ -1,0 +1,450 @@
+package domain
+
+import "strings"
+
+// Deterministic name normalisation (Hardening Task 5).
+//
+// The full-data crosswalk of EIVE/Tichý/Midolo against the complete WCVP
+// left 1.804 / 380 / 229 vocabulary taxa unresolvable (see
+// docs/research/reality-check.md, M2'). Categorizing the COMPLETE
+// unmatched lists — not a sample — showed the misses are dominated by four
+// structural spelling differences, not by absent taxa: aggregate markers
+// (664 / 229 / 134 names), hybrid markers (452 / 136 / 83), infraspecific
+// autonyms (356 / 0 / 5), and the -ii/-i genitive alternation.
+//
+// This file turns each of those into a SEPARATE, pure, deterministic step
+// that produces additional LOOKUP KEYS for a name. It is emphatically NOT
+// fuzzy matching: every rule is a finite rewrite with a nomenclatural
+// justification, nothing is scored, and a key either exists in the index or
+// it does not. Fuzzy matching already exists (Similarity/FuzzyThreshold)
+// and is deliberately confined to requires_review results.
+//
+// Two of the rules are botanical JUDGEMENT CALLS rather than pure spelling
+// normalisations — aggregate-to-nominate-species and autonym-to-species.
+// Both are marked by NormalizationRule.Flagged so a caller can report them
+// separately instead of silently equating two circumscriptions. See the
+// respective doc comments for the reasoning.
+//
+// Note what is deliberately NOT here: nothing in this file changes
+// Canonicalize. Canonicalize's output is the STORED match key
+// (name.canonical_fold) and is parity-tested against SQLite's
+// "unicode61 remove_diacritics 2" tokenizer (see
+// internal/adapters/sqlite/fts_parity_test.go); widening it would break
+// that contract and silently change every stored fold. Orthography is
+// therefore expressed as an extra candidate key (GenitiveVariant), not as a
+// wider fold.
+
+// hybridMarker is the botanical multiplication sign (U+00D7) marking a
+// nothotaxon. It is NOT the ASCII letter 'x' — see NormalizeHybridMarker
+// for how the ASCII spelling is (and is not) recognized.
+const hybridMarker = "×"
+
+// NormalizationRule identifies which deterministic rewrite produced a
+// NameCandidate, so a caller can report per-rule outcomes and separate
+// pure spelling fixes from the two botanical judgement calls.
+type NormalizationRule string
+
+const (
+	// RuleExact is the unmodified Canonicalize key — the behavior that
+	// existed before this file. It is always the first candidate.
+	RuleExact NormalizationRule = "exact"
+	// RuleHybridSpacing normalises the hybrid marker's spelling and
+	// spacing ("acer ×coriaceum" -> "acer × coriaceum").
+	RuleHybridSpacing NormalizationRule = "hybrid_spacing"
+	// RuleHybridMarkerDropped removes the hybrid marker, for the case
+	// where the backbone carries the same epithet as a non-nothotaxon
+	// ("anacamptis × albertii" -> "anacamptis albertii").
+	RuleHybridMarkerDropped NormalizationRule = "hybrid_marker_dropped"
+	// RuleHybridMarkerAdded inserts the marker into an unmarked binomial,
+	// for the case where the SOURCE omitted it and the backbone has the
+	// name as a nothospecies ("abies borisii-regis" ->
+	// "abies × borisii-regis").
+	RuleHybridMarkerAdded NormalizationRule = "hybrid_marker_added"
+	// RuleAggregate strips one aggregate marker layer while the name stays
+	// aggregate-marked — it still denotes an aggregate, so a hit is a real
+	// aggregate concept, not a substitution.
+	RuleAggregate NormalizationRule = "aggregate"
+	// RuleAggregateToNominate resolves an aggregate-marked name to the
+	// bare nominate species. Flagged: see the doc comment on Flagged.
+	RuleAggregateToNominate NormalizationRule = "aggregate_to_nominate"
+	// RuleAutonym resolves an infraspecific autonym to its species.
+	// Flagged: see the doc comment on Flagged.
+	RuleAutonym NormalizationRule = "autonym"
+	// RuleOrthographyGenitive is the -ii/-i alternation in epithets formed
+	// from personal names (ICN Art. 60.8 / Rec. 60C).
+	RuleOrthographyGenitive NormalizationRule = "orthography_genitive"
+)
+
+// Flagged reports whether a match produced by r rests on a botanical
+// JUDGEMENT about circumscription rather than on a pure spelling
+// normalisation. A flagged match is still a match — the value is written —
+// but the caller must report it separately so the judgement is visible and
+// auditable rather than silently baked into the data.
+//
+// Exactly two rules are flagged, and the two judgements are deliberately
+// ASYMMETRIC, because the direction of the circumscription error differs:
+//
+//   - RuleAutonym ("Acer obtusatum subsp. obtusatum" -> "Acer obtusatum").
+//     An autonym is the nominate infraspecific taxon; strictly it is
+//     NARROWER than the species, which also contains the other subspecies.
+//     But the reason the autonym is unresolvable here is precisely that the
+//     backbone does not recognize the infraspecific division at all — WCVP
+//     holds no "Acer obtusatum subsp. obtusatum" row, only the species. In
+//     that backbone's circumscription the species IS the taxon the source
+//     calls the autonym, so equating them attributes the source's values to
+//     the taxon the backbone actually models. Flagged rather than silent
+//     because that argument holds for THIS backbone, not universally: a
+//     backbone that did recognize the division would resolve the autonym
+//     exactly and never reach this rule.
+//
+//   - RuleAggregateToNominate ("Acer opalus aggr." -> "Acer opalus"). This
+//     is the weaker of the two and points the other way: an aggregate is
+//     WIDER than its nominate species (Acer opalus aggr. also covers
+//     A. obtusatum and further microspecies), so attaching an aggregate's
+//     indicator values to the nominate species alone attributes a
+//     collective mean to one member. It is applied anyway because the
+//     measured alternative is worse: WCVP carries ZERO aggregate-marked
+//     names (verified: `SELECT count(*) FROM name WHERE canonical_fold LIKE
+//     '% agg%.'` = 0), so refusing the fallback discards 664/229/134
+//     vocabulary taxa outright, and the aggregate's nominate species is the
+//     taxon a user searching for the aggregate will actually look up.
+//     Flagged so a consumer can exclude these values if the approximation
+//     is unacceptable for their use.
+func (r NormalizationRule) Flagged() bool {
+	switch r {
+	case RuleAggregateToNominate, RuleAutonym:
+		return true
+	case RuleExact, RuleHybridSpacing, RuleHybridMarkerDropped, RuleHybridMarkerAdded, RuleAggregate, RuleOrthographyGenitive:
+		return false
+	}
+	return false
+}
+
+// NameCandidate is one lookup key plus the rule that produced it.
+type NameCandidate struct {
+	Key  string
+	Rule NormalizationRule
+}
+
+// NameCandidates returns the ordered, deduplicated ladder of lookup keys
+// for a verbatim name: Canonicalize(verbatim) first (RuleExact — the
+// pre-normalisation behavior, unchanged), then one key per applicable
+// normalisation rule, ordered by increasing semantic distance from the
+// source name. Pure spelling rewrites (hybrid marker, genitive) come
+// before the two flagged judgement calls, so a rule that changes only
+// spelling always wins over one that changes circumscription.
+//
+// Callers are expected to try the keys IN ORDER and stop at the first one
+// the index answers. Because RuleExact is always first, a name that
+// resolved before this file existed resolves identically now — the rules
+// can only convert previously-unmatched names, never re-route a name that
+// already had a hit.
+//
+// An empty or whitespace-only verbatim yields nil: there is nothing to
+// look up, and an empty key would match nothing meaningfully.
+func NameCandidates(verbatim string) []NameCandidate {
+	canon := Canonicalize(verbatim)
+	if canon == "" {
+		return nil
+	}
+
+	out := []NameCandidate{{Key: canon, Rule: RuleExact}}
+	seen := map[string]bool{canon: true}
+	add := func(key string, rule NormalizationRule) {
+		if key == "" || seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, NameCandidate{Key: key, Rule: rule})
+	}
+
+	spaced, changed := NormalizeHybridMarker(canon)
+	if changed {
+		add(spaced, RuleHybridSpacing)
+	}
+	if dropped, ok := DropHybridMarker(spaced); ok {
+		add(dropped, RuleHybridMarkerDropped)
+	}
+	if added, ok := AddHybridMarker(spaced); ok {
+		add(added, RuleHybridMarkerAdded)
+	}
+
+	bases := AggregateBases(canon)
+	for i, b := range bases {
+		rule := RuleAggregate
+		// The LAST base is the one no longer carrying any marker — the bare
+		// nominate species, i.e. the flagged fallback. Every earlier base is
+		// still aggregate-marked and therefore still denotes an aggregate.
+		if i == len(bases)-1 {
+			rule = RuleAggregateToNominate
+		}
+		add(b, rule)
+	}
+
+	if base, ok := AutonymBase(canon); ok {
+		add(base, RuleAutonym)
+	}
+	if variant, ok := GenitiveVariant(canon); ok {
+		add(variant, RuleOrthographyGenitive)
+	}
+	return out
+}
+
+// NormalizeHybridMarker normalises the nothotaxon multiplication sign in an
+// already-canonicalized name to a standalone, space-separated "×" token,
+// and reports whether anything changed. It handles the two spellings the
+// measured data actually contains:
+//
+//   - "×" attached to the following epithet or genus ("acer ×coriaceum",
+//     "×aegilotriticum") — 426 of EIVE's 1.804 unresolvable taxa. WCVP
+//     stores these space-separated ("acer × coriaceum", "× aamaealoe"), so
+//     this is pure spacing.
+//   - a standalone ASCII "x" token after the first token
+//     ("crocosmia x crocosmiiflora") — 12 Midolo taxa. Canonicalize has
+//     already lower-cased an uppercase "X", so both spellings arrive here
+//     as "x".
+//
+// It deliberately does NOT treat an ASCII "x" ATTACHED to an epithet
+// ("acer xcoriaceum") as a marker: 'x' is a legitimate epithet letter
+// ("Rosa xanthina", "Xanthium strumarium") and no string-local rule can
+// tell the two apart. The measured cost of that abstention is zero — the
+// complete unmatched lists of all three vocabularies contain no attached
+// ASCII-x hybrid at all. It also does not treat a LEADING standalone "x"
+// as a nothogenus marker, for the same indistinguishability reason and
+// with the same measured cost of zero.
+func NormalizeHybridMarker(canon string) (string, bool) {
+	fields := strings.Fields(canon)
+	out := make([]string, 0, len(fields)+1)
+	changed := false
+	// Written as an if-chain rather than a tagless switch on purpose: Go's
+	// coverage profile emits no block for a switch CASE EXPRESSION, so the
+	// mutation gate cannot mutate the conditions below when they live in a
+	// switch (they come back "not covered" and are silently skipped). Same
+	// reasoning in AggregateBases and GenitiveVariant.
+	for i, f := range fields {
+		if f != hybridMarker && strings.HasPrefix(f, hybridMarker) {
+			out = append(out, hybridMarker, strings.TrimPrefix(f, hybridMarker))
+			changed = true
+			continue
+		}
+		if f == "x" && i > 0 {
+			out = append(out, hybridMarker)
+			changed = true
+			continue
+		}
+		out = append(out, f)
+	}
+	if !changed {
+		return canon, false
+	}
+	return strings.Join(out, " "), true
+}
+
+// DropHybridMarker removes every standalone "×" token from an
+// already-marker-normalised name, and reports whether anything was
+// removed. It exists because a backbone does not always carry a
+// nothotaxon AS a nothotaxon: EIVE's "Anacamptis ×albertii" and
+// "Centaurea ×pouzinii" are held by WCVP under the unmarked epithet.
+// Dropping the marker changes no epithet, so the resulting key still
+// denotes the same taxon name — this is a spelling rule, not a judgement.
+//
+// A name consisting of nothing but markers is returned unchanged: stripping
+// it would leave an empty key.
+func DropHybridMarker(canon string) (string, bool) {
+	fields := strings.Fields(canon)
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if f == hybridMarker {
+			continue
+		}
+		out = append(out, f)
+	}
+	if len(out) == len(fields) || len(out) == 0 {
+		return canon, false
+	}
+	return strings.Join(out, " "), true
+}
+
+// AddHybridMarker inserts the hybrid marker into an unmarked BINOMIAL
+// ("abies borisii-regis" -> "abies × borisii-regis") and reports whether it
+// did. It is the mirror image of DropHybridMarker: the trait sources
+// frequently omit the marker on names WCVP holds as nothospecies —
+// "Abies borisii-regis" (Tichý, Midolo) and "Amelanchier lamarckii" (all
+// three vocabularies) are real, measured examples.
+//
+// It applies ONLY to a two-token name that carries no marker yet.
+// Restricting it to binomials keeps it from multiplying candidates across
+// infraspecific names, for which the measured data shows no case at all;
+// and because callers only reach this key after the exact key came up
+// empty, the added hypothesis can never displace a real match — it either
+// finds a nothospecies that exists or finds nothing.
+func AddHybridMarker(canon string) (string, bool) {
+	fields := strings.Fields(canon)
+	if len(fields) != 2 {
+		return canon, false
+	}
+	for _, f := range fields {
+		if f == hybridMarker {
+			return canon, false
+		}
+	}
+	return fields[0] + " " + hybridMarker + " " + fields[1], true
+}
+
+// aggregateMarkers are the single-token trailing markers that make a name
+// denote a collective species ("Sammelart") rather than one taxon. They
+// mirror internal/application's aggregateSuffixes (the §B.2 match path),
+// extended with the spellings the measured trait vocabularies actually use.
+var aggregateMarkers = map[string]bool{
+	"agg.":   true,
+	"aggr.":  true,
+	"s.l.":   true,
+	"s.lat.": true,
+	"s.str.": true,
+	"sl.":    true,
+}
+
+// sensuQualifiers are the second half of the SPACED sensu construction
+// ("… s. l.", "… s. str."), which Canonicalize preserves as two tokens.
+// They are only ever a marker when directly preceded by "s." — a bare
+// trailing "l." is far more likely to be Linnaeus.
+var sensuQualifiers = map[string]bool{
+	"l.":   true,
+	"lat.": true,
+	"str.": true,
+}
+
+// AggregateBases peels the trailing aggregate markers off an
+// already-canonicalized name, one layer at a time, and returns the
+// resulting bases from the most-marked to the bare name. It returns nil
+// when the name carries no marker, or when stripping would leave nothing.
+//
+// Layers are real: 60 EIVE taxa are spelled "… aggr. s. l." — an aggregate
+// that is additionally qualified sensu lato — and each layer removed is a
+// separate lookup worth trying, because a backbone might carry the
+// aggregate under the shorter marker.
+func AggregateBases(canon string) []string {
+	fields := strings.Fields(canon)
+	var bases []string
+	// Guarded early-continue rather than a tagless switch or an if/else
+	// chain — see NormalizeHybridMarker for why the conditions must stay
+	// mutatable, and gocritic's ifElseChain for why they cannot be an
+	// if/else.
+	for {
+		n := len(fields)
+		if n >= 3 && fields[n-2] == "s." && sensuQualifiers[fields[n-1]] {
+			fields = fields[:n-2]
+			bases = append(bases, strings.Join(fields, " "))
+			continue
+		}
+		if n >= 2 && aggregateMarkers[fields[n-1]] {
+			fields = fields[:n-1]
+			bases = append(bases, strings.Join(fields, " "))
+			continue
+		}
+		return bases
+	}
+}
+
+// infraspecificMarkers are the rank markers AutonymBase recognizes between
+// a species epithet and an infraspecific epithet. Deliberately limited to
+// the spellings that occur in the measured vocabularies: an unrecognized
+// marker means "not an autonym" and the name stays unresolved, which is
+// the safe direction.
+var infraspecificMarkers = map[string]bool{
+	"subsp.":  true,
+	"ssp.":    true,
+	"var.":    true,
+	"f.":      true,
+	"subf.":   true,
+	"subvar.": true,
+}
+
+// AutonymBase reduces an infraspecific AUTONYM — a four-token
+// "genus epithet <rank marker> epithet" name whose infraspecific epithet
+// repeats the species epithet — to its species, and reports whether it
+// did. "Acer obtusatum subsp. obtusatum" and
+// "Aconitum lycoctonum subsp. lycoctonum" are real EIVE misses; WCVP holds
+// only the species.
+//
+// The repetition check is what makes this safe: a non-nominate
+// infraspecific name ("Allium circinatum subsp. peloponnesiacum", also a
+// real EIVE miss) is a genuinely different taxon and is NOT reduced. See
+// NormalizationRule.Flagged for why even the nominate reduction is
+// reported rather than applied silently.
+//
+// Deeper chains ("… subsp. y var. y") are not reduced: they have no
+// measured occurrence and no unambiguous reduction target.
+func AutonymBase(canon string) (string, bool) {
+	fields := strings.Fields(canon)
+	if len(fields) != 4 {
+		return canon, false
+	}
+	if !infraspecificMarkers[fields[2]] || fields[1] != fields[3] {
+		return canon, false
+	}
+	return fields[0] + " " + fields[1], true
+}
+
+// genitiveStemMin is the shortest stem GenitiveVariant will rewrite. An
+// epithet formed from a personal name always has a real stem in front of
+// the genitive ending ("plumier-ii", "adam-i"); requiring three runes keeps
+// the rule off degenerate tokens like a bare "i".
+const genitiveStemMin = 3
+
+// GenitiveVariant returns the other spelling of an epithet formed from a
+// personal name under the -ii/-i alternation (ICN Art. 60.8 / Rec. 60C:
+// "plumierii" vs "plumieri", "edmundi" vs "edmundii"), applied to the LAST
+// token of an already-canonicalized name, and reports whether it applied.
+//
+// This is the ONLY orthographic pattern added, and it is added here rather
+// than inside Canonicalize on purpose (see this file's header: Canonicalize
+// is the stored fold and is parity-bound to SQLite's unicode61 tokenizer).
+// The measured residual after the aggregate/hybrid/autonym rules justified
+// exactly this one: it recovers 17 EIVE, 13 Tichý and 8 Midolo taxa —
+// "Cardamine plumierii", "Cota triumfettii", "Plantago cornutii",
+// "Polygala edmundi", "Crocus biflorus subsp. adamii" are real, measured
+// misses.
+//
+// Deliberately NOT added, though also present in the residual:
+//
+//   - GENDER AGREEMENT of the epithet (ICN Art. 23.5: "arctostaphylos
+//     alpinus" vs WCVP "arctostaphylos alpina", "echinochloa colonum" vs
+//     "colona"). Measured gain: 3 EIVE / 2 Tichý / 2 Midolo taxa, with one
+//     AMBIGUOUS hit per vocabulary. Rewriting an epithet's final -us/-a/-um
+//     can produce a different, legitimately existing epithet, so the rule
+//     can land a trait value on the wrong concept — a bad trade for seven
+//     taxa in total.
+//   - the -ae/-iae alternation: one single measured hit, not enough to
+//     justify a rule.
+//   - genuine misspellings ("artemisia siversiana" vs WCVP "sieversiana",
+//     "paeonia broteroi" vs "broteri"). These are not deterministic
+//     rewrites at all; they are exactly what the existing, deliberately
+//     requires_review fuzzy path is for.
+func GenitiveVariant(canon string) (string, bool) {
+	fields := strings.Fields(canon)
+	if len(fields) == 0 {
+		return canon, false
+	}
+	last := fields[len(fields)-1]
+	if strings.Contains(last, ".") {
+		return canon, false
+	}
+	stem := strings.TrimRight(last, "i")
+	// Guarded early-return rather than a tagless switch or an if/else chain
+	// — see AggregateBases.
+	if len([]rune(stem)) < genitiveStemMin {
+		return canon, false
+	}
+	if last == stem+"ii" {
+		fields[len(fields)-1] = stem + "i"
+		return strings.Join(fields, " "), true
+	}
+	if last == stem+"i" {
+		fields[len(fields)-1] = stem + "ii"
+		return strings.Join(fields, " "), true
+	}
+	// No trailing "i" at all, or three or more of them — neither is the
+	// Art. 60.8 alternation.
+	return canon, false
+}

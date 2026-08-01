@@ -71,4 +71,27 @@ m5() {
   ls -la "$OUT"/bundle-*.sqlite
 }
 
+# Hardening Task 5: marginal gain je Normalisierungsregel. Braucht eine
+# fertig ingestete Voll-DB (Default: die aus M1'); DB per DB=... setzbar.
+# Kein Ingest, reine Namensauflösung — läuft in Sekunden.
+t5() {
+  bash poc/measure/gen_canonicalize.sh --check
+  bash poc/measure/gen_normalize.sh --check
+  (cd poc && go build -o "$ROOT/$OUT/bridge-norm" ./measure/bridge)
+  "$OUT/bridge-norm" --norm --db "${DB:-$OUT/m1real.sqlite}" \
+    --vocab eive=pipelines/eive/output/eive-canonical.csv \
+    --vocab tichy=pipelines/tichy/output/tichy-canonical.csv \
+    --vocab midolo=pipelines/midolo/output/midolo-canonical.csv \
+    | tee "$OUT/t5-norm.txt"
+}
+
+# Hardening Task 5, Gegenprobe: derselbe Volldaten-Ingest wie M1'/M2', aber
+# mit der Normalisierung — bestätigt die t5-Zahlen end-to-end im echten
+# Codepfad statt in der Probe.
+t5ingest() {
+  rm -f "$OUT"/t5real.sqlite*
+  /usr/bin/time -l ./hostus ingest --dataset poc/measure/dataset.full-real.yaml --db "$OUT/t5real.sqlite" 2>&1 | tee "$OUT/t5-ingest.log"
+  sqlite3 "$OUT/t5real.sqlite" < poc/measure/stats.sql | tee "$OUT/t5-stats.txt"
+}
+
 for step in "$@"; do "$step"; done

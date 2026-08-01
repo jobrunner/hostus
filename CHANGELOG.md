@@ -62,6 +62,28 @@ Vegetationsaufnahme-Importe mit Tippfehlern:
   exportiert, ein Bundle bleibt also vollständig offline abfragbar
   (Concept, Suggest, Traits) — end-to-end belegt in
   `internal/app/integration_test.go`
+- **Deterministische Namensnormalisierung im Trait-Crosswalk**
+  (`internal/domain/normalize.go`, `NameCandidates`): ein Trait-Name wird
+  jetzt gegen eine geordnete Kandidatenleiter aufgelöst — zuerst
+  unverändert `domain.Canonicalize` (identisches Verhalten wie bisher),
+  danach je eine Regel für Hybridmarker (`Acer ×coriaceum` →
+  `acer × coriaceum`, Marker ergänzen/entfernen, ASCII-`x`),
+  Aggregatmarker (`Acer opalus aggr.`, `… s. l.`), infraspezifische
+  Autonyme (`Acer obtusatum subsp. obtusatum`) und die
+  `-ii`/`-i`-Genitivalternation (ICN Art. 60.8). Kein Fuzzy-Matching: jede
+  Regel ist eine endliche, nomenklatorisch begründete Umschreibung, nichts
+  wird bewertet. Gemessen an den Volldaten steigt die Taxon-Auflösbarkeit
+  von 87,84 / 95,73 / 96,41 % auf **97,96 / 98,82 / 99,11 %** (EIVE /
+  Tichý / Midolo), die nicht auflösbaren Trait-Zeilen sinken um
+  84 / 72 / 75 % — vollständige Messung inkl. marginalem Zugewinn je Regel
+  in `docs/research/reality-check.md`, Abschnitt „Nach Hardening (Task 5)".
+  Zwei der Regeln setzen Umgrenzungen gleich, die nicht identisch sind
+  (Aggregat → Nominatart, Autonym → Art); sie sind als `flagged`
+  gekennzeichnet, werden im `hostus ingest`-Report getrennt gezählt und
+  namentlich bemustert, statt still mitzulaufen. Die Mehrdeutigkeitsquote
+  steigt dadurch (EIVE +231 Taxa) — ausschließlich aus vorher
+  unauflösbaren Namen; mehrdeutig heißt weiterhin: es wird nichts
+  geschrieben.
 - **Bewusster Lizenz-Scope-Schnitt (PoC R1)**: Euro+Med PlantBase,
   GermanSL, EuroSL und die FloraVeg.EU-Downloads werden NICHT ingestiert —
   für keine der vier Quellen ließ sich eine belastbare

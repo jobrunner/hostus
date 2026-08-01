@@ -123,6 +123,16 @@ func printTraitReports(w io.Writer, reports []application.TraitIngestReport) {
 	for _, r := range reports {
 		_, _ = fmt.Fprintf(w, "  %s: rows=%d matched=%d unmatched=%d ambiguous=%d\n",
 			r.Vocab, r.Rows, r.Matched, r.Unmatched, r.Ambiguous)
+		for _, n := range r.Normalized {
+			flag := ""
+			if n.Flagged {
+				flag = " [flagged: circumscriptions equated, not identical]"
+			}
+			_, _ = fmt.Fprintf(w, "    normalized %s: rows=%d taxa=%d%s\n", n.Rule, n.Rows, n.Taxa, flag)
+		}
+		if len(r.FlaggedSample) > 0 {
+			_, _ = fmt.Fprintf(w, "    flagged sample: %s\n", strings.Join(r.FlaggedSample, ", "))
+		}
 		if len(r.UnmatchedSample) > 0 {
 			_, _ = fmt.Fprintf(w, "    unmatched sample: %s\n", strings.Join(r.UnmatchedSample, ", "))
 		}

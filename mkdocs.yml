@@ -56,6 +56,7 @@ nav:
       - how-to/index.md
       - Entwicklungsumgebung: how-to/development.md
       - Offline-Bundle exportieren: how-to/offline-bundle.md
+      - Traits pipeln und ingestieren: how-to/trait-ingest.md
   - Referenz:
       - reference/index.md
       - HTTP-API: reference/http-api.md

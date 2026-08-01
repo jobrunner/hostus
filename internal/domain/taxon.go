@@ -175,6 +175,11 @@ type Concept struct {
 	ParentID        string
 	SecReference    string
 	Status          Status
+	// RankVerbatim mirrors Name.RankVerbatim's rule for the concept's own
+	// Rank: populated only when Rank is RankOther (a concept's Rank always
+	// tracks its accepted name's Rank, but the two are separate structs/
+	// rows, so this is carried independently rather than assumed equal).
+	RankVerbatim string
 }
 
 // Xref is a cross-reference to a name or concept in an external authority

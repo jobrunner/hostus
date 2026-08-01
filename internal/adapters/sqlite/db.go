@@ -154,11 +154,23 @@ func nullableFK(id string) any {
 	return id
 }
 
+// nullString converts an optional (non-FK) string column value into a
+// driver value that SQLite stores as NULL when empty, rather than as a
+// literal empty string — used for name.rank_verbatim/
+// taxon_concept.rank_verbatim, which are empty exactly when the rank is
+// canonical (nothing to preserve) and set only for RankOther rows.
+func nullString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 func (t *ingestTx) UpsertName(n domain.Name) error {
 	_, err := t.tx.ExecContext(t.ctx, `
-		INSERT OR REPLACE INTO name (id, canonical, canonical_fold, authorship, rank, ipni_id, published_in, nom_status, basionym_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		n.ID, n.Canonical, domain.Canonicalize(n.Canonical), n.Authorship, string(n.Rank), n.IPNIID, n.PublishedIn, n.NomStatus, nullableFK(n.BasionymID),
+		INSERT OR REPLACE INTO name (id, canonical, canonical_fold, authorship, rank, ipni_id, published_in, nom_status, basionym_id, rank_verbatim)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.ID, n.Canonical, domain.Canonicalize(n.Canonical), n.Authorship, string(n.Rank), n.IPNIID, n.PublishedIn, n.NomStatus, nullableFK(n.BasionymID), nullString(n.RankVerbatim),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: upserting name %q: %w", n.ID, err)
@@ -168,9 +180,9 @@ func (t *ingestTx) UpsertName(n domain.Name) error {
 
 func (t *ingestTx) UpsertConcept(c domain.Concept) error {
 	_, err := t.tx.ExecContext(t.ctx, `
-		INSERT OR REPLACE INTO taxon_concept (id, backbone_id, accepted_name, rank, parent_id, sec_reference, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		c.ID, c.BackboneID, c.AcceptedName.ID, string(c.Rank), nullableFK(c.ParentID), c.SecReference, string(c.Status),
+		INSERT OR REPLACE INTO taxon_concept (id, backbone_id, accepted_name, rank, parent_id, sec_reference, status, rank_verbatim)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.ID, c.BackboneID, c.AcceptedName.ID, string(c.Rank), nullableFK(c.ParentID), c.SecReference, string(c.Status), nullString(c.RankVerbatim),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: upserting concept %q: %w", c.ID, err)

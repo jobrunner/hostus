@@ -367,6 +367,11 @@ func (st *ingestState) upsertAcceptedConcept(row TaxonRow, name domain.Name, ran
 		AcceptedName: name,
 		Rank:         rank,
 		Status:       domain.ParseStatus(row.Status),
+		// RankVerbatim mirrors name.RankVerbatim: both were derived from
+		// the same row by the same domain.ParseRankLenient call, so
+		// they're always identical (see domain.Concept.RankVerbatim's
+		// doc comment for why it's still its own field).
+		RankVerbatim: name.RankVerbatim,
 	}
 	if err := st.tx.UpsertConcept(concept); err != nil {
 		return domain.Concept{}, fmt.Errorf("application: backbone %q: %w", b.ID, err)

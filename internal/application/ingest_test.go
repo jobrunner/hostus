@@ -580,10 +580,23 @@ func TestIngest_WCVPExoticRanks_CompletesAndReportsThem(t *testing.T) {
 	if proles.Rank != domain.RankOther {
 		t.Errorf("proles concept.Rank = %q, want %q", proles.Rank, domain.RankOther)
 	}
+	// Fix round 1: rank_verbatim now round-trips through the real sqlite
+	// adapter, not just the in-process domain.Name — proving a nomenclature
+	// service doesn't forget which exotic rank a concept actually had the
+	// moment the ingest process exits (spec §A.1).
+	if proles.RankVerbatim != "proles" {
+		t.Errorf("proles concept.RankVerbatim = %q, want %q (round-tripped through sqlite)", proles.RankVerbatim, "proles")
+	}
+	if proles.AcceptedName.RankVerbatim != "proles" {
+		t.Errorf("proles concept.AcceptedName.RankVerbatim = %q, want %q (round-tripped through sqlite)", proles.AcceptedName.RankVerbatim, "proles")
+	}
 
 	ordinary := mustConcept(ctx, t, repo, "wcvp-exotic:concept:1")
 	if ordinary.Rank != domain.RankSpecies {
 		t.Errorf("ordinary concept.Rank = %q, want %q", ordinary.Rank, domain.RankSpecies)
+	}
+	if ordinary.RankVerbatim != "" {
+		t.Errorf("ordinary concept.RankVerbatim = %q, want empty (Rank alone already identifies it)", ordinary.RankVerbatim)
 	}
 }
 
@@ -593,9 +606,12 @@ func TestIngest_WCVPExoticRanks_CompletesAndReportsThem(t *testing.T) {
 // normalizes to domain.RankOther (and leaves it empty otherwise — Rank
 // alone already identifies a canonical rank exactly, so there is nothing
 // to preserve there). It exercises the fakeCapturingRepo test double
-// (below) instead of the real sqlite adapter, since sqlite's schema does
-// not persist rank_verbatim (this task's smallest-footprint choice — see
-// the ParseRankLenient/domain.Name.RankVerbatim doc comments): the
+// (below) — a minimal in-memory output.Repository/IngestTx, rather than
+// the real sqlite adapter — so this test stays a narrow, fast check of
+// exactly what Ingest hands to UpsertName, independent of the sqlite
+// adapter's own read/write plumbing (which
+// TestIngest_WCVPExoticRanks_CompletesAndReportsThem above, and
+// internal/adapters/sqlite's own tests, cover separately): the
 // information must survive from TaxonRow through to the domain.Name
 // Ingest hands the repository, which is the boundary this task owns.
 func TestIngest_OtherRank_PopulatesNameRankVerbatim(t *testing.T) {

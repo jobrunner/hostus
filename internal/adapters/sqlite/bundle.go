@@ -376,11 +376,11 @@ func populateBundle(ctx context.Context, src, bundle *DB, conceptIDs []string, o
 		nameBasionymCol = 8
 	)
 	names, err := copySelfReferencingRows(ctx, src, bundle,
-		`SELECT DISTINCT n.id, n.canonical, n.canonical_fold, n.authorship, n.rank, n.ipni_id, n.published_in, n.nom_status, n.basionym_id
+		`SELECT DISTINCT n.id, n.canonical, n.canonical_fold, n.authorship, n.rank, n.ipni_id, n.published_in, n.nom_status, n.basionym_id, n.rank_verbatim
 		 FROM name n
 		 JOIN concept_name cn ON cn.name_id = n.id
 		 WHERE cn.concept_id IN (`+placeholders+`)`, args,
-		`INSERT INTO name (id, canonical, canonical_fold, authorship, rank, ipni_id, published_in, nom_status, basionym_id) VALUES (?,?,?,?,?,?,?,?,?)`,
+		`INSERT INTO name (id, canonical, canonical_fold, authorship, rank, ipni_id, published_in, nom_status, basionym_id, rank_verbatim) VALUES (?,?,?,?,?,?,?,?,?,?)`,
 		nameIDCol, nameBasionymCol, `UPDATE name SET basionym_id = ? WHERE id = ?`)
 	if err != nil {
 		return report, err
@@ -392,8 +392,8 @@ func populateBundle(ctx context.Context, src, bundle *DB, conceptIDs []string, o
 		conceptParentIDCol = 4
 	)
 	concepts, err := copySelfReferencingRows(ctx, src, bundle,
-		`SELECT id, backbone_id, accepted_name, rank, parent_id, sec_reference, status FROM taxon_concept WHERE id IN (`+placeholders+`)`, args,
-		`INSERT INTO taxon_concept (id, backbone_id, accepted_name, rank, parent_id, sec_reference, status) VALUES (?,?,?,?,?,?,?)`,
+		`SELECT id, backbone_id, accepted_name, rank, parent_id, sec_reference, status, rank_verbatim FROM taxon_concept WHERE id IN (`+placeholders+`)`, args,
+		`INSERT INTO taxon_concept (id, backbone_id, accepted_name, rank, parent_id, sec_reference, status, rank_verbatim) VALUES (?,?,?,?,?,?,?,?)`,
 		conceptIDCol, conceptParentIDCol, `UPDATE taxon_concept SET parent_id = ? WHERE id = ?`)
 	if err != nil {
 		return report, err

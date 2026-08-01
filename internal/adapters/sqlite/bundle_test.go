@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jobrunner/hostus/internal/adapters/sqlite"
+	"github.com/jobrunner/hostus/internal/application"
 	"github.com/jobrunner/hostus/internal/domain"
 	"github.com/jobrunner/hostus/internal/ports/output"
 )
@@ -728,5 +729,94 @@ func TestExportBundle_AreaWithNoMatchingConcepts_ProducesEmptyBundle(t *testing.
 	}
 	if meta.ManifestSHA != "" {
 		t.Errorf("bundle_meta.source_manifest_sha = %q, want empty (no backbone_version rows were in scope)", meta.ManifestSHA)
+	}
+}
+
+// sliceRowSource is a minimal application.RowSource backed by an in-memory
+// slice, for tests that need a specific TaxonRow (e.g. an exotic rank) the
+// shared WCVP fixture doesn't happen to carry.
+type sliceRowSource struct{ taxa []application.TaxonRow }
+
+func (s sliceRowSource) Taxa() []application.TaxonRow                 { return s.taxa }
+func (s sliceRowSource) Distributions() []application.DistributionRow { return nil }
+
+// ingestOtherRankFixture ingests one "proles" concept (WCVP's real exotic
+// rank — see docs/research/reality-check.md's M1.0) into a fresh in-memory
+// repo, so ExportBundle's rank_verbatim carry-through can be tested without
+// depending on the shared WCVP fixture containing an exotic rank itself.
+func ingestOtherRankFixture(t *testing.T) *sqlite.DB {
+	t.Helper()
+	db, err := sqlite.Open(":memory:")
+	if err != nil {
+		t.Fatalf("sqlite.Open(:memory:): unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "wcvp-other", Version: "v1", Redistribution: "allowed"}}, ManifestSHA: "x"}
+	taxa := []application.TaxonRow{
+		{TaxonID: "2", AcceptedTaxonID: "2", Accepted: true, Canonical: "Paeonia corallina proles ovatifolia", Authorship: "Rouy & Foucaud", Rank: "proles", Status: "Synonym"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) {
+		return sliceRowSource{taxa: taxa}, nil
+	}
+	if _, err := application.Ingest(context.Background(), ds, readerFor, db); err != nil {
+		t.Fatalf("application.Ingest: unexpected error: %v", err)
+	}
+	return db
+}
+
+// TestExportBundle_CarriesRankVerbatimThrough proves Hardening Task 1's
+// fix-round-1 requirement that rank_verbatim survives a bundle export, not
+// just a live ingest: a "proles" concept's name.rank_verbatim/
+// taxon_concept.rank_verbatim must both read back as "proles" from the
+// exported bundle file, and repo.Concept against the reopened bundle must
+// surface it via domain.Concept.RankVerbatim.
+func TestExportBundle_CarriesRankVerbatimThrough(t *testing.T) {
+	ctx := context.Background()
+	src := ingestOtherRankFixture(t)
+
+	out := filepath.Join(t.TempDir(), "bundle-other-rank.sqlite")
+	if _, err := sqlite.ExportBundle(ctx, src, out, sqlite.BundleOpts{SnapshotVersion: "v1"}); err != nil {
+		t.Fatalf("ExportBundle: unexpected error: %v", err)
+	}
+
+	raw, err := sql.Open("sqlite", out)
+	if err != nil {
+		t.Fatalf("sql.Open(%q): unexpected error: %v", out, err)
+	}
+	defer func() { _ = raw.Close() }()
+
+	var nameVerbatim, conceptVerbatim string
+	if err := raw.QueryRow(`SELECT rank_verbatim FROM name WHERE id = ?`, "wcvp-other:name:2").Scan(&nameVerbatim); err != nil {
+		t.Fatalf("reading name.rank_verbatim: unexpected error: %v", err)
+	}
+	if nameVerbatim != "proles" {
+		t.Errorf("bundle name.rank_verbatim = %q, want %q", nameVerbatim, "proles")
+	}
+	if err := raw.QueryRow(`SELECT rank_verbatim FROM taxon_concept WHERE id = ?`, "wcvp-other:concept:2").Scan(&conceptVerbatim); err != nil {
+		t.Fatalf("reading taxon_concept.rank_verbatim: unexpected error: %v", err)
+	}
+	if conceptVerbatim != "proles" {
+		t.Errorf("bundle taxon_concept.rank_verbatim = %q, want %q", conceptVerbatim, "proles")
+	}
+
+	bundle, err := sqlite.Open(out)
+	if err != nil {
+		t.Fatalf("sqlite.Open(%q): unexpected error: %v", out, err)
+	}
+	defer func() { _ = bundle.Close() }()
+
+	concept, synonyms, xrefs, dists, err := bundle.Concept(ctx, "wcvp-other:concept:2")
+	if err != nil {
+		t.Fatalf("bundle.Concept: unexpected error: %v", err)
+	}
+	_ = synonyms
+	_ = xrefs
+	_ = dists
+	if concept.Rank != domain.RankOther {
+		t.Errorf("bundle concept.Rank = %q, want %q", concept.Rank, domain.RankOther)
+	}
+	if concept.RankVerbatim != "proles" {
+		t.Errorf("bundle concept.RankVerbatim = %q, want %q", concept.RankVerbatim, "proles")
 	}
 }

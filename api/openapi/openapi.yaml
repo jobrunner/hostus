@@ -398,6 +398,18 @@ components:
         rank:
           type: string
           example: SPECIES
+        rank_verbatim:
+          type: string
+          description: >-
+            Ursprüngliche Quell-Schreibweise des taxonomischen Rangs (z. B.
+            WCVPs `proles`), wenn `rank` = `OTHER` ist — der eine Fall, in
+            dem der kanonische `rank`-Wert allein verbergen würde, welchen
+            exotischen Rang dieses Concept tatsächlich trägt. Fehlt das Feld
+            (nie ein leerer String!) bei jedem kanonisch eingestuften
+            Concept — Abwesenheit bedeutet "nicht zutreffend", nicht
+            "unbekannt" (gleiches Ehrlichkeitsmuster wie `homotypic`/
+            `niche_width`).
+          example: proles
         status:
           type: string
           example: ACCEPTED

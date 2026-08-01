@@ -109,12 +109,13 @@ type errorEnvelope struct {
 }
 
 type conceptResponse struct {
-	ConceptID string `json:"concept_id"`
-	Display   string `json:"display"`
-	Canonical string `json:"canonical"`
-	Rank      string `json:"rank"`
-	Status    string `json:"status"`
-	Backbone  struct {
+	ConceptID    string `json:"concept_id"`
+	Display      string `json:"display"`
+	Canonical    string `json:"canonical"`
+	Rank         string `json:"rank"`
+	RankVerbatim string `json:"rank_verbatim"`
+	Status       string `json:"status"`
+	Backbone     struct {
 		ID      string `json:"id"`
 		Version string `json:"version"`
 	} `json:"backbone"`
@@ -470,6 +471,97 @@ func TestHandleMatch_MalformedBody_Returns400InvalidQuery(t *testing.T) {
 	got := decodeJSON[errorEnvelope](t, rr.Body)
 	if got.Error.Code != "INVALID_QUERY" {
 		t.Errorf("error.code = %q, want %q", got.Error.Code, "INVALID_QUERY")
+	}
+}
+
+// sliceRowSource is a minimal application.RowSource backed by an in-memory
+// slice, for tests that need specific TaxonRows (e.g. an exotic rank) that
+// the shared WCVP fixture doesn't happen to carry.
+type sliceRowSource struct{ taxa []application.TaxonRow }
+
+func (s sliceRowSource) Taxa() []application.TaxonRow                 { return s.taxa }
+func (s sliceRowSource) Distributions() []application.DistributionRow { return nil }
+
+// otherRankRepo ingests one ordinary "Species" concept and one "proles"
+// concept (WCVP's real exotic rank that made hostus 2.0's full ingest
+// abort — see docs/research/reality-check.md's M1.0) into a fresh
+// in-memory repo, so /v1/concept's rank_verbatim rendering can be tested
+// against both a canonical and an OTHER-ranked concept without depending
+// on the shared WCVP fixture carrying an exotic rank itself.
+func otherRankRepo(t *testing.T) *sqlite.DB {
+	t.Helper()
+	db, err := sqlite.Open(":memory:")
+	if err != nil {
+		t.Fatalf("sqlite.Open(:memory:): unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "wcvp-other", Version: "v1"}}, ManifestSHA: "x"}
+	taxa := []application.TaxonRow{
+		{TaxonID: "1", AcceptedTaxonID: "1", Accepted: true, Canonical: "Ordinary species", Rank: "Species", Status: "Accepted"},
+		{TaxonID: "2", AcceptedTaxonID: "2", Accepted: true, Canonical: "Paeonia corallina proles ovatifolia", Authorship: "Rouy & Foucaud", Rank: "proles", Status: "Synonym"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) {
+		return sliceRowSource{taxa: taxa}, nil
+	}
+	if _, err := application.Ingest(context.Background(), ds, readerFor, db); err != nil {
+		t.Fatalf("application.Ingest: unexpected error: %v", err)
+	}
+	return db
+}
+
+// TestHandleConcept_OtherRank_RendersRankVerbatim proves Hardening Task 1's
+// fix-round-1 requirement end to end: a concept whose rank degraded to
+// domain.RankOther (WCVP's "proles") must render BOTH `"rank":"OTHER"` and
+// `"rank_verbatim":"proles"` on the wire — the whole point of persisting
+// RankVerbatim through the ingest is so a nomenclature service doesn't
+// forget which exotic rank a concept actually had (spec §A.1) — while a
+// canonically-ranked concept must OMIT the "rank_verbatim" key entirely
+// (checked on the raw JSON, like the existing niche_width/homotypic
+// omitempty tests), never render it as an empty string.
+func TestHandleConcept_OtherRank_RendersRankVerbatim(t *testing.T) {
+	repo := otherRankRepo(t)
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/concept/wcvp-other:concept:2", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	got := decodeJSON[conceptResponse](t, bytes.NewBuffer(rr.Body.Bytes()))
+	if got.Rank != "OTHER" {
+		t.Errorf("rank = %q, want %q", got.Rank, "OTHER")
+	}
+	if got.RankVerbatim != "proles" {
+		t.Errorf("rank_verbatim = %q, want %q", got.RankVerbatim, "proles")
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decoding raw JSON: %v (body: %s)", err, rr.Body.String())
+	}
+	if _, present := raw["rank_verbatim"]; !present {
+		t.Errorf("raw JSON = %s, want a \"rank_verbatim\" key present for an OTHER-ranked concept", rr.Body.String())
+	}
+
+	rr2 := httptest.NewRecorder()
+	r.ServeHTTP(rr2, httptest.NewRequest(http.MethodGet, "/v1/concept/wcvp-other:concept:1", nil))
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rr2.Code, rr2.Body.String())
+	}
+
+	ordinary := decodeJSON[conceptResponse](t, bytes.NewBuffer(rr2.Body.Bytes()))
+	if ordinary.Rank != "SPECIES" {
+		t.Errorf("rank = %q, want %q", ordinary.Rank, "SPECIES")
+	}
+
+	var rawOrdinary map[string]any
+	if err := json.Unmarshal(rr2.Body.Bytes(), &rawOrdinary); err != nil {
+		t.Fatalf("decoding raw JSON: %v (body: %s)", err, rr2.Body.String())
+	}
+	if _, present := rawOrdinary["rank_verbatim"]; present {
+		t.Errorf("raw JSON = %s, want the \"rank_verbatim\" key OMITTED entirely for a canonically-ranked concept", rr2.Body.String())
 	}
 }
 

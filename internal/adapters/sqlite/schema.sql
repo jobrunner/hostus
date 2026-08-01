@@ -32,11 +32,18 @@ CREATE TABLE IF NOT EXISTS name (
   canonical      TEXT NOT NULL,
   canonical_fold TEXT NOT NULL DEFAULT '',
   authorship     TEXT,
-  rank           TEXT NOT NULL,      -- FAMILY|GENUS|SPECIES|SUBSPECIES|VARIETY|FORM
+  rank           TEXT NOT NULL,      -- FAMILY|GENUS|...|SUBFORM|NOTHOSUBSPECIES|NOTHOVARIETY|NOTHOFORM|OTHER (domain.Rank)
   ipni_id        TEXT,
   published_in   TEXT,
   nom_status     TEXT,               -- NULL|nom_nud|nom_superfl|pro_syn|...
-  basionym_id    TEXT REFERENCES name(id)
+  basionym_id    TEXT REFERENCES name(id),
+  -- rank_verbatim carries the original source "taxonrank" spelling
+  -- (e.g. WCVP's "proles") when rank = 'OTHER' — the one case where the
+  -- canonical Rank value alone has thrown that spelling away by
+  -- collapsing it into the catch-all. NULL/empty for every other rank,
+  -- since Rank itself already identifies the canonical spelling exactly
+  -- there. See domain.Name.RankVerbatim / domain.ParseRankLenient.
+  rank_verbatim  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_name_canonical_fold ON name(canonical_fold);
@@ -49,7 +56,12 @@ CREATE TABLE IF NOT EXISTS taxon_concept (
   rank           TEXT NOT NULL,
   parent_id      TEXT REFERENCES taxon_concept(id),
   sec_reference  TEXT,              -- bibliographic sec. identity
-  status         TEXT NOT NULL      -- accepted|...
+  status         TEXT NOT NULL,     -- accepted|...
+  -- rank_verbatim mirrors name.rank_verbatim's rule, for the concept's own
+  -- rank (which is always the same value as its accepted name's rank, but
+  -- copied independently here since Concept and Name are separate rows/
+  -- structs — see domain.Concept.RankVerbatim).
+  rank_verbatim  TEXT
 );
 
 -- Concept <-> name (accepted + synonyms, typed).

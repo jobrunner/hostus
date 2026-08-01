@@ -16,8 +16,8 @@ import (
 // its accepted name and backbone version, used by Concept, ConceptByXref,
 // and MatchExact so the three reads decode identically.
 const conceptColumns = `
-	tc.id, tc.backbone_id, bv.version, tc.rank, COALESCE(tc.parent_id, ''), COALESCE(tc.sec_reference, ''), tc.status,
-	an.id, an.canonical, COALESCE(an.authorship, ''), an.rank, COALESCE(an.ipni_id, ''), COALESCE(an.published_in, ''), COALESCE(an.nom_status, ''), COALESCE(an.basionym_id, '')`
+	tc.id, tc.backbone_id, bv.version, tc.rank, COALESCE(tc.parent_id, ''), COALESCE(tc.sec_reference, ''), tc.status, COALESCE(tc.rank_verbatim, ''),
+	an.id, an.canonical, COALESCE(an.authorship, ''), an.rank, COALESCE(an.ipni_id, ''), COALESCE(an.published_in, ''), COALESCE(an.nom_status, ''), COALESCE(an.basionym_id, ''), COALESCE(an.rank_verbatim, '')`
 
 const conceptJoin = `
 	FROM taxon_concept tc
@@ -29,12 +29,13 @@ func scanConcept(scan func(dest ...any) error) (*domain.Concept, error) {
 	var (
 		c                                           domain.Concept
 		conceptRank, parentID, secReference, status string
+		conceptRankVerbatim                         string
 		an                                          domain.Name
-		nameRank                                    string
+		nameRank, nameRankVerbatim                  string
 	)
 	if err := scan(
-		&c.ID, &c.BackboneID, &c.BackboneVersion, &conceptRank, &parentID, &secReference, &status,
-		&an.ID, &an.Canonical, &an.Authorship, &nameRank, &an.IPNIID, &an.PublishedIn, &an.NomStatus, &an.BasionymID,
+		&c.ID, &c.BackboneID, &c.BackboneVersion, &conceptRank, &parentID, &secReference, &status, &conceptRankVerbatim,
+		&an.ID, &an.Canonical, &an.Authorship, &nameRank, &an.IPNIID, &an.PublishedIn, &an.NomStatus, &an.BasionymID, &nameRankVerbatim,
 	); err != nil {
 		return nil, err
 	}
@@ -47,12 +48,18 @@ func scanConcept(scan func(dest ...any) error) (*domain.Concept, error) {
 	c.ParentID = parentID
 	c.SecReference = secReference
 	c.Status = domain.ParseStatus(status)
+	if rank == domain.RankOther {
+		c.RankVerbatim = conceptRankVerbatim
+	}
 
 	nRank, err := domain.ParseRank(nameRank)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: accepted name %q: %w", an.ID, err)
 	}
 	an.Rank = nRank
+	if nRank == domain.RankOther {
+		an.RankVerbatim = nameRankVerbatim
+	}
 	c.AcceptedName = an
 
 	return &c, nil
@@ -87,7 +94,7 @@ func (db *DB) Concept(ctx context.Context, id string) (*domain.Concept, []output
 
 func (db *DB) conceptSynonyms(ctx context.Context, conceptID string) ([]output.SynonymName, error) {
 	rows, err := db.sql.QueryContext(ctx, `
-		SELECT n.id, n.canonical, COALESCE(n.authorship, ''), n.rank, COALESCE(n.ipni_id, ''), COALESCE(n.published_in, ''), COALESCE(n.nom_status, ''), COALESCE(n.basionym_id, ''), cn.homotypic
+		SELECT n.id, n.canonical, COALESCE(n.authorship, ''), n.rank, COALESCE(n.ipni_id, ''), COALESCE(n.published_in, ''), COALESCE(n.nom_status, ''), COALESCE(n.basionym_id, ''), COALESCE(n.rank_verbatim, ''), cn.homotypic
 		FROM concept_name cn
 		JOIN name n ON n.id = cn.name_id
 		WHERE cn.concept_id = ? AND cn.role = 'synonym'
@@ -190,8 +197,8 @@ func (db *DB) Classification(ctx context.Context, conceptID string) ([]domain.Cl
 // per-name column list into a domain.Name.
 func scanName(scan func(dest ...any) error) (*domain.Name, error) {
 	var n domain.Name
-	var rank string
-	if err := scan(&n.ID, &n.Canonical, &n.Authorship, &rank, &n.IPNIID, &n.PublishedIn, &n.NomStatus, &n.BasionymID); err != nil {
+	var rank, rankVerbatim string
+	if err := scan(&n.ID, &n.Canonical, &n.Authorship, &rank, &n.IPNIID, &n.PublishedIn, &n.NomStatus, &n.BasionymID, &rankVerbatim); err != nil {
 		return nil, err
 	}
 	r, err := domain.ParseRank(rank)
@@ -199,6 +206,9 @@ func scanName(scan func(dest ...any) error) (*domain.Name, error) {
 		return nil, fmt.Errorf("name %q: %w", n.ID, err)
 	}
 	n.Rank = r
+	if r == domain.RankOther {
+		n.RankVerbatim = rankVerbatim
+	}
 	return &n, nil
 }
 
@@ -284,7 +294,7 @@ func (db *DB) MatchExact(ctx context.Context, canon string) ([]output.MatchCandi
 
 	rows, err := db.sql.QueryContext(ctx, `
 		SELECT cn.role,
-			n.id, n.canonical, COALESCE(n.authorship, ''), n.rank, COALESCE(n.ipni_id, ''), COALESCE(n.published_in, ''), COALESCE(n.nom_status, ''), COALESCE(n.basionym_id, ''),`+
+			n.id, n.canonical, COALESCE(n.authorship, ''), n.rank, COALESCE(n.ipni_id, ''), COALESCE(n.published_in, ''), COALESCE(n.nom_status, ''), COALESCE(n.basionym_id, ''), COALESCE(n.rank_verbatim, ''),`+
 		conceptColumns+`
 		FROM name n
 		JOIN concept_name cn ON cn.name_id = n.id
@@ -383,7 +393,7 @@ func (db *DB) MatchFuzzyCandidates(ctx context.Context, canon string, limit int)
 
 	rows, err := db.sql.QueryContext(ctx, `
 		SELECT cn.role,
-			n.id, n.canonical, COALESCE(n.authorship, ''), n.rank, COALESCE(n.ipni_id, ''), COALESCE(n.published_in, ''), COALESCE(n.nom_status, ''), COALESCE(n.basionym_id, ''),`+
+			n.id, n.canonical, COALESCE(n.authorship, ''), n.rank, COALESCE(n.ipni_id, ''), COALESCE(n.published_in, ''), COALESCE(n.nom_status, ''), COALESCE(n.basionym_id, ''), COALESCE(n.rank_verbatim, ''),`+
 		conceptColumns+`
 		FROM name n
 		JOIN concept_name cn ON cn.name_id = n.id
@@ -479,16 +489,16 @@ func scanMatchCandidateRows(rows *sql.Rows, op, arg string) ([]output.MatchCandi
 	for rows.Next() {
 		var role string
 		var matched domain.Name
-		var matchedRank string
+		var matchedRank, matchedRankVerbatim string
 		var c domain.Concept
-		var conceptRank, parentID, secReference, status string
+		var conceptRank, parentID, secReference, status, conceptRankVerbatim string
 		var an domain.Name
-		var nameRank string
+		var nameRank, nameRankVerbatim string
 		if err := rows.Scan(
 			&role,
-			&matched.ID, &matched.Canonical, &matched.Authorship, &matchedRank, &matched.IPNIID, &matched.PublishedIn, &matched.NomStatus, &matched.BasionymID,
-			&c.ID, &c.BackboneID, &c.BackboneVersion, &conceptRank, &parentID, &secReference, &status,
-			&an.ID, &an.Canonical, &an.Authorship, &nameRank, &an.IPNIID, &an.PublishedIn, &an.NomStatus, &an.BasionymID,
+			&matched.ID, &matched.Canonical, &matched.Authorship, &matchedRank, &matched.IPNIID, &matched.PublishedIn, &matched.NomStatus, &matched.BasionymID, &matchedRankVerbatim,
+			&c.ID, &c.BackboneID, &c.BackboneVersion, &conceptRank, &parentID, &secReference, &status, &conceptRankVerbatim,
+			&an.ID, &an.Canonical, &an.Authorship, &nameRank, &an.IPNIID, &an.PublishedIn, &an.NomStatus, &an.BasionymID, &nameRankVerbatim,
 		); err != nil {
 			return nil, fmt.Errorf("sqlite: scanning %s %q row: %w", op, arg, err)
 		}
@@ -498,6 +508,9 @@ func scanMatchCandidateRows(rows *sql.Rows, op, arg string) ([]output.MatchCandi
 			return nil, fmt.Errorf("sqlite: matched name %q: %w", matched.ID, err)
 		}
 		matched.Rank = mRank
+		if mRank == domain.RankOther {
+			matched.RankVerbatim = matchedRankVerbatim
+		}
 
 		cRank, err := domain.ParseRank(conceptRank)
 		if err != nil {
@@ -507,12 +520,18 @@ func scanMatchCandidateRows(rows *sql.Rows, op, arg string) ([]output.MatchCandi
 		c.ParentID = parentID
 		c.SecReference = secReference
 		c.Status = domain.ParseStatus(status)
+		if cRank == domain.RankOther {
+			c.RankVerbatim = conceptRankVerbatim
+		}
 
 		aRank, err := domain.ParseRank(nameRank)
 		if err != nil {
 			return nil, fmt.Errorf("sqlite: accepted name %q: %w", an.ID, err)
 		}
 		an.Rank = aRank
+		if aRank == domain.RankOther {
+			an.RankVerbatim = nameRankVerbatim
+		}
 		c.AcceptedName = an
 
 		out = append(out, output.MatchCandidate{Concept: c, MatchedName: matched, Role: role})

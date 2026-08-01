@@ -105,6 +105,16 @@ davon, oder das Basionym selbst). Fehlt das Feld, ist die Typisierung
 unbekannt — das Feld wird niemals als `false` ausgeliefert, da das eine
 unbelegbare "heterotypisch"-Behauptung wäre.
 
+`rank_verbatim` erscheint nur, wenn `rank` = `OTHER` ist — der Backbone
+verwendet einen taxonomischen Rang, der keinem der kanonischen Ränge
+entspricht (z. B. WCVPs `proles`, `lusus`, `nothosubsp.`; siehe
+`docs/research/reality-check.md` für die volle gemessene Rang-Inventur).
+In diesem Fall trägt `rank_verbatim` die ursprüngliche Quell-Schreibweise,
+damit sie nicht verloren geht. Für jedes kanonisch eingestufte Concept
+fehlt das Feld ganz (nie ein leerer String) — Abwesenheit bedeutet "nicht
+zutreffend", nicht "unbekannt", dasselbe Muster wie bei `homotypic` und
+`niche_width`.
+
 `distribution` (Referenzgebiets-Zuordnungen, z. B. WGSRPD L3) wird von
 `hostus ingest` befüllt und ausgeliefert; das Feld ist leer, wenn der
 Backbone für dieses Concept keine Distribution liefert.

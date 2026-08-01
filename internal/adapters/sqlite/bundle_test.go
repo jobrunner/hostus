@@ -346,10 +346,13 @@ func exportAUTBundle(t *testing.T) (out string, report sqlite.BundleReport, bund
 // (copyDistribution's doc comment) — exactly 1 distinct WGSRPD level-3
 // area code across their combined distribution: "AUT" itself, not their
 // full global range (which the pre-reduction fixture measured at 16
-// distinct codes — see TestExportBundle_EmptyArea_IncludesEverything's
-// whole-DB counterpart for proof that an unscoped export still carries
-// every area). Exact numbers (not just "> 0") are pinned deliberately: an
-// off-by-one in copyRows' row-counting loop would otherwise go unnoticed.
+// distinct codes). See TestExportBundle_EmptyArea_IncludesEverything for
+// the matching unscoped-side proof: an unscoped export of the SAME
+// concept (wcvp:concept:405825) keeps all 9 of its distribution rows,
+// which is what makes this scoped-side drop a deliberate scoping decision
+// rather than silent data loss. Exact numbers (not just "> 0") are pinned
+// deliberately: an off-by-one in copyRows' row-counting loop would
+// otherwise go unnoticed.
 func TestExportBundle_AreaFilter_ReportReflectsWhatWasCopied(t *testing.T) {
 	out, report, _ := exportAUTBundle(t)
 	if report.Path != out {
@@ -482,7 +485,19 @@ func TestExportBundle_AreaFilter_BundleMetaRecordsProvenance(t *testing.T) {
 // whole-DB export convention: an empty Area copies every concept in src,
 // including ones with no distribution row at all (the GENUS-rank
 // Corynephorus, which the AUT-scoped test above proves is excluded from an
-// area-filtered bundle).
+// area-filtered bundle) — AND, per Task 4's copyDistribution doc comment,
+// every distribution row of an in-scope concept, not just the ones in a
+// requested area (there is no requested area here to begin with). This is
+// the deliberate "unscoped still means everything" half of the size
+// reduction pair: TestExportBundle_AreaFilter_ReportReflectsWhatWasCopied
+// proves an AUT-scoped export of the SAME fixture concept
+// (wcvp:concept:405825) drops down to just its AUT row; this test proves
+// an unscoped export of that same concept keeps all 9 of its distribution
+// rows (internal/adapters/wcvp/testdata/wcvp-sample/wcvp_distribution.csv
+// has exactly 9 rows for taxonid 405825) — without this assertion, the
+// reduction could have silently become "always scope to something" and no
+// test would catch it, since report.Concepts>0 alone says nothing about
+// distribution row survival.
 func TestExportBundle_EmptyArea_IncludesEverything(t *testing.T) {
 	ctx := context.Background()
 	src := ingestWCVPFixture(t)
@@ -509,6 +524,17 @@ func TestExportBundle_EmptyArea_IncludesEverything(t *testing.T) {
 	// the report reflects what was actually copied.
 	if report.Concepts == 0 {
 		t.Fatal("report.Concepts = 0 for a whole-DB export, want > 0")
+	}
+
+	concept405825, synonyms405825, xrefs405825, dists, err := bundle.Concept(ctx, "wcvp:concept:405825")
+	if err != nil {
+		t.Fatalf("bundle.Concept(405825): unexpected error: %v", err)
+	}
+	_ = concept405825
+	_ = synonyms405825
+	_ = xrefs405825
+	if len(dists) != 9 {
+		t.Errorf("bundle.Concept(405825) distribution = %d rows, want 9 (a whole-DB export must copy a concept's FULL distribution, not just an in-scope subset — there is no scope here)", len(dists))
 	}
 
 	meta := readBundleMeta(t, out)

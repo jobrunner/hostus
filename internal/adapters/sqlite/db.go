@@ -27,7 +27,18 @@ var _ output.Repository = (*DB)(nil)
 // path may be ":memory:" for an ephemeral, in-process database, as used by
 // tests. Foreign-key enforcement is turned on for the returned connection.
 func Open(path string) (*DB, error) {
-	sqlDB, err := sql.Open("sqlite", path)
+	// journal_mode=WAL lets a concurrent READER (e.g. serve's Suggest/Match
+	// queries, opened via its own *DB) proceed while an ingest writer holds
+	// a write transaction open — the default rollback-journal mode instead
+	// locks the whole database for the duration of a write, blocking every
+	// reader until it commits. busy_timeout bounds how long any lock wait
+	// (a reader momentarily blocked by a writer's checkpoint, or the
+	// reverse) may block before giving up with SQLITE_BUSY, rather than
+	// failing immediately. Both are set via the modernc.org/sqlite DSN
+	// shorthand so they apply at connection-open time, before schema.sql
+	// runs any DDL below.
+	dsn := path + "?_journal_mode=WAL&_busy_timeout=5000"
+	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: open %q: %w", path, err)
 	}

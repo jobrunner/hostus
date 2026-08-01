@@ -279,7 +279,16 @@ Peak-RSS, kein Swapping (`swaps 0`, `page faults 135`). Das ist die
 Antwort auf die Frage aus dem Plan: nicht der Speicher ist das Problem,
 sondern die FK-Prüfkosten.
 
-**Verdikt:** _(Task 4)_
+**Verdikt: hält nicht — mit bekannter, billiger Reparatur.** Der Serienstand
+ist an echten WCVP-Volldaten **nicht einsatzfähig**: der Ingest bricht
+entweder nach 5,37 s hart ab (unbekannter Rang, 11.223/1.448.984 Zeilen,
+0,775 %) oder läuft quadratisch und wurde nach 22 min 48 s ohne einen
+einzigen committeten Datensatz manuell abgebrochen. Beides sind
+Code-Defekte, keine Dateneigenschaften, und beide sind mit dem Messwerkzeug
+selbst widerlegt: acht zusätzliche FK-Indizes drücken denselben Volldatensatz
+auf 276,70 s (Faktor 4,9 schneller als schon der abgebrochene Lauf bei
+weniger Daten), bei einem Speicher-Overhead von nur ~18 % DB-Größe. Speicher
+(2,97 GiB Peak-RSS) ist nachweislich **nicht** der begrenzende Faktor.
 
 ---
 
@@ -374,7 +383,18 @@ in WCVP — er ist nur anders geschrieben (Aggregat, Hybridzeichen, Autonym,
 Orthographie). Das ist eine Aussage über die 20er-Stichprobe, nicht über
 alle 1.815/380/229 Fälle.
 
-**Verdikt:** _(Task 4)_
+**Verdikt: hält mit Auflagen.** Auf Zeilenebene (das, was zuerst ins Auge
+fällt) sind 12,47–18,11 % der Trait-Zeilen verloren (unmatched + ambiguous
+addiert). Das klingt schlecht, ist aber die falsche Bezugsgröße: auf
+**Taxon-Ebene** — der Ebene, auf der UC1/UC4 tatsächlich nachschlagen — sind
+87,76 % (EIVE) bis 96,41 % (Midolo) der Vokabular-Taxa in WCVP auflösbar,
+und die Stichprobe der Nichttreffer zeigt, dass der Rest überwiegend
+**strukturell** ist (Aggregate, Hybridzeichen, Autonyme, Orthographie —
+19/16/20 von je 20 Fällen), nicht substanziell fehlend. Die Auflage: der
+**ambiguous**-Anteil (10,98–18,11 %, bei Midolo größer als unmatched) ist
+kein Rundungsfehler, sondern ein bewusster Sicherheitsmechanismus, der Namen
+mit mehrdeutiger Auflösung verwirft statt zu raten — das kostet Abdeckung,
+kauft aber Korrektheit.
 
 ---
 
@@ -430,7 +450,12 @@ FloraVeg 16.402 distinkte kanonisierte Taxa.
 | **Vereinigung** | **224** | **3,51 %** | — |
 | danach immer noch unaufgelöst | 5 | 0,08 % | — |
 
-**Verdikt:** _(Task 4)_
+**Verdikt: hält nicht als eigenständiges Argument für die Lizenzgespräche
+— siehe M6.** Auf Namensebene sieht der Zugewinn real aus (EIVE +6,09 %,
+bis zu 903 Taxa), aber M3 misst nur, ob der Name **irgendwo** in einer
+Brückenliste vorkommt — nicht, ob er sich zu einem WCVP-Konzept
+zurückverbinden lässt. Diese Zahl ist damit eine Obergrenze, keine
+Prognose; die belastbare Zahl steht in M6.
 
 ---
 
@@ -482,7 +507,16 @@ Die Verteilung ist stark von der Präfixlänge getrieben (Auszug, ohne
 Vollständige Tabellen: `poc/measure/out/m4-latency-noarea.txt` und
 `…-ger.txt`.
 
-**Verdikt:** _(Task 4)_
+**Verdikt: hält.** p50 36,4 ms / p95 220,2 ms (mit `area=GER` 38,7 / 253,8 ms)
+gegen eine 908-MiB-Volldaten-DB, über HTTP, ist für ein Autosuggest-Feld
+gut spürbar — Faustregel für „tippt sich flüssig an" liegt bei ~100 ms
+Medianlatenz, hier ist der Median gut darunter. Die Auflage steckt in der
+Präfixlänge, nicht im area-Filter: kurze 2-Zeichen-Präfixe (`ca`, `al`, `tr`)
+ziehen p50 auf 139–373 ms, weil sie die meisten FTS5-Treffer erzeugen; das
+ist der Fall, der im Feld bei den ersten Tastenanschlägen auftritt. Der
+harte 20-req/s-Rate-Limit ist ein Nebenbefund, keine Schwäche der Latenz
+selbst, aber relevant für Multi-User-Feldeinsatz (mehrere Geräte gegen
+denselben Server).
 
 ---
 
@@ -547,7 +581,12 @@ Bundle kopiert **alle 369 Gebiete** dieser Konzepte, nicht nur das
 gescopte. `PRAGMA page_count` = 26.585 bei `page_size` 4.096, Freelist 252
 Seiten — die Datei ist also praktisch nicht durch Verschnitt aufgebläht.
 
-**Verdikt:** _(Task 4)_
+**Verdikt: hält nicht.** Das GER-Bundle ist mit 108,9 MB Faktor 5,4 über
+der Spec-Obergrenze von 10–20 MB, und das ungescopte Voll-Bundle scheitert
+komplett am SQLite-Parameterlimit — es gibt heute keinen Weg, „alles"
+oder „mehrere Gebiete" zu exportieren. Beides sind Designlücken, keine
+Messfehler: der Export kopiert alle Synonyme (Ø 14,2 Namen/Konzept) und
+alle 369 Gebiete je Konzept mit, nicht nur das gescopte.
 
 ---
 
@@ -598,7 +637,137 @@ den WCVP-DwC-A-Reader), eine Rangabbildung für GermanSL/EuroSL-Rangkürzel
 Cross-Backbone-Auflösungsstufe im Trait-Ingest, die nach einem
 WCVP-Fehlschlag über den Brücken-Backbone nachschlägt.
 
-**Verdikt:** _(Task 4)_
+**Verdikt: hält nicht als Rechtfertigung für die Lizenzgespräche.** Von den
+vier Kandidatenquellen liefern nur GermanSL und EuroSL überhaupt einen
+Rang- und Akzeptiert-Link, den eine Brücke bräuchte; Euro+Med und FloraVeg
+— die beiden größten Namenslisten (167.888 bzw. 16.402 Zeilen) — tragen
+weder Rang noch aufgelösten Akzeptiert-Verweis und liefern **0** brückbare
+Taxa in jedem der drei Vokabulare. Der gemessene Gesamtgewinn aller vier
+Quellen zusammen ist 51 EIVE- (0,34 % von 14.830), 3 Tichý- und 2
+Midolo-Taxa — eine Größenordnung unter dem 903/372/224, das M3 auf
+Namensebene suggeriert.
+
+---
+
+## Was das für die sechs Use Cases heißt
+
+### UC1 (Feldbestimmung + Zeigerwerte) und UC4 (Vegetationsaufnahme → EUNIS)
+
+Beide hängen an Zeigerwerten (EIVE/Tichý) bzw. am ESy-Namensraum (FloraVeg,
+für UC4). Die auf den ersten Blick alarmierende Zahl aus M2.3 — nur
+**2,64 %** aller 440.098 WCVP-Konzepte tragen überhaupt einen Trait-Wert —
+ist bei richtiger Einordnung **kein Defektbefund**: WCVP ist ein globaler
+Gefäßpflanzen-Backbone, EIVE/Tichý/Midolo sind europäische Vokabulare mit
+14.830/8.907/6.382 Taxa. Ein Nenner von 440.098 verdünnt jeden europäischen
+Zähler künstlich; die Kennzahl, die tatsächlich etwas über die Tauglichkeit
+für UC1/UC4 aussagt, ist die **Taxon-Ebenen-Trefferquote aus M2.2**:
+87,76 % (EIVE) bis 96,41 % (Midolo) der Taxa, die die jeweilige Vokabular
+überhaupt führt, lösen sich in WCVP auf.
+
+**Ist das gut genug?** Für den überwiegenden Feldbetrieb ja — für Mittel­
+europas häufige Sandtrockenrasen-/Grünland-Arten (das in UC1/UC4
+beschriebene Szenario) liegt die Trefferquote im oberen 90er-Bereich
+(Tichý, Midolo) bzw. knapp darunter (EIVE, 87,76 %). Die Kosten der
+residualen 4–12 %: laut der M2.4-Stichprobe sind das überwiegend
+Aggregate (`… agg.`), Hybride, infraspezifische Autonyme und
+orthographische Varianten — also Fälle, in denen im Feld exakt der Name
+notiert wurde, den WCVP anders schreibt oder gar nicht als eigene Zeile
+führt. Für UC1 heißt das: ein Nutzer, der `Festuca ovina agg.` einträgt,
+bekommt heute **keine** Zeigerwerte, obwohl EIVE für die Kleinarten
+welche hat — nicht weil die Daten fehlen, sondern weil der Namensabgleich
+zu wörtlich ist. Für UC4 ist das genau der in der Lösungsarchitektur
+beschriebene dritte Fall (`aggregate_policy: "unresolvable"`) — die Zahl
+bestätigt, dass er in der Praxis real und nicht selten ist.
+
+UC1's Offline-Bundle ist der zweite Belastungspunkt: die Spec nennt
+10–20 MB für Mitteleuropa, gemessen wurden **108,9 MB** fürs
+GER-Bundle — Faktor 5,4. Für den Transport (Download übers Netz, einmalig
+oder bei Delta-Sync) relativiert `gzip -9` das auf 20,5 MiB, gerade noch an
+der Obergrenze der Spec. Aber das ist nur die **Transportgröße** — auf dem
+Gerät liegt die Datei entpackt (SQLite kann nicht komprimiert gelesen
+werden), 108,9 MB sind also die reale Zahl für Speicherplatz auf einem
+Feldgerät. Für ein Smartphone ist das unkritisch; für ältere oder
+speicherarme Geräte, oder wenn das UC1-Bundle mehrere Bezugsräume
+gleichzeitig vorhalten soll, ist es ein Faktor.
+
+### Die ambiguous-Quote ist der interessantere Befund als die Nichttreffer
+
+10,98 % (EIVE) bis 18,11 % (Midolo) der Trait-Zeilen sind nicht
+„nicht gefunden", sondern **ambiguous** — der Name existiert in WCVP,
+löst aber auf mehrere verschiedene Konzepte auf, und `IngestTraits`
+verweigert bewusst die Zuordnung statt zu raten. Das ist strukturell
+etwas anderes als ein Nichttreffer: der Trait-Wert *ist* vorhanden, er
+kann nur nicht sicher an ein Konzept gehängt werden. Bei Midolo ist das
+mit 18,11 % der größere Verlustposten als das Nichtfinden (3,59 %). Für
+die Trait-Abdeckung heißt das: ein Teil der „verlorenen" 12–18 % ließe
+sich durch bessere Disambiguierung (z. B. Rang- oder Autorschafts­
+abgleich) tatsächlich noch heben — anders als bei echten Nichttreffern,
+wo der Name im Backbone schlicht fehlt. Das ist exakt die Review-Warteschlange,
+die Spec §D.4 vorhersieht: mehrdeutige Zuordnungen sollen einer manuellen
+oder heuristischen Nachprüfung zugeführt werden statt stillschweigend zu
+verschwinden — die gemessenen 7.824/7.170/5.780 ambiguous-Zeilen sind die
+konkrete Größe dieser Warteschlange, keine Abstraktion mehr.
+
+## Was jetzt zu entscheiden ist
+
+Priorisiert nach Aufwand/Nutzen, mit dem gemessenen Trade-off je Punkt:
+
+1. **Die zwei Ingest-Blocker beheben (Rang-Vokabular, FK-Indizes).**
+   Günstigste und eindeutigste Entscheidung im ganzen Bericht: der
+   Serienstand ist an Volldaten schlicht **nicht benutzbar**
+   (Abbruch nach 5,37 s bzw. manueller Kill nach 22:48 min ohne
+   einen einzigen committeten Datensatz), und die Reparatur ist im
+   Messwerkzeug bereits vorgeführt — 8 zusätzliche FK-Indizes plus eine
+   erweiterte Rang-Tabelle bringen denselben Volldatensatz auf **276,70 s**
+   bei nachweislich unkritischem Speicherbedarf (2,97 GiB, kein Swapping).
+   Das ist kein Forschungsaufwand, sondern ein Schema- und
+   Enum-Fix; ohne ihn gibt es überhaupt keine Produktions-DB.
+
+2. **Bundle-Größe und Mehrgebiets-Scoping als Design-Lücke behandeln.**
+   108,9 MB statt 10–20 MB (Faktor 5,4) plus die harte Grenze, dass
+   `--area` nur einen Wert nimmt und das ungescopte Bundle am
+   SQLite-Parameterlimit scheitert, sind zusammen ein echtes
+   Architekturproblem, kein Bugfix von einer Zeile. Optionen, die die
+   Messung nahelegt: (a) Synonyme und Distributionszeilen im Bundle
+   selbst filtern statt aller Namen/Gebiete je Konzept mitzukopieren
+   (der Haupttreiber laut M5.2); (b) `--area` auf eine Liste von
+   WGSRPD-L3-Codes erweitern (löst das Mitteleuropa-Problem) und
+   `scopeConceptIDs` von einem einzelnen `IN (?,…)` auf eine
+   Temp-Table/`INSERT`-basierte Auswahl umstellen (löst das
+   Parameterlimit-Problem für das Voll-Bundle gleich mit); (c) den
+   Kompromiss transportkomprimiert (`gzip`, 20,5 MiB) explizit als
+   Verteilweg dokumentieren, ohne die On-Device-Zahl zu beschönigen.
+
+3. **p95 220 ms — akzeptabel, aber die Präfixlänge beobachten.**
+   Für Feld-Autosuggest ist ein Median von 36,4 ms komfortabel; die
+   Belastung kommt von kurzen 2-Zeichen-Präfixen (p50 bis 373 ms) — genau
+   die ersten Tastenanschläge im Feld. Wenn das spürbar wird, ist der
+   günstigste Hebel eine Mindestpräfixlänge (z. B. 3 Zeichen) oder ein
+   Debounce im Client, nicht ein Serverumbau; ein serverseitiger Hebel
+   wäre ein Präfix-Index statt reinem FTS5-Scan für sehr kurze Präfixe.
+   Keine Dringlichkeit, aber im Auge behalten, sobald Multi-Device-Nutzung
+   gegen dieselbe 20-req/s-Grenze läuft.
+
+4. **Das Lizenzgespräch: evidenzbasiert zurückstellen.** Die vier
+   lizenzunklaren Quellen zusammen (Euro+Med, EuroSL, GermanSL, FloraVeg)
+   liefern real **51 zusätzliche EIVE-Taxa** (≈0,34 % von 14.830), 3
+   Tichý- und 2 Midolo-Taxa — weil die beiden größten Kandidaten,
+   Euro+Med und FloraVeg, weder Rang noch aufgelösten Akzeptiert-Link
+   führen und deshalb strukturell **nicht** an ein WCVP-Konzept
+   gebunden werden können (0 brückbare Taxa in allen drei Vokabularen).
+   Dem steht die M2.4-Stichprobe gegenüber: bessere Namensnormalisierung
+   (Aggregate, Hybridzeichen, Autonyme, Orthographie) trifft laut
+   Stichprobe 19/20 (EIVE), 16/20 (Tichý), 20/20 (Midolo) der
+   Nichttreffer-Fälle — und ist reiner Code-/Regelaufwand ohne jede
+   Lizenzabhängigkeit. **Empfehlung:** Aufwand zuerst in die
+   Namensnormalisierung stecken, das Lizenzgespräch nicht als
+   Datenqualitäts-Blocker führen. Das ist jetzt eine evidenzbasierte
+   Empfehlung, keine Vermutung mehr — und es ist eine Aussage über
+   **Aufwandsverteilung**, nicht über den Wert der Arbeit der
+   Kolleg:innen bei Euro+Med/GermanSL/EuroSL/FloraVeg: deren Daten sind
+   real und korrekt, sie sind für diesen einen Zweck (Brücke zu einem
+   WCVP-Konzept) nur strukturell ungeeignet, weil sie keinen
+   Akzeptiert-Link führen.
 
 ---
 

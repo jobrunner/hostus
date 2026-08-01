@@ -153,7 +153,7 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 		JOIN name an ON an.id = tc.accepted_name
 		WHERE 1 = 1` + rankFilter + `
 		GROUP BY tc.id
-		ORDER BY score ASC
+		ORDER BY in_area DESC, score ASC
 		LIMIT ?`
 
 	rows, err := db.sql.QueryContext(ctx, query, args...)

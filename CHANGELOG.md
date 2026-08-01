@@ -48,6 +48,36 @@ dahin akkumulieren PRs hier.
   Goroutine-Leak) entfernt — passte nicht zum SP1-SQLite-Design.
 - `hostus serve` loggt jetzt zusätzlich zum RingLog (MCP) auch auf stderr,
   inkl. einer Startzeile mit der Listen-Adresse.
+- `internal/adapters/sqlite/suggest.go`: der SQL-seitige Fetch-Budget-Query
+  (`ORDER BY score ASC LIMIT ?`, bm25-only) konnte in_area-Kandidaten
+  (Ranking-Priorität 2 laut Spezifikation §B.1, also ÜBER dem bm25-Score)
+  aus dem Kandidaten-Set werfen, bevor `domain.RankSuggestions` überhaupt
+  lief — bei einem breiten Prefix mit mehr Treffern als das Budget
+  (`max(20, 4×limit)`) konnten dadurch gebietsfremde Treffer vor
+  gebietseigenen landen, genau die §B.1-Inversion, die die
+  In-Area-Priorisierung verhindern soll. Fix: `ORDER BY in_area DESC, score
+  ASC LIMIT ?`, damit in_area-Zeilen das Budget-Fenster überleben; die
+  vollständige Mehrschlüssel-Sortierung bleibt weiterhin
+  `domain.RankSuggestions`s Aufgabe.
+- `GET /v1/suggest`: die 400-Fehlermeldung bei einem unbekannten
+  `rank`-Token verkettete `"unknown rank: "` mit `domain.ParseRank`s
+  eigenem Fehlertext (`domain: unknown taxon rank "foo"`) und leakte so
+  interne Domain-Fehlerformulierungen in die HTTP-Antwort; die Meldung
+  benennt das Token jetzt direkt (`unknown rank "foo"`).
+
+### Bekannte Einschränkungen
+- `ExportBundle` (`internal/adapters/sqlite/bundle.go`) kopiert Zeilen 1:1
+  (`copyRows`), ohne Fremdschlüssel-Ziele auf Gebietszugehörigkeit zu
+  prüfen: Ein gebietsgescoptes Bundle kopiert nur `taxon_concept`/`name`-
+  Zeilen der im Gebiet liegenden Concepts. Solange `taxon_concept.parent_id`
+  und `name.basionym_id` (SP1/SP2) für jedes ausgewählte Backbone durchweg
+  NULL sind, bleibt das folgenlos. Sobald eine künftige SP diese Spalten
+  erstmals befüllt, kann ein Concept/Name außerhalb des Gebiets auf einen
+  NICHT mitkopierten Parent/Basionym verweisen — das gebietsgescopte Bundle
+  würde dann mit einem FK-Fehler abbrechen. Wer diese Spalten zuerst befüllt,
+  muss `ExportBundle` gleichzeitig anpassen (gebietsfremde Selbstreferenzen
+  auf NULL setzen, oder die referenzierten Ancestor-Zeilen mit ins Bundle
+  ziehen), statt das als Feld-Crash neu zu entdecken.
 
 ### Added
 - Hexagonales Skelett (`internal/domain`, `application`, `ports/{input,output}`,

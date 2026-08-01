@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -63,8 +64,10 @@ func suggestResponseToDTO(resp application.SuggestResponse) suggestResponseDTO {
 // domain.Rank values via domain.ParseRank. An empty param returns (nil,
 // nil) — no rank filter, per output.SuggestOpts.Ranks' documented "empty
 // means every rank is eligible" convention. Any unrecognized token is
-// reported as an error (the raw token, so the 400 message names the
-// offending value) rather than silently dropped or defaulted.
+// reported as a fresh error naming just the offending token (e.g. `unknown
+// rank "foo"`), rather than propagating domain.ParseRank's own error
+// verbatim — concatenating that one (which already reads `domain: unknown
+// taxon rank "foo"`) produced a doubled-up, internals-leaking 400 message.
 func parseSuggestRanks(param string) ([]domain.Rank, error) {
 	if param == "" {
 		return nil, nil
@@ -72,9 +75,10 @@ func parseSuggestRanks(param string) ([]domain.Rank, error) {
 	tokens := strings.Split(param, ",")
 	ranks := make([]domain.Rank, 0, len(tokens))
 	for _, tok := range tokens {
-		rank, err := domain.ParseRank(strings.TrimSpace(tok))
+		trimmed := strings.TrimSpace(tok)
+		rank, err := domain.ParseRank(trimmed)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("unknown rank %q", trimmed)
 		}
 		ranks = append(ranks, rank)
 	}
@@ -102,7 +106,7 @@ func handleSuggest(repo output.Repository) http.HandlerFunc {
 
 		ranks, err := parseSuggestRanks(query.Get("rank"))
 		if err != nil {
-			httperr.InvalidQueryError(w, "unknown rank: "+err.Error())
+			httperr.InvalidQueryError(w, err.Error())
 			return
 		}
 

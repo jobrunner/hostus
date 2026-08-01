@@ -2,9 +2,12 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/jobrunner/hostus/internal/domain"
+	"github.com/jobrunner/hostus/internal/ports/output"
 )
 
 // TestFetchBudget_ExactValues pins fetchBudget's arithmetic and both of its
@@ -140,4 +143,123 @@ func TestFinalize_ReingestAppendsRatherThanReplaces(t *testing.T) {
 	if got, want := rowCount(t, db, "fts_name_map"), 4; got != want {
 		t.Fatalf("fts_name_map row count after re-ingest = %d, want %d", got, want)
 	}
+}
+
+// seedFetchBudgetOverflowFixture seeds noiseCount "noise" concepts sharing
+// the "zzqfiltest" prefix with a short 2-word canonical (a good, tightly
+// clustered bm25 score against that prefix), plus exactly one additional
+// "target" concept that also matches the prefix but whose canonical is
+// padded with a large number of unrelated filler words. FTS5's bm25 is
+// normalized by document length (the well-known BM25 length-normalization
+// term), so padding the target's document far past every noise document's
+// length reliably gives it the worst (largest/least-negative) bm25 score
+// of the whole set — it sorts dead last under a bm25-only ORDER BY. The
+// target is the only concept in this fixture with a distribution row (in
+// areaCode), so it is the only in_area candidate. Returns the target
+// concept's ID.
+//
+// This reproduces the Fix-A bug: with noiseCount chosen so noiseCount+1
+// exceeds fetchBudget(limit), a bm25-only "ORDER BY score ASC LIMIT
+// budget" truncates the SQL result set before the target row (dead last by
+// score) ever reaches it, even though spec §B.1 ranks in_area (priority 2)
+// above bm25 score (priority 5) — the target should survive into the
+// candidate set and be surfaced, not silently dropped by the SQL layer.
+func seedFetchBudgetOverflowFixture(t *testing.T, db *DB, noiseCount int, areaCode string) (targetConceptID string) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := db.BeginIngest(ctx, domain.BackboneVersion{ID: "wcvp", Version: "v1", IngestedAt: "2026-08-01T00:00:00Z", ManifestSHA: "x"})
+	if err != nil {
+		t.Fatalf("BeginIngest: %v", err)
+	}
+
+	for i := 0; i < noiseCount; i++ {
+		id := fmt.Sprintf("c-zzqfiltest-noise-%02d", i)
+		nameID := fmt.Sprintf("n-zzqfiltest-noise-%02d", i)
+		name := domain.Name{ID: nameID, Canonical: fmt.Sprintf("Zzqfiltest noise%02d", i), Rank: domain.RankSpecies}
+		concept := domain.Concept{ID: id, BackboneID: "wcvp", AcceptedName: name, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+		if err := tx.UpsertName(name); err != nil {
+			t.Fatalf("UpsertName(noise %d): %v", i, err)
+		}
+		if err := tx.UpsertConcept(concept); err != nil {
+			t.Fatalf("UpsertConcept(noise %d): %v", i, err)
+		}
+		if err := tx.LinkName(concept.ID, name.ID, "accepted", nil); err != nil {
+			t.Fatalf("LinkName(noise %d): %v", i, err)
+		}
+	}
+
+	targetConceptID = "c-zzqfiltest-target"
+	targetNameID := "n-zzqfiltest-target"
+	filler := make([]string, 200)
+	for i := range filler {
+		filler[i] = fmt.Sprintf("padding%03d", i)
+	}
+	targetCanonical := "Zzqfiltest " + strings.Join(filler, " ")
+	targetName := domain.Name{ID: targetNameID, Canonical: targetCanonical, Rank: domain.RankSpecies}
+	targetConcept := domain.Concept{ID: targetConceptID, BackboneID: "wcvp", AcceptedName: targetName, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+	if err := tx.UpsertName(targetName); err != nil {
+		t.Fatalf("UpsertName(target): %v", err)
+	}
+	if err := tx.UpsertConcept(targetConcept); err != nil {
+		t.Fatalf("UpsertConcept(target): %v", err)
+	}
+	if err := tx.LinkName(targetConcept.ID, targetName.ID, "accepted", nil); err != nil {
+		t.Fatalf("LinkName(target): %v", err)
+	}
+	if err := tx.AddDistribution(targetConceptID, domain.Distribution{AreaScheme: "wgsrpd_l3", AreaCode: areaCode}); err != nil {
+		t.Fatalf("AddDistribution(target): %v", err)
+	}
+
+	if err := tx.Finalize(); err != nil {
+		t.Fatalf("Finalize: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	return targetConceptID
+}
+
+// TestSuggest_InAreaCandidateSurvivesFetchBudgetOverflow is the Fix-A
+// regression test (see the task report): it seeds 25 "noise" concepts plus
+// one in-area "target" concept, all matching the "zzqfiltest" prefix — 26
+// matches total, comfortably more than fetchBudget(1) == 20 (see
+// TestFetchBudget_ExactValues: 1*4=4 < floor 20, so budget is exactly 20).
+// The target's canonical is padded so its bm25 score is the worst of the
+// 26 (see seedFetchBudgetOverflowFixture's doc comment) — under a
+// bm25-only "ORDER BY score ASC LIMIT 20" it would be truncated away
+// before domain.RankSuggestions (an application-layer concern Suggest
+// itself never runs) ever saw it, even though it is the one in_area
+// candidate and spec §B.1 ranks in_area above score. Ordering by in_area
+// DESC first (the fix) keeps it inside the budget window regardless of
+// its score.
+func TestSuggest_InAreaCandidateSurvivesFetchBudgetOverflow(t *testing.T) {
+	db := openTestDB(t)
+	const areaCode = "ZZQ"
+	targetID := seedFetchBudgetOverflowFixture(t, db, 25, areaCode)
+
+	got, err := db.Suggest(context.Background(), "zzqfiltest", output.SuggestOpts{Limit: 1, Area: areaCode})
+	if err != nil {
+		t.Fatalf("Suggest: unexpected error: %v", err)
+	}
+
+	found := false
+	for _, item := range got {
+		if item.ConceptID == targetID {
+			found = true
+			if !item.InArea {
+				t.Errorf("target item %+v: InArea = false, want true", item)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("Suggest(%q) = %d items, want the in_area target concept %q to survive the fetch budget (got IDs: %v)", "zzqfiltest", len(got), targetID, conceptIDsList(got))
+	}
+}
+
+func conceptIDsList(items []domain.SuggestItem) []string {
+	out := make([]string, len(items))
+	for i, it := range items {
+		out[i] = it.ConceptID
+	}
+	return out
 }

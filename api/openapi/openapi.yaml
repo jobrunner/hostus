@@ -8,9 +8,11 @@
 # changes against (breaking-change detection via oasdiff).
 #
 # SP1 adds the local SQLite/FTS5-backed `/v1/concept/{id}`, `/v1/xref` and
-# `/v1/match` endpoints on top of the SP0 health/metrics skeleton. Their
-# shapes below mirror internal/adapters/http/taxa.go's DTOs exactly — no
-# aspirational fields (traits, suggest, translate are later SPs).
+# `/v1/match` endpoints on top of the SP0 health/metrics skeleton. SP2 adds
+# the area-/rank-filtered, priority-ranked `GET /v1/suggest` autosuggest
+# endpoint. Their shapes below mirror internal/adapters/http's DTOs exactly
+# — no aspirational fields (traits, translate, synonyms are still later
+# SPs).
 openapi: 3.0.3
 info:
   title: hostus API

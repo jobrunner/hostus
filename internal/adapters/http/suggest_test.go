@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	httpx "github.com/jobrunner/hostus/internal/adapters/http"
@@ -173,6 +174,16 @@ func TestHandleSuggest_UnknownRank_Returns400InvalidQuery(t *testing.T) {
 	got := decodeJSON[errorEnvelope](t, rr.Body)
 	if got.Error.Code != "INVALID_QUERY" {
 		t.Errorf("error.code = %q, want %q", got.Error.Code, "INVALID_QUERY")
+	}
+	// The message must name the offending token cleanly and must not leak
+	// domain.ParseRank's own error string (`domain: unknown taxon rank
+	// "foo"`) via naive concatenation — see internal/adapters/http/suggest.go's
+	// parseSuggestRanks doc comment.
+	if strings.Contains(got.Error.Message, "domain:") {
+		t.Errorf("error.message = %q, must not leak the domain error string", got.Error.Message)
+	}
+	if want := `unknown rank "bogus"`; got.Error.Message != want {
+		t.Errorf("error.message = %q, want %q", got.Error.Message, want)
 	}
 }
 

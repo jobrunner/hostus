@@ -624,3 +624,118 @@ func TestMatchNames_EmptyRequestsReturnsEmptyResults(t *testing.T) {
 		t.Errorf("len(results) = %d, want 0", len(results))
 	}
 }
+
+// seedAggregateHomonymPair seeds TWO distinct concepts sharing the exact
+// same aggregate canonical ("Ambigua aggregata agg.") — the aggregate
+// counterpart of seedHomonymPair. Two independent sources (e.g. two
+// backbones' collective-species concepts) can legitimately carry the same
+// aggregate name, and hostus has no basis for preferring either.
+func seedAggregateHomonymPair(t *testing.T, repo *sqlite.DB) (conceptA, conceptB string) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := repo.BeginIngest(ctx, domain.BackboneVersion{ID: "test-agg-homonym", Version: "v1"})
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	for _, suffix := range []string{"a", "b"} {
+		name := domain.Name{ID: "test-agg-homonym:name:" + suffix, Canonical: "Ambigua aggregata agg.", Rank: domain.RankSpecies}
+		concept := domain.Concept{ID: "test-agg-homonym:concept:" + suffix, BackboneID: "test-agg-homonym", AcceptedName: name, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+		if err := tx.UpsertName(name); err != nil {
+			t.Fatalf("UpsertName(%s): unexpected error: %v", suffix, err)
+		}
+		if err := tx.UpsertConcept(concept); err != nil {
+			t.Fatalf("UpsertConcept(%s): unexpected error: %v", suffix, err)
+		}
+		if err := tx.LinkName(concept.ID, name.ID, "accepted", nil); err != nil {
+			t.Fatalf("LinkName(%s): unexpected error: %v", suffix, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+	return "test-agg-homonym:concept:a", "test-agg-homonym:concept:b"
+}
+
+// TestMatchNames_AggregateResolvingToSeveralConceptsRequiresReview pins the
+// aggregate path against the same guard classify and matchFuzzy already
+// apply: when the aggregate's canonical resolves to more than one DISTINCT
+// concept, hostus must not answer with candidates[0]. Picking the first row
+// SQLite happened to return would present a coin flip as a 0.95-confidence
+// answer and hide a real ambiguity from the caller.
+func TestMatchNames_AggregateResolvingToSeveralConceptsRequiresReview(t *testing.T) {
+	repo := seededMatchRepo(t)
+	conceptA, conceptB := seedAggregateHomonymPair(t, repo)
+
+	results, err := application.MatchNames(context.Background(), repo, []application.MatchRequest{
+		{ID: "1", Verbatim: "Ambigua aggregata agg."},
+	})
+	if err != nil {
+		t.Fatalf("MatchNames: unexpected error: %v", err)
+	}
+	r := results[0]
+	if r.ConceptID != "" {
+		t.Errorf("ConceptID = %q, want empty (must not pick one of %q/%q)", r.ConceptID, conceptA, conceptB)
+	}
+	if r.MatchType != "" {
+		t.Errorf("MatchType = %q, want empty (nothing was resolved)", r.MatchType)
+	}
+	if r.Confidence != 0 {
+		t.Errorf("Confidence = %v, want 0 (no resolution, no confidence)", r.Confidence)
+	}
+	if !r.RequiresReview {
+		t.Error("RequiresReview = false, want true (an ambiguous aggregate needs a human)")
+	}
+	if len(r.Candidates) != 2 {
+		t.Errorf("Candidates = %v, want both tied names listed", r.Candidates)
+	}
+	if r.Note == "" {
+		t.Error("Note = empty, want an explanation for the reviewer")
+	}
+}
+
+// TestMatchNames_AggregateWithSeveralNamesOfOneConceptStillResolves pins the
+// other direction: several MatchExact rows that all resolve to the SAME
+// concept (here an aggregate's accepted name plus a synonym sharing its
+// canonical) are NOT ambiguous — the aggregate_alias result must be
+// unchanged, RequiresReview stays false. The guard keys on distinct
+// concepts, not on candidate count.
+func TestMatchNames_AggregateWithSeveralNamesOfOneConceptStillResolves(t *testing.T) {
+	repo := seededMatchRepo(t)
+	conceptID := seedFestucaOvinaAggregate(t, repo)
+
+	ctx := context.Background()
+	tx, err := repo.BeginIngest(ctx, domain.BackboneVersion{ID: "test-agg", Version: "v1"})
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	syn := domain.Name{ID: "test-agg:name:festuca-ovina-agg-syn", Canonical: "Festuca ovina agg.", Rank: domain.RankSpecies}
+	if err := tx.UpsertName(syn); err != nil {
+		t.Fatalf("UpsertName: unexpected error: %v", err)
+	}
+	if err := tx.LinkName(conceptID, syn.ID, "synonym", nil); err != nil {
+		t.Fatalf("LinkName: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+
+	results, err := application.MatchNames(ctx, repo, []application.MatchRequest{
+		{ID: "1", Verbatim: "Festuca ovina agg."},
+	})
+	if err != nil {
+		t.Fatalf("MatchNames: unexpected error: %v", err)
+	}
+	r := results[0]
+	if r.MatchType != domain.MatchAggregateAlias {
+		t.Errorf("MatchType = %q, want %q", r.MatchType, domain.MatchAggregateAlias)
+	}
+	if r.ConceptID != conceptID {
+		t.Errorf("ConceptID = %q, want %q", r.ConceptID, conceptID)
+	}
+	if r.Confidence != 0.95 {
+		t.Errorf("Confidence = %v, want 0.95", r.Confidence)
+	}
+	if r.RequiresReview {
+		t.Error("RequiresReview = true, want false (two names, one concept, is not an ambiguity)")
+	}
+}

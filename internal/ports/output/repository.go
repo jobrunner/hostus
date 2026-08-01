@@ -82,6 +82,19 @@ type Repository interface {
 	// BeginIngest starts an ingest transaction for the given backbone
 	// version. Callers must Commit or Rollback the returned IngestTx.
 	BeginIngest(ctx context.Context, bv domain.BackboneVersion) (IngestTx, error)
+
+	// BeginTraitIngest starts an ingest transaction for a TRAIT
+	// vocabulary. It is deliberately separate from BeginIngest: a trait
+	// vocabulary is NOT a taxonomic backbone, so it must never appear in
+	// backbone_version — those rows are served verbatim as the
+	// backbone_versions provenance block of every /v1/suggest and /v1/match
+	// response and gate /health/ready, and a synthetic "trait:<vocab>" row
+	// there would tell clients a trait vocabulary is a backbone (and could
+	// make a backbone-less database report ready). The returned IngestTx
+	// therefore has no backbone: its Finalize is a no-op (there are no
+	// concepts to index), and only AddTraitValue/UpsertTraitVocabulary are
+	// meaningful on it. Callers must Commit or Rollback.
+	BeginTraitIngest(ctx context.Context) (IngestTx, error)
 }
 
 // SuggestOpts configures Repository.Suggest.

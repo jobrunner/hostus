@@ -68,13 +68,22 @@ type traitResolution struct {
 // and writes matched values as trait_value rows, then records meta as the
 // vocabulary's provenance.
 //
+// Before either phase, checkVocabIdentity reconciles the manifest's
+// (vocab, version) against the one every CSV row declares, so a manifest
+// pointed at the wrong file — or pinning a version the pipeline does not
+// emit — fails loudly instead of writing data under a foreign identity.
+//
 // It runs in two strictly separated phases — RESOLVE first, WRITE second:
 //
 //	Phase 1 (no transaction open): every DISTINCT canonical taxon name is
 //	resolved through repo.MatchExact and cached in a map.
-//	Phase 2: BeginIngest -> UpsertTraitVocabulary + AddTraitValue -> Commit,
-//	consulting only that map. NO repository read happens while the ingest
-//	transaction is open.
+//	Phase 2: BeginTraitIngest -> UpsertTraitVocabulary + AddTraitValue ->
+//	Commit, consulting only that map. NO repository read happens while the
+//	ingest transaction is open.
+//
+// Phase 2 uses repo.BeginTraitIngest, NOT repo.BeginIngest: a trait
+// vocabulary is not a taxonomic backbone and must never leave a row in
+// backbone_version (see output.Repository.BeginTraitIngest).
 //
 // The split is not a micro-optimization, it is a correctness requirement.
 // The sqlite adapter deliberately runs with SetMaxOpenConns(1) (the
@@ -103,16 +112,16 @@ func IngestTraits(ctx context.Context, repo output.Repository, src TraitRowSourc
 	rows := src.Rows()
 	report.Rows = len(rows)
 
+	if err := checkVocabIdentity(rows, meta); err != nil {
+		return report, err
+	}
+
 	resolved, err := resolveTraitTaxa(ctx, repo, rows)
 	if err != nil {
 		return report, fmt.Errorf("application: resolving trait taxa for vocab %q: %w", meta.Vocab, err)
 	}
 
-	tx, err := repo.BeginIngest(ctx, domain.BackboneVersion{
-		ID:      "trait:" + string(meta.Vocab),
-		Version: meta.Version,
-		License: meta.License,
-	})
+	tx, err := repo.BeginTraitIngest(ctx)
 	if err != nil {
 		return report, fmt.Errorf("application: starting trait ingest for vocab %q: %w", meta.Vocab, err)
 	}
@@ -139,7 +148,7 @@ func IngestTraits(ctx context.Context, repo output.Repository, src TraitRowSourc
 			}
 			tv := domain.TraitValue{
 				Vocab:        meta.Vocab,
-				VocabVersion: row.VocabVersion,
+				VocabVersion: meta.Version,
 				Dim:          dim,
 				Value:        row.Value,
 				NicheWidth:   row.NicheWidth,
@@ -163,6 +172,37 @@ func IngestTraits(ctx context.Context, repo output.Repository, src TraitRowSourc
 
 	report.UnmatchedSample = sortedSample(unmatched, unmatchedSampleCap)
 	return report, nil
+}
+
+// checkVocabIdentity reconciles the two independent sources of a trait
+// value's (vocab, version) identity — the manifest entry (meta) and the
+// canonical CSV's own vocab/vocab_version columns (row) — and refuses the
+// whole ingest if they disagree, naming both sides.
+//
+// This is not defensive paranoia, it is the only thing standing between a
+// misconfigured manifest and silently wrong data. trait_value rows are
+// written under meta's identity while the CSV's rows carry their own; a
+// mismatch on VERSION makes Repository.Traits' LEFT JOIN onto
+// trait_vocabulary miss, silently degrading Taxonomy to "" on the wire. A
+// mismatch on VOCAB is worse: pointing an `id: eive` manifest entry at
+// Tichý's canonical CSV would store Tichý's 1..12 values under vocab=eive,
+// which domain.ScaleFor then renders on the 0..10 normalized EIVE scale —
+// an invented scale, and exactly the cross-vocabulary merge PoC P10
+// forbids.
+//
+// It runs BEFORE phase 1 (resolution) so a mismatched vocabulary costs no
+// repository work and, more importantly, opens no transaction at all —
+// "write nothing" is guaranteed structurally, not by a rollback.
+func checkVocabIdentity(rows []TraitRow, meta domain.TraitVocabMeta) error {
+	for _, row := range rows {
+		if row.Vocab != string(meta.Vocab) {
+			return fmt.Errorf("application: trait row for taxon %q declares vocab %q but the manifest pins vocab %q: refusing to ingest a vocabulary under another vocabulary's identity", row.Taxon, row.Vocab, meta.Vocab)
+		}
+		if row.VocabVersion != meta.Version {
+			return fmt.Errorf("application: trait row for taxon %q declares vocab %s version %q but the manifest pins version %q: refusing to ingest, the pinned version must match the data", row.Taxon, row.Vocab, row.VocabVersion, meta.Version)
+		}
+	}
+	return nil
 }
 
 // resolveTraitTaxa is IngestTraits' phase 1: it maps every DISTINCT

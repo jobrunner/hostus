@@ -76,6 +76,42 @@ Spezifikation folgen in SP4+. `release-please` cuttet daraus das nächste
 `2.0.0-alpha.N`-Release; bis dahin akkumulieren PRs hier.
 
 ### Fixed
+- Trait-Ingest schreibt keine `backbone_version`-Zeilen mehr: er lief zuvor
+  über `BeginIngest` mit einer synthetischen `trait:<vokabular>`-Version,
+  die im `backbone_versions`-Provenienzblock JEDER `/v1/suggest`- und
+  `/v1/match`-Antwort auftauchte (ein Trait-Vokabular als taxonomischer
+  Backbone ausgewiesen) und `/health/ready` verfälschte. Neuer Port
+  `output.Repository.BeginTraitIngest` öffnet die Transaktion ohne
+  Backbone-Eintrag.
+- Trait-Ingest gleicht die `(vocab, version)`-Identität aus Manifest und
+  kanonischer CSV jetzt zeilenweise ab und bricht bei Abweichung mit einer
+  Fehlermeldung ab, die beide Seiten nennt, statt Werte unter fremder
+  Identität zu speichern (ein `id: eive`, das auf Tichýs CSV zeigt, hätte
+  dessen 1–12-Werte auf EIVEs normalisierter 0–10-Skala ausgeliefert);
+  persistiert wird die im Manifest gepinnte Version. `dataset.example.yaml`
+  pinnte für Tichý/Midolo Versionen, die die Pipelines gar nicht emittieren
+  (`1.0` statt `2.0`/`3`) — korrigiert.
+- `dataset.example.yaml` verweist für Tichý/Midolo nicht mehr auf
+  `floraveg.eu/download/...` (Lizenz ungeklärt, PoC-R1-Scope-Schnitt),
+  sondern auf die Zenodo-DOIs der CC-BY-4.0-Originaldatensätze — der Wert
+  wird in `trait_vocabulary.source_url` persistiert, über die API
+  ausgeliefert und in jedes Offline-Bundle kopiert.
+- Trait-CSV-Reader: die Kurzzeilen-Prüfung ging von genau sieben Spalten
+  aus und verursachte einen Panic bei einem Header mit ZUSÄTZLICHEN Spalten (die der Reader
+  mit `FieldsPerRecord = -1` ausdrücklich zulässt); sie orientiert sich
+  jetzt an der tatsächlichen Position der gesuchten Spalten.
+- `POST /v1/match`: der Aggregat-Pfad wählte bei mehreren Treffern
+  `candidates[0]`, auch wenn diese auf VERSCHIEDENE Concepts zeigten. Er
+  wendet jetzt dieselbe Prüfung an wie der exact- und der fuzzy-Pfad:
+  `requires_review: true`, alle Kandidaten gelistet, kein geratenes
+  `concept_id`.
+- Fuzzy-Prefilter der SQLite-Adapter: das GLOB-Präfix aus dem ersten
+  Zeichen der Anfrage wird escaped — ein führendes `[` erzeugte zuvor eine
+  unterminierte Zeichenklasse (fand nichts), ein führendes `*`/`?` machte
+  den Prefilter zum No-op (voller Tabellenscan).
+- `docs/how-to/trait-ingest.md` nannte einen Pfad
+  (`pipelines/tichy/output/tichy2023-canonical.csv`), den die Pipeline nicht
+  erzeugt.
 - `google.golang.org/grpc` auf v1.82.1 angehoben (behebt GO-2026-6061 in der
   OTLP-gRPC-Exporter-Kette von `internal/adapters/telemetry`).
 - Go-Toolchain auf 1.26.5 angehoben (`go.mod` toolchain-Direktive,

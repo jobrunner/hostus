@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
 
+	"github.com/jobrunner/hostus/internal/adapters/sqlite"
 	"github.com/jobrunner/hostus/internal/adapters/traits"
 	"github.com/jobrunner/hostus/internal/application"
 	"github.com/jobrunner/hostus/internal/domain"
@@ -248,6 +250,179 @@ func TestIngestTraits_SecondVocabularyDoesNotMergeWithFirst(t *testing.T) {
 	}
 }
 
+// TestIngestTraits_LeavesNoBackboneVersionRow pins the boundary between a
+// trait vocabulary and a taxonomic backbone. IngestTraits used to open its
+// write transaction via BeginIngest with a synthetic
+// "trait:<vocab>" BackboneVersion, which unconditionally INSERTs into
+// backbone_version — those rows are then served verbatim as the
+// backbone_versions provenance block of every /v1/suggest and /v1/match
+// response, telling clients a trait vocabulary is a backbone.
+func TestIngestTraits_LeavesNoBackboneVersionRow(t *testing.T) {
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+
+	if _, err := application.IngestTraits(ctx, repo, loadEIVEFixture(t), eiveMeta); err != nil {
+		t.Fatalf("IngestTraits: unexpected error: %v", err)
+	}
+
+	versions, err := repo.BackboneVersions(ctx)
+	if err != nil {
+		t.Fatalf("BackboneVersions: unexpected error: %v", err)
+	}
+	if len(versions) != 0 {
+		t.Fatalf("BackboneVersions = %v, want none: a trait-only ingest must not record ANY backbone", versions)
+	}
+
+	// The vocabulary itself must still be recorded — the fix removes the
+	// backbone row, not the provenance.
+	vocabs, err := repo.TraitVocabularies(ctx)
+	if err != nil {
+		t.Fatalf("TraitVocabularies: unexpected error: %v", err)
+	}
+	if len(vocabs) != 1 {
+		t.Fatalf("len(TraitVocabularies) = %d, want 1", len(vocabs))
+	}
+}
+
+// TestIngestTraits_BackboneVersionsHoldOnlyRealBackbones is the same
+// guarantee on a realistically populated database: after a real WCVP ingest
+// PLUS two trait vocabularies, BackboneVersions must list exactly the
+// backbones and nothing whose id looks like "trait:...".
+func TestIngestTraits_BackboneVersionsHoldOnlyRealBackbones(t *testing.T) {
+	repo := seededMatchRepo(t)
+	ctx := context.Background()
+
+	if _, err := application.IngestTraits(ctx, repo, loadEIVEFixture(t), eiveMeta); err != nil {
+		t.Fatalf("IngestTraits(eive): unexpected error: %v", err)
+	}
+	if _, err := application.IngestTraits(ctx, repo, loadTichyFixture(t), tichyMeta); err != nil {
+		t.Fatalf("IngestTraits(tichy): unexpected error: %v", err)
+	}
+
+	versions, err := repo.BackboneVersions(ctx)
+	if err != nil {
+		t.Fatalf("BackboneVersions: unexpected error: %v", err)
+	}
+	if len(versions) != 1 {
+		t.Fatalf("len(BackboneVersions) = %d (%v), want 1 (the WCVP backbone alone)", len(versions), versions)
+	}
+	if versions[0].ID != "wcvp" {
+		t.Errorf("BackboneVersions[0].ID = %q, want %q", versions[0].ID, "wcvp")
+	}
+	for _, bv := range versions {
+		if strings.HasPrefix(bv.ID, "trait:") {
+			t.Errorf("BackboneVersions contains synthetic trait entry %q; trait vocabularies are not backbones", bv.ID)
+		}
+	}
+}
+
+// TestIngestTraits_VocabMismatchFailsAndWritesNothing pins the worst
+// misconfiguration the (vocab, version) reconciliation exists to stop:
+// a manifest entry pinned to one vocabulary pointed at another
+// vocabulary's canonical CSV. Without the check, Tichý's 1..12 values would
+// be stored under vocab=eive and rendered on EIVE's normalized 0..10 scale
+// — an invented scale, and the cross-vocabulary merge PoC P10 forbids.
+func TestIngestTraits_VocabMismatchFailsAndWritesNothing(t *testing.T) {
+	repo := seededMatchRepo(t)
+	ctx := context.Background()
+
+	// eiveMeta pins vocab "eive", the fixture rows declare "tichy2023".
+	_, err := application.IngestTraits(ctx, repo, loadTichyFixture(t), eiveMeta)
+	if err == nil {
+		t.Fatal("IngestTraits: expected an error for a CSV/manifest vocab mismatch, got nil")
+	}
+	for _, want := range []string{"tichy2023", "eive"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q; it must name BOTH sides of the mismatch", err, want)
+		}
+	}
+	assertNothingIngested(t, repo)
+}
+
+// TestIngestTraits_VersionMismatchFailsAndWritesNothing pins the subtler
+// half: the vocab agrees but the manifest pins a version the pipeline does
+// not emit. Silently accepting it makes Repository.Traits' LEFT JOIN onto
+// trait_vocabulary miss, degrading taxonomy to "" on the wire instead of
+// failing — this was live in the shipped dataset.example.yaml.
+func TestIngestTraits_VersionMismatchFailsAndWritesNothing(t *testing.T) {
+	repo := seededMatchRepo(t)
+	ctx := context.Background()
+
+	wrongVersion := eiveMeta
+	wrongVersion.Version = "9.9"
+
+	_, err := application.IngestTraits(ctx, repo, loadEIVEFixture(t), wrongVersion)
+	if err == nil {
+		t.Fatal("IngestTraits: expected an error for a CSV/manifest version mismatch, got nil")
+	}
+	for _, want := range []string{"9.9", "1.0"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q; it must name BOTH sides of the mismatch", err, want)
+		}
+	}
+	assertNothingIngested(t, repo)
+}
+
+// assertNothingIngested asserts a refused trait ingest left the database
+// completely untouched — no vocabulary metadata row and no trait values on
+// the one concept the fixtures do match.
+func assertNothingIngested(t *testing.T, repo *sqlite.DB) {
+	t.Helper()
+	ctx := context.Background()
+
+	vocabs, err := repo.TraitVocabularies(ctx)
+	if err != nil {
+		t.Fatalf("TraitVocabularies: unexpected error: %v", err)
+	}
+	if len(vocabs) != 0 {
+		t.Errorf("TraitVocabularies = %v, want none: a refused ingest must write nothing", vocabs)
+	}
+
+	concept, err := repo.ConceptByXref(ctx, "powo", "396681-1")
+	if err != nil {
+		t.Fatalf("ConceptByXref: unexpected error: %v", err)
+	}
+	sets, err := repo.Traits(ctx, concept.ID, nil)
+	if err != nil {
+		t.Fatalf("Traits: unexpected error: %v", err)
+	}
+	if len(sets) != 0 {
+		t.Errorf("Traits(%q) = %v, want none: a refused ingest must write nothing", concept.ID, sets)
+	}
+}
+
+// TestIngestTraits_WritesManifestPinnedVersionOnEveryValue pins that the
+// version persisted on a trait_value is the manifest's pinned one — the
+// single source of truth reconciled against the CSV — so a value can never
+// carry a version trait_vocabulary has no row for.
+func TestIngestTraits_WritesManifestPinnedVersionOnEveryValue(t *testing.T) {
+	repo := seededMatchRepo(t)
+	ctx := context.Background()
+
+	if _, err := application.IngestTraits(ctx, repo, loadEIVEFixture(t), eiveMeta); err != nil {
+		t.Fatalf("IngestTraits: unexpected error: %v", err)
+	}
+	concept, err := repo.ConceptByXref(ctx, "powo", "396681-1")
+	if err != nil {
+		t.Fatalf("ConceptByXref: unexpected error: %v", err)
+	}
+	sets, err := repo.Traits(ctx, concept.ID, nil)
+	if err != nil {
+		t.Fatalf("Traits: unexpected error: %v", err)
+	}
+	if len(sets) != 1 {
+		t.Fatalf("len(Traits) = %d, want 1", len(sets))
+	}
+	if sets[0].VocabVersion != eiveMeta.Version {
+		t.Errorf("VocabVersion = %q, want %q (the manifest-pinned version)", sets[0].VocabVersion, eiveMeta.Version)
+	}
+	// The join onto trait_vocabulary only resolves when the value's version
+	// matches the recorded vocabulary's — a non-empty Taxonomy proves it did.
+	if sets[0].Taxonomy != eiveMeta.Taxonomy {
+		t.Errorf("Taxonomy = %q, want %q (empty means the trait_vocabulary join missed)", sets[0].Taxonomy, eiveMeta.Taxonomy)
+	}
+}
+
 func TestIngestTraits_MatchExactErrorPropagates(t *testing.T) {
 	repo := seededMatchRepo(t)
 	src := fakeTraitRowSource{rows: []application.TraitRow{
@@ -294,6 +469,15 @@ func (r *txGuardRepo) MatchExact(ctx context.Context, canon string) ([]output.Ma
 
 func (r *txGuardRepo) BeginIngest(ctx context.Context, bv domain.BackboneVersion) (output.IngestTx, error) {
 	tx, err := r.Repository.BeginIngest(ctx, bv)
+	if err != nil {
+		return nil, err
+	}
+	r.txOpen = true
+	return &txGuardTx{IngestTx: tx, repo: r}, nil
+}
+
+func (r *txGuardRepo) BeginTraitIngest(ctx context.Context) (output.IngestTx, error) {
+	tx, err := r.Repository.BeginTraitIngest(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -390,4 +574,9 @@ func (r *failingMatchRepo) MatchExact(context.Context, string) ([]output.MatchCa
 func (r *failingMatchRepo) BeginIngest(ctx context.Context, bv domain.BackboneVersion) (output.IngestTx, error) {
 	r.beganIngest = true
 	return r.Repository.BeginIngest(ctx, bv)
+}
+
+func (r *failingMatchRepo) BeginTraitIngest(ctx context.Context) (output.IngestTx, error) {
+	r.beganIngest = true
+	return r.Repository.BeginTraitIngest(ctx)
 }

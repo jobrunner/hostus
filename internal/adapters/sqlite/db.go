@@ -115,6 +115,21 @@ func (db *DB) BeginIngest(ctx context.Context, bv domain.BackboneVersion) (outpu
 	return &ingestTx{ctx: ctx, tx: tx, backboneID: bv.ID}, nil
 }
 
+// BeginTraitIngest starts a transaction for one trait-vocabulary import
+// WITHOUT touching backbone_version — see output.Repository.BeginTraitIngest
+// for why a trait vocabulary must never be recorded as a backbone. The
+// returned IngestTx carries an empty backboneID, which makes Finalize a
+// no-op: its query filters on tc.backbone_id, and no taxon_concept belongs
+// to the empty backbone, so a trait ingest never (re)writes the FTS index it
+// did not contribute names to.
+func (db *DB) BeginTraitIngest(ctx context.Context) (output.IngestTx, error) {
+	tx, err := db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: beginning trait ingest transaction: %w", err)
+	}
+	return &ingestTx{ctx: ctx, tx: tx, backboneID: ""}, nil
+}
+
 // ingestTx implements output.IngestTx over a single *sql.Tx.
 type ingestTx struct {
 	ctx        context.Context

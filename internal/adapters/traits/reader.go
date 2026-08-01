@@ -74,7 +74,7 @@ func Read(path string) (*Dataset, error) {
 	}
 
 	var ds Dataset
-	minFields := len(wantHeader)
+	minFields := minFieldsFor(idx)
 	line := 1 // header was line 1
 	for {
 		line++
@@ -98,6 +98,32 @@ func Read(path string) (*Dataset, error) {
 		ds.Rows = append(ds.Rows, parsed)
 	}
 	return &ds, nil
+}
+
+// minFieldsFor returns how many fields a data row must have for parseRow to
+// index every wanted column safely: one past the RIGHTMOST position any
+// wanted column occupies in the ACTUAL header.
+//
+// len(wantHeader) is not that number. The reader sets FieldsPerRecord = -1
+// precisely so ragged/extended pipeline output is tolerated, so the header
+// may carry extra columns — with a header like "extra|taxon|...|n_systems",
+// n_systems sits at index 7 while len(wantHeader) is still 7, and a 7-field
+// row would clear the guard only to panic on row[7]. That would break this
+// reader's documented "collect the bad row in Errors, never panic" posture.
+func minFieldsFor(idx map[string]int) int {
+	minFields := 0
+	for _, want := range wantHeader {
+		// i+1 > minFields is a genuinely equivalent mutant at
+		// CONDITIONALS_BOUNDARY (>=): when i+1 == minFields exactly,
+		// reassigning minFields to it is a no-op (same value), so no test
+		// can observe the difference — the same max-selection-idiom
+		// equivalence already documented on application.matchFuzzy's
+		// running `best` and domain.Similarity's maxLen.
+		if i := idx[want]; i+1 > minFields {
+			minFields = i + 1
+		}
+	}
+	return minFields
 }
 
 // parseRow decodes one data row. value is mandatory; niche_width/n_systems

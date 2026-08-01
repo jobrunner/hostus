@@ -1,10 +1,12 @@
 package httpx_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/jobrunner/hostus/internal/adapters/sqlite"
@@ -399,5 +401,82 @@ func TestZeroValueDepsDoesNotMountTraitsRoute(t *testing.T) {
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/concept/anything/traits", nil))
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (mux's own not-found, since the route isn't mounted)", rr.Code)
+	}
+}
+
+// TestBackboneVersionsExcludeTraitVocabularies pins the provenance block of
+// both endpoints that carry one. backbone_versions is generated straight
+// from Repository.BackboneVersions, so a trait ingest that recorded itself
+// there (as "trait:eive") would tell every /v1/suggest and /v1/match client
+// that a trait vocabulary is a taxonomic backbone. After a full ingest —
+// one real backbone plus two trait vocabularies — the map must contain the
+// backbone and nothing else.
+func TestBackboneVersionsExcludeTraitVocabularies(t *testing.T) {
+	repo := seededTraitsRepo(t)
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	assertOnlyRealBackbones := func(t *testing.T, endpoint string, versions map[string]string) {
+		t.Helper()
+		if versions["wcvp"] != "2026-06-15" {
+			t.Errorf("%s: backbone_versions[wcvp] = %q, want %q", endpoint, versions["wcvp"], "2026-06-15")
+		}
+		if len(versions) != 1 {
+			t.Errorf("%s: backbone_versions = %v, want exactly the wcvp backbone", endpoint, versions)
+		}
+		for id := range versions {
+			if strings.HasPrefix(id, "trait:") {
+				t.Errorf("%s: backbone_versions contains %q; a trait vocabulary is not a backbone", endpoint, id)
+			}
+		}
+	}
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/suggest?q=Coryne", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/v1/suggest status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	assertOnlyRealBackbones(t, "/v1/suggest", decodeJSON[suggestResponse](t, rr.Body).BackboneVersions)
+
+	rr = httptest.NewRecorder()
+	body := `{"names": [{"id": "1", "verbatim": "Corynephorus canescens"}]}`
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/match", bytes.NewBufferString(body)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/v1/match status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	assertOnlyRealBackbones(t, "/v1/match", decodeJSON[matchResponse](t, rr.Body).BackboneVersions)
+}
+
+// TestHealthReady_TraitVocabularyAloneDoesNotSatisfyReadiness pins the
+// readiness gate against the same confusion: /health/ready only counts
+// backbone_version rows, so a database holding trait vocabularies but no
+// backbone at all — nothing to serve /v1/suggest or /v1/concepts from —
+// must stay 503 rather than being waved through by a synthetic trait row.
+func TestHealthReady_TraitVocabularyAloneDoesNotSatisfyReadiness(t *testing.T) {
+	db, err := sqlite.Open(":memory:")
+	if err != nil {
+		t.Fatalf("sqlite.Open(:memory:): unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ds, err := traits.Read("../traits/testdata/eive-sample.csv")
+	if err != nil {
+		t.Fatalf("traits.Read(eive-sample.csv): unexpected error: %v", err)
+	}
+	if _, err := application.IngestTraits(context.Background(), db, traitsRowSource{ds: ds}, traitsEIVEMeta); err != nil {
+		t.Fatalf("IngestTraits: unexpected error: %v", err)
+	}
+	vocabs, err := db.TraitVocabularies(context.Background())
+	if err != nil {
+		t.Fatalf("TraitVocabularies: unexpected error: %v", err)
+	}
+	if len(vocabs) != 1 {
+		t.Fatalf("len(TraitVocabularies) = %d, want 1 — the fixture must really have been ingested", len(vocabs))
+	}
+
+	r := httpx.NewRouter(httpx.Deps{Repo: db})
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/health/ready", nil))
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 (a trait vocabulary is not a backbone)", rr.Code)
 	}
 }

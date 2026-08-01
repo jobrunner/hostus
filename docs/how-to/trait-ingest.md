@@ -31,10 +31,12 @@ nix develop -c bash pipelines/midolo/build.sh
 
 Jede Pipeline lädt (oder nutzt einen bereits vorhandenen Cache), konvertiert
 mit `python3`+`openpyxl` und schreibt das Ergebnis nach
-`pipelines/<vocab>/output/<vocab>-canonical.csv` (generiertes Artefakt,
-nicht eingecheckt) sowie eine Zusammenfassung (Zeilen, Taxa, Dimensionen,
-beobachtete Min/Max je Dimension) auf stdout und in
-`pipelines/<vocab>/<vocab>.summary.txt`.
+`pipelines/<pipeline>/output/<pipeline>-canonical.csv` (generiertes
+Artefakt, nicht eingecheckt) sowie eine Zusammenfassung (Zeilen, Taxa,
+Dimensionen, beobachtete Min/Max je Dimension) auf stdout und in
+`pipelines/<pipeline>/<pipeline>.summary.txt`. `<pipeline>` ist der
+Verzeichnisname (`eive`, `tichy`, `midolo`) — nicht die Vokabular-ID
+(`eive`, `tichy2023`, `midolo2023`).
 
 ### 2. Vokabular im Manifest pinnen
 
@@ -54,13 +56,28 @@ trait_vocabularies:
     taxonomy: floraveg-eunis-aligned
     license: CC-BY-4.0
     source: https://doi.org/10.5281/zenodo.7427088
-    path: pipelines/tichy/output/tichy2023-canonical.csv
+    path: pipelines/tichy/output/tichy-canonical.csv
+  - id: midolo2023
+    version: "3"
+    taxonomy: floraveg-eunis-aligned
+    license: CC-BY-4.0
+    source: https://doi.org/10.5281/zenodo.7116957
+    path: pipelines/midolo/output/midolo-canonical.csv
 ```
 
 `id` muss einer der bekannten Vokabular-Bezeichner sein (`eive`,
 `tichy2023`, `midolo2023` — siehe `internal/domain.ParseTraitVocab`);
 `taxonomy` dokumentiert den Namensraum, gegen den das Vokabular
 harmonisiert wurde (siehe unten, "Namensraum-Kreuzung").
+
+`id` und `version` müssen **exakt** mit den Spalten `vocab` und
+`vocab_version` der kanonischen CSV übereinstimmen (also mit `VOCAB` /
+`VOCAB_VERSION` in `pipelines/<pipeline>/build.sh`: EIVE `1.0`, Tichý
+`2.0`, Midolo `3`). hostus vergleicht beide Seiten zeilenweise und bricht
+den Ingest mit einer Fehlermeldung ab, die beide Seiten nennt, statt Werte
+unter einer fremden Identität zu speichern — ein `id: eive`, das auf
+Tichýs CSV zeigt, würde sonst Tichýs 1–12-Werte auf der normalisierten
+EIVE-Skala 0–10 ausliefern.
 
 ### 3. Ingestieren
 

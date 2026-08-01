@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jobrunner/hostus/internal/domain"
 	"github.com/jobrunner/hostus/internal/ports/output"
@@ -413,8 +414,35 @@ func (db *DB) MatchFuzzyCandidates(ctx context.Context, canon string, limit int)
 // resolves via idx_name_canonical_fold, with the ordering applied as a
 // cheap temp-B-tree sort over the already-narrowed row set, not a
 // re-scan.
+// globEscape makes s a GLOB pattern matching s LITERALLY, by wrapping each
+// of GLOB's three metacharacters in a single-character bracket set — GLOB
+// has no backslash escape, but "[*]", "[?]" and "[[]" are the documented
+// literal forms (and "]" is only special INSIDE a bracket set, so it needs
+// no escaping here).
+//
+// fuzzyCandidateNameIDs builds its prefix pattern from the query's first
+// rune, which is caller-controlled: an unescaped "[" would open a bracket
+// set that the appended "*" never closes (an unterminated set matches
+// nothing, silently disabling fuzzy matching), and an unescaped "*" or "?"
+// would turn the whole prefix filter into a no-op that scans the entire
+// name table — exactly the whole-table scan the prefilter exists to avoid.
+func globEscape(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch r {
+		case '*', '?', '[':
+			b.WriteByte('[')
+			b.WriteRune(r)
+			b.WriteByte(']')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 func fuzzyCandidateNameIDs(ctx context.Context, db *sql.DB, want string, limit int) ([]string, error) {
-	firstRunePrefix := string([]rune(want)[:1]) + "*"
+	firstRunePrefix := globEscape(string([]rune(want)[:1])) + "*"
 
 	rows, err := db.QueryContext(ctx, `
 		SELECT id FROM name

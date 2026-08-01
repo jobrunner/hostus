@@ -163,6 +163,47 @@ func TestRead_MalformedRowsAreCollectedNotPanicking(t *testing.T) {
 	}
 }
 
+// TestRead_ExtraLeadingColumnShortRowIsCollectedNotPanicking pins the
+// short-row guard against a header carrying EXTRA columns. The reader sets
+// FieldsPerRecord = -1 precisely to tolerate ragged input, so a pipeline
+// that prepends a column is legal — but it shifts every wanted column one
+// position right, and a guard of len(wantHeader) (7) would then wave a
+// 7-field row through only for parseRow to index row[7] and panic. The
+// documented posture is "collect the bad row in Errors, never panic".
+func TestRead_ExtraLeadingColumnShortRowIsCollectedNotPanicking(t *testing.T) {
+	dir := t.TempDir()
+	content := "extra|" + cleanHeader +
+		// full row (8 fields): parses fine despite the extra column
+		"x|Corynephorus canescens|eive|1.0|M|2.48|3.42|20\n" +
+		// 7 fields: enough for the OLD guard, one short of n_systems at
+		// index 7 — the panic case.
+		"x|Festuca ovina|eive|1.0|N|3.1|2.0\n"
+	path := dir + "/extra-column.csv"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	ds, err := traits.Read(path)
+	if err != nil {
+		t.Fatalf("Read(%q): unexpected fatal error: %v", path, err)
+	}
+	if got, want := len(ds.Rows), 1; got != want {
+		t.Fatalf("len(Rows) = %d, want %d (only the full row survives)", got, want)
+	}
+	if got, want := ds.Rows[0].Taxon, "Corynephorus canescens"; got != want {
+		t.Errorf("Rows[0].Taxon = %q, want %q (columns must be read by header position, not by ordinal)", got, want)
+	}
+	if got, want := len(ds.Errors), 1; got != want {
+		t.Fatalf("len(Errors) = %d, want %d (the short row must be collected)", got, want)
+	}
+	if !strings.Contains(ds.Errors[0].Error(), "short row") {
+		t.Errorf("Errors[0] = %q, want a short-row error", ds.Errors[0])
+	}
+	if !strings.Contains(ds.Errors[0].Error(), "want at least 8") {
+		t.Errorf("Errors[0] = %q, want the guard to demand 8 fields (n_systems sits at index 7)", ds.Errors[0])
+	}
+}
+
 func TestRead_MissingHeaderColumn(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/bad-header.csv"

@@ -255,6 +255,15 @@ func matchFuzzy(ctx context.Context, repo output.Repository, req MatchRequest, q
 // true from matchFuzzy either way. Only when matchFuzzy also finds nothing
 // (nil) does this fall back to the plain noteAggregateUnresolved
 // UNRESOLVABLE result, unchanged from before fuzzy existed.
+//
+// When repo.MatchExact DOES return candidates, this applies the same
+// distinct-concept guard classify and matchFuzzy apply: several candidates
+// resolving to the SAME concept (e.g. an aggregate's accepted name and a
+// synonym of it) still resolve normally, but candidates resolving to two or
+// more DISTINCT concepts are a genuine ambiguity — no ConceptID/MatchType
+// is invented, RequiresReview is set and every candidate name is listed.
+// Picking candidates[0] there would silently answer a question hostus
+// cannot answer, which is precisely what the other two paths refuse to do.
 func matchAggregate(ctx context.Context, repo output.Repository, req MatchRequest, canonical string) (MatchResult, error) {
 	queryCanon := domain.Canonicalize(canonical)
 	candidates, err := repo.MatchExact(ctx, queryCanon)
@@ -274,6 +283,20 @@ func matchAggregate(ctx context.Context, repo output.Repository, req MatchReques
 			ID:             req.ID,
 			RequiresReview: true,
 			Note:           noteAggregateUnresolved,
+		}, nil
+	}
+	distinctConcepts := make(map[string]bool, len(candidates))
+	names := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		distinctConcepts[c.Concept.ID] = true
+		names = append(names, c.MatchedName.Canonical)
+	}
+	if len(distinctConcepts) > 1 {
+		return MatchResult{
+			ID:             req.ID,
+			RequiresReview: true,
+			Note:           noteAmbiguous,
+			Candidates:     names,
 		}, nil
 	}
 	return MatchResult{

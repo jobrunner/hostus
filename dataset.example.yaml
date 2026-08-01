@@ -31,27 +31,36 @@ backbones:
     path: ./backbones/floraveg
     note: "ESy-Namensraum, gepinnt — nicht mit EIVE/EuroSL verwechseln"
 
+# Trait-Vokabulare. `version` MUSS exakt der Spalte `vocab_version` der
+# kanonischen CSV entsprechen, die die jeweilige Pipeline erzeugt (siehe
+# VOCAB_VERSION in pipelines/<pipeline>/build.sh) — hostus vergleicht beide
+# Seiten beim Ingest und bricht bei Abweichung ab, statt Werte unter einer
+# falschen Identität zu speichern. `source` ist die Zenodo-DOI des
+# Originaldatensatzes (alle drei CC-BY-4.0), nicht der FloraVeg.EU-Download:
+# dessen Lizenz ist ungeklärt (docs/research/quellenregister.md), und die
+# Angabe wird in trait_vocabulary.source_url persistiert, über die API
+# ausgeliefert und in jedes Offline-Bundle kopiert.
 trait_vocabularies:
-  # Ellenberg-type Indicator Values for Europe.
+  # Ellenberg-type Indicator Values for Europe (Dengler et al. 2023).
   - id: eive
     version: "1.0"
     taxonomy: euromed-via-eurosl
     license: CC-BY-4.0
-    source: https://zenodo.org/record/eive
-    path: ./traits/eive.csv
+    source: https://doi.org/10.5281/zenodo.7534792
+    path: pipelines/eive/output/eive-canonical.csv
 
-  # Zeigerwerte nach Tichý et al. 2023, im FloraVeg-Namensraum.
+  # Zeigerwerte nach Tichý et al. 2023, FloraVeg/EUNIS-harmonisiert.
   - id: tichy2023
-    version: "1.0"
-    taxonomy: floraveg
+    version: "2.0"
+    taxonomy: floraveg-eunis-aligned
     license: CC-BY-4.0
-    source: https://floraveg.eu/download/tichy2023
-    path: ./traits/tichy2023.csv
+    source: https://doi.org/10.5281/zenodo.7427088
+    path: pipelines/tichy/output/tichy-canonical.csv
 
-  # Zeigerwerte nach Midolo et al. 2023, ebenfalls FloraVeg-Namensraum.
+  # Zeigerwerte nach Midolo et al. 2023, ebenfalls FloraVeg/EUNIS-Namensraum.
   - id: midolo2023
-    version: "1.0"
-    taxonomy: floraveg
+    version: "3"
+    taxonomy: floraveg-eunis-aligned
     license: CC-BY-4.0
-    source: https://floraveg.eu/download/midolo2023
-    path: ./traits/midolo2023.csv
+    source: https://doi.org/10.5281/zenodo.7116957
+    path: pipelines/midolo/output/midolo-canonical.csv

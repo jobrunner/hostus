@@ -1,0 +1,31 @@
+# Messmanifest M2: WCVP-Backbone + alle drei CC-BY-Trait-Vokabulare.
+backbones:
+  - id: wcvp
+    version: "2026-06-04"
+    license: CC-BY-4.0
+    source: https://sftp.kew.org/pub/data-repositories/WCVP/wcvp_dwca.zip
+    path: /Users/jbrunner/work/projects/hostus/poc/data/wcvp/filtered
+    redistribution: allowed
+
+trait_vocabularies:
+  - id: eive
+    version: "1.0"
+    taxonomy: euromed-via-eurosl
+    license: CC-BY-4.0
+    source: https://doi.org/10.5281/zenodo.7534792
+    path: /Users/jbrunner/work/projects/hostus/pipelines/eive/output/eive-canonical.csv
+    redistribution: allowed
+  - id: tichy2023
+    version: "2.0"
+    taxonomy: floraveg-eunis-aligned
+    license: CC-BY-4.0
+    source: https://doi.org/10.5281/zenodo.7427088
+    path: /Users/jbrunner/work/projects/hostus/pipelines/tichy/output/tichy-canonical.csv
+    redistribution: allowed
+  - id: midolo2023
+    version: "3"
+    taxonomy: floraveg-eunis-aligned
+    license: CC-BY-4.0
+    source: https://doi.org/10.5281/zenodo.7116957
+    path: /Users/jbrunner/work/projects/hostus/pipelines/midolo/output/midolo-canonical.csv
+    redistribution: allowed

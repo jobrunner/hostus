@@ -1,0 +1,7 @@
+backbones:
+  - id: wcvp
+    version: "2026-06-04"
+    license: CC-BY-4.0
+    source: https://sftp.kew.org/pub/data-repositories/WCVP/wcvp_dwca.zip
+    path: __PATH__
+    redistribution: allowed

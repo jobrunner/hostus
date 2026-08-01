@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -219,6 +220,144 @@ func (db *DB) MatchExact(ctx context.Context, canon string) ([]output.MatchCandi
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: querying MatchExact %q: %w", canon, err)
 	}
+	all, err := scanMatchCandidateRows(rows, "MatchExact", canon)
+	if err != nil {
+		return nil, err
+	}
+
+	// Belt-and-suspenders recheck (see doc comment above): canonical_fold
+	// drives the SQL filter, but a stale/unpopulated fold column must never
+	// silently widen the result beyond an exact match.
+	var out []output.MatchCandidate
+	for _, c := range all {
+		if domain.Canonicalize(c.MatchedName.Canonical) != want {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// fuzzyCandidateLengthWindow bounds how far a fuzzy prefilter candidate's
+// canonical-fold length may differ (in runes/bytes — canonical_fold is
+// ASCII-folded, so the two coincide) from the query's, on either side.
+const fuzzyCandidateLengthWindow = 3
+
+// MatchFuzzyCandidates returns up to limit names that are cheap-to-find
+// near-misses of canon, for the application layer to score with
+// domain.Similarity. The prefilter is deliberately narrow so a fuzzy lookup
+// never scans the whole name table:
+//
+//   - same first rune of canonical_fold as canon's (a typo essentially
+//     never changes the first letter of a scientific name's genus),
+//     expressed as a GLOB prefix pattern rather than substr(...)=? or a
+//     LIKE pattern — SQLite's query planner turns a GLOB prefix into an
+//     indexed range scan over idx_name_canonical_fold (confirmed via EXPLAIN
+//     QUERY PLAN), whereas both substr() and (the by-default
+//     case-insensitive) LIKE force a full table scan despite the index
+//     existing; and
+//   - canonical_fold length within fuzzyCandidateLengthWindow runes of
+//     canon's, applied as a residual filter over that already-narrowed set.
+//
+// This filtering runs as its OWN query against the name table alone (see
+// fuzzyCandidateNameIDs), not folded into one big join with
+// concept_name/taxon_concept/backbone_version: tried as a single query, the
+// planner (reasonably, by its own row-count estimates) chose to drive the
+// join from taxon_concept and probe into the indexed name column per row —
+// i.e. it still touched every taxon_concept row despite the index existing,
+// exactly the whole-table scan this prefilter exists to avoid. Resolving
+// the (at most limit) matched name IDs first, then joining ONLY those IDs
+// outward to their concept/accepted-name/backbone-version context, keeps
+// that second step's cost bounded by limit regardless of which join order
+// the planner picks for it.
+//
+// Recall trade-off: a genuine near-miss whose first letter was itself
+// mistyped, or whose length differs by more than the window (e.g. a
+// dropped/added word), will NOT be returned — this is intentional; a
+// prefilter that must also catch those would have to scan every row,
+// defeating the purpose. limit <= 0 uses a modest built-in default.
+func (db *DB) MatchFuzzyCandidates(ctx context.Context, canon string, limit int) ([]output.MatchCandidate, error) {
+	want := domain.Canonicalize(canon)
+	if want == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	ids, err := fuzzyCandidateNameIDs(ctx, db.sql, want, limit)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: querying MatchFuzzyCandidates %q: %w", canon, err)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	// idsJSON binds the whole ID list as ONE parameter via json_each,
+	// rather than building a "?,?,?..." placeholder list by runtime string
+	// concatenation: the query text below is a fixed literal regardless of
+	// len(ids), which keeps it a plain parameterized query (gosec's G202
+	// rule flags any runtime-assembled SQL string, even placeholder-only
+	// concatenation, and this repo's suppression-directive budget is zero
+	// — see debt-guard.sh).
+	idsJSON, err := json.Marshal(ids)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: encoding MatchFuzzyCandidates %q id list: %w", canon, err)
+	}
+
+	rows, err := db.sql.QueryContext(ctx, `
+		SELECT cn.role,
+			n.id, n.canonical, COALESCE(n.authorship, ''), n.rank, COALESCE(n.ipni_id, ''), COALESCE(n.published_in, ''), COALESCE(n.nom_status, ''), COALESCE(n.basionym_id, ''),`+
+		conceptColumns+`
+		FROM name n
+		JOIN concept_name cn ON cn.name_id = n.id
+		JOIN taxon_concept tc ON tc.id = cn.concept_id
+		JOIN name an ON an.id = tc.accepted_name
+		JOIN backbone_version bv ON bv.id = tc.backbone_id
+		WHERE n.id IN (SELECT value FROM json_each(?))
+		ORDER BY tc.id, n.id`, string(idsJSON))
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: querying MatchFuzzyCandidates %q: %w", canon, err)
+	}
+	return scanMatchCandidateRows(rows, "MatchFuzzyCandidates", canon)
+}
+
+// fuzzyCandidateNameIDs runs MatchFuzzyCandidates' prefilter (GLOB first-rune
+// prefix + length window) against the name table ALONE, returning up to
+// limit matching name IDs. Isolating it from the enrichment join is what
+// lets it lean on idx_name_canonical_fold — see MatchFuzzyCandidates' doc
+// comment for why the combined-query version didn't.
+func fuzzyCandidateNameIDs(ctx context.Context, db *sql.DB, want string, limit int) ([]string, error) {
+	firstRunePrefix := string([]rune(want)[:1]) + "*"
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT id FROM name
+		WHERE canonical_fold GLOB ?
+		  AND ABS(length(canonical_fold) - length(?)) <= ?
+		LIMIT ?`, firstRunePrefix, want, fuzzyCandidateLengthWindow, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// scanMatchCandidateRows decodes rows shaped like MatchExact's/
+// MatchFuzzyCandidates' shared SELECT (role, matched name, concept,
+// accepted name) into MatchCandidates, closing rows before returning. It
+// does no canonical-equality filtering itself — callers that need an exact
+// match (MatchExact) apply that afterward; MatchFuzzyCandidates wants the
+// near-misses this returns as-is.
+func scanMatchCandidateRows(rows *sql.Rows, op, arg string) ([]output.MatchCandidate, error) {
 	defer func() { _ = rows.Close() }()
 
 	var out []output.MatchCandidate
@@ -236,11 +375,7 @@ func (db *DB) MatchExact(ctx context.Context, canon string) ([]output.MatchCandi
 			&c.ID, &c.BackboneID, &c.BackboneVersion, &conceptRank, &parentID, &secReference, &status,
 			&an.ID, &an.Canonical, &an.Authorship, &nameRank, &an.IPNIID, &an.PublishedIn, &an.NomStatus, &an.BasionymID,
 		); err != nil {
-			return nil, fmt.Errorf("sqlite: scanning MatchExact %q row: %w", canon, err)
-		}
-
-		if domain.Canonicalize(matched.Canonical) != want {
-			continue
+			return nil, fmt.Errorf("sqlite: scanning %s %q row: %w", op, arg, err)
 		}
 
 		mRank, err := domain.ParseRank(matchedRank)
@@ -268,7 +403,7 @@ func (db *DB) MatchExact(ctx context.Context, canon string) ([]output.MatchCandi
 		out = append(out, output.MatchCandidate{Concept: c, MatchedName: matched, Role: role})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("sqlite: iterating MatchExact %q rows: %w", canon, err)
+		return nil, fmt.Errorf("sqlite: iterating %s %q rows: %w", op, arg, err)
 	}
 	return out, nil
 }

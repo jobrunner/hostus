@@ -342,6 +342,78 @@ func TestMatchExact_DoesNotConfuseDistinctEpithets(t *testing.T) {
 	}
 }
 
+func TestMatchFuzzyCandidates_ReturnsNearMissForTypo(t *testing.T) {
+	db := openSeededDB(t)
+
+	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", 10)
+	if err != nil {
+		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
+	}
+	ids := make(map[string]bool, len(got))
+	for _, c := range got {
+		ids[c.MatchedName.ID] = true
+	}
+	if !ids["n-festuca-ovona"] || !ids["n-festuca-ovena"] {
+		t.Fatalf("MatchFuzzyCandidates(%q) ids = %v, want both near-miss names present", "festuca ovina", ids)
+	}
+}
+
+func TestMatchFuzzyCandidates_ExcludesUnrelatedNames(t *testing.T) {
+	db := openSeededDB(t)
+
+	// "abies alba" shares neither first letter nor length-window with
+	// "festuca ovina" — the prefilter must exclude it even though it's a
+	// perfectly real seeded name, proving the query doesn't fall back to a
+	// full scan.
+	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", 10)
+	if err != nil {
+		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
+	}
+	for _, c := range got {
+		if c.MatchedName.ID == "n-abies-alba" {
+			t.Fatalf("MatchFuzzyCandidates(%q) = %v, want n-abies-alba excluded by the prefilter", "festuca ovina", got)
+		}
+	}
+}
+
+func TestMatchFuzzyCandidates_RespectsLimit(t *testing.T) {
+	db := openSeededDB(t)
+
+	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", 1)
+	if err != nil {
+		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("MatchFuzzyCandidates(%q, limit=1) = %d candidates, want exactly 1", "festuca ovina", len(got))
+	}
+}
+
+func TestMatchFuzzyCandidates_ZeroLimitUsesDefault(t *testing.T) {
+	db := openSeededDB(t)
+
+	// limit <= 0 must fall back to the adapter's default cap (not silently
+	// become a SQL LIMIT 0, which would return nothing at all).
+	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", 0)
+	if err != nil {
+		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatalf("MatchFuzzyCandidates(%q, limit=0) = empty, want the default cap to apply (near-misses present)", "festuca ovina")
+	}
+}
+
+func TestMatchFuzzyCandidates_NoNearMissReturnsEmpty(t *testing.T) {
+	db := openSeededDB(t)
+
+	got, err := db.MatchFuzzyCandidates(context.Background(), "zzznonexistent", 10)
+	if err != nil {
+		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("MatchFuzzyCandidates(%q) = %v, want empty", "zzznonexistent", got)
+	}
+}
+
 func synonymIDs(names []domain.Name) []string {
 	ids := make([]string, 0, len(names))
 	for _, n := range names {

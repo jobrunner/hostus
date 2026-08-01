@@ -22,6 +22,17 @@ type Repository interface {
 	// form equals canon, leaving classification (exact vs. exact_author,
 	// etc.) to the application layer.
 	MatchExact(ctx context.Context, canon string) ([]MatchCandidate, error)
+	// MatchFuzzyCandidates returns up to limit names that are CHEAP TO FIND
+	// near-misses of canon (an already domain.Canonicalize'd query) for the
+	// application layer to score with domain.Similarity — it does not
+	// itself compute or filter by similarity. Implementations must use a
+	// prefilter (e.g. same first letter + a bounded canonical-length
+	// window) so a fuzzy lookup never scans the whole name table; see the
+	// sqlite adapter's doc comment for the concrete prefilter and its
+	// recall trade-off (a real near-miss whose length or first letter
+	// diverges enough from canon can be missed — deliberately, to keep this
+	// cheap). limit <= 0 uses the adapter's default cap.
+	MatchFuzzyCandidates(ctx context.Context, canon string, limit int) ([]MatchCandidate, error)
 	// BackboneVersions lists every ingested backbone artifact.
 	BackboneVersions(ctx context.Context) ([]domain.BackboneVersion, error)
 

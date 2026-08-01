@@ -8,12 +8,22 @@ import (
 	"github.com/jobrunner/hostus/internal/ports/output"
 )
 
-// Confidence values assigned per match type, per spec §B.2.
+// Confidence values assigned per match type, per spec §B.2. A MatchFuzzy
+// result has no fixed confidence tier here: its Confidence IS the winning
+// domain.Similarity score (see matchFuzzy) — fuzzy confidence is inherently
+// graded, not a fixed constant like the other match types.
 const (
 	confidenceExactAuthor    = 0.99
 	confidenceAggregateAlias = 0.95
 	confidenceExact          = 0.90
 )
+
+// fuzzyCandidateLimit bounds how many repo.MatchFuzzyCandidates rows
+// matchFuzzy scores per query. The prefilter (same first letter + a bounded
+// length window, see the sqlite adapter) already narrows candidates to a
+// small set for any real near-miss; this cap just keeps the Similarity
+// scoring cost bounded against a pathological backbone.
+const fuzzyCandidateLimit = 20
 
 // Notes attached to results that need a human's attention.
 const (
@@ -21,6 +31,8 @@ const (
 	noteAggregateUnresolved = "Aggregat ohne aufgelöstes Sammelart-Konzept"
 	noteUnresolvable        = "Kein eindeutiger Treffer, keine Fuzzy-Auflösung in dieser SP"
 	noteAmbiguous           = "Mehrdeutiger Treffer: mehrere Konzepte mit gleicher Übereinstimmungsstärke, manuelle Prüfung nötig"
+	noteFuzzy               = "Fuzzy-Treffer: Ähnlichkeit über Schwellenwert, manuelle Prüfung erforderlich"
+	noteFuzzyAmbiguous      = "Mehrdeutiger Fuzzy-Treffer: mehrere Konzepte mit gleicher Ähnlichkeit, manuelle Prüfung nötig"
 )
 
 // aggregateSuffixes are the trailing tokens (case-insensitive, after
@@ -62,11 +74,15 @@ type MatchResult struct {
 //     UNRESOLVABLE if none does. No microspecies resolution is attempted.
 //  3. Otherwise repo.MatchExact(Canonicalize(canonical)) is classified
 //     candidate-by-candidate via domain.ClassifyMatch, preferring
-//     exact_author over exact. Zero classified matches -> UNRESOLVABLE.
-//
-// Fuzzy matching is explicitly out of scope for this SP: a name that only
-// near-matches a stored canonical (e.g. a misspelled epithet) is never
-// silently resolved — it comes back UNRESOLVABLE for manual review.
+//     exact_author over exact.
+//  4. If step 3 found nothing to classify (the plain-UNRESOLVABLE case —
+//     NOT the ambiguous-tie case, which is already a resolved-but-uncertain
+//     outcome), matchFuzzy tries a fuzzy resolution over
+//     repo.MatchFuzzyCandidates, scored by domain.Similarity against
+//     domain.FuzzyThreshold. A fuzzy hit ALWAYS sets RequiresReview (spec
+//     §B.2 — this is not optional), whether it resolves to one concept or
+//     is itself ambiguous across tied concepts. Nothing clearing the
+//     threshold -> UNRESOLVABLE, unchanged from before fuzzy existed.
 func MatchNames(ctx context.Context, repo output.Repository, reqs []MatchRequest) ([]MatchResult, error) {
 	results := make([]MatchResult, 0, len(reqs))
 	for _, req := range reqs {
@@ -93,7 +109,116 @@ func matchOne(ctx context.Context, repo output.Repository, req MatchRequest) (Ma
 	if err != nil {
 		return MatchResult{}, err
 	}
-	return classify(req, queryCanon, queryAuthor, candidates), nil
+	res, unresolved := classify(req, queryCanon, queryAuthor, candidates)
+	if !unresolved {
+		return res, nil
+	}
+	if len(candidates) > 0 {
+		// The canonical DID match a real candidate exactly — it just failed
+		// author verification (queryAuthor differs from every candidate's
+		// author). That is a deliberate rejection, not "no match found":
+		// falling through to fuzzy here would trivially "fuzzy-match" the
+		// query back onto that very same canonical (similarity 1.0) and
+		// silently launder the author check away. Fuzzy only ever applies
+		// when MatchExact found nothing to classify in the first place.
+		return res, nil
+	}
+
+	fuzzy, err := matchFuzzy(ctx, repo, req, queryCanon)
+	if err != nil {
+		return MatchResult{}, err
+	}
+	if fuzzy != nil {
+		return *fuzzy, nil
+	}
+	return res, nil
+}
+
+// matchFuzzy attempts a fuzzy resolution of req once matchOne has ruled out
+// every other outcome: classify's plain-UNRESOLVABLE case (not its
+// ambiguous-tie case — a tie is not a matching failure), AND MatchExact
+// returning zero candidates in the first place (not a canonical-matched
+// author-mismatch — see matchOne's own guard, which never calls this
+// function when repo.MatchExact found a canonical match at all). It scores
+// every
+// repo.MatchFuzzyCandidates(ctx, queryCanon, ...) result with
+// domain.Similarity against queryCanon:
+//
+//   - no candidate reaches domain.FuzzyThreshold -> nil, so the caller
+//     falls back to classify's original UNRESOLVABLE result.
+//   - exactly one distinct concept ties for the best score -> a resolved
+//     MatchType: domain.MatchFuzzy result. Confidence is that best score
+//     (fuzzy confidence is graded, not a fixed tier); RequiresReview is
+//     ALWAYS true per spec §B.2, with no exception for how close the score
+//     is to 1.0; Candidates lists every name tied at the best score.
+//   - two or more candidates at the best score resolve to DIFFERENT
+//     concepts -> ambiguous: no ConceptID/MatchType, RequiresReview true,
+//     Candidates lists the tied names — silently picking one would hide a
+//     genuine ambiguity from the caller, same principle as classify's own
+//     ambiguity handling.
+func matchFuzzy(ctx context.Context, repo output.Repository, req MatchRequest, queryCanon string) (*MatchResult, error) {
+	candidates, err := repo.MatchFuzzyCandidates(ctx, queryCanon, fuzzyCandidateLimit)
+	if err != nil {
+		return nil, err
+	}
+
+	best := 0.0
+	scores := make([]float64, len(candidates))
+	for i, c := range candidates {
+		s := domain.Similarity(queryCanon, domain.Canonicalize(c.MatchedName.Canonical))
+		scores[i] = s
+		// s > best is a genuinely equivalent mutant at CONDITIONALS_BOUNDARY
+		// (>=): when s == best exactly, reassigning best to it is a no-op
+		// (same value) — the same max-selection-idiom equivalence already
+		// documented on domain.Similarity's maxLen computation.
+		if s > best {
+			best = s
+		}
+	}
+	// best < domain.FuzzyThreshold is NOT a boundary equivalent: a
+	// similarity landing EXACTLY on FuzzyThreshold must still resolve (the
+	// threshold is inclusive, per FuzzyThreshold's doc comment and the spec
+	// examples it's tuned against) — see
+	// TestMatchNames_FuzzyThresholdIsInclusiveAtExactBoundary, engineered to
+	// land exactly on 0.85.
+	if best < domain.FuzzyThreshold {
+		return nil, nil
+	}
+
+	var winners []classifiedHit
+	for i, c := range candidates {
+		if scores[i] == best {
+			winners = append(winners, classifiedHit{conceptID: c.Concept.ID, name: c.MatchedName.Canonical})
+		}
+	}
+
+	distinctConcepts := make(map[string]bool, len(winners))
+	for _, w := range winners {
+		distinctConcepts[w.conceptID] = true
+	}
+	names := make([]string, 0, len(winners))
+	for _, w := range winners {
+		names = append(names, w.name)
+	}
+
+	if len(distinctConcepts) > 1 {
+		return &MatchResult{
+			ID:             req.ID,
+			RequiresReview: true,
+			Note:           noteFuzzyAmbiguous,
+			Candidates:     names,
+		}, nil
+	}
+
+	return &MatchResult{
+		ID:             req.ID,
+		MatchType:      domain.MatchFuzzy,
+		Confidence:     best,
+		ConceptID:      winners[0].conceptID,
+		RequiresReview: true,
+		Note:           noteFuzzy,
+		Candidates:     names,
+	}, nil
 }
 
 // matchAggregate resolves an aggregate/collective-species query: the
@@ -134,6 +259,12 @@ type classifiedHit struct {
 // winning strength is exact_author if any candidate classified that way,
 // else exact, else neither (UNRESOLVABLE).
 //
+// The returned bool is true ONLY for the plain-UNRESOLVABLE case (zero
+// candidates classified at all) — it is false both when a result resolved
+// normally AND when it resolved to an ambiguous tie, since a tie is not a
+// matching failure that fuzzy matching should get a second attempt at.
+// matchOne uses this to decide whether to fall through to matchFuzzy.
+//
 // Zero classified matches yields an UNRESOLVABLE result carrying the
 // candidate names that were seen (if any), so a reviewer has something to
 // look at.
@@ -147,7 +278,7 @@ type classifiedHit struct {
 // candidates at the winning strength that all resolve to the SAME concept
 // (e.g. a synonym and its accepted name both classifying exact_author) are
 // NOT ambiguous — they still resolve normally to that one concept.
-func classify(req MatchRequest, queryCanon, queryAuthor string, candidates []output.MatchCandidate) MatchResult {
+func classify(req MatchRequest, queryCanon, queryAuthor string, candidates []output.MatchCandidate) (MatchResult, bool) {
 	var (
 		names              []string
 		exactAuthorMatches []classifiedHit
@@ -167,9 +298,10 @@ func classify(req MatchRequest, queryCanon, queryAuthor string, candidates []out
 			exactAuthorMatches = append(exactAuthorMatches, hit)
 		case domain.MatchExact:
 			exactMatches = append(exactMatches, hit)
-		case domain.MatchAggregateAlias:
-			// ClassifyMatch never produces this (it is assigned by
-			// matchAggregate, a separate code path) — unreachable here.
+		case domain.MatchAggregateAlias, domain.MatchFuzzy:
+			// ClassifyMatch never produces either of these — they are
+			// assigned by separate code paths (matchAggregate, matchFuzzy)
+			// — unreachable here.
 		}
 	}
 
@@ -186,7 +318,7 @@ func classify(req MatchRequest, queryCanon, queryAuthor string, candidates []out
 			RequiresReview: true,
 			Note:           noteUnresolvable,
 			Candidates:     names,
-		}
+		}, true
 	}
 
 	distinctConcepts := make(map[string]bool, len(winners))
@@ -203,7 +335,7 @@ func classify(req MatchRequest, queryCanon, queryAuthor string, candidates []out
 			RequiresReview: true,
 			Note:           noteAmbiguous,
 			Candidates:     tiedNames,
-		}
+		}, false
 	}
 
 	conf := confidenceExact
@@ -215,7 +347,7 @@ func classify(req MatchRequest, queryCanon, queryAuthor string, candidates []out
 		MatchType:  bestType,
 		Confidence: conf,
 		ConceptID:  winners[0].conceptID,
-	}
+	}, false
 }
 
 // isAggregate reports whether canonical's last whitespace-separated token

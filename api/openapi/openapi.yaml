@@ -160,10 +160,12 @@ paths:
       description: >-
         Löst eine Liste verbatimer Namen (z. B. aus einem Vegetationsaufnahme-
         Import) gegen den lokalen Index auf. Jeder Eintrag wird unabhängig
-        klassifiziert (`exact`, `exact_author`, `aggregate_alias` oder
-        `unresolvable`); ein `unresolvable`-Ergebnis ist ein normales
+        klassifiziert (`exact`, `exact_author`, `aggregate_alias`, `fuzzy`
+        oder `unresolvable`); ein `unresolvable`-Ergebnis ist ein normales
         Element der 200er-Antwort, kein HTTP-Fehler. Nur ein fehlerhafter
-        Request-Body liefert einen 400-Fehler.
+        Request-Body liefert einen 400-Fehler. Bei `fuzzy` ist
+        `requires_review` IMMER `true` — eine Ähnlichkeits-basierte Auflösung
+        gilt nie als endgültig bestätigt.
       tags:
         - taxa
       requestBody:
@@ -471,10 +473,14 @@ components:
           description: Spiegelt die `id` aus der Anfrage.
         match_type:
           type: string
-          enum: [exact, exact_author, aggregate_alias, unresolvable]
+          enum: [exact, exact_author, aggregate_alias, fuzzy, unresolvable]
         confidence:
           type: number
           format: double
+          description: >-
+            Bei `fuzzy` die tatsächliche Ähnlichkeits-Score (0..1, siehe
+            `domain.Similarity`/`FuzzyThreshold`), nicht eine feste Stufe wie
+            bei den übrigen match_type-Werten.
           example: 0.99
         concept_id:
           type: string
@@ -482,13 +488,17 @@ components:
         candidates:
           type: array
           description: >-
-            Kandidaten-Kanonicalnamen, deren Autor nicht eindeutig
-            klassifiziert werden konnte (nur bei `unresolvable`).
+            Kandidaten-Kanonicalnamen, die nicht eindeutig klassifiziert
+            werden konnten (`unresolvable`) oder bei `fuzzy` mit der
+            Bestwertung gleichauf lagen.
           items:
             type: string
         requires_review:
           type: boolean
-          description: Gesetzt, wenn das Ergebnis manuelle Prüfung nahelegt.
+          description: >-
+            Gesetzt, wenn das Ergebnis manuelle Prüfung nahelegt. Bei
+            `match_type: fuzzy` immer `true` (§B.2) — unabhängig davon, wie
+            hoch die Ähnlichkeits-Score ausfällt.
         note:
           type: string
           description: Menschenlesbare Erläuterung, z. B. für Aggregate.

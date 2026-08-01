@@ -119,6 +119,237 @@ func seedSynonymAndAcceptedSameNameOneConcept(t *testing.T, repo *sqlite.DB) str
 	return concept.ID
 }
 
+// seedSileneOtites ingests a single accepted concept "Silene otites" — a
+// correctly-spelled name a query for the commonly-mistyped "Silene otitis"
+// should fuzzy-resolve to (a single epithet-letter typo, well past
+// domain.FuzzyThreshold; see domain.Similarity's doc comment). The real
+// WCVP test fixture carries no Silene at all, so this is seeded directly
+// via the Repository port, same pattern as seedFestucaOvinaAggregate.
+func seedSileneOtites(t *testing.T, repo *sqlite.DB) string {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := repo.BeginIngest(ctx, domain.BackboneVersion{ID: "test-fuzzy", Version: "v1"})
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	name := domain.Name{ID: "test-fuzzy:name:silene-otites", Canonical: "Silene otites", Authorship: "(L.) Wibel", Rank: domain.RankSpecies}
+	concept := domain.Concept{ID: "test-fuzzy:concept:silene-otites", BackboneID: "test-fuzzy", AcceptedName: name, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+	if err := tx.UpsertName(name); err != nil {
+		t.Fatalf("UpsertName: unexpected error: %v", err)
+	}
+	if err := tx.UpsertConcept(concept); err != nil {
+		t.Fatalf("UpsertConcept: unexpected error: %v", err)
+	}
+	if err := tx.LinkName(concept.ID, name.ID, "accepted", nil); err != nil {
+		t.Fatalf("LinkName: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+	return concept.ID
+}
+
+// seedSileneFuzzyTie ingests TWO distinct accepted concepts, "Silene
+// otites" and "Silene otitas", both exactly one substitution away from a
+// query of "Silene otitis" (same rune length, one differing letter each) —
+// so both tie for the best domain.Similarity score. Returns both concept
+// IDs in ingestion order.
+func seedSileneFuzzyTie(t *testing.T, repo *sqlite.DB) (conceptA, conceptB string) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := repo.BeginIngest(ctx, domain.BackboneVersion{ID: "test-fuzzy-tie", Version: "v1"})
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	nameA := domain.Name{ID: "test-fuzzy-tie:name:a", Canonical: "Silene otites", Rank: domain.RankSpecies}
+	nameB := domain.Name{ID: "test-fuzzy-tie:name:b", Canonical: "Silene otitas", Rank: domain.RankSpecies}
+	conceptAObj := domain.Concept{ID: "test-fuzzy-tie:concept:a", BackboneID: "test-fuzzy-tie", AcceptedName: nameA, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+	conceptBObj := domain.Concept{ID: "test-fuzzy-tie:concept:b", BackboneID: "test-fuzzy-tie", AcceptedName: nameB, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+	if err := tx.UpsertName(nameA); err != nil {
+		t.Fatalf("UpsertName(a): unexpected error: %v", err)
+	}
+	if err := tx.UpsertName(nameB); err != nil {
+		t.Fatalf("UpsertName(b): unexpected error: %v", err)
+	}
+	if err := tx.UpsertConcept(conceptAObj); err != nil {
+		t.Fatalf("UpsertConcept(a): unexpected error: %v", err)
+	}
+	if err := tx.UpsertConcept(conceptBObj); err != nil {
+		t.Fatalf("UpsertConcept(b): unexpected error: %v", err)
+	}
+	if err := tx.LinkName(conceptAObj.ID, nameA.ID, "accepted", nil); err != nil {
+		t.Fatalf("LinkName(a): unexpected error: %v", err)
+	}
+	if err := tx.LinkName(conceptBObj.ID, nameB.ID, "accepted", nil); err != nil {
+		t.Fatalf("LinkName(b): unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+	return conceptAObj.ID, conceptBObj.ID
+}
+
+func TestMatchNames_FuzzyResolvesTypoToSingleConcept(t *testing.T) {
+	repo := seededMatchRepo(t)
+	conceptID := seedSileneOtites(t, repo)
+
+	results, err := application.MatchNames(context.Background(), repo, []application.MatchRequest{
+		{ID: "1", Verbatim: "Silene otitis"},
+	})
+	if err != nil {
+		t.Fatalf("MatchNames: unexpected error: %v", err)
+	}
+	r := results[0]
+	if r.MatchType != domain.MatchFuzzy {
+		t.Errorf("MatchType = %q, want %q", r.MatchType, domain.MatchFuzzy)
+	}
+	if !r.RequiresReview {
+		t.Error("RequiresReview = false, want true (mandatory on every fuzzy hit, per spec §B.2)")
+	}
+	if r.ConceptID != conceptID {
+		t.Errorf("ConceptID = %q, want %q", r.ConceptID, conceptID)
+	}
+	if r.Confidence < domain.FuzzyThreshold || r.Confidence >= 1.0 {
+		t.Errorf("Confidence = %v, want in [FuzzyThreshold, 1.0)", r.Confidence)
+	}
+	if len(r.Candidates) != 1 || r.Candidates[0] != "Silene otites" {
+		t.Errorf("Candidates = %v, want [%q]", r.Candidates, "Silene otites")
+	}
+}
+
+func TestMatchNames_FuzzyTieAcrossDistinctConceptsIsAmbiguous(t *testing.T) {
+	repo := seededMatchRepo(t)
+	seedSileneFuzzyTie(t, repo)
+
+	results, err := application.MatchNames(context.Background(), repo, []application.MatchRequest{
+		{ID: "1", Verbatim: "Silene otitis"},
+	})
+	if err != nil {
+		t.Fatalf("MatchNames: unexpected error: %v", err)
+	}
+	r := results[0]
+	if r.MatchType != "" {
+		t.Errorf("MatchType = %q, want empty (ambiguous — no type should be assigned)", r.MatchType)
+	}
+	if r.ConceptID != "" {
+		t.Errorf("ConceptID = %q, want empty (ambiguous — no concept should be picked arbitrarily)", r.ConceptID)
+	}
+	if !r.RequiresReview {
+		t.Error("RequiresReview = false, want true")
+	}
+	if len(r.Candidates) != 2 {
+		t.Fatalf("Candidates = %v, want 2 tied candidate names", r.Candidates)
+	}
+	if r.Note == "" {
+		t.Error("Note = empty, want an explanation for the reviewer")
+	}
+}
+
+func TestMatchNames_ExactBeatsFuzzy(t *testing.T) {
+	repo := seededMatchRepo(t)
+	// Also seed a near-miss for Corynephorus canescens (the real fixture's
+	// exact accepted name) so a fuzzy candidate genuinely exists — proving
+	// the exact hit wins because exact/exact_author is tried FIRST, not
+	// merely because nothing fuzzy was available.
+	ctx := context.Background()
+	tx, err := repo.BeginIngest(ctx, domain.BackboneVersion{ID: "test-near-miss", Version: "v1"})
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	name := domain.Name{ID: "test-near-miss:name:corynephorus-canascens", Canonical: "Corynephorus canascens", Rank: domain.RankSpecies}
+	concept := domain.Concept{ID: "test-near-miss:concept:corynephorus-canascens", BackboneID: "test-near-miss", AcceptedName: name, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+	if err := tx.UpsertName(name); err != nil {
+		t.Fatalf("UpsertName: unexpected error: %v", err)
+	}
+	if err := tx.UpsertConcept(concept); err != nil {
+		t.Fatalf("UpsertConcept: unexpected error: %v", err)
+	}
+	if err := tx.LinkName(concept.ID, name.ID, "accepted", nil); err != nil {
+		t.Fatalf("LinkName: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+
+	results, err := application.MatchNames(ctx, repo, []application.MatchRequest{
+		{ID: "1", Verbatim: "Corynephorus canescens"},
+	})
+	if err != nil {
+		t.Fatalf("MatchNames: unexpected error: %v", err)
+	}
+	r := results[0]
+	if r.MatchType != domain.MatchExact {
+		t.Errorf("MatchType = %q, want %q (exact must win over an available fuzzy candidate)", r.MatchType, domain.MatchExact)
+	}
+	if r.RequiresReview {
+		t.Error("RequiresReview = true, want false (an exact match is not a fuzzy match)")
+	}
+}
+
+// seedThresholdBoundaryPair ingests one accepted concept whose canonical is
+// engineered to sit EXACTLY at domain.FuzzyThreshold's similarity to
+// queryCanonThresholdBoundary: both are 20 runes long, distinct-lettered
+// (a-t, plus u/v/w substitutes) so no cheaper insert/delete realignment is
+// possible, differing in exactly 3 aligned positions -> Levenshtein distance
+// 3, similarity 1 - 3/20 = 0.85 exactly. This exercises the "is the
+// threshold check itself inclusive of the boundary" case that no
+// same/very-different length pair in TestSimilarity's table (which never
+// lands exactly on 0.85) can reach.
+const (
+	queryCanonThresholdBoundary     = "Abcdefghijklmnopqrst"
+	candidateCanonThresholdBoundary = "Abcdeughijkvmnopqwst"
+)
+
+func seedThresholdBoundaryPair(t *testing.T, repo *sqlite.DB) string {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := repo.BeginIngest(ctx, domain.BackboneVersion{ID: "test-threshold", Version: "v1"})
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	name := domain.Name{ID: "test-threshold:name:1", Canonical: candidateCanonThresholdBoundary, Rank: domain.RankSpecies}
+	concept := domain.Concept{ID: "test-threshold:concept:1", BackboneID: "test-threshold", AcceptedName: name, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+	if err := tx.UpsertName(name); err != nil {
+		t.Fatalf("UpsertName: unexpected error: %v", err)
+	}
+	if err := tx.UpsertConcept(concept); err != nil {
+		t.Fatalf("UpsertConcept: unexpected error: %v", err)
+	}
+	if err := tx.LinkName(concept.ID, name.ID, "accepted", nil); err != nil {
+		t.Fatalf("LinkName: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+	return concept.ID
+}
+
+func TestMatchNames_FuzzyThresholdIsInclusiveAtExactBoundary(t *testing.T) {
+	repo := seededMatchRepo(t)
+	conceptID := seedThresholdBoundaryPair(t, repo)
+
+	if got := domain.Similarity(domain.Canonicalize(queryCanonThresholdBoundary), domain.Canonicalize(candidateCanonThresholdBoundary)); got != domain.FuzzyThreshold {
+		t.Fatalf("test fixture invalid: Similarity = %v, want exactly domain.FuzzyThreshold (%v)", got, domain.FuzzyThreshold)
+	}
+
+	results, err := application.MatchNames(context.Background(), repo, []application.MatchRequest{
+		{ID: "1", Verbatim: queryCanonThresholdBoundary},
+	})
+	if err != nil {
+		t.Fatalf("MatchNames: unexpected error: %v", err)
+	}
+	r := results[0]
+	if r.MatchType != domain.MatchFuzzy {
+		t.Errorf("MatchType = %q, want %q (a similarity exactly AT FuzzyThreshold must still resolve, not be rejected as below it)", r.MatchType, domain.MatchFuzzy)
+	}
+	if r.ConceptID != conceptID {
+		t.Errorf("ConceptID = %q, want %q", r.ConceptID, conceptID)
+	}
+	if r.Confidence != domain.FuzzyThreshold {
+		t.Errorf("Confidence = %v, want exactly domain.FuzzyThreshold (%v)", r.Confidence, domain.FuzzyThreshold)
+	}
+}
+
 func TestMatchNames_HomonymAtSameStrengthDifferentConceptsFlagsAmbiguous(t *testing.T) {
 	repo := seededMatchRepo(t)
 	seedHomonymPair(t, repo)

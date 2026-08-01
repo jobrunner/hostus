@@ -84,6 +84,93 @@ func addUnknownEIVETraitValue(t *testing.T, src *sqlite.DB, conceptID string) {
 	}
 }
 
+// addTwoEIVEVersionsWithDifferentRedistribution starts two fresh ingest
+// transactions against src and records trait_value rows for conceptID under
+// TWO versions of vocab=eive ("1.0" unknown, "2.0" restricted), each with
+// its own trait_vocabulary metadata row. This mirrors what a real re-ingest
+// at a new pinned version actually leaves behind: trait_vocabulary's
+// primary key is (vocab, version), and IngestTraits never deletes an older
+// version's row (see internal/application/traits_ingest.go), so both rows
+// — and both trait_value rows — genuinely coexist in the database. It is
+// the fixture for proving findRestrictedSources' dedup: without it, "eive"
+// would be named/recorded twice under two different redistribution values.
+func addTwoEIVEVersionsWithDifferentRedistribution(t *testing.T, src *sqlite.DB, conceptID string) {
+	t.Helper()
+	ctx := context.Background()
+	bvs, err := src.BackboneVersions(ctx)
+	if err != nil || len(bvs) == 0 {
+		t.Fatalf("BackboneVersions: unexpected error/empty result: %v / %+v", err, bvs)
+	}
+
+	versions := []struct {
+		version        string
+		redistribution domain.Redistribution
+	}{
+		{"1.0", domain.RedistributionUnknown},
+		{"2.0", domain.RedistributionRestricted},
+	}
+	for _, v := range versions {
+		tx, err := src.BeginIngest(ctx, bvs[0])
+		if err != nil {
+			t.Fatalf("BeginIngest: unexpected error: %v", err)
+		}
+		if err := tx.AddTraitValue(conceptID, domain.TraitValue{
+			Vocab: domain.VocabEIVE, VocabVersion: v.version, Dim: domain.DimM, Value: 5.5,
+		}); err != nil {
+			t.Fatalf("AddTraitValue(%s): unexpected error: %v", v.version, err)
+		}
+		if err := tx.UpsertTraitVocabulary(domain.TraitVocabMeta{
+			Vocab: domain.VocabEIVE, Version: v.version, Taxonomy: "euromed-aligned", License: "",
+			Redistribution: v.redistribution,
+		}); err != nil {
+			t.Fatalf("UpsertTraitVocabulary(%s): unexpected error: %v", v.version, err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("Commit(%s): unexpected error: %v", v.version, err)
+		}
+	}
+}
+
+// TestExportBundle_SameVocabTwoVersionsDifferentRedistribution_NamedOnce is
+// the fix-round-1 regression: trait_vocabulary's primary key is (vocab,
+// version), so a bundle's scope can genuinely include trait_value rows from
+// TWO versions of the same vocab id (eive 1.0 unknown, eive 2.0 restricted)
+// — findRestrictedSources must still name "eive" exactly once in the
+// refusal error (with the MORE SEVERE of the two values, "restricted", not
+// silently the first-seen "unknown" — pinning dedupeRestrictedSourcesByID's
+// severity-ranking choice, not just its presence/absence), and
+// --force-include-restricted must record bundle_meta.restricted_sources as
+// exactly "eive", never "eive,eive".
+func TestExportBundle_SameVocabTwoVersionsDifferentRedistribution_NamedOnce(t *testing.T) {
+	ctx := context.Background()
+	src := ingestWCVPFixture(t)
+	const conceptID = "wcvp:concept:405825" // Corynephorus canescens, AUT scope
+	addTwoEIVEVersionsWithDifferentRedistribution(t, src, conceptID)
+
+	out := filepath.Join(t.TempDir(), "bundle-dup-refused.sqlite")
+	_, err := sqlite.ExportBundle(ctx, src, out, sqlite.BundleOpts{Area: "AUT", SnapshotVersion: "v1"})
+	if err == nil {
+		t.Fatal("ExportBundle: want an error when a vocab contributes under two non-allowed versions, got nil")
+	}
+	if got, want := strings.Count(err.Error(), "eive"), 1; got != want {
+		t.Errorf("ExportBundle error = %q, want %q to appear exactly once, appeared %d times", err, "eive", got)
+	}
+	if !strings.Contains(err.Error(), "eive (redistribution=restricted)") {
+		t.Errorf("ExportBundle error = %q, want it to report the MORE SEVERE value %q for eive, not %q", err, "restricted", "unknown")
+	}
+
+	forcedOut := filepath.Join(t.TempDir(), "bundle-dup-forced.sqlite")
+	if _, err := sqlite.ExportBundle(ctx, src, forcedOut, sqlite.BundleOpts{
+		Area: "AUT", SnapshotVersion: "v1", AllowRestricted: true,
+	}); err != nil {
+		t.Fatalf("ExportBundle(AllowRestricted): unexpected error: %v", err)
+	}
+	meta := readBundleMeta(t, forcedOut)
+	if meta.RestrictedSources != "eive" {
+		t.Errorf("bundle_meta.restricted_sources = %q, want %q (not \"eive,eive\")", meta.RestrictedSources, "eive")
+	}
+}
+
 // setBackboneRedistribution re-records src's existing "wcvp" backbone_version
 // row with redistribution set to value, via the same BeginIngest(INSERT OR
 // REPLACE) path a real re-ingest would use — so tests can make the

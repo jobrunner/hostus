@@ -16,19 +16,33 @@ import (
 // application.Backbone DTO application.Ingest expects. application never
 // imports internal/adapters/manifest (depguard), so this mapping lives here
 // in the composition root — the one place allowed to know about both.
-func adaptBackbones(bs []manifest.Backbone) []application.Backbone {
+//
+// b.Redistribution is routed through domain.ParseRedistribution rather than
+// cast directly: the JSON-schema enum (dataset.schema.json) and the
+// domain.Redistribution constants are two independently maintained sources
+// of truth for the same three values, and nothing else in the ingest path
+// checks they stay in lockstep. A raw string(...) cast would silently carry
+// a schema/constant drift (or a manifest that somehow bypassed schema
+// validation) all the way into backbone_version — ParseRedistribution fails
+// loudly here instead, at the one composition-root boundary that knows
+// about both the manifest and the domain type.
+func adaptBackbones(bs []manifest.Backbone) ([]application.Backbone, error) {
 	out := make([]application.Backbone, 0, len(bs))
 	for _, b := range bs {
+		redistribution, err := domain.ParseRedistribution(b.Redistribution)
+		if err != nil {
+			return nil, fmt.Errorf("app: backbone %q: %w", b.ID, err)
+		}
 		out = append(out, application.Backbone{
 			ID:             b.ID,
 			Version:        b.Version,
 			License:        b.License,
 			SourceURL:      b.SourceURL,
 			Path:           b.Path,
-			Redistribution: b.Redistribution,
+			Redistribution: string(redistribution),
 		})
 	}
-	return out
+	return out, nil
 }
 
 // wcvpRowSource adapts a *wcvp.Dataset (T4's reader output) into
@@ -113,13 +127,20 @@ func ingestTraitVocab(ctx context.Context, tv manifest.TraitVocabulary, repo *sq
 	if err != nil {
 		return application.TraitIngestReport{}, fmt.Errorf("app: trait vocabulary %q: %w", tv.ID, err)
 	}
+	// tv.Redistribution is routed through ParseRedistribution for the same
+	// reason as adaptBackbones' backbone mapping above — see its doc
+	// comment.
+	redistribution, err := domain.ParseRedistribution(tv.Redistribution)
+	if err != nil {
+		return application.TraitIngestReport{}, fmt.Errorf("app: trait vocabulary %q: %w", tv.ID, err)
+	}
 	meta := domain.TraitVocabMeta{
 		Vocab:          vocab,
 		Version:        tv.Version,
 		Taxonomy:       tv.Taxonomy,
 		License:        tv.License,
 		SourceURL:      tv.SourceURL,
-		Redistribution: domain.Redistribution(tv.Redistribution),
+		Redistribution: redistribution,
 	}
 	return application.IngestTraits(ctx, repo, traitVocabRowSource{ds: ds}, meta)
 }
@@ -134,7 +155,11 @@ func Ingest(ctx context.Context, manifestPath, dbPath string) (application.Inges
 	if err != nil {
 		return application.IngestReport{}, nil, err
 	}
-	ds := &application.Dataset{Backbones: adaptBackbones(manifestDS.Backbones), ManifestSHA: manifestDS.ManifestSHA}
+	backbones, err := adaptBackbones(manifestDS.Backbones)
+	if err != nil {
+		return application.IngestReport{}, nil, err
+	}
+	ds := &application.Dataset{Backbones: backbones, ManifestSHA: manifestDS.ManifestSHA}
 
 	repo, err := sqlite.Open(dbPath)
 	if err != nil {

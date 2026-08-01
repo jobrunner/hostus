@@ -114,14 +114,89 @@ func findRestrictedSources(ctx context.Context, src *DB, conceptIDs []string) ([
 	}
 	out = append(out, vocabs...)
 
+	out = dedupeRestrictedSourcesByID(out)
+
 	// out[i].ID < out[j].ID vs. <=: a provable-equivalence-class boundary,
-	// same as sortedSample's len(all) > cap in traits_ingest.go. Every id
-	// this function collects is DISTINCT (backbone ids come from a DISTINCT
-	// bv.id query, vocab ids from a DISTINCT tv.vocab query), so no two
-	// elements of out ever compare equal — <= would only produce a
-	// different result from < for equal keys, which never occurs here.
+	// same as sortedSample's len(all) > cap in traits_ingest.go. This is
+	// true ONLY because of the dedupeRestrictedSourcesByID call directly
+	// above: trait_vocabulary's primary key is (vocab, version), not vocab
+	// alone, and IngestTraits never deletes an older version's row when a
+	// vocabulary is re-ingested at a new version — so the raw `vocabs`
+	// query above CAN legitimately return the same vocab id twice (once
+	// per version) with two different redistribution values, and the
+	// backbone query's ids could in principle collide with a vocab id too.
+	// dedupeRestrictedSourcesByID collapses all of that to one entry per
+	// id first, so by the time this sort runs, every element of out is
+	// guaranteed distinct by construction — no two ever compare equal, so
+	// <= would only produce a different result from < for equal keys,
+	// which cannot occur here.
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
+}
+
+// dedupeRestrictedSourcesByID collapses in to exactly one restrictedSource
+// per distinct ID, keeping the MOST SEVERE Redistribution value observed
+// for that id (restricted outranks unknown). This is necessary — not just
+// tidying — because trait_vocabulary's primary key is (vocab, version):
+// re-ingesting a vocabulary at a new version leaves the prior version's row
+// (and its trait_value rows) in place, so a bundle's scope can genuinely
+// include trait_value rows from TWO versions of the same vocab id with two
+// different redistribution values (e.g. eive 1.0 unknown, eive 2.0
+// restricted). Without this dedup, findRestrictedSources' caller-visible
+// list would name that id twice — undermining the gate's core promise that
+// an offending source is named, and recorded into
+// bundle_meta.restricted_sources, EXACTLY once.
+func dedupeRestrictedSourcesByID(in []restrictedSource) []restrictedSource {
+	bySeverity := func(r string) int {
+		switch domain.Redistribution(r) {
+		case domain.RedistributionRestricted:
+			return 2
+		case domain.RedistributionUnknown:
+			return 1
+		case domain.RedistributionAllowed:
+			// Never actually reaches here: in is only ever populated by
+			// queryNonAllowedSources, which already filters out
+			// RedistributionAllowed rows. Kept as an explicit case (not
+			// folded into default) so the exhaustive linter enforces this
+			// switch covers every domain.Redistribution value, the same
+			// convention domain.ScaleFor's per-vocabulary switches use.
+			return 0
+		default: // any value outside the three known constants (should not occur past ParseRedistribution)
+			return 0
+		}
+	}
+
+	byID := make(map[string]restrictedSource, len(in))
+	var order []string
+	for _, r := range in {
+		existing, ok := byID[r.ID]
+		if !ok {
+			order = append(order, r.ID)
+			byID[r.ID] = r
+			continue
+		}
+		// > vs >=: a provable-equivalence-class boundary at the tie case
+		// (severities equal). bySeverity is a total, injective map over
+		// exactly the three known domain.Redistribution values, so
+		// bySeverity(r.Redistribution) == bySeverity(existing.Redistribution)
+		// implies the two Redistribution strings are themselves equal —
+		// there is no pair of DIFFERENT known values that share a
+		// severity. So at the tie, replacing existing with r (>=) or
+		// keeping existing (>) produces the same observable
+		// Redistribution string either way; only the strict > vs <=
+		// direction (CONDITIONALS_NEGATION) changes behavior, which the
+		// two-version dedup test below pins by asserting on the SURVIVING
+		// value, not just the surviving id.
+		if bySeverity(r.Redistribution) > bySeverity(existing.Redistribution) {
+			byID[r.ID] = r
+		}
+	}
+
+	out := make([]restrictedSource, 0, len(order))
+	for _, id := range order {
+		out = append(out, byID[id])
+	}
+	return out
 }
 
 // queryNonAllowedSources runs query (with args) against src, expecting two

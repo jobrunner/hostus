@@ -33,13 +33,6 @@ func TestParse_ValidManifest(t *testing.T) {
 		t.Errorf("Backbones[0].Path = %q, want %q (relative paths resolved against the manifest's directory)", wcvp.Path, wantPath)
 	}
 
-	if got, want := len(ds.TraitVocabularies), 2; got != want {
-		t.Fatalf("len(TraitVocabularies) = %d, want %d", got, want)
-	}
-	if ds.TraitVocabularies[0].ID != "eive" {
-		t.Errorf("TraitVocabularies[0].ID = %q, want %q", ds.TraitVocabularies[0].ID, "eive")
-	}
-
 	if len(ds.Raw) == 0 {
 		t.Error("Raw = empty, want the manifest's raw bytes")
 	}
@@ -48,6 +41,37 @@ func TestParse_ValidManifest(t *testing.T) {
 	}
 	if len(ds.ManifestSHA) != 64 {
 		t.Errorf("len(ManifestSHA) = %d, want 64 (hex-encoded SHA-256)", len(ds.ManifestSHA))
+	}
+}
+
+func TestParse_ValidManifestTraitVocabularies(t *testing.T) {
+	ds, err := manifest.Parse("testdata/dataset-valid.yaml")
+	if err != nil {
+		t.Fatalf("Parse: unexpected error: %v", err)
+	}
+
+	if got, want := len(ds.TraitVocabularies), 2; got != want {
+		t.Fatalf("len(TraitVocabularies) = %d, want %d", got, want)
+	}
+	eive := ds.TraitVocabularies[0]
+	if eive.ID != "eive" {
+		t.Errorf("TraitVocabularies[0].ID = %q, want %q", eive.ID, "eive")
+	}
+	if eive.Version != "1.0" {
+		t.Errorf("TraitVocabularies[0].Version = %q, want %q", eive.Version, "1.0")
+	}
+	if eive.Taxonomy != "euromed-via-eurosl" {
+		t.Errorf("TraitVocabularies[0].Taxonomy = %q, want %q", eive.Taxonomy, "euromed-via-eurosl")
+	}
+	if eive.License != "CC-BY-4.0" {
+		t.Errorf("TraitVocabularies[0].License = %q, want %q", eive.License, "CC-BY-4.0")
+	}
+	if eive.SourceURL != "https://example.org/eive" {
+		t.Errorf("TraitVocabularies[0].SourceURL = %q, want %q", eive.SourceURL, "https://example.org/eive")
+	}
+	wantTraitPath := filepath.Join("testdata", "..", "..", "traits", "testdata", "eive-sample.csv")
+	if eive.Path != wantTraitPath {
+		t.Errorf("TraitVocabularies[0].Path = %q, want %q (relative paths resolved against the manifest's directory)", eive.Path, wantTraitPath)
 	}
 }
 
@@ -115,6 +139,16 @@ func TestParse_RejectsMissingRequiredField(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "schema validation") {
 		t.Errorf("Parse error = %q, want it to mention schema validation (required rejects the missing field)", err)
+	}
+}
+
+func TestParse_RejectsTraitVocabularyMissingRequiredField(t *testing.T) {
+	_, err := manifest.Parse("testdata/dataset-trait-vocab-missing-required.yaml")
+	if err == nil {
+		t.Fatal("Parse: expected error for a trait vocabulary entry missing license/source/path, got nil")
+	}
+	if !strings.Contains(err.Error(), "schema validation") {
+		t.Errorf("Parse error = %q, want it to mention schema validation", err)
 	}
 }
 

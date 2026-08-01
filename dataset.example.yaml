@@ -36,13 +36,22 @@ trait_vocabularies:
   - id: eive
     version: "1.0"
     taxonomy: euromed-via-eurosl
+    license: CC-BY-4.0
+    source: https://zenodo.org/record/eive
+    path: ./traits/eive.csv
 
   # Zeigerwerte nach Tichý et al. 2023, im FloraVeg-Namensraum.
   - id: tichy2023
     version: "1.0"
     taxonomy: floraveg
+    license: CC-BY-4.0
+    source: https://floraveg.eu/download/tichy2023
+    path: ./traits/tichy2023.csv
 
   # Zeigerwerte nach Midolo et al. 2023, ebenfalls FloraVeg-Namensraum.
   - id: midolo2023
     version: "1.0"
     taxonomy: floraveg
+    license: CC-BY-4.0
+    source: https://floraveg.eu/download/midolo2023
+    path: ./traits/midolo2023.csv

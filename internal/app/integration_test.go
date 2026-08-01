@@ -117,7 +117,7 @@ func TestIntegration_EndToEndIngestServeQuery(t *testing.T) {
 	manifestPath := "testdata/dataset.yaml"
 
 	ctx := context.Background()
-	report, err := app.Ingest(ctx, manifestPath, dbPath)
+	report, _, err := app.Ingest(ctx, manifestPath, dbPath)
 	if err != nil {
 		t.Fatalf("app.Ingest: unexpected error: %v", err)
 	}
@@ -411,7 +411,7 @@ func TestIntegration_OfflineBundleServesSuggestOffline(t *testing.T) {
 	dbPath := filepath.Join(dir, "hostus.sqlite")
 	bundlePath := filepath.Join(dir, "bundle.sqlite")
 
-	if _, err := app.Ingest(ctx, "testdata/dataset.yaml", dbPath); err != nil {
+	if _, _, err := app.Ingest(ctx, "testdata/dataset.yaml", dbPath); err != nil {
 		t.Fatalf("app.Ingest: unexpected error: %v", err)
 	}
 

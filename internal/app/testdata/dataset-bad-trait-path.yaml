@@ -10,4 +10,4 @@ trait_vocabularies:
     taxonomy: euromed-via-eurosl
     license: CC-BY-4.0
     source: https://example.org/eive
-    path: ../../adapters/traits/testdata/eive-sample.csv
+    path: ./does-not-exist.csv

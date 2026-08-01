@@ -83,10 +83,11 @@ type integrationConceptResponse struct {
 type integrationMatchResponse struct {
 	BackboneVersions map[string]string `json:"backbone_versions"`
 	Results          []struct {
-		ID         string  `json:"id"`
-		MatchType  string  `json:"match_type"`
-		Confidence float64 `json:"confidence"`
-		ConceptID  string  `json:"concept_id"`
+		ID             string  `json:"id"`
+		MatchType      string  `json:"match_type"`
+		Confidence     float64 `json:"confidence"`
+		ConceptID      string  `json:"concept_id"`
+		RequiresReview bool    `json:"requires_review"`
 	} `json:"results"`
 }
 
@@ -651,6 +652,9 @@ func assertFuzzyMatch(t *testing.T, client *http.Client, baseURL string) {
 	}
 	if r.ConceptID != corynephorusConceptID {
 		t.Errorf("concept_id = %q, want %q (the typo'd name's correctly-spelled match)", r.ConceptID, corynephorusConceptID)
+	}
+	if !r.RequiresReview {
+		t.Error("requires_review = false, want true (mandatory on every fuzzy hit per spec §B.2, regardless of similarity score)")
 	}
 }
 

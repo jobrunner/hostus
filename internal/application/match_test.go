@@ -2,6 +2,7 @@ package application_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/jobrunner/hostus/internal/adapters/sqlite"
@@ -528,6 +529,71 @@ func TestMatchNames_AggregateWithoutKnownConceptIsUnresolvable(t *testing.T) {
 
 	results, err := application.MatchNames(context.Background(), repo, []application.MatchRequest{
 		{ID: "1", Verbatim: "Nonexistentus bogus agg."},
+	})
+	if err != nil {
+		t.Fatalf("MatchNames: unexpected error: %v", err)
+	}
+	r := results[0]
+	if r.MatchType != "" {
+		t.Errorf("MatchType = %q, want empty (UNRESOLVABLE)", r.MatchType)
+	}
+	if r.ConceptID != "" {
+		t.Errorf("ConceptID = %q, want empty", r.ConceptID)
+	}
+	if !r.RequiresReview {
+		t.Error("RequiresReview = false, want true")
+	}
+	if r.Note == "" {
+		t.Error("Note = empty, want an explanation for the reviewer")
+	}
+}
+
+// TestMatchNames_AggregateTypoFuzzyResolves pins the fix-round-1 gap: a
+// typo'd aggregate query ("Festuca ovinaa agg.", one inserted letter) must
+// get the same fuzzy chance as a typo'd plain species name once
+// repo.MatchExact finds nothing for its exact (marker-included) canonical —
+// per spec §B.2, fuzzy is the catch-all once exact/exact_author/AGGREGATE
+// all come up empty, not just the first two. The result must still convey
+// its aggregate origin (via the Note) even though MatchType becomes
+// domain.MatchFuzzy rather than domain.MatchAggregateAlias, and
+// RequiresReview must be true regardless.
+func TestMatchNames_AggregateTypoFuzzyResolves(t *testing.T) {
+	repo := seededMatchRepo(t)
+	conceptID := seedFestucaOvinaAggregate(t, repo)
+
+	results, err := application.MatchNames(context.Background(), repo, []application.MatchRequest{
+		{ID: "1", Verbatim: "Festuca ovinaa agg."},
+	})
+	if err != nil {
+		t.Fatalf("MatchNames: unexpected error: %v", err)
+	}
+	r := results[0]
+	if r.MatchType != domain.MatchFuzzy {
+		t.Errorf("MatchType = %q, want %q", r.MatchType, domain.MatchFuzzy)
+	}
+	if r.ConceptID != conceptID {
+		t.Errorf("ConceptID = %q, want %q", r.ConceptID, conceptID)
+	}
+	if !r.RequiresReview {
+		t.Error("RequiresReview = false, want true (mandatory on every fuzzy hit, per spec §B.2)")
+	}
+	if r.Confidence < domain.FuzzyThreshold {
+		t.Errorf("Confidence = %v, want >= FuzzyThreshold (%v)", r.Confidence, domain.FuzzyThreshold)
+	}
+	if !strings.Contains(r.Note, "Aggregat") {
+		t.Errorf("Note = %q, want it to still signal the aggregate origin (MatchType alone no longer does, since it's now %q)", r.Note, r.MatchType)
+	}
+}
+
+// TestMatchNames_AggregateTypoWithNoNearMatchIsUnresolvable pins the other
+// direction of the same fix: an aggregate query with no near match at all
+// (not just no exact one) must still end up UNRESOLVABLE, unchanged —
+// falling through to fuzzy must never manufacture a match out of nothing.
+func TestMatchNames_AggregateTypoWithNoNearMatchIsUnresolvable(t *testing.T) {
+	repo := seededMatchRepo(t)
+
+	results, err := application.MatchNames(context.Background(), repo, []application.MatchRequest{
+		{ID: "1", Verbatim: "Zzzznonexistent zzzzznope agg."},
 	})
 	if err != nil {
 		t.Fatalf("MatchNames: unexpected error: %v", err)

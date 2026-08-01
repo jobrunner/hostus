@@ -388,6 +388,30 @@ func TestMatchFuzzyCandidates_RespectsLimit(t *testing.T) {
 	}
 }
 
+// TestMatchFuzzyCandidates_OrdersByClosestLengthFirst pins the fix-round-1
+// gap: fuzzyCandidateNameIDs had no ORDER BY before its LIMIT, so when the
+// prefilter matched more rows than limit, SQLite could return an arbitrary
+// subset — potentially truncating away the closest (best) match before
+// domain.Similarity ever scored it. The fixture admits three candidates at
+// different length-diffs from "festuca ovina" (n-festuca-ovona/-ovena at
+// diff 0, n-festuca-ovinaxy at diff 2); with limit=1, the closest (diff-0)
+// row must always win, deterministically, never the diff-2 one.
+func TestMatchFuzzyCandidates_OrdersByClosestLengthFirst(t *testing.T) {
+	db := openSeededDB(t)
+
+	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", 1)
+	if err != nil {
+		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("MatchFuzzyCandidates(%q, limit=1) = %d candidates, want exactly 1", "festuca ovina", len(got))
+	}
+	id := got[0].MatchedName.ID
+	if id != "n-festuca-ovona" && id != "n-festuca-ovena" {
+		t.Errorf("MatchFuzzyCandidates(%q, limit=1) returned %q, want one of the length-diff-0 names (n-festuca-ovona/n-festuca-ovena), not the farther n-festuca-ovinaxy", "festuca ovina", id)
+	}
+}
+
 func TestMatchFuzzyCandidates_ZeroLimitUsesDefault(t *testing.T) {
 	db := openSeededDB(t)
 

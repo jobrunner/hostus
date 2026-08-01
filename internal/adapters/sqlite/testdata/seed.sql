@@ -29,7 +29,13 @@ VALUES ('wcvp', '2026-06-15', 'CC-BY-4.0', 'https://example.org/wcvp.zip', '2026
 -- prefilter dimensions (first letter, length window) legitimately admit
 -- ovona/ovena — and a wholly unrelated "abies alba" (different first
 -- letter AND different length) to prove the prefilter actually excludes
--- something.
+-- something. "Festuca ovinaxy" (length-diff 2 from the query, still within
+-- the window) is the fix-round-1 addition pinning
+-- TestMatchFuzzyCandidates_OrdersByClosestLengthFirst: with limit=1 among
+-- three admissible candidates at different length-diffs, the query must
+-- deterministically return one of the diff-0 rows, never the diff-2 one —
+-- proving fuzzyCandidateNameIDs' ORDER BY (not an arbitrary SQLite subset)
+-- decides which row survives the LIMIT.
 INSERT INTO name (id, canonical, canonical_fold, authorship, rank, ipni_id, published_in, nom_status, basionym_id) VALUES
   ('n-aira-canescens',           'aira canescens',           'aira canescens',           'L.',           'SPECIES', NULL, NULL, NULL, NULL),
   ('n-corynephorus-canescens',   'corynephorus canescens',   'corynephorus canescens',   '(L.) P.Beauv.','SPECIES', 'urn:lsid:ipni.org:names:391847-1', NULL, NULL, 'n-aira-canescens'),
@@ -38,6 +44,7 @@ INSERT INTO name (id, canonical, canonical_fold, authorship, rank, ipni_id, publ
   ('n-senecio-jacobaea',         'senecio jacobaea',         'senecio jacobaea',         'L.',           'SPECIES', NULL, NULL, NULL, NULL),
   ('n-festuca-ovona',            'Festuca ovona',            'festuca ovona',            'Test',         'SPECIES', NULL, NULL, NULL, NULL),
   ('n-festuca-ovena',            'Festuca ovena',            'festuca ovena',            'Test',         'SPECIES', NULL, NULL, NULL, NULL),
+  ('n-festuca-ovinaxy',          'Festuca ovinaxy',          'festuca ovinaxy',          'Test',         'SPECIES', NULL, NULL, NULL, NULL),
   ('n-abies-alba',               'Abies alba',               'abies alba',               'Mill.',        'SPECIES', NULL, NULL, NULL, NULL);
 
 INSERT INTO taxon_concept (id, backbone_id, accepted_name, rank, parent_id, sec_reference, status) VALUES
@@ -45,6 +52,7 @@ INSERT INTO taxon_concept (id, backbone_id, accepted_name, rank, parent_id, sec_
   ('c-jacobaea-vulgaris',      'wcvp', 'n-jacobaea-vulgaris',      'SPECIES', NULL, 'WCVP (2026)', 'ACCEPTED'),
   ('c-festuca-ovona',          'wcvp', 'n-festuca-ovona',          'SPECIES', NULL, 'WCVP (2026)', 'ACCEPTED'),
   ('c-festuca-ovena',          'wcvp', 'n-festuca-ovena',          'SPECIES', NULL, 'WCVP (2026)', 'ACCEPTED'),
+  ('c-festuca-ovinaxy',        'wcvp', 'n-festuca-ovinaxy',        'SPECIES', NULL, 'WCVP (2026)', 'ACCEPTED'),
   ('c-abies-alba',             'wcvp', 'n-abies-alba',             'SPECIES', NULL, 'WCVP (2026)', 'ACCEPTED');
 
 INSERT INTO concept_name (concept_id, name_id, role, homotypic) VALUES
@@ -55,6 +63,7 @@ INSERT INTO concept_name (concept_id, name_id, role, homotypic) VALUES
   ('c-jacobaea-vulgaris',      'n-senecio-jacobaea',         'synonym',  1),
   ('c-festuca-ovona',          'n-festuca-ovona',            'accepted', NULL),
   ('c-festuca-ovena',          'n-festuca-ovena',            'accepted', NULL),
+  ('c-festuca-ovinaxy',        'n-festuca-ovinaxy',          'accepted', NULL),
   ('c-abies-alba',             'n-abies-alba',               'accepted', NULL);
 
 INSERT INTO xref (concept_id, authority, ext_id) VALUES

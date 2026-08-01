@@ -33,6 +33,14 @@ const (
 	noteAmbiguous           = "Mehrdeutiger Treffer: mehrere Konzepte mit gleicher Übereinstimmungsstärke, manuelle Prüfung nötig"
 	noteFuzzy               = "Fuzzy-Treffer: Ähnlichkeit über Schwellenwert, manuelle Prüfung erforderlich"
 	noteFuzzyAmbiguous      = "Mehrdeutiger Fuzzy-Treffer: mehrere Konzepte mit gleicher Ähnlichkeit, manuelle Prüfung nötig"
+	// noteAggregatePrefix is prepended to whatever matchFuzzy's Note already
+	// says (noteFuzzy or noteFuzzyAmbiguous) when a fuzzy hit resolves an
+	// aggregate/collective-species query — see matchAggregate's fuzzy
+	// fallback. It's the mechanism that keeps the result's aggregate nature
+	// signaled even though MatchType becomes domain.MatchFuzzy rather than
+	// domain.MatchAggregateAlias (MatchResult has no separate "is this an
+	// aggregate" field; Note is the only carrier).
+	noteAggregatePrefix = "Aggregat: "
 )
 
 // aggregateSuffixes are the trailing tokens (case-insensitive, after
@@ -70,8 +78,12 @@ type MatchResult struct {
 //  1. Split Verbatim into (canonical, author) via splitVerbatim.
 //  2. If canonical ends in an aggregate marker (agg./aggr./s.l.), the
 //     result is MatchAggregateAlias: resolved to whatever concept
-//     repo.MatchExact finds for the (full, marker-included) canonical, or
-//     UNRESOLVABLE if none does. No microspecies resolution is attempted.
+//     repo.MatchExact finds for the (full, marker-included) canonical. No
+//     microspecies resolution is attempted. If repo.MatchExact finds
+//     nothing, matchAggregate itself falls through to a fuzzy attempt
+//     (step 4's matchFuzzy) against that same marker-included canonical,
+//     before giving up as UNRESOLVABLE — a typo'd aggregate name gets the
+//     same fuzzy chance as a typo'd plain species name.
 //  3. Otherwise repo.MatchExact(Canonicalize(canonical)) is classified
 //     candidate-by-candidate via domain.ClassifyMatch, preferring
 //     exact_author over exact.
@@ -82,7 +94,10 @@ type MatchResult struct {
 //     domain.FuzzyThreshold. A fuzzy hit ALWAYS sets RequiresReview (spec
 //     §B.2 — this is not optional), whether it resolves to one concept or
 //     is itself ambiguous across tied concepts. Nothing clearing the
-//     threshold -> UNRESOLVABLE, unchanged from before fuzzy existed.
+//     threshold -> UNRESOLVABLE, unchanged from before fuzzy existed. Per
+//     spec §B.2's own wording ("wenn exact/exact_author/aggregate nichts
+//     liefert"), fuzzy is the catch-all for exact, exact_author, AND
+//     aggregate all coming up empty — not just the first two.
 func MatchNames(ctx context.Context, repo output.Repository, reqs []MatchRequest) ([]MatchResult, error) {
 	results := make([]MatchResult, 0, len(reqs))
 	for _, req := range reqs {
@@ -225,12 +240,36 @@ func matchFuzzy(ctx context.Context, repo output.Repository, req MatchRequest, q
 // aggregate's own canonical (marker included, e.g. "Festuca ovina agg.")
 // is looked up verbatim; whichever concept repo.MatchExact finds for it is
 // the answer, since there is no microspecies resolution in this SP.
+//
+// If repo.MatchExact finds nothing for that exact (marker-included)
+// canonical, this falls through to matchFuzzy against the SAME canonical —
+// per spec §B.2, fuzzy is the catch-all once exact/exact_author/aggregate
+// all come up empty, and an aggregate name is no exception (a typo'd
+// "Festuca ovinaa agg." deserves the same fuzzy chance as a typo'd plain
+// species name). When that fuzzy attempt DOES resolve something,
+// noteAggregatePrefix is prepended to whatever Note matchFuzzy produced
+// (noteFuzzy for a clean resolution, noteFuzzyAmbiguous for a tied one) so
+// the result still visibly conveys "this was an aggregate query" even
+// though MatchType is domain.MatchFuzzy rather than
+// domain.MatchAggregateAlias — RequiresReview is already unconditionally
+// true from matchFuzzy either way. Only when matchFuzzy also finds nothing
+// (nil) does this fall back to the plain noteAggregateUnresolved
+// UNRESOLVABLE result, unchanged from before fuzzy existed.
 func matchAggregate(ctx context.Context, repo output.Repository, req MatchRequest, canonical string) (MatchResult, error) {
-	candidates, err := repo.MatchExact(ctx, domain.Canonicalize(canonical))
+	queryCanon := domain.Canonicalize(canonical)
+	candidates, err := repo.MatchExact(ctx, queryCanon)
 	if err != nil {
 		return MatchResult{}, err
 	}
 	if len(candidates) == 0 {
+		fuzzy, err := matchFuzzy(ctx, repo, req, queryCanon)
+		if err != nil {
+			return MatchResult{}, err
+		}
+		if fuzzy != nil {
+			fuzzy.Note = noteAggregatePrefix + fuzzy.Note
+			return *fuzzy, nil
+		}
 		return MatchResult{
 			ID:             req.ID,
 			RequiresReview: true,

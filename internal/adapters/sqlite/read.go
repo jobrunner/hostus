@@ -327,6 +327,17 @@ func (db *DB) MatchFuzzyCandidates(ctx context.Context, canon string, limit int)
 // limit matching name IDs. Isolating it from the enrichment join is what
 // lets it lean on idx_name_canonical_fold — see MatchFuzzyCandidates' doc
 // comment for why the combined-query version didn't.
+//
+// ORDER BY the length-window residual itself (closest length first, then
+// canonical_fold for a deterministic tiebreak) before LIMIT: without an
+// explicit order, a prefilter match count above limit would let SQLite
+// return an arbitrary subset of the matching rows, potentially truncating
+// away the true best (closest) match before domain.Similarity ever sees it.
+// Ordering by the SAME residual the WHERE clause already computed doesn't
+// change the query plan — confirmed via EXPLAIN QUERY PLAN, it still
+// resolves via idx_name_canonical_fold, with the ordering applied as a
+// cheap temp-B-tree sort over the already-narrowed row set, not a
+// re-scan.
 func fuzzyCandidateNameIDs(ctx context.Context, db *sql.DB, want string, limit int) ([]string, error) {
 	firstRunePrefix := string([]rune(want)[:1]) + "*"
 
@@ -334,7 +345,8 @@ func fuzzyCandidateNameIDs(ctx context.Context, db *sql.DB, want string, limit i
 		SELECT id FROM name
 		WHERE canonical_fold GLOB ?
 		  AND ABS(length(canonical_fold) - length(?)) <= ?
-		LIMIT ?`, firstRunePrefix, want, fuzzyCandidateLengthWindow, limit)
+		ORDER BY ABS(length(canonical_fold) - length(?)), canonical_fold
+		LIMIT ?`, firstRunePrefix, want, fuzzyCandidateLengthWindow, want, limit)
 	if err != nil {
 		return nil, err
 	}

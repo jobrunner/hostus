@@ -500,13 +500,42 @@ HOSTUS_SQLITE_PATH=poc/measure/out/m1real.sqlite ./hostus serve --port 8097 --lo
 
 Vollständige Tabellen: `poc/measure/out/m1real-latency-noarea.txt` und
 `poc/measure/out/m1real-latency-ger.txt`. p50 bleibt im selben Bereich
-(+2–2 ms); p95 steigt um rund 50–70 ms gegenüber der Baseline-Messung — am
-ehesten durch die etwas größere Datenbank (916 MiB vs. 908 MiB, +436
-zusätzliche Konzepte, +11.223 zusätzliche Namen mit den neuen Rängen) und
-durch Messvarianz auf demselben Rechner erklärbar; dieselben kurzen
-2-Zeichen-Präfixe (`ca`, `al`, `sa`) dominieren den p95 wie in M4. Kein neuer
-Befund, keine Regression, die auf den Hardening-Fix selbst zurückzuführen
-wäre — die Größenordnung (p50 niedrige 40 ms, p95 um 300 ms) ist dieselbe.
+(+2–2 ms); **p95 steigt deutlich — um 25 % ohne `area` (220,2 → 274,37 ms)
+und 27 % mit `area=GER` (253,8 → 321,57 ms).** Das ist die einzige der drei
+Kennzahlen (M1'/M2'/M3'), die sich gegenüber der Baseline sichtbar
+verschlechtert, und die Ursache ist **nicht geklärt** — das war mit den
+Mitteln dieser Aufgabe nicht isolierbar:
+
+- **Die Größenordnungen passen nicht zusammen.** DB +0,9 % (916 vs. 908 MiB),
+  Konzepte +0,1 %, Namen +0,8 % — keiner dieser Zuwächse erklärt plausibel
+  einen 25–27 % höheren p95.
+- **Ein zweiter Lauf derselben Messung** (`poc/measure/out/m1real-latency-noarea-rep2.txt`,
+  identischer Code, identische DB, gleicher Rechner, sofort im Anschluss
+  wiederholt) ergab p50=40,73 ms / p95=301,89 ms gegenüber dem ersten Lauf
+  (p50=38,59 ms / p95=274,37 ms) — eine Schwankung von rund 10 % allein durch
+  Wiederholung, ohne jede Codeänderung. Das zeigt, dass ein Teil der 25–27 %
+  Differenz zur Baseline durch bloße Lauf-zu-Lauf-Varianz erklärbar sein
+  könnte — aber eben nur ein Teil, nicht die volle Differenz, und für die
+  Baseline selbst existiert **kein** Wiederholungslauf, mit dem sich deren
+  eigene Varianz einordnen ließe. Die Aussage „Messvarianz" ist damit
+  plausibilisiert, aber nicht quantitativ belegt.
+- **Eine naheliegende Alternativursache wurde nicht geprüft:** die acht neuen
+  FK-Indizes aus Task 2 verändern, welche Pläne SQLites Query-Planer wählt.
+  Der Suggest-Pfad kombiniert FTS5-`MATCH` mit Joins und einer
+  `MATERIALIZED`-CTE (`internal/adapters/sqlite/suggest.go`); ein Planer, der
+  jetzt einen Index-Pfad dort bevorzugt, wo vorher ein Scan günstiger war,
+  ist ein plausibler Kandidat für einen echten, auf den Hardening-Fix
+  zurückgehenden Effekt — und wurde hier nicht per `EXPLAIN QUERY PLAN`
+  gegen eine ungeindizierte Vergleichs-DB verifiziert oder ausgeschlossen.
+
+**Offene Kandidatenursachen für Task 6** (keine davon ist hier belegt oder
+ausgeschlossen): (a) Query-Plan-Änderung durch die neuen FK-Indizes, (b)
+FTS/Join-Kosten durch die zusätzlichen, von T1 admittierten OTHER-Rang-Zeilen,
+(c) unquantifizierte Maschinen-Varianz (siehe Wiederholungslauf oben).
+Dieselben kurzen 2-Zeichen-Präfixe (`ca`, `al`, `sa`) dominieren den p95 wie
+in M4 — das ist die einzige Konstante zwischen Baseline und dieser Messung.
+Diese Sektion liefert bewusst **kein Verdikt** zu dieser Abweichung (siehe
+Präambel oben); das ist Aufgabe von Task 6.
 
 ---
 

@@ -12,9 +12,20 @@ import (
 // so an adapter can batch a whole backbone import into one transaction.
 type Repository interface {
 	// Concept resolves a taxon_concept by id, returning its accepted
-	// concept, its synonym names, its cross-references, and its
-	// distribution. Returns domain.ErrNotFound (wrapped) if id is unknown.
-	Concept(ctx context.Context, id string) (*domain.Concept, []domain.Name, []domain.Xref, []domain.Distribution, error)
+	// concept, its synonym names (each carrying its own homotypic linkage,
+	// see SynonymName), its cross-references, and its distribution. Returns
+	// domain.ErrNotFound (wrapped) if id is unknown.
+	Concept(ctx context.Context, id string) (*domain.Concept, []SynonymName, []domain.Xref, []domain.Distribution, error)
+	// Classification walks conceptID's taxon_concept.parent_id chain
+	// upward, bounded to a small fixed depth (see the sqlite adapter's
+	// maxClassificationDepth) so a cyclic or corrupt parent_id chain can
+	// never hang. Returns the ancestor chain ROOT-FIRST — index 0 is the
+	// topmost ancestor reached, and the last element is conceptID's
+	// immediate parent; conceptID itself is never included. A concept with
+	// no parent_id (or one whose chain terminates within the depth bound)
+	// returns an empty, non-error slice. Returns domain.ErrNotFound
+	// (wrapped) if conceptID is unknown.
+	Classification(ctx context.Context, conceptID string) ([]domain.ClassificationEntry, error)
 	// ConceptByXref resolves a taxon_concept via a cross-reference to an
 	// external authority (e.g. authority="powo", extID="396681-1").
 	ConceptByXref(ctx context.Context, authority, extID string) (*domain.Concept, error)
@@ -95,6 +106,17 @@ type MatchCandidate struct {
 	Concept     domain.Concept
 	MatchedName domain.Name
 	Role        string // accepted|synonym
+}
+
+// SynonymName is one synonym name Repository.Concept returns for a concept:
+// the name itself, plus whether its concept_name link is marked homotypic.
+// Homotypic is nil when unknown/unproven (see the ingest homotypic rule in
+// internal/application/ingest.go) — never a pointer to false, since NULL in
+// the underlying concept_name.homotypic column means "unknown", not
+// "known heterotypic".
+type SynonymName struct {
+	domain.Name
+	Homotypic *bool
 }
 
 // IngestTx batches the writes of a single backbone ingest into one

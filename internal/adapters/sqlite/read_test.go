@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jobrunner/hostus/internal/domain"
+	"github.com/jobrunner/hostus/internal/ports/output"
 )
 
 const (
@@ -83,7 +84,7 @@ func assertConceptFields(t *testing.T, concept *domain.Concept) {
 	}
 }
 
-func assertCorynephorusSynonyms(t *testing.T, synonyms []domain.Name) {
+func assertCorynephorusSynonyms(t *testing.T, synonyms []output.SynonymName) {
 	t.Helper()
 	wantSynonyms := []string{"n-aira-canescens", "n-weingaertneria-canescens"}
 	gotSynonyms := synonymIDs(synonyms)
@@ -438,7 +439,7 @@ func TestMatchFuzzyCandidates_NoNearMissReturnsEmpty(t *testing.T) {
 	}
 }
 
-func synonymIDs(names []domain.Name) []string {
+func synonymIDs(names []output.SynonymName) []string {
 	ids := make([]string, 0, len(names))
 	for _, n := range names {
 		ids = append(ids, n.ID)

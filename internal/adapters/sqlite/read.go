@@ -59,7 +59,7 @@ func scanConcept(scan func(dest ...any) error) (*domain.Concept, error) {
 
 // Concept resolves a taxon_concept by id, returning its accepted concept,
 // its synonym names, its cross-references, and its distribution.
-func (db *DB) Concept(ctx context.Context, id string) (*domain.Concept, []domain.Name, []domain.Xref, []domain.Distribution, error) {
+func (db *DB) Concept(ctx context.Context, id string) (*domain.Concept, []output.SynonymName, []domain.Xref, []domain.Distribution, error) {
 	row := db.sql.QueryRowContext(ctx, `SELECT`+conceptColumns+conceptJoin+` WHERE tc.id = ?`, id)
 	concept, err := scanConcept(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -84,9 +84,9 @@ func (db *DB) Concept(ctx context.Context, id string) (*domain.Concept, []domain
 	return concept, synonyms, xrefs, dists, nil
 }
 
-func (db *DB) conceptSynonyms(ctx context.Context, conceptID string) ([]domain.Name, error) {
+func (db *DB) conceptSynonyms(ctx context.Context, conceptID string) ([]output.SynonymName, error) {
 	rows, err := db.sql.QueryContext(ctx, `
-		SELECT n.id, n.canonical, COALESCE(n.authorship, ''), n.rank, COALESCE(n.ipni_id, ''), COALESCE(n.published_in, ''), COALESCE(n.nom_status, ''), COALESCE(n.basionym_id, '')
+		SELECT n.id, n.canonical, COALESCE(n.authorship, ''), n.rank, COALESCE(n.ipni_id, ''), COALESCE(n.published_in, ''), COALESCE(n.nom_status, ''), COALESCE(n.basionym_id, ''), cn.homotypic
 		FROM concept_name cn
 		JOIN name n ON n.id = cn.name_id
 		WHERE cn.concept_id = ? AND cn.role = 'synonym'
@@ -96,18 +96,93 @@ func (db *DB) conceptSynonyms(ctx context.Context, conceptID string) ([]domain.N
 	}
 	defer func() { _ = rows.Close() }()
 
-	var out []domain.Name
+	var out []output.SynonymName
 	for rows.Next() {
-		n, err := scanName(rows.Scan)
+		var homotypic sql.NullBool
+		n, err := scanName(func(dest ...any) error {
+			return rows.Scan(append(dest, &homotypic)...)
+		})
 		if err != nil {
 			return nil, fmt.Errorf("sqlite: scanning synonym of concept %q: %w", conceptID, err)
 		}
-		out = append(out, *n)
+		sn := output.SynonymName{Name: *n}
+		if homotypic.Valid {
+			sn.Homotypic = &homotypic.Bool
+		}
+		out = append(out, sn)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("sqlite: iterating synonyms of concept %q: %w", conceptID, err)
 	}
 	return out, nil
+}
+
+// maxClassificationDepth bounds Classification's upward parent_id walk, so
+// a cyclic or otherwise corrupt parent_id chain can never hang the request
+// — 10 hops comfortably exceeds any real taxonomic rank depth this system
+// models (FAMILY > ... > FORM is far shallower).
+const maxClassificationDepth = 10
+
+// Classification walks conceptID's taxon_concept.parent_id chain upward,
+// bounded to maxClassificationDepth hops, and returns the ancestor chain
+// ROOT-FIRST: index 0 is the topmost ancestor reached, and the last element
+// is conceptID's immediate parent. conceptID itself is never included. A
+// NULL parent_id (no further ancestor) or hitting the depth bound (a
+// cyclic/corrupt chain) both stop the walk without error — a partial or
+// empty chain is a normal, valid result.
+func (db *DB) Classification(ctx context.Context, conceptID string) ([]domain.ClassificationEntry, error) {
+	exists, err := db.conceptExists(ctx, conceptID)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: checking concept %q exists: %w", conceptID, err)
+	}
+	if !exists {
+		return nil, fmt.Errorf("sqlite: concept %q: %w", conceptID, domain.ErrNotFound)
+	}
+
+	var chain []domain.ClassificationEntry
+	current := conceptID
+	for i := 0; i < maxClassificationDepth; i++ {
+		var parentID sql.NullString
+		if err := db.sql.QueryRowContext(ctx, `SELECT parent_id FROM taxon_concept WHERE id = ?`, current).Scan(&parentID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				break
+			}
+			return nil, fmt.Errorf("sqlite: walking classification for concept %q: %w", conceptID, err)
+		}
+		if !parentID.Valid || parentID.String == "" {
+			break
+		}
+
+		var canonical, rank string
+		err := db.sql.QueryRowContext(ctx, `
+			SELECT an.canonical, tc.rank
+			FROM taxon_concept tc JOIN name an ON an.id = tc.accepted_name
+			WHERE tc.id = ?`, parentID.String).Scan(&canonical, &rank)
+		if errors.Is(err, sql.ErrNoRows) {
+			// parent_id names a concept id no longer present (shouldn't
+			// happen under FK enforcement, but stop defensively rather
+			// than erroring the whole request).
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("sqlite: reading classification ancestor %q: %w", parentID.String, err)
+		}
+		r, err := domain.ParseRank(rank)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite: classification ancestor %q: %w", parentID.String, err)
+		}
+		chain = append(chain, domain.ClassificationEntry{ConceptID: parentID.String, Canonical: canonical, Rank: r})
+		current = parentID.String
+	}
+
+	// i < j is a genuinely equivalent mutant at CONDITIONALS_BOUNDARY (<=):
+	// for an odd-length chain, i <= j would run one further iteration where
+	// i == j, swapping chain[i] with itself — a no-op, producing the exact
+	// same final order either way. No test can observe the difference.
+	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
+		chain[i], chain[j] = chain[j], chain[i]
+	}
+	return chain, nil
 }
 
 // scanName reads a name row shaped like conceptSynonyms'/MatchExact's

@@ -344,8 +344,25 @@ components:
         homotypic:
           type: boolean
           description: >-
-            Aktuell nie gesetzt (SP1 ingestiert diese Information noch
-            nicht); für spätere SPs reserviert.
+            `true`, wenn die Basionym-Verknüpfung ein gemeinsames Basionym
+            mit dem akzeptierten Namen beweist (Rekombination). Fehlt das
+            Feld (kein `false`!), ist die Typisierung unbekannt/unbewiesen —
+            `false` würde fälschlich "heterotypisch" behaupten, was ohne
+            Verknüpfungsdaten nie belegbar ist.
+
+    ClassificationEntry:
+      type: object
+      required: [concept_id, canonical, rank]
+      properties:
+        concept_id:
+          type: string
+          example: 'wcvp:concept:451295'
+        canonical:
+          type: string
+          example: Corynephorus
+        rank:
+          type: string
+          example: GENUS
 
     Distribution:
       type: object
@@ -394,11 +411,14 @@ components:
         classification:
           type: array
           description: >-
-            Übergeordnete Klassifikationskette. Aktuell immer leer (SP1
-            ingestiert keine Eltern-Verknüpfungen); für spätere SPs
-            reserviert.
+            Übergeordnete Klassifikationskette, ROOT-FIRST (Index 0 = oberste
+            erreichte Vorfahren-Ebene, letztes Element = direktes Elternteil
+            dieses Concepts). Wird durch Verfolgen von `parent_id` ermittelt,
+            bis zu einer festen Tiefenbegrenzung (10 Hops), damit eine
+            zyklische/korrupte Kette nie hängen bleibt. Fehlt/leer, wenn kein
+            Eltern-Concept ingestiert wurde.
           items:
-            type: string
+            $ref: '#/components/schemas/ClassificationEntry'
         synonyms:
           type: array
           items:

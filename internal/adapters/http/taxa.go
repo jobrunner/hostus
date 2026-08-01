@@ -27,15 +27,23 @@ type backboneRefDTO struct {
 	Version string `json:"version"`
 }
 
-// synonymDTO is one synonym name grouped under a concept. Homotypic is left
-// nil (omitted) always: neither Repository.Concept nor the T5 ingest
-// populates concept_name.homotypic yet (see task-5-report.md's "Concerns"
-// section), so rendering it would fabricate data the backbone never
-// asserted.
+// synonymDTO is one synonym name grouped under a concept. Homotypic is
+// omitted (nil) unless T7's ingest homotypic rule proved it true — a NULL
+// concept_name.homotypic means "unknown", never "known heterotypic" (see
+// output.SynonymName's doc comment), so it must never be rendered as a
+// literal false.
 type synonymDTO struct {
 	Canonical  string `json:"canonical"`
 	Authorship string `json:"authorship,omitempty"`
 	Homotypic  *bool  `json:"homotypic,omitempty"`
+}
+
+// classificationDTO is one ancestor entry of a concept's classification
+// chain, per spec §B's concept shape (§4.3-derived parent linkage).
+type classificationDTO struct {
+	ConceptID string `json:"concept_id"`
+	Canonical string `json:"canonical"`
+	Rank      string `json:"rank"`
 }
 
 // distributionDTO is one reference-area assignment for a concept, per
@@ -62,20 +70,19 @@ type conceptDTO struct {
 	Status       string            `json:"status"`
 	Backbone     backboneRefDTO    `json:"backbone"`
 	Xrefs        map[string]string `json:"xrefs,omitempty"`
-	// Classification is always omitted in SP1: T5's ingest never populates
-	// domain.Concept.ParentID (see task-5-report.md's "Concerns" section),
-	// so there is no parent chain to walk. Rendering a fabricated or
-	// single-element chain would misrepresent data the backbone never
-	// supplied; this field is reserved for when parent linkage is ingested.
-	Classification []string          `json:"classification,omitempty"`
-	Synonyms       []synonymDTO      `json:"synonyms"`
-	Distribution   []distributionDTO `json:"distribution,omitempty"`
+	// Classification is the parent chain (root-first — see
+	// output.Repository.Classification's doc comment), omitted when empty
+	// (a top-level concept with no ingested parent, or one whose backbone
+	// simply doesn't carry parent linkage).
+	Classification []classificationDTO `json:"classification,omitempty"`
+	Synonyms       []synonymDTO        `json:"synonyms"`
+	Distribution   []distributionDTO   `json:"distribution,omitempty"`
 }
 
 // conceptToDTO renders a resolved concept (as returned by
-// Repository.Concept) into the wire shape shared by /v1/concept/{id} and
-// /v1/xref.
-func conceptToDTO(c *domain.Concept, synonyms []domain.Name, xrefs []domain.Xref, distribution []domain.Distribution) conceptDTO {
+// Repository.Concept/Classification) into the wire shape shared by
+// /v1/concept/{id} and /v1/xref.
+func conceptToDTO(c *domain.Concept, synonyms []output.SynonymName, xrefs []domain.Xref, distribution []domain.Distribution, classification []domain.ClassificationEntry) conceptDTO {
 	display := c.AcceptedName.Canonical
 	if c.AcceptedName.Authorship != "" {
 		display = display + " " + c.AcceptedName.Authorship
@@ -91,7 +98,7 @@ func conceptToDTO(c *domain.Concept, synonyms []domain.Name, xrefs []domain.Xref
 
 	syns := make([]synonymDTO, len(synonyms))
 	for i, s := range synonyms {
-		syns[i] = synonymDTO{Canonical: s.Canonical, Authorship: s.Authorship}
+		syns[i] = synonymDTO{Canonical: s.Canonical, Authorship: s.Authorship, Homotypic: s.Homotypic}
 	}
 
 	var dists []distributionDTO
@@ -102,16 +109,25 @@ func conceptToDTO(c *domain.Concept, synonyms []domain.Name, xrefs []domain.Xref
 		}
 	}
 
+	var classif []classificationDTO
+	if len(classification) > 0 {
+		classif = make([]classificationDTO, len(classification))
+		for i, entry := range classification {
+			classif[i] = classificationDTO{ConceptID: entry.ConceptID, Canonical: entry.Canonical, Rank: string(entry.Rank)}
+		}
+	}
+
 	return conceptDTO{
-		ConceptID:    c.ID,
-		Display:      display,
-		Canonical:    c.AcceptedName.Canonical,
-		Rank:         string(c.Rank),
-		Status:       string(c.Status),
-		Backbone:     backboneRefDTO{ID: c.BackboneID, Version: c.BackboneVersion},
-		Xrefs:        xrefMap,
-		Synonyms:     syns,
-		Distribution: dists,
+		ConceptID:      c.ID,
+		Display:        display,
+		Canonical:      c.AcceptedName.Canonical,
+		Rank:           string(c.Rank),
+		Status:         string(c.Status),
+		Backbone:       backboneRefDTO{ID: c.BackboneID, Version: c.BackboneVersion},
+		Xrefs:          xrefMap,
+		Classification: classif,
+		Synonyms:       syns,
+		Distribution:   dists,
 	}
 }
 
@@ -176,7 +192,12 @@ func writeConcept(w http.ResponseWriter, r *http.Request, repo output.Repository
 		httperr.InternalError(w)
 		return
 	}
-	writeJSON(w, conceptToDTO(c, synonyms, xrefs, distribution))
+	classification, err := repo.Classification(r.Context(), id)
+	if err != nil {
+		httperr.InternalError(w)
+		return
+	}
+	writeJSON(w, conceptToDTO(c, synonyms, xrefs, distribution, classification))
 }
 
 // handleConcept serves GET /v1/concept/{id}.

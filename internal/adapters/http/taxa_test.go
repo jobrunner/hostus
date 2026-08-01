@@ -40,6 +40,8 @@ func (s wcvpRowSource) Taxa() []application.TaxonRow {
 			Rank:            t.Rank,
 			Status:          t.Status,
 			POWOID:          t.POWOID(),
+			ParentTaxonID:   t.ParentNameUsageID,
+			BasionymTaxonID: t.OriginalNameUsageID,
 		})
 	}
 	return out
@@ -116,10 +118,16 @@ type conceptResponse struct {
 		ID      string `json:"id"`
 		Version string `json:"version"`
 	} `json:"backbone"`
-	Xrefs    map[string]string `json:"xrefs"`
+	Xrefs          map[string]string `json:"xrefs"`
+	Classification []struct {
+		ConceptID string `json:"concept_id"`
+		Canonical string `json:"canonical"`
+		Rank      string `json:"rank"`
+	} `json:"classification"`
 	Synonyms []struct {
 		Canonical  string `json:"canonical"`
 		Authorship string `json:"authorship"`
+		Homotypic  *bool  `json:"homotypic"`
 	} `json:"synonyms"`
 	Distribution []struct {
 		AreaScheme string `json:"area_scheme"`
@@ -142,6 +150,7 @@ func hasDistributionArea(dists []struct {
 func hasSynonym(syns []struct {
 	Canonical  string `json:"canonical"`
 	Authorship string `json:"authorship"`
+	Homotypic  *bool  `json:"homotypic"`
 }, canonicalPrefix string) bool {
 	for _, s := range syns {
 		if len(s.Canonical) >= len(canonicalPrefix) && s.Canonical[:len(canonicalPrefix)] == canonicalPrefix {
@@ -188,15 +197,86 @@ func TestHandleConcept_KnownID_ReturnsConcept(t *testing.T) {
 	if !hasSynonym(got.Synonyms, "Weingaertneria") {
 		t.Errorf("synonyms = %+v, want an entry starting with %q", got.Synonyms, "Weingaertneria")
 	}
-	// The WCVP fixture's Corynephorus canescens (405825) carries nine
-	// WGSRPD-L3 distribution rows (see wcvp_distribution.csv); assert at
-	// least one lands on the wire so /v1/concept doesn't silently drop
-	// distribution (spec §B.1/§4.3).
+	assertCorynephorusCanescensDistribution(t, got)
+	assertCorynephorusCanescensClassification(t, got)
+}
+
+// assertCorynephorusCanescensDistribution checks the WCVP fixture's
+// Corynephorus canescens (405825) carries its nine WGSRPD-L3 distribution
+// rows (see wcvp_distribution.csv) on the wire, so /v1/concept doesn't
+// silently drop distribution (spec §B.1/§4.3). Split out of
+// TestHandleConcept_KnownID_ReturnsConcept purely to keep that test's
+// cyclomatic complexity down.
+func assertCorynephorusCanescensDistribution(t *testing.T, got conceptResponse) {
+	t.Helper()
 	if len(got.Distribution) != 9 {
 		t.Fatalf("len(distribution) = %d, want %d", len(got.Distribution), 9)
 	}
 	if !hasDistributionArea(got.Distribution, "wgsrpd_l3", "AUT") {
 		t.Errorf("distribution = %+v, want an entry {wgsrpd_l3 AUT}", got.Distribution)
+	}
+}
+
+// assertCorynephorusCanescensClassification checks the fixture's
+// Corynephorus canescens (405825, parentnameusageid 451295) renders exactly
+// one classification entry: the Corynephorus genus (451295), itself
+// accepted in the same fixture and with no further ancestor of its own.
+func assertCorynephorusCanescensClassification(t *testing.T, got conceptResponse) {
+	t.Helper()
+	if len(got.Classification) != 1 {
+		t.Fatalf("len(classification) = %d, want 1 (the Corynephorus genus ancestor)", len(got.Classification))
+	}
+	if got.Classification[0].ConceptID != "wcvp:concept:451295" || got.Classification[0].Canonical != "Corynephorus" || got.Classification[0].Rank != "GENUS" {
+		t.Errorf("classification[0] = %+v, want {wcvp:concept:451295 Corynephorus GENUS}", got.Classification[0])
+	}
+}
+
+// TestHandleConcept_HomotypicSynonymRendersTrueOthersOmitted proves
+// synonymDTO.Homotypic renders exactly what T7's ingest homotypic rule
+// proved, on the real wire response: Bromus ovinus (a synonym of Festuca
+// ovina, 415853) is a recombination of the accepted name itself
+// (originalnameusageid=415853), so it renders homotypic:true; Festuca
+// duriuscula (also a synonym of Festuca ovina, no basionym linkage at all)
+// must have its "homotypic" key OMITTED from the JSON — never rendered as
+// a literal false.
+func TestHandleConcept_HomotypicSynonymRendersTrueOthersOmitted(t *testing.T) {
+	repo := seededRepo(t)
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	const festucaOvinaConceptID = "wcvp:concept:415853"
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/concept/"+festucaOvinaConceptID, nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	var raw struct {
+		Synonyms []map[string]any `json:"synonyms"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decoding raw JSON: %v (body: %s)", err, rr.Body.String())
+	}
+
+	var bromus, duriuscula map[string]any
+	for _, s := range raw.Synonyms {
+		switch s["canonical"] {
+		case "Bromus ovinus":
+			bromus = s
+		case "Festuca duriuscula":
+			duriuscula = s
+		}
+	}
+	if bromus == nil {
+		t.Fatalf("synonyms = %+v, want an entry for %q", raw.Synonyms, "Bromus ovinus")
+	}
+	if h, ok := bromus["homotypic"].(bool); !ok || !h {
+		t.Errorf("Bromus ovinus[\"homotypic\"] = %v (present=%v), want true", bromus["homotypic"], ok)
+	}
+	if duriuscula == nil {
+		t.Fatalf("synonyms = %+v, want an entry for %q", raw.Synonyms, "Festuca duriuscula")
+	}
+	if _, present := duriuscula["homotypic"]; present {
+		t.Errorf("Festuca duriuscula[\"homotypic\"] = %v, want the key OMITTED entirely (unproven, never a literal false)", duriuscula["homotypic"])
 	}
 }
 

@@ -63,6 +63,9 @@ GET /v1/concept/wcvp:concept:405825
   "status": "ACCEPTED",
   "backbone": { "id": "wcvp", "version": "2026-06-15" },
   "xrefs": { "powo": "396681-1" },
+  "classification": [
+    { "concept_id": "wcvp:concept:451295", "canonical": "Corynephorus", "rank": "GENUS" }
+  ],
   "synonyms": [
     { "canonical": "Weingaertneria canescens var. pallida", "authorship": "Beckh." },
     { "canonical": "Corynephorus canescens f. pallidus", "authorship": "(Beckh.) Soó" },
@@ -83,13 +86,28 @@ GET /v1/concept/wcvp:concept:405825
 }
 ```
 
-`vernacular_de` (deutscher Trivialname) und `classification`
-(Klassifikationskette) sind Teil der DTO, aber in SP1 immer leer/omitted —
-die Vernakular-Tabelle bzw. Eltern-Verknüpfungen werden noch nicht
-ingestiert. `distribution` (Referenzgebiets-Zuordnungen, z. B. WGSRPD L3)
-wird dagegen bereits von `hostus ingest` befüllt und ausgeliefert; das
-Feld ist leer, wenn der Backbone für dieses Concept keine Distribution
-liefert.
+`vernacular_de` (deutscher Trivialname) ist Teil der DTO, aber immer
+leer/omitted — die Vernakular-Tabelle wird noch nicht ingestiert.
+
+`classification` (Klassifikationskette) wird durch Verfolgen von
+`taxon_concept.parent_id` nach oben ermittelt und ROOT-FIRST geliefert:
+Index 0 ist die oberste erreichte Vorfahren-Ebene, das letzte Element das
+direkte Elternteil des angefragten Concepts; das Concept selbst ist nie
+Teil der Kette. Die Tiefe ist auf 10 Hops begrenzt, damit eine
+zyklische/korrupte `parent_id`-Kette niemals hängen bleibt. `parent_id`
+wird nur gesetzt, wenn das Eltern-Taxon selbst als akzeptiertes Concept
+ingestiert wurde — andernfalls (und wenn die Kette nach der
+Tiefenbegrenzung endet) ist `classification` leer/omitted.
+
+`synonyms[].homotypic` ist `true`, wenn die Basionym-Verknüpfung ein
+gemeinsames Basionym mit dem akzeptierten Namen beweist (Rekombination
+davon, oder das Basionym selbst). Fehlt das Feld, ist die Typisierung
+unbekannt — das Feld wird niemals als `false` ausgeliefert, da das eine
+unbelegbare "heterotypisch"-Behauptung wäre.
+
+`distribution` (Referenzgebiets-Zuordnungen, z. B. WGSRPD L3) wird von
+`hostus ingest` befüllt und ausgeliefert; das Feld ist leer, wenn der
+Backbone für dieses Concept keine Distribution liefert.
 
 Unbekannte IDs liefern `404 NOT_FOUND` im [Fehlerformat](#fehlerformat).
 

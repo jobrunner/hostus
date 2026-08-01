@@ -304,6 +304,145 @@ func assertBundleTraitVocabularies(t *testing.T, bundle *sqlite.DB) {
 	}
 }
 
+// mustBundleConcept resolves id via bundle.Concept, returning just the
+// concept and error — discarding the synonyms/xrefs/distribution results
+// this file's tests don't need — so callers can inspect the error
+// themselves (e.g. asserting domain.ErrNotFound) without a multi-blank-
+// identifier assignment.
+func mustBundleConcept(ctx context.Context, t *testing.T, bundle *sqlite.DB, id string) (*domain.Concept, error) {
+	t.Helper()
+	concept, synonyms, xrefs, dists, err := bundle.Concept(ctx, id)
+	_ = synonyms
+	_ = xrefs
+	_ = dists
+	return concept, err
+}
+
+// mustBundleSynonyms resolves id via bundle.Concept, failing the test on
+// error, for callers that only need the synonym names — not the
+// concept/xrefs/distribution results repo.Concept always returns alongside
+// them.
+func mustBundleSynonyms(ctx context.Context, t *testing.T, bundle *sqlite.DB, id string) []output.SynonymName {
+	t.Helper()
+	concept, synonyms, xrefs, dists, err := bundle.Concept(ctx, id)
+	if err != nil {
+		t.Fatalf("bundle.Concept(%q): unexpected error: %v", id, err)
+	}
+	_ = concept
+	_ = xrefs
+	_ = dists
+	return synonyms
+}
+
+// TestExportBundle_AreaFilter_NullsOutOfAreaParentReference is the SP2
+// forward-note this task closes: the fixture's Corynephorus canescens
+// (405825, SPECIES) is IN the AUT scope (it has an AUT distribution row),
+// but its parent — Corynephorus (451295, GENUS) — has NO distribution row
+// at all (see TestExportBundle_AreaFilter_ExcludesConceptsOutsideArea) and
+// so is NEVER copied into an AUT-scoped bundle. Since T7's ingest now
+// populates taxon_concept.parent_id, copying 405825's row verbatim would
+// FK-fail against a parent that was never copied. ExportBundle must
+// instead null out that one out-of-scope reference: the export still
+// succeeds, the bundle's copy of 405825 has parent_id NULL (not a dangling
+// FK, not a dropped row), and the bundle stays fully queryable afterward.
+func TestExportBundle_AreaFilter_NullsOutOfAreaParentReference(t *testing.T) {
+	ctx := context.Background()
+	out, _, bundle := exportAUTBundle(t)
+
+	const (
+		childID  = "wcvp:concept:405825" // Corynephorus canescens, AUT distribution -> in scope
+		parentID = "wcvp:concept:451295" // Corynephorus (GENUS), no distribution at all -> out of scope
+	)
+
+	// The out-of-area parent must genuinely be absent from the bundle —
+	// otherwise nulling its reference wouldn't be the interesting case.
+	if _, err := mustBundleConcept(ctx, t, bundle, parentID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("bundle.Concept(%q) error = %v, want domain.ErrNotFound (the out-of-area parent must not be in the bundle)", parentID, err)
+	}
+
+	child, err := mustBundleConcept(ctx, t, bundle, childID)
+	if err != nil {
+		t.Fatalf("bundle.Concept(%q): unexpected error: %v", childID, err)
+	}
+	if child.ParentID != "" {
+		t.Errorf("bundle Concept(%q).ParentID = %q, want empty (NULLed, since %q is outside the AUT scope)", childID, child.ParentID, parentID)
+	}
+
+	// Belt-and-suspenders: assert the NULLing directly against the raw
+	// column too, not just through Concept's COALESCE(parent_id, '').
+	raw, err := sql.Open("sqlite", out)
+	if err != nil {
+		t.Fatalf("sql.Open(%q): unexpected error: %v", out, err)
+	}
+	defer func() { _ = raw.Close() }()
+	var parentIDCol sql.NullString
+	if err := raw.QueryRow(`SELECT parent_id FROM taxon_concept WHERE id = ?`, childID).Scan(&parentIDCol); err != nil {
+		t.Fatalf("reading taxon_concept.parent_id for %q: unexpected error: %v", childID, err)
+	}
+	if parentIDCol.Valid {
+		t.Errorf("taxon_concept.parent_id for %q = %q, want SQL NULL", childID, parentIDCol.String)
+	}
+
+	// The bundle must stay fully queryable (Suggest/Traits), not just
+	// FK-consistent — proving nulling the reference didn't otherwise
+	// corrupt the row.
+	if _, err := bundle.Suggest(ctx, "coryn", output.SuggestOpts{Limit: 10}); err != nil {
+		t.Errorf("bundle.Suggest after NULLing an out-of-scope parent: unexpected error: %v", err)
+	}
+	if _, err := bundle.Traits(ctx, childID, nil); err != nil {
+		t.Errorf("bundle.Traits(%q) after NULLing an out-of-scope parent: unexpected error: %v", childID, err)
+	}
+}
+
+// TestExportBundle_AreaFilter_PreservesInScopeBasionymReference is the
+// mirror image of TestExportBundle_AreaFilter_NullsOutOfAreaParentReference:
+// a self-reference that DOES resolve within the copied scope must survive
+// the export, not just an out-of-scope one being nulled. Bromus ovinus
+// (401569, a synonym of Festuca ovina, AUT distribution) has its
+// basionym_id resolved to Festuca ovina's own name (415853) — and BOTH
+// names are copied into the AUT bundle (Festuca ovina is itself in scope),
+// so this reference must come out linked, not NULLed by mistake.
+func TestExportBundle_AreaFilter_PreservesInScopeBasionymReference(t *testing.T) {
+	ctx := context.Background()
+	out, _, bundle := exportAUTBundle(t)
+
+	const (
+		bromusOvinusNameID  = "wcvp:name:401569"
+		festucaOvinaNameID  = "wcvp:name:415853"
+		festucaOvinaConcept = "wcvp:concept:415853"
+	)
+
+	raw, err := sql.Open("sqlite", out)
+	if err != nil {
+		t.Fatalf("sql.Open(%q): unexpected error: %v", out, err)
+	}
+	defer func() { _ = raw.Close() }()
+	var basionymIDCol sql.NullString
+	if err := raw.QueryRow(`SELECT basionym_id FROM name WHERE id = ?`, bromusOvinusNameID).Scan(&basionymIDCol); err != nil {
+		t.Fatalf("reading name.basionym_id for %q: unexpected error: %v", bromusOvinusNameID, err)
+	}
+	if !basionymIDCol.Valid || basionymIDCol.String != festucaOvinaNameID {
+		t.Errorf("name.basionym_id for %q = %+v, want %q (both names are in the AUT-scoped bundle)", bromusOvinusNameID, basionymIDCol, festucaOvinaNameID)
+	}
+
+	// Same fact, via the public Repository surface: Bromus ovinus must
+	// still render homotypic:true (concept_name.homotypic, computed from
+	// this exact basionym linkage at ingest time) after export.
+	synonyms := mustBundleSynonyms(ctx, t, bundle, festucaOvinaConcept)
+	var bromus *output.SynonymName
+	for i := range synonyms {
+		if synonyms[i].Canonical == "Bromus ovinus" {
+			bromus = &synonyms[i]
+		}
+	}
+	if bromus == nil {
+		t.Fatalf("synonyms of %q = %+v, want an entry for %q", festucaOvinaConcept, synonyms, "Bromus ovinus")
+	}
+	if bromus.Homotypic == nil || !*bromus.Homotypic {
+		t.Errorf("bundle Concept(%q) Bromus ovinus.Homotypic = %v, want a pointer to true", festucaOvinaConcept, bromus.Homotypic)
+	}
+}
+
 // TestExportBundle_AreaWithNoMatchingConcepts_ProducesEmptyBundle exercises
 // the "GER does not exist in the fixture" case the task brief calls out: no
 // concept has a GER distribution row, so the bundle must come out empty

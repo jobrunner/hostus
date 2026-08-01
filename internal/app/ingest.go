@@ -50,6 +50,8 @@ func (s wcvpRowSource) Taxa() []application.TaxonRow {
 			Rank:            t.Rank,
 			Status:          t.Status,
 			POWOID:          t.POWOID(),
+			ParentTaxonID:   t.ParentNameUsageID,
+			BasionymTaxonID: t.OriginalNameUsageID,
 		})
 	}
 	return out

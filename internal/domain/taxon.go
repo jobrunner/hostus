@@ -97,6 +97,16 @@ type Xref struct {
 	ExtID     string
 }
 
+// ClassificationEntry is one ancestor in a Concept's parent chain, as
+// returned by output.Repository's classification walk (see
+// internal/adapters/sqlite's Classification method): the ancestor's own
+// concept id, its accepted name's canonical, and its rank.
+type ClassificationEntry struct {
+	ConceptID string
+	Canonical string
+	Rank      Rank
+}
+
 // Distribution is a single area assignment for a Concept, keyed by the
 // area-coding scheme in use (e.g. WGSRPD level 3).
 type Distribution struct {

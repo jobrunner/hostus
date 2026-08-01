@@ -149,12 +149,15 @@ type matchResponseDTO struct {
 	Results          []matchResultDTO  `json:"results"`
 }
 
-// writeJSON encodes v as the JSON response body with status, setting
-// Content-Type first so it is present even if Encode fails partway through
-// writing the body.
-func writeJSON(w http.ResponseWriter, status int, v any) {
+// writeJSON encodes v as a 200 OK JSON response body, setting Content-Type
+// first so it is present even if Encode fails partway through writing the
+// body. Every current success path (concept, match, suggest, traits) is a
+// 200; error bodies go through httperr.Write, which owns its own status —
+// so writeJSON takes no status parameter (a hardcoded one that every caller
+// already agreed on, rather than a param unparam would flag as dead).
+func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
+	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(v)
 }
 
@@ -173,7 +176,7 @@ func writeConcept(w http.ResponseWriter, r *http.Request, repo output.Repository
 		httperr.InternalError(w)
 		return
 	}
-	writeJSON(w, http.StatusOK, conceptToDTO(c, synonyms, xrefs, distribution))
+	writeJSON(w, conceptToDTO(c, synonyms, xrefs, distribution))
 }
 
 // handleConcept serves GET /v1/concept/{id}.
@@ -241,7 +244,7 @@ func handleMatch(repo output.Repository) http.HandlerFunc {
 			backboneVersions[v.ID] = v.Version
 		}
 
-		writeJSON(w, http.StatusOK, matchResponseDTO{
+		writeJSON(w, matchResponseDTO{
 			BackboneVersions: backboneVersions,
 			Results:          matchResultsToDTO(results),
 		})

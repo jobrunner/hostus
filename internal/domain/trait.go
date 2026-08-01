@@ -151,10 +151,6 @@ type TraitSet struct {
 //
 //   - Midolo disturbance dims: genuinely continuous/unbounded, no fixed
 //     scale by definition.
-//   - Tichý S (Salinity): PoC P6 only observed a narrow sample range
-//     (roughly -0.02 to 0) and did not confirm the full range, so no
-//     min/max is hardcoded here. The real range is recorded by the T2
-//     ingest pipeline from the actual data, not invented in this function.
 //   - Any (vocab, dim) combination the vocabulary simply does not define
 //     (e.g. Midolo+M, EIVE+S, EIVE+a disturbance dim) — handled by
 //     explicit case arms per vocabulary (not a bare fallthrough) so the
@@ -162,9 +158,26 @@ type TraitSet struct {
 //
 // The non-sentinel results are:
 //
-//   - EIVE M/N/R/L/T:  (0, 10, true) — uniform, normalized.
-//   - Tichý L/T/M/R/N: (1, 9, false) — classic Ellenberg-compatible range,
-//     NOT normalized.
+//   - EIVE M/N/R/L/T: (0, 10, true) — uniform, normalized. This is the
+//     ONLY normalized vocabulary; every other result below is
+//     normalized=false, on purpose, because none of them share one common
+//     scale.
+//   - Tichý L/T/M/R/N/S: per-dimension ranges, NOT normalized, NOT a
+//     theoretical/"classic Ellenberg" scale — these are the empirically
+//     OBSERVED min/max of the full ingested Tichý et al. 2023 (v2.0) table
+//     (8,908 taxa; see pipelines/tichy/ and
+//     .superpowers/sdd/2026-08-01-sp3-traits/task-2-report.md for the
+//     measurement run): L 1-9, T 1-12, M 1-12, R 1-9, N 1-9, S 0-9. T1
+//     originally hardcoded a flat 1-9 for all five core dims (a "classic
+//     Ellenberg" assumption) and a (0,0,false) sentinel for S (the PoC's
+//     sample was too narrow, ~-0.02..0, to trust); Task 2's full-table
+//     pipeline run showed T and M actually reach 12, and gave a real,
+//     confirmed range for S — this comment and the switch below were
+//     corrected to match the measured data rather than the assumption.
+//     If a future Tichý version's measured range for a dim becomes
+//     unavailable or ambiguous, that dim should fall back to the
+//     (0,0,false) sentinel rather than guessing — same honesty rule as
+//     Salinity had under T1.
 func ScaleFor(v TraitVocab, d TraitDim) (min, max float64, normalized bool) {
 	switch v {
 	case VocabEIVE:
@@ -177,13 +190,18 @@ func ScaleFor(v TraitVocab, d TraitDim) (min, max float64, normalized bool) {
 		}
 	case VocabTichy:
 		switch d {
-		case DimL, DimT, DimM, DimR, DimN:
+		case DimL:
+			return 1, 9, false
+		case DimT:
+			return 1, 12, false
+		case DimM:
+			return 1, 12, false
+		case DimR:
+			return 1, 9, false
+		case DimN:
 			return 1, 9, false
 		case DimS:
-			// Deliberately the (0,0,false) "no fixed scale established"
-			// sentinel, not a guessed numeric range — see the ScaleFor
-			// doc comment above.
-			return 0, 0, false
+			return 0, 9, false
 		case DimDisturbanceSeverity, DimDisturbanceFrequency, DimMowingFrequency, DimGrazingPressure, DimSoilDisturbance:
 			// Tichý defines none of the Midolo disturbance dimensions.
 			return 0, 0, false

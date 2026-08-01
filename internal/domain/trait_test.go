@@ -89,25 +89,46 @@ func TestScaleFor_EIVE(t *testing.T) {
 	}
 }
 
+// TestScaleFor_Tichy pins the per-dimension ranges ScaleFor reports for
+// Tichý, grounded in Task 2's full-table pipeline measurement over the
+// real Tichý et al. 2023 v2.0 data (8,908 taxa; see
+// .superpowers/sdd/2026-08-01-sp3-traits/task-2-report.md): L and R and N
+// are the classic Ellenberg 1-9, but T and M genuinely reach 12, and
+// Salinity's real range is 0-9. None of them are normalized.
 func TestScaleFor_Tichy(t *testing.T) {
-	for _, d := range []TraitDim{DimL, DimT, DimM, DimR, DimN} {
-		min, max, normalized := ScaleFor(VocabTichy, d)
-		if min != 1 || max != 9 || normalized {
-			t.Fatalf("ScaleFor(Tichy, %q) = (%v,%v,%v), want (1,9,false)", d, min, max, normalized)
+	cases := []struct {
+		dim      TraitDim
+		min, max float64
+	}{
+		{DimL, 1, 9},
+		{DimT, 1, 12},
+		{DimM, 1, 12},
+		{DimR, 1, 9},
+		{DimN, 1, 9},
+		{DimS, 0, 9},
+	}
+	for _, tc := range cases {
+		min, max, normalized := ScaleFor(VocabTichy, tc.dim)
+		if min != tc.min || max != tc.max || normalized {
+			t.Fatalf("ScaleFor(Tichy, %q) = (%v,%v,%v), want (%v,%v,false)", tc.dim, min, max, normalized, tc.min, tc.max)
 		}
 	}
 }
 
-func TestScaleFor_TichySalinity(t *testing.T) {
-	// PoC P6 only observed a narrow sample range (roughly -0.02 to 0) for
-	// Tichý Salinity and did not confirm the full range, so ScaleFor must
-	// NOT invent a numeric range here — it reports the same (0,0,false)
-	// "no fixed scale established" sentinel used for Midolo's genuinely
-	// unbounded dims. The real range is recorded by the T2 ingest pipeline
-	// from the actual data, not hardcoded in this function.
-	min, max, normalized := ScaleFor(VocabTichy, DimS)
-	if min != 0 || max != 0 || normalized {
-		t.Fatalf("ScaleFor(Tichy, S) = (%v,%v,%v), want (0,0,false)", min, max, normalized)
+// TestScaleFor_TichyTAndMExceedClassicEllenberg pins the specific
+// regression the real pipeline data exposed: T1 assumed a flat "classic
+// Ellenberg" 1-9 for all five Tichý core dims, but Task 2's full-table
+// measurement showed T and M actually range up to 12. This test fails if
+// ScaleFor is ever reverted to the flat 1-9 assumption for these two dims.
+func TestScaleFor_TichyTAndMExceedClassicEllenberg(t *testing.T) {
+	for _, d := range []TraitDim{DimT, DimM} {
+		_, max, _ := ScaleFor(VocabTichy, d)
+		if max == 9 {
+			t.Fatalf("ScaleFor(Tichy, %q) max = 9, want 12 — Task 2's measured data shows this dim exceeds the classic Ellenberg 1-9 range", d)
+		}
+		if max != 12 {
+			t.Fatalf("ScaleFor(Tichy, %q) max = %v, want 12", d, max)
+		}
 	}
 }
 

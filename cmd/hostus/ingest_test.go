@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jobrunner/hostus/internal/application"
 )
 
 // TestIngestCommand_FixtureManifest_PrintsReport drives "hostus ingest
@@ -50,6 +52,45 @@ func TestIngestCommand_FixtureManifest_PrintsReport(t *testing.T) {
 	}
 	if !strings.Contains(got, "Abies alba") {
 		t.Errorf("report %q, want the unmatched sample to name the specific lost taxa", got)
+	}
+}
+
+// TestPrintIngestReport_OtherRanksNotice proves Hardening Task 1's "visible,
+// not silent" requirement at the CLI layer: a backbone report carrying
+// OtherRanks must print a "ranks: other=N (...)" line naming the exotic
+// spellings (WCVP's "proles", the empty string rendered as "(empty)" so it
+// stays readable rather than printing nothing) — and a backbone with
+// OtherRanks == 0 must print no such line at all.
+func TestPrintIngestReport_OtherRanksNotice(t *testing.T) {
+	report := application.IngestReport{
+		Backbones: []application.BackboneReport{
+			{
+				ID:         "wcvp",
+				Names:      3,
+				OtherRanks: 3,
+				OtherRankSample: []application.RankVerbatimCount{
+					{Verbatim: "proles", Count: 2},
+					{Verbatim: "", Count: 1},
+				},
+			},
+			{ID: "clean", Names: 1},
+		},
+	}
+
+	var out bytes.Buffer
+	printIngestReport(&out, report)
+
+	got := out.String()
+	if !strings.Contains(got, "ranks: other=3 (proles 2, (empty) 1)") {
+		t.Errorf("report %q, want a \"ranks: other=3 (proles 2, (empty) 1)\" line", got)
+	}
+	cleanIdx := strings.Index(got, "clean:")
+	if cleanIdx == -1 {
+		t.Fatalf("report %q, want it to mention backbone %q", got, "clean")
+	}
+	cleanSection := got[cleanIdx:]
+	if strings.Contains(cleanSection, "ranks: other") {
+		t.Errorf("report %q, want no \"ranks: other\" line for a backbone with OtherRanks == 0", cleanSection)
 	}
 }
 

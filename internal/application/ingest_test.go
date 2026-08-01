@@ -470,7 +470,14 @@ func TestIngest_WCVPFixture_SynonymDoesNotGetItsOwnConcept(t *testing.T) {
 	}
 }
 
-func TestIngest_UnknownRankFails(t *testing.T) {
+// TestIngest_UnknownRankDegradesToOther pins the Hardening Task 1 fix: an
+// unparseable "taxonrank" value (whether an arbitrary garbage string or one
+// of WCVP's real exotic spellings like "proles" — see
+// TestIngest_WCVPExoticRanks_CompletesAndReportsThem below for the latter)
+// must NOT abort the ingest anymore. This replaces the old
+// TestIngest_UnknownRankFails, which pinned the exact opposite (and now
+// wrong) behavior.
+func TestIngest_UnknownRankDegradesToOther(t *testing.T) {
 	ds := &application.Dataset{
 		Backbones:   []application.Backbone{{ID: "bad", Version: "v1"}},
 		ManifestSHA: "deadbeef",
@@ -482,18 +489,153 @@ func TestIngest_UnknownRankFails(t *testing.T) {
 		return fakeRowSource{taxa: []application.TaxonRow{{TaxonID: "1", AcceptedTaxonID: "1", Accepted: true, Canonical: "Bogus", Rank: "NOT-A-RANK"}}}, nil
 	}
 
-	if _, err := application.Ingest(ctx, ds, readerFor, repo); err == nil {
-		t.Fatal("Ingest: expected error for an unparseable rank, got nil")
+	report, err := application.Ingest(ctx, ds, readerFor, repo)
+	if err != nil {
+		t.Fatalf("Ingest: unexpected error for an unparseable rank (must degrade to RankOther, not abort): %v", err)
+	}
+	if len(report.Backbones) != 1 || report.Backbones[0].OtherRanks != 1 {
+		t.Fatalf("report.Backbones = %+v, want exactly one backbone with OtherRanks=1", report.Backbones)
 	}
 
 	versions, err := repo.BackboneVersions(ctx)
 	if err != nil {
 		t.Fatalf("BackboneVersions: unexpected error: %v", err)
 	}
+	found := false
 	for _, v := range versions {
 		if v.ID == "bad" {
-			t.Error("BackboneVersions contains the failed backbone; a rolled-back ingest must not leave a partial backbone_version record readable")
+			found = true
 		}
+	}
+	if !found {
+		t.Error("BackboneVersions does not contain the successfully-ingested backbone \"bad\"")
+	}
+
+	concept := mustConcept(ctx, t, repo, "bad:concept:1")
+	if concept.Rank != domain.RankOther {
+		t.Errorf("concept.Rank = %q, want %q", concept.Rank, domain.RankOther)
+	}
+}
+
+// TestIngest_WCVPExoticRanks_CompletesAndReportsThem is the brief's
+// required real-shape regression: an ingest whose input contains WCVP's
+// "proles" rank (the exact value that made hostus 2.0's full WCVP ingest
+// abort after 5.37s on taxon 542377 — see
+// docs/research/reality-check.md's M1.0) must complete, not abort, and the
+// report must count+surface the exotic ranks rather than silently dropping
+// them. The fixture mixes "proles" (count 2, so it must sort first) with
+// two exotic ranks tied at count 1 ("grex"/"lusus", which must then break
+// the tie alphabetically) and one ordinary "Species" row, so both of
+// sortedRankCounts' sort keys (count desc, then verbatim asc) are actually
+// exercised, not just the count-desc one.
+func TestIngest_WCVPExoticRanks_CompletesAndReportsThem(t *testing.T) {
+	ds := &application.Dataset{
+		Backbones:   []application.Backbone{{ID: "wcvp-exotic", Version: "v1"}},
+		ManifestSHA: "deadbeef",
+	}
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+
+	taxa := []application.TaxonRow{
+		{TaxonID: "1", AcceptedTaxonID: "1", Accepted: true, Canonical: "Ordinary species", Rank: "Species"},
+		{TaxonID: "2", AcceptedTaxonID: "2", Accepted: true, Canonical: "Paeonia corallina proles ovatifolia", Rank: "proles"},
+		{TaxonID: "3", AcceptedTaxonID: "3", Accepted: true, Canonical: "Some lusus", Rank: "lusus"},
+		{TaxonID: "4", AcceptedTaxonID: "4", Accepted: true, Canonical: "Another proles", Rank: "proles"},
+		{TaxonID: "5", AcceptedTaxonID: "5", Accepted: true, Canonical: "Some grex", Rank: "grex"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) {
+		return fakeRowSource{taxa: taxa}, nil
+	}
+
+	report, err := application.Ingest(ctx, ds, readerFor, repo)
+	if err != nil {
+		t.Fatalf("Ingest: expected completion despite exotic ranks (proles/lusus/grex), got error: %v", err)
+	}
+	if len(report.Backbones) != 1 {
+		t.Fatalf("len(report.Backbones) = %d, want 1", len(report.Backbones))
+	}
+	b := report.Backbones[0]
+	if b.Names != 5 {
+		t.Errorf("b.Names = %d, want 5 (every row still gets a Name, exotic rank or not)", b.Names)
+	}
+	if b.OtherRanks != 4 {
+		t.Errorf("b.OtherRanks = %d, want 4 (two proles + one lusus + one grex)", b.OtherRanks)
+	}
+	// "grex" sorts before "lusus" alphabetically once their counts tie at 1.
+	wantSample := []application.RankVerbatimCount{
+		{Verbatim: "proles", Count: 2},
+		{Verbatim: "grex", Count: 1},
+		{Verbatim: "lusus", Count: 1},
+	}
+	if len(b.OtherRankSample) != len(wantSample) {
+		t.Fatalf("b.OtherRankSample = %+v, want %+v", b.OtherRankSample, wantSample)
+	}
+	for i, want := range wantSample {
+		if b.OtherRankSample[i] != want {
+			t.Errorf("b.OtherRankSample[%d] = %+v, want %+v (most frequent first, ties broken alphabetically)", i, b.OtherRankSample[i], want)
+		}
+	}
+
+	proles := mustConcept(ctx, t, repo, "wcvp-exotic:concept:2")
+	if proles.Rank != domain.RankOther {
+		t.Errorf("proles concept.Rank = %q, want %q", proles.Rank, domain.RankOther)
+	}
+
+	ordinary := mustConcept(ctx, t, repo, "wcvp-exotic:concept:1")
+	if ordinary.Rank != domain.RankSpecies {
+		t.Errorf("ordinary concept.Rank = %q, want %q", ordinary.Rank, domain.RankSpecies)
+	}
+}
+
+// TestIngest_OtherRank_PopulatesNameRankVerbatim proves the OTHER half of
+// the "verbatim source string must be preserved" requirement: pass 1 sets
+// domain.Name.RankVerbatim to the raw source spelling for every row that
+// normalizes to domain.RankOther (and leaves it empty otherwise — Rank
+// alone already identifies a canonical rank exactly, so there is nothing
+// to preserve there). It exercises the fakeCapturingRepo test double
+// (below) instead of the real sqlite adapter, since sqlite's schema does
+// not persist rank_verbatim (this task's smallest-footprint choice — see
+// the ParseRankLenient/domain.Name.RankVerbatim doc comments): the
+// information must survive from TaxonRow through to the domain.Name
+// Ingest hands the repository, which is the boundary this task owns.
+func TestIngest_OtherRank_PopulatesNameRankVerbatim(t *testing.T) {
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "wcvp-exotic", Version: "v1"}}, ManifestSHA: "x"}
+	repo := &fakeCapturingRepo{}
+	ctx := context.Background()
+
+	taxa := []application.TaxonRow{
+		{TaxonID: "1", AcceptedTaxonID: "1", Accepted: true, Canonical: "Ordinary species", Rank: "Species"},
+		{TaxonID: "2", AcceptedTaxonID: "2", Accepted: true, Canonical: "Paeonia corallina proles ovatifolia", Rank: "proles"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) {
+		return fakeRowSource{taxa: taxa}, nil
+	}
+
+	if _, err := application.Ingest(ctx, ds, readerFor, repo); err != nil {
+		t.Fatalf("Ingest: unexpected error: %v", err)
+	}
+
+	names := repo.tx.namesByID()
+	proles, ok := names["wcvp-exotic:name:2"]
+	if !ok {
+		t.Fatalf("no Name captured for taxon 2")
+	}
+	if proles.Rank != domain.RankOther {
+		t.Errorf("proles Name.Rank = %q, want %q", proles.Rank, domain.RankOther)
+	}
+	if proles.RankVerbatim != "proles" {
+		t.Errorf("proles Name.RankVerbatim = %q, want %q (preserved, readable)", proles.RankVerbatim, "proles")
+	}
+
+	ordinary, ok := names["wcvp-exotic:name:1"]
+	if !ok {
+		t.Fatalf("no Name captured for taxon 1")
+	}
+	if ordinary.Rank != domain.RankSpecies {
+		t.Errorf("ordinary Name.Rank = %q, want %q", ordinary.Rank, domain.RankSpecies)
+	}
+	if ordinary.RankVerbatim != "" {
+		t.Errorf("ordinary Name.RankVerbatim = %q, want empty (Rank alone already identifies it)", ordinary.RankVerbatim)
 	}
 }
 
@@ -518,6 +660,80 @@ func (f fakeRowSource) Taxa() []application.TaxonRow                 { return f.
 func (f fakeRowSource) Distributions() []application.DistributionRow { return f.dists }
 
 var _ output.Repository = (*sqlite.DB)(nil)
+
+// fakeCapturingRepo is a minimal output.Repository test double whose only
+// meaningfully-implemented method is BeginIngest — the only Repository
+// method application.Ingest itself calls (everything downstream goes
+// through the returned IngestTx). It exists so
+// TestIngest_OtherRank_PopulatesNameRankVerbatim can inspect the exact
+// domain.Name Ingest hands to UpsertName without needing the real sqlite
+// adapter's schema to carry a field (RankVerbatim) this task deliberately
+// does not persist there.
+type fakeCapturingRepo struct {
+	tx fakeCapturingTx
+}
+
+func (f *fakeCapturingRepo) BeginIngest(context.Context, domain.BackboneVersion) (output.IngestTx, error) {
+	return &f.tx, nil
+}
+
+func (f *fakeCapturingRepo) Concept(context.Context, string) (*domain.Concept, []output.SynonymName, []domain.Xref, []domain.Distribution, error) {
+	panic("not needed by Ingest")
+}
+func (f *fakeCapturingRepo) Classification(context.Context, string) ([]domain.ClassificationEntry, error) {
+	panic("not needed by Ingest")
+}
+func (f *fakeCapturingRepo) ConceptByXref(context.Context, string, string) (*domain.Concept, error) {
+	panic("not needed by Ingest")
+}
+func (f *fakeCapturingRepo) MatchExact(context.Context, string) ([]output.MatchCandidate, error) {
+	panic("not needed by Ingest")
+}
+func (f *fakeCapturingRepo) MatchFuzzyCandidates(context.Context, string, int) ([]output.MatchCandidate, error) {
+	panic("not needed by Ingest")
+}
+func (f *fakeCapturingRepo) BackboneVersions(context.Context) ([]domain.BackboneVersion, error) {
+	panic("not needed by Ingest")
+}
+func (f *fakeCapturingRepo) Traits(context.Context, string, []domain.TraitVocab) ([]domain.TraitSet, error) {
+	panic("not needed by Ingest")
+}
+func (f *fakeCapturingRepo) TraitVocabularies(context.Context) ([]domain.TraitVocabMeta, error) {
+	panic("not needed by Ingest")
+}
+func (f *fakeCapturingRepo) Suggest(context.Context, string, output.SuggestOpts) ([]domain.SuggestItem, error) {
+	panic("not needed by Ingest")
+}
+func (f *fakeCapturingRepo) BeginTraitIngest(context.Context) (output.IngestTx, error) {
+	panic("not needed by Ingest")
+}
+
+// fakeCapturingTx is the IngestTx fakeCapturingRepo hands out: it records
+// every Name passed to UpsertName (keyed by id, last write wins — matching
+// pass 1's "write once, sub-pass 1b may re-write with linkage filled in"
+// pattern) and no-ops everything else Ingest calls along the way.
+type fakeCapturingTx struct {
+	names map[string]domain.Name
+}
+
+func (t *fakeCapturingTx) namesByID() map[string]domain.Name { return t.names }
+
+func (t *fakeCapturingTx) UpsertName(n domain.Name) error {
+	if t.names == nil {
+		t.names = make(map[string]domain.Name)
+	}
+	t.names[n.ID] = n
+	return nil
+}
+func (t *fakeCapturingTx) UpsertConcept(domain.Concept) error                { return nil }
+func (t *fakeCapturingTx) LinkName(string, string, string, *bool) error      { return nil }
+func (t *fakeCapturingTx) AddXref(string, domain.Xref) error                 { return nil }
+func (t *fakeCapturingTx) AddDistribution(string, domain.Distribution) error { return nil }
+func (t *fakeCapturingTx) AddTraitValue(string, domain.TraitValue) error     { return nil }
+func (t *fakeCapturingTx) UpsertTraitVocabulary(domain.TraitVocabMeta) error { return nil }
+func (t *fakeCapturingTx) Finalize() error                                   { return nil }
+func (t *fakeCapturingTx) Commit() error                                     { return nil }
+func (t *fakeCapturingTx) Rollback() error                                   { return nil }
 
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {

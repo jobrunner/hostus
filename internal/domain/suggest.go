@@ -25,23 +25,35 @@ type SuggestItem struct {
 
 // rankOrder assigns the ordinal used by RankOrder/RankSuggestions priority
 // step 4: species before subspecies before variety before form, with
-// FAMILY and GENUS ranked ahead of all of those (broader ranks first).
-// Unknown ranks are placed last, after FORM, so an unrecognized Rank never
+// FAMILY and GENUS ranked ahead of all of those (broader ranks first). The
+// nothotaxon (hybrid) ranks are placed directly after their non-hybrid
+// counterpart (nothosubsp. after subspecies, nothovar. after subvariety,
+// nothof. after subform) — WCVP doesn't define a relative order between a
+// rank and its nothotaxon sibling, so this is a deliberate, documented
+// choice rather than a measured requirement. RankOther (and any other
+// unrecognized Rank) is placed last, after SUBFORM/NOTHOFORM, so it never
 // masquerades as FAMILY (ordinal 0) or intrudes elsewhere in the ordering.
 var rankOrder = map[Rank]int{
-	RankFamily:     0,
-	RankGenus:      1,
-	RankSpecies:    2,
-	RankSubspecies: 3,
-	RankVariety:    4,
-	RankForm:       5,
+	RankFamily:          0,
+	RankGenus:           1,
+	RankSpecies:         2,
+	RankSubspecies:      3,
+	RankNothosubspecies: 4,
+	RankVariety:         5,
+	RankSubvariety:      6,
+	RankNothovariety:    7,
+	RankForm:            8,
+	RankSubform:         9,
+	RankNothoform:       10,
 }
 
-const unknownRankOrder = 6
+const unknownRankOrder = 11
 
 // RankOrder returns the ordinal used to compare Ranks for suggest ranking
 // (§B.1 step 4): FAMILY(0) < GENUS(1) < SPECIES(2) < SUBSPECIES(3) <
-// VARIETY(4) < FORM(5). An unrecognized Rank returns an ordinal after FORM.
+// VARIETY(5) < SUBVARIETY(6) < FORM(8) < SUBFORM(9), with the nothotaxon
+// ranks interleaved (see rankOrder's doc comment) and RankOther/any
+// unrecognized Rank sorting after all of them (11).
 func RankOrder(r Rank) int {
 	if order, ok := rankOrder[r]; ok {
 		return order

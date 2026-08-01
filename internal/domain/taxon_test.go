@@ -1,6 +1,7 @@
 package domain_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/jobrunner/hostus/internal/domain"
@@ -23,8 +24,18 @@ func TestParseRank(t *testing.T) {
 		{"subspecies", domain.RankSubspecies},
 		{"Variety", domain.RankVariety},
 		{"variety", domain.RankVariety},
+		{"Subvariety", domain.RankSubvariety},
+		{"SUBVARIETY", domain.RankSubvariety},
 		{"Form", domain.RankForm},
 		{"form", domain.RankForm},
+		{"Subform", domain.RankSubform},
+		{"SUBFORM", domain.RankSubform},
+		{"Nothosubspecies", domain.RankNothosubspecies},
+		{"NOTHOSUBSPECIES", domain.RankNothosubspecies},
+		{"Nothovariety", domain.RankNothovariety},
+		{"Nothoform", domain.RankNothoform},
+		{"Other", domain.RankOther},
+		{"OTHER", domain.RankOther},
 	}
 	for _, c := range cases {
 		got, err := domain.ParseRank(c.in)
@@ -48,6 +59,73 @@ func TestParseRank_Empty(t *testing.T) {
 	_, err := domain.ParseRank("")
 	if err == nil {
 		t.Fatal("ParseRank(\"\"): expected error, got nil")
+	}
+}
+
+// TestParseRank_RejectsBogus pins the strict API-facing behavior SP2's
+// `GET /v1/suggest?rank=bogus` -> 400 INVALID_QUERY test depends on: the
+// strict parser must keep rejecting garbage even though ParseRankLenient
+// (below) now tolerates the exact same input for ingest purposes.
+func TestParseRank_RejectsBogus(t *testing.T) {
+	_, err := domain.ParseRank("bogus")
+	if err == nil {
+		t.Fatal("ParseRank(\"bogus\"): expected error, got nil")
+	}
+}
+
+// wcvpRankInventory is the full measured WCVP taxonrank inventory from
+// docs/research/reality-check.md (real wcvp_taxon.csv, column 8): every
+// spelling that is NOT one of ParseRank's canonical constants, including
+// the empty string. ParseRankLenient must map every single one of these to
+// RankOther, and must never error, or a full WCVP ingest aborts again
+// (this is the exact defect this task fixes).
+var wcvpRankInventory = []string{
+	"", "proles", "lusus", "microgène", "Convariety", "monstr.", "grex",
+	"subproles", "stirps", "provar.", "psp.", "modif.", "mut.", "sublusus",
+	"subap.", "subsubsp.", "subspecioid", "positio", "nid", "micromorphe",
+	"microf.", "group", "ecas.", "agamosp.",
+}
+
+func TestParseRankLenient_ExoticInventory_NeverErrorsAlwaysOther(t *testing.T) {
+	for _, in := range wcvpRankInventory {
+		t.Run("input:"+in, func(t *testing.T) {
+			rank, verbatim := domain.ParseRankLenient(in)
+			if rank != domain.RankOther {
+				t.Errorf("ParseRankLenient(%q) rank = %q, want %q", in, rank, domain.RankOther)
+			}
+			wantVerbatim := strings.TrimSpace(in)
+			if verbatim != wantVerbatim {
+				t.Errorf("ParseRankLenient(%q) verbatim = %q, want %q (preserved, readable)", in, verbatim, wantVerbatim)
+			}
+		})
+	}
+}
+
+func TestParseRankLenient_CanonicalAndNothotaxonRanks(t *testing.T) {
+	cases := []struct {
+		in   string
+		want domain.Rank
+	}{
+		{"Family", domain.RankFamily},
+		{"Genus", domain.RankGenus},
+		{"Species", domain.RankSpecies},
+		{"Subspecies", domain.RankSubspecies},
+		{"Variety", domain.RankVariety},
+		{"Subvariety", domain.RankSubvariety},
+		{"Form", domain.RankForm},
+		{"Subform", domain.RankSubform},
+		{"nothosubsp.", domain.RankNothosubspecies},
+		{"nothovar.", domain.RankNothovariety},
+		{"nothof.", domain.RankNothoform},
+	}
+	for _, c := range cases {
+		rank, verbatim := domain.ParseRankLenient(c.in)
+		if rank != c.want {
+			t.Errorf("ParseRankLenient(%q) rank = %q, want %q", c.in, rank, c.want)
+		}
+		if verbatim != c.in {
+			t.Errorf("ParseRankLenient(%q) verbatim = %q, want %q", c.in, verbatim, c.in)
+		}
 	}
 }
 

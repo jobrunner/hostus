@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/jobrunner/hostus/internal/domain"
@@ -89,12 +90,38 @@ type BackboneReport struct {
 	Concepts int
 	Synonyms int
 	Orphaned int // synonym rows whose accepted target was never ingested (dangling reference in the source data)
+	// OtherRanks counts taxon rows whose "taxonrank" column didn't match one
+	// of domain's canonical Rank constants and so normalized to
+	// domain.RankOther (see domain.ParseRankLenient) — this is what makes
+	// an exotic rank spelling (e.g. WCVP's "proles") visible in the report
+	// instead of silently swallowed, mirroring TraitIngestReport.Unmatched.
+	OtherRanks int
+	// OtherRankSample is a bounded (otherRankSampleCap), deterministic
+	// sample of the verbatim rank spellings counted in OtherRanks, most
+	// frequent first (ties broken alphabetically) — see sortedRankCounts.
+	OtherRankSample []RankVerbatimCount
 	// Redistribution is this backbone's manifest-pinned redistribution
 	// value (see domain.Redistribution), surfaced here so "hostus ingest"
 	// can print a notice for anything that is not "allowed" — the local
 	// ingest itself is never gated by it.
 	Redistribution string
 }
+
+// RankVerbatimCount is one entry in BackboneReport.OtherRankSample: a
+// verbatim source "taxonrank" spelling (as returned by
+// domain.ParseRankLenient) paired with how many taxon rows carried it.
+type RankVerbatimCount struct {
+	Verbatim string
+	Count    int
+}
+
+// otherRankSampleCap bounds BackboneReport.OtherRankSample the same way
+// unmatchedSampleCap bounds TraitIngestReport.UnmatchedSample (see
+// traits_ingest.go): a real WCVP ingest can carry dozens of distinct exotic
+// rank spellings (see docs/research/reality-check.md's measured
+// inventory), and the report must stay readable rather than dumping every
+// one of them.
+const otherRankSampleCap = 20
 
 // IngestReport summarizes an Ingest run across every backbone in the dataset.
 type IngestReport struct {
@@ -166,6 +193,12 @@ type ingestState struct {
 	// OR REPLACE.
 	namesByTaxon    map[string]domain.Name
 	conceptsByTaxon map[string]domain.Concept
+	// otherRankCounts tallies, per verbatim source rank spelling, how many
+	// taxon rows normalized to domain.RankOther via
+	// domain.ParseRankLenient — the raw material for
+	// BackboneReport.OtherRanks/OtherRankSample (see
+	// finalizeOtherRanksReport).
+	otherRankCounts map[string]int
 }
 
 // acceptedTaxonIDs resolves the full set of ACCEPTED source taxonIDs from
@@ -233,11 +266,12 @@ func ingestBackbone(ctx context.Context, b Backbone, manifestSHA string, rs RowS
 	taxa := rs.Taxa()
 	present := presentTaxonIDs(taxa)
 	st := &ingestState{
-		backbone:    b,
-		tx:          tx,
-		distByTaxon: distByTaxon,
-		accepted:    acceptedTaxonIDs(taxa),
-		basionymOf:  basionymIDsByTaxon(b, taxa, present),
+		backbone:        b,
+		tx:              tx,
+		distByTaxon:     distByTaxon,
+		accepted:        acceptedTaxonIDs(taxa),
+		basionymOf:      basionymIDsByTaxon(b, taxa, present),
+		otherRankCounts: make(map[string]int),
 	}
 
 	if err := st.pass1AcceptedAndNames(taxa, &report); err != nil {
@@ -248,6 +282,7 @@ func ingestBackbone(ctx context.Context, b Backbone, manifestSHA string, rs RowS
 		_ = tx.Rollback()
 		return report, err
 	}
+	st.finalizeOtherRanksReport(&report)
 	if err := tx.Finalize(); err != nil {
 		_ = tx.Rollback()
 		return report, fmt.Errorf("application: finalizing FTS index for backbone %q: %w", b.ID, err)
@@ -278,9 +313,15 @@ func (st *ingestState) pass1AcceptedAndNames(taxa []TaxonRow, report *BackboneRe
 	st.conceptsByTaxon = make(map[string]domain.Concept)
 
 	for _, row := range taxa {
-		rank, err := domain.ParseRank(row.Rank)
-		if err != nil {
-			return fmt.Errorf("application: backbone %q, taxon %q: %w", b.ID, row.TaxonID, err)
+		// ParseRankLenient (never ParseRank/error here) is what makes the
+		// ingest tolerant of WCVP's full rank vocabulary: an exotic
+		// spelling degrades to domain.RankOther instead of aborting the
+		// whole backbone (see docs/research/reality-check.md's M1.0 — the
+		// defect this fixes). st.otherRankCounts tallies every occurrence
+		// so the report can surface them (finalizeOtherRanksReport).
+		rank, verbatim := domain.ParseRankLenient(row.Rank)
+		if rank == domain.RankOther {
+			st.otherRankCounts[verbatim]++
 		}
 
 		// POWOID IS the IPNI id (POWO mints its taxon ids in IPNI's own
@@ -293,6 +334,9 @@ func (st *ingestState) pass1AcceptedAndNames(taxa []TaxonRow, report *BackboneRe
 			Authorship: row.Authorship,
 			Rank:       rank,
 			IPNIID:     row.POWOID,
+		}
+		if rank == domain.RankOther {
+			name.RankVerbatim = verbatim
 		}
 		if err := st.tx.UpsertName(name); err != nil {
 			return fmt.Errorf("application: backbone %q: %w", b.ID, err)
@@ -436,6 +480,57 @@ func (st *ingestState) homotypic(row TaxonRow) *bool {
 	}
 	t := true
 	return &t
+}
+
+// finalizeOtherRanksReport copies st.otherRankCounts (accumulated during
+// pass 1) into report.OtherRanks/OtherRankSample, once every row has been
+// processed. Kept as its own step (rather than updating report inline as
+// rows are counted) so the bounding/sorting only happens once, not on
+// every row.
+func (st *ingestState) finalizeOtherRanksReport(report *BackboneReport) {
+	for _, n := range st.otherRankCounts {
+		report.OtherRanks += n
+	}
+	report.OtherRankSample = sortedRankCounts(st.otherRankCounts, otherRankSampleCap)
+}
+
+// sortedRankCounts returns a deterministic, bounded (at most cap) sample of
+// counts, ordered by Count descending (most frequent exotic rank first, so
+// the report leads with what matters most) and, for equal counts, by
+// Verbatim ascending — the same "sorted for determinism, capped for size"
+// approach as traits_ingest.go's sortedSample.
+func sortedRankCounts(counts map[string]int, cap int) []RankVerbatimCount {
+	if len(counts) == 0 {
+		return nil
+	}
+	all := make([]RankVerbatimCount, 0, len(counts))
+	for v, n := range counts {
+		all = append(all, RankVerbatimCount{Verbatim: v, Count: n})
+	}
+	sort.Slice(all, func(i, j int) bool {
+		// Both comparisons below are guarded (explicitly or by
+		// construction) against the equal case, so mutating > to >= or
+		// < to <= at CONDITIONALS_BOUNDARY is a genuinely equivalent
+		// mutant: neither branch can ever observe operands it considers
+		// equal.
+		if all[i].Count != all[j].Count {
+			return all[i].Count > all[j].Count
+		}
+		// This branch only runs when Counts are equal; Verbatim strings
+		// are never equal to each other here regardless, since all was
+		// built from a map's keys (each key appears at most once) — so
+		// all[i].Verbatim == all[j].Verbatim never happens for i != j.
+		return all[i].Verbatim < all[j].Verbatim
+	})
+	// len(all) >= cap is a genuinely equivalent mutant at
+	// CONDITIONALS_BOUNDARY: at len(all) == cap exactly, all[:cap] IS all,
+	// so both branches produce the identical slice and no test can observe
+	// the difference — the same documented-equivalence class as
+	// traits_ingest.go's sortedSample.
+	if len(all) > cap {
+		all = all[:cap]
+	}
+	return all
 }
 
 // nameID and conceptID derive stable, deterministic ids from the backbone

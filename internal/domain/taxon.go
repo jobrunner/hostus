@@ -14,11 +14,43 @@ const (
 	RankSpecies    Rank = "SPECIES"
 	RankSubspecies Rank = "SUBSPECIES"
 	RankVariety    Rank = "VARIETY"
+	RankSubvariety Rank = "SUBVARIETY"
 	RankForm       Rank = "FORM"
+	RankSubform    Rank = "SUBFORM"
+	// RankNothosubspecies, RankNothovariety and RankNothoform are the
+	// nothotaxon (hybrid) counterparts of Subspecies/Variety/Form — WCVP's
+	// "nothosubsp."/"nothovar."/"nothof." spellings — kept as their own
+	// canonical ranks (rather than folded into RankOther) because they
+	// occur in real volume (552/134/15 rows respectively, per
+	// docs/research/reality-check.md) and have an unambiguous position in
+	// the rank hierarchy.
+	RankNothosubspecies Rank = "NOTHOSUBSPECIES"
+	RankNothovariety    Rank = "NOTHOVARIETY"
+	RankNothoform       Rank = "NOTHOFORM"
+	// RankOther is the catch-all for every WCVP taxonrank spelling NOT
+	// covered by a dedicated constant above — including the empty string
+	// and the long tail of rare infraspecific ranks (proles, lusus, grex,
+	// stirps, ...; see docs/research/reality-check.md for the full measured
+	// inventory). It exists so ParseRankLenient (the ingest-facing parser)
+	// never has to reject a row: an exotic rank degrades to RankOther
+	// instead of aborting the whole ingest. See ParseRankLenient's doc
+	// comment for how the original spelling is preserved.
+	RankOther Rank = "OTHER"
 )
 
-// ParseRank maps a WCVP "taxonrank" spelling (case-insensitive) to a Rank.
-// Unknown or empty input returns an error.
+// ParseRank maps a canonical Rank spelling (case-insensitive; the exact set
+// of constants above) to a Rank. Unknown or empty input returns an error —
+// this is the STRICT parser, used for API input (e.g. the suggest
+// endpoint's `rank=` query parameter) where an unrecognized value is a
+// client error (400 INVALID_QUERY), and internally to re-parse a Rank that
+// was itself stored by an ingest (which only ever writes one of the
+// constants above, RankOther included).
+//
+// It deliberately does NOT recognize WCVP's raw exotic spellings
+// ("proles", "nothosubsp.", ...) — those go through ParseRankLenient
+// instead, which degrades them to RankOther rather than erroring. Keeping
+// the two parsers separate is what lets the ingest tolerate WCVP's full
+// rank vocabulary while the API stays strict about what it accepts.
 func ParseRank(s string) (Rank, error) {
 	switch strings.ToUpper(strings.TrimSpace(s)) {
 	case "FAMILY":
@@ -31,11 +63,59 @@ func ParseRank(s string) (Rank, error) {
 		return RankSubspecies, nil
 	case "VARIETY":
 		return RankVariety, nil
+	case "SUBVARIETY":
+		return RankSubvariety, nil
 	case "FORM":
 		return RankForm, nil
+	case "SUBFORM":
+		return RankSubform, nil
+	case "NOTHOSUBSPECIES":
+		return RankNothosubspecies, nil
+	case "NOTHOVARIETY":
+		return RankNothovariety, nil
+	case "NOTHOFORM":
+		return RankNothoform, nil
+	case "OTHER":
+		return RankOther, nil
 	default:
 		return "", fmt.Errorf("domain: unknown taxon rank %q", s)
 	}
+}
+
+// nothotaxonRanks maps WCVP's raw nothotaxon taxonrank spellings (which
+// don't share a case-insensitive spelling with their canonical constant
+// name, unlike e.g. "Variety"/"VARIETY") to the Rank ParseRankLenient
+// should return for them.
+var nothotaxonRanks = map[string]Rank{
+	"nothosubsp.": RankNothosubspecies,
+	"nothovar.":   RankNothovariety,
+	"nothof.":     RankNothoform,
+}
+
+// ParseRankLenient maps a WCVP "taxonrank" column value — verbatim, exactly
+// as read from the source row — to a Rank. Unlike ParseRank, it NEVER
+// errors: this is the ingest-facing parser, and ParseRank's own doc comment
+// explains why the two are kept separate (the API stays strict; the ingest
+// must not abort on WCVP's long tail of rare infraspecific ranks).
+//
+// Any spelling not recognized as one of the canonical ranks (including the
+// empty string, and exotic values like "proles", "lusus", "grex", ...)
+// returns RankOther. The second return value is the verbatim input,
+// trimmed of surrounding whitespace — for RankOther this is the only place
+// the original spelling survives (RankOther collapses every exotic rank
+// into one value), so callers that want to report or display it (e.g. the
+// ingest report's "ranks: other=N (proles 2351, ...)" line, or
+// domain.Name.RankVerbatim) must keep this return value rather than
+// re-deriving it from the Rank alone.
+func ParseRankLenient(s string) (Rank, string) {
+	trimmed := strings.TrimSpace(s)
+	if r, ok := nothotaxonRanks[strings.ToLower(trimmed)]; ok {
+		return r, trimmed
+	}
+	if r, err := ParseRank(trimmed); err == nil {
+		return r, trimmed
+	}
+	return RankOther, trimmed
 }
 
 // Status is the taxonomic status of a Concept (accepted, synonym, ...).
@@ -75,6 +155,13 @@ type Name struct {
 	PublishedIn string
 	NomStatus   string
 	BasionymID  string
+	// RankVerbatim holds the original source "taxonrank" spelling when Rank
+	// is RankOther — the one case where Rank alone has thrown information
+	// away by collapsing an exotic spelling ("proles", "lusus", ...) into a
+	// single catch-all value. It is left empty for every other Rank, since
+	// Rank itself already identifies the canonical spelling exactly (no
+	// information is lost there). See ParseRankLenient's doc comment.
+	RankVerbatim string
 }
 
 // Concept is a taxonomic concept: an accepted name plus its placement and

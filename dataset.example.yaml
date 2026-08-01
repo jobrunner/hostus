@@ -12,6 +12,7 @@ backbones:
     license: CC-BY-4.0
     source: https://sftp.kew.org/pub/data-repositories/WCVP/
     path: ./backbones/wcvp # lokaler Pfad zum entpackten DwC-A-Bundle
+    redistribution: allowed # CC-BY-4.0, docs/research/quellenregister.md
 
   # Catalogue of Life (ColDP-Export) — globaler Cross-Reference-Anschluss.
   - id: colxr
@@ -19,17 +20,24 @@ backbones:
     license: CC-BY-4.0
     source: https://download.checklistbank.org/col/
     path: ./backbones/colxr
+    redistribution: allowed # CC-BY-4.0, docs/research/quellenregister.md
 
   # Euro+Med PlantBase — regionale Konzepte für Mitteleuropa.
   - id: euromed
     version: "2024-12-01"
     path: ./backbones/euromed
+    # Keine Lizenz auffindbar (docs/research/quellenregister.md, ❌ blocked)
+    # -> lokal genutzt, aber NICHT redistribuierbar, bis geklärt.
+    redistribution: unknown
 
   # FloraVeg.EU — Namensraum für ESy-Vegetationsklassifikation.
   - id: floraveg
     version: "2021-06-01"
     path: ./backbones/floraveg
     note: "ESy-Namensraum, gepinnt — nicht mit EIVE/EuroSL verwechseln"
+    # Lizenz ungeklärt (docs/research/quellenregister.md, ⚠️ partially
+    # confirmed) -> lokal genutzt, aber NICHT redistribuierbar, bis geklärt.
+    redistribution: unknown
 
 # Trait-Vokabulare. `version` MUSS exakt der Spalte `vocab_version` der
 # kanonischen CSV entsprechen, die die jeweilige Pipeline erzeugt (siehe
@@ -48,6 +56,7 @@ trait_vocabularies:
     license: CC-BY-4.0
     source: https://doi.org/10.5281/zenodo.7534792
     path: pipelines/eive/output/eive-canonical.csv
+    redistribution: allowed # CC-BY-4.0, docs/research/quellenregister.md
 
   # Zeigerwerte nach Tichý et al. 2023, FloraVeg/EUNIS-harmonisiert.
   - id: tichy2023
@@ -56,6 +65,7 @@ trait_vocabularies:
     license: CC-BY-4.0
     source: https://doi.org/10.5281/zenodo.7427088
     path: pipelines/tichy/output/tichy-canonical.csv
+    redistribution: allowed # CC-BY-4.0, docs/research/quellenregister.md
 
   # Zeigerwerte nach Midolo et al. 2023, ebenfalls FloraVeg/EUNIS-Namensraum.
   - id: midolo2023
@@ -64,3 +74,4 @@ trait_vocabularies:
     license: CC-BY-4.0
     source: https://doi.org/10.5281/zenodo.7116957
     path: pipelines/midolo/output/midolo-canonical.csv
+    redistribution: allowed # CC-BY-4.0, docs/research/quellenregister.md

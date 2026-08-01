@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,10 +21,11 @@ var fixedBundleClock = time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
 
 // bundleMetaRow is the single bundle_meta row readBundleMeta reads back.
 type bundleMetaRow struct {
-	SnapshotVersion string
-	Area            string
-	CreatedAt       string
-	ManifestSHA     string
+	SnapshotVersion   string
+	Area              string
+	CreatedAt         string
+	ManifestSHA       string
+	RestrictedSources string
 }
 
 // readBundleMeta opens path directly with database/sql (the "sqlite"
@@ -40,11 +43,178 @@ func readBundleMeta(t *testing.T, path string) bundleMetaRow {
 	defer func() { _ = raw.Close() }()
 
 	var got bundleMetaRow
-	row := raw.QueryRow(`SELECT snapshot_version, area, created_at, source_manifest_sha FROM bundle_meta`)
-	if err := row.Scan(&got.SnapshotVersion, &got.Area, &got.CreatedAt, &got.ManifestSHA); err != nil {
+	row := raw.QueryRow(`SELECT snapshot_version, area, created_at, source_manifest_sha, restricted_sources FROM bundle_meta`)
+	if err := row.Scan(&got.SnapshotVersion, &got.Area, &got.CreatedAt, &got.ManifestSHA, &got.RestrictedSources); err != nil {
 		t.Fatalf("reading bundle_meta from %q: unexpected error: %v", path, err)
 	}
 	return got
+}
+
+// addUnknownEIVETraitValue starts a fresh ingest transaction against src and
+// records one trait_value row for conceptID under vocab=eive plus its
+// trait_vocabulary metadata with Redistribution=unknown — the shared setup
+// TestExportBundle_RefusesByDefaultWhenSourceNotAllowed and
+// TestExportBundle_ForceIncludeRestricted_SucceedsAndRecordsSource both use
+// to make "eive" a genuinely contributing, non-allowed source for the
+// AUT-scoped bundle.
+func addUnknownEIVETraitValue(t *testing.T, src *sqlite.DB, conceptID string) {
+	t.Helper()
+	ctx := context.Background()
+	bvs, err := src.BackboneVersions(ctx)
+	if err != nil || len(bvs) == 0 {
+		t.Fatalf("BackboneVersions: unexpected error/empty result: %v / %+v", err, bvs)
+	}
+	tx, err := src.BeginIngest(ctx, bvs[0])
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	if err := tx.AddTraitValue(conceptID, domain.TraitValue{
+		Vocab: domain.VocabEIVE, VocabVersion: "1.0", Dim: domain.DimM, Value: 5.5,
+	}); err != nil {
+		t.Fatalf("AddTraitValue: unexpected error: %v", err)
+	}
+	if err := tx.UpsertTraitVocabulary(domain.TraitVocabMeta{
+		Vocab: domain.VocabEIVE, Version: "1.0", Taxonomy: "euromed-aligned", License: "",
+		Redistribution: domain.RedistributionUnknown,
+	}); err != nil {
+		t.Fatalf("UpsertTraitVocabulary: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+}
+
+// setBackboneRedistribution re-records src's existing "wcvp" backbone_version
+// row with redistribution set to value, via the same BeginIngest(INSERT OR
+// REPLACE) path a real re-ingest would use — so tests can make the
+// BACKBONE itself (not just a trait vocabulary) a non-allowed contributing
+// source without re-ingesting the whole fixture.
+func setBackboneRedistribution(t *testing.T, src *sqlite.DB, redistribution domain.Redistribution) {
+	t.Helper()
+	ctx := context.Background()
+	bvs, err := src.BackboneVersions(ctx)
+	if err != nil || len(bvs) == 0 {
+		t.Fatalf("BackboneVersions: unexpected error/empty result: %v / %+v", err, bvs)
+	}
+	bv := bvs[0]
+	bv.Redistribution = redistribution
+	tx, err := src.BeginIngest(ctx, bv)
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+}
+
+// TestExportBundle_RefusesNamingEverySourceSortedByID proves
+// findRestrictedSources' sort actually orders MULTIPLE offending sources —
+// both the backbone itself (wcvp, forced to restricted) and the eive trait
+// vocabulary (unknown) contribute to the same AUT scope here, so the error
+// must name both, alphabetically ("eive" before "wcvp").
+func TestExportBundle_RefusesNamingEverySourceSortedByID(t *testing.T) {
+	ctx := context.Background()
+	src := ingestWCVPFixture(t)
+	const conceptID = "wcvp:concept:405825" // Corynephorus canescens, AUT scope
+	setBackboneRedistribution(t, src, domain.RedistributionRestricted)
+	addUnknownEIVETraitValue(t, src, conceptID)
+
+	out := filepath.Join(t.TempDir(), "bundle-multi-refused.sqlite")
+	_, err := sqlite.ExportBundle(ctx, src, out, sqlite.BundleOpts{Area: "AUT", SnapshotVersion: "v1"})
+	if err == nil {
+		t.Fatal("ExportBundle: want an error when multiple contributing sources are not redistribution-allowed, got nil")
+	}
+	eiveIdx := strings.Index(err.Error(), "eive")
+	wcvpIdx := strings.Index(err.Error(), "wcvp")
+	if eiveIdx == -1 || wcvpIdx == -1 {
+		t.Fatalf("ExportBundle error = %q, want it to name both %q and %q", err, "eive", "wcvp")
+	}
+	if eiveIdx > wcvpIdx {
+		t.Errorf("ExportBundle error = %q, want %q to be named before %q (sorted by id)", err, "eive", "wcvp")
+	}
+
+	// With --force-include-restricted, bundle_meta.restricted_sources must
+	// list BOTH ids, comma-joined and sorted.
+	forcedOut := filepath.Join(t.TempDir(), "bundle-multi-forced.sqlite")
+	if _, err := sqlite.ExportBundle(ctx, src, forcedOut, sqlite.BundleOpts{
+		Area: "AUT", SnapshotVersion: "v1", AllowRestricted: true,
+	}); err != nil {
+		t.Fatalf("ExportBundle(AllowRestricted): unexpected error: %v", err)
+	}
+	meta := readBundleMeta(t, forcedOut)
+	if meta.RestrictedSources != "eive,wcvp" {
+		t.Errorf("bundle_meta.restricted_sources = %q, want %q", meta.RestrictedSources, "eive,wcvp")
+	}
+}
+
+// TestExportBundle_RefusesByDefaultWhenSourceNotAllowed is the RED/GREEN
+// core of the redistribution gate: a bundle scope that includes trait_value
+// rows from a vocabulary whose redistribution is "unknown" (not "allowed")
+// must be refused by default, naming the offending source and its
+// redistribution value in the error — never silently exported.
+func TestExportBundle_RefusesByDefaultWhenSourceNotAllowed(t *testing.T) {
+	ctx := context.Background()
+	src := ingestWCVPFixture(t)
+	const conceptID = "wcvp:concept:405825" // Corynephorus canescens, AUT scope
+	addUnknownEIVETraitValue(t, src, conceptID)
+
+	out := filepath.Join(t.TempDir(), "bundle-refused.sqlite")
+	_, err := sqlite.ExportBundle(ctx, src, out, sqlite.BundleOpts{Area: "AUT", SnapshotVersion: "v1"})
+	if err == nil {
+		t.Fatal("ExportBundle: want an error when a contributing source is not redistribution-allowed, got nil")
+	}
+	if !strings.Contains(err.Error(), "eive") {
+		t.Errorf("ExportBundle error = %q, want it to name the offending source %q", err, "eive")
+	}
+	if !strings.Contains(err.Error(), "unknown") {
+		t.Errorf("ExportBundle error = %q, want it to state the redistribution value %q", err, "unknown")
+	}
+	if _, statErr := os.Stat(out); statErr == nil {
+		t.Errorf("ExportBundle refused, but %q was still created", out)
+	}
+}
+
+// TestExportBundle_ForceIncludeRestricted_SucceedsAndRecordsSource proves
+// the opt-out: with AllowRestricted, the same scope that
+// TestExportBundle_RefusesByDefaultWhenSourceNotAllowed refuses now
+// succeeds, AND bundle_meta.restricted_sources names exactly the offending
+// source — a bundle can never silently carry unclearable data even when the
+// gate is overridden.
+func TestExportBundle_ForceIncludeRestricted_SucceedsAndRecordsSource(t *testing.T) {
+	ctx := context.Background()
+	src := ingestWCVPFixture(t)
+	const conceptID = "wcvp:concept:405825" // Corynephorus canescens, AUT scope
+	addUnknownEIVETraitValue(t, src, conceptID)
+
+	out := filepath.Join(t.TempDir(), "bundle-forced.sqlite")
+	report, err := sqlite.ExportBundle(ctx, src, out, sqlite.BundleOpts{
+		Area: "AUT", SnapshotVersion: "v1", AllowRestricted: true,
+		Now: func() time.Time { return fixedBundleClock },
+	})
+	if err != nil {
+		t.Fatalf("ExportBundle(AllowRestricted): unexpected error: %v", err)
+	}
+	if report.Concepts == 0 {
+		t.Fatal("ExportBundle(AllowRestricted): report.Concepts = 0, want the AUT-scoped concepts copied")
+	}
+
+	meta := readBundleMeta(t, out)
+	if meta.RestrictedSources != "eive" {
+		t.Errorf("bundle_meta.restricted_sources = %q, want %q", meta.RestrictedSources, "eive")
+	}
+}
+
+// TestExportBundle_AllAllowedSources_RestrictedSourcesEmpty is the
+// regression guard for "an all-allowed DB exports exactly as before": the
+// existing AUT bundle (no non-allowed source anywhere in scope) must record
+// an EMPTY bundle_meta.restricted_sources, proving the gate is a genuine
+// no-op when nothing is restricted.
+func TestExportBundle_AllAllowedSources_RestrictedSourcesEmpty(t *testing.T) {
+	out, _, _ := exportAUTBundle(t)
+	meta := readBundleMeta(t, out)
+	if meta.RestrictedSources != "" {
+		t.Errorf("bundle_meta.restricted_sources = %q, want empty (every contributing source is allowed)", meta.RestrictedSources)
+	}
 }
 
 // exportAUTBundle ingests the real WCVP fixture into a source DB, exports
@@ -255,6 +425,7 @@ func TestExportBundle_CarriesTraitValuesAndVocabularyMetadata(t *testing.T) {
 	}
 	if err := tx.UpsertTraitVocabulary(domain.TraitVocabMeta{
 		Vocab: domain.VocabEIVE, Version: "1.0", Taxonomy: "euromed-aligned", License: "CC-BY-4.0",
+		Redistribution: domain.RedistributionAllowed,
 	}); err != nil {
 		t.Fatalf("UpsertTraitVocabulary: unexpected error: %v", err)
 	}

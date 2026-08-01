@@ -134,7 +134,7 @@ func (db *DB) conceptExists(ctx context.Context, id string) (bool, error) {
 // TraitVocabularies lists every ingested (vocab, version) metadata row.
 func (db *DB) TraitVocabularies(ctx context.Context) ([]domain.TraitVocabMeta, error) {
 	rows, err := db.sql.QueryContext(ctx, `
-		SELECT vocab, version, taxonomy, COALESCE(license, ''), COALESCE(source_url, '')
+		SELECT vocab, version, taxonomy, COALESCE(license, ''), COALESCE(source_url, ''), redistribution
 		FROM trait_vocabulary
 		ORDER BY vocab, version`)
 	if err != nil {
@@ -144,12 +144,13 @@ func (db *DB) TraitVocabularies(ctx context.Context) ([]domain.TraitVocabMeta, e
 
 	var out []domain.TraitVocabMeta
 	for rows.Next() {
-		var vocab string
+		var vocab, redistribution string
 		var meta domain.TraitVocabMeta
-		if err := rows.Scan(&vocab, &meta.Version, &meta.Taxonomy, &meta.License, &meta.SourceURL); err != nil {
+		if err := rows.Scan(&vocab, &meta.Version, &meta.Taxonomy, &meta.License, &meta.SourceURL, &redistribution); err != nil {
 			return nil, fmt.Errorf("sqlite: scanning trait_vocabulary row: %w", err)
 		}
 		meta.Vocab = domain.TraitVocab(vocab)
+		meta.Redistribution = domain.Redistribution(redistribution)
 		out = append(out, meta)
 	}
 	if err := rows.Err(); err != nil {

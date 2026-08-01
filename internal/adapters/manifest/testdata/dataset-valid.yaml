@@ -4,11 +4,13 @@ backbones:
     license: CC-BY-4.0
     source: https://sftp.kew.org/pub/data-repositories/WCVP/
     path: ../../wcvp/testdata/wcvp-sample
+    redistribution: allowed
   - id: colxr
     version: "2026-06-15"
     license: CC-BY-4.0
     source: https://download.checklistbank.org/col/
     path: ../../wcvp/testdata/wcvp-sample
+    redistribution: allowed
 trait_vocabularies:
   - id: eive
     version: "1.0"
@@ -16,9 +18,11 @@ trait_vocabularies:
     license: CC-BY-4.0
     source: https://example.org/eive
     path: ../../traits/testdata/eive-sample.csv
+    redistribution: allowed
   - id: tichy2023
     version: "2.0"
     taxonomy: floraveg-eunis-aligned
     license: CC-BY-4.0
     source: https://example.org/tichy
     path: ../../traits/testdata/tichy-sample.csv
+    redistribution: allowed

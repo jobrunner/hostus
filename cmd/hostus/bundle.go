@@ -29,6 +29,7 @@ func newBundleCmd() *cobra.Command {
 	cmd.Flags().String("area", "", "area identifier to scope the bundle to (empty = whole database)")
 	cmd.Flags().String("out", "", "output path for the bundle")
 	cmd.Flags().String("snapshot", "", "snapshot version recorded into the bundle's bundle_meta table")
+	cmd.Flags().Bool("force-include-restricted", false, "export even if a contributing source's redistribution is not \"allowed\" (records the offending source ids into bundle_meta.restricted_sources)")
 	return cmd
 }
 
@@ -59,10 +60,15 @@ func runBundle(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	forceIncludeRestricted, err := cmd.Flags().GetBool("force-include-restricted")
+	if err != nil {
+		return err
+	}
 
 	report, err := app.Bundle(cmd.Context(), dbPath, out, sqlite.BundleOpts{
 		Area:            area,
 		SnapshotVersion: snapshot,
+		AllowRestricted: forceIncludeRestricted,
 	})
 	if err != nil {
 		return err

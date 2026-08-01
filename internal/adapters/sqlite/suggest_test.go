@@ -73,11 +73,12 @@ func ingestWCVPFixture(t *testing.T) *sqlite.DB {
 	backbones := make([]application.Backbone, 0, len(ds.Backbones))
 	for _, b := range ds.Backbones {
 		backbones = append(backbones, application.Backbone{
-			ID:        b.ID,
-			Version:   b.Version,
-			License:   b.License,
-			SourceURL: b.SourceURL,
-			Path:      b.Path,
+			ID:             b.ID,
+			Version:        b.Version,
+			License:        b.License,
+			SourceURL:      b.SourceURL,
+			Path:           b.Path,
+			Redistribution: b.Redistribution,
 		})
 	}
 	appDS := &application.Dataset{Backbones: backbones, ManifestSHA: ds.ManifestSHA}

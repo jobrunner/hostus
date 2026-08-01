@@ -19,4 +19,8 @@ type BackboneVersion struct {
 	SourceURL   string
 	IngestedAt  string // RFC3339 timestamp
 	ManifestSHA string // checksum of the validated manifest
+	// Redistribution gates whether this backbone's data may be copied into
+	// an exported bundle (see ExportBundle in internal/adapters/sqlite). It
+	// never gates local ingest or reads.
+	Redistribution Redistribution
 }

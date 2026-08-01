@@ -6,17 +6,13 @@ backbones:
     path: ../../../internal/adapters/wcvp/testdata/wcvp-sample
     redistribution: allowed
 trait_vocabularies:
+  # Deliberately NOT "allowed" -- exercises the "hostus ingest" notice and
+  # the "hostus bundle" redistribution gate (fail by default, succeed with
+  # --force-include-restricted).
   - id: eive
     version: "1.0"
     taxonomy: euromed-via-eurosl
     license: CC-BY-4.0
     source: https://example.org/eive
     path: ../../../internal/adapters/traits/testdata/eive-sample.csv
-    redistribution: allowed
-  - id: tichy2023
-    version: "2.0"
-    taxonomy: floraveg
-    license: CC-BY-4.0
-    source: https://example.org/tichy
-    path: ../../../internal/adapters/traits/testdata/tichy-sample.csv
-    redistribution: allowed
+    redistribution: unknown

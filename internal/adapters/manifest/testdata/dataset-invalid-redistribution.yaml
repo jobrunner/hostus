@@ -3,5 +3,4 @@ backbones:
     version: "2026-06-15"
     license: CC-BY-4.0
     path: ../../wcvp/testdata/wcvp-sample
-    redistribution: allowed
-unexpected_top_level_key: true
+    redistribution: maybe # not one of allowed|restricted|unknown -- must fail schema validation

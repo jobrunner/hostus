@@ -20,11 +20,12 @@ func adaptBackbones(bs []manifest.Backbone) []application.Backbone {
 	out := make([]application.Backbone, 0, len(bs))
 	for _, b := range bs {
 		out = append(out, application.Backbone{
-			ID:        b.ID,
-			Version:   b.Version,
-			License:   b.License,
-			SourceURL: b.SourceURL,
-			Path:      b.Path,
+			ID:             b.ID,
+			Version:        b.Version,
+			License:        b.License,
+			SourceURL:      b.SourceURL,
+			Path:           b.Path,
+			Redistribution: b.Redistribution,
 		})
 	}
 	return out
@@ -113,11 +114,12 @@ func ingestTraitVocab(ctx context.Context, tv manifest.TraitVocabulary, repo *sq
 		return application.TraitIngestReport{}, fmt.Errorf("app: trait vocabulary %q: %w", tv.ID, err)
 	}
 	meta := domain.TraitVocabMeta{
-		Vocab:     vocab,
-		Version:   tv.Version,
-		Taxonomy:  tv.Taxonomy,
-		License:   tv.License,
-		SourceURL: tv.SourceURL,
+		Vocab:          vocab,
+		Version:        tv.Version,
+		Taxonomy:       tv.Taxonomy,
+		License:        tv.License,
+		SourceURL:      tv.SourceURL,
+		Redistribution: domain.Redistribution(tv.Redistribution),
 	}
 	return application.IngestTraits(ctx, repo, traitVocabRowSource{ds: ds}, meta)
 }

@@ -53,6 +53,34 @@ func TestIngestCommand_FixtureManifest_PrintsReport(t *testing.T) {
 	}
 }
 
+// TestIngestCommand_RestrictedVocabulary_PrintsRedistributionNotice drives
+// "hostus ingest" against a manifest whose eive trait vocabulary is pinned
+// redistribution: unknown (testdata/dataset-restricted.yaml) and asserts
+// the printed report includes the German "hinweis:" notice line — local
+// ingest itself must still succeed (it is never gated), but the operator
+// must SEE that this source cannot be shipped in an exported bundle without
+// --force-include-restricted (see bundle_test.go's companion smoke test).
+func TestIngestCommand_RestrictedVocabulary_PrintsRedistributionNotice(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
+
+	cmd := newIngestCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--dataset=testdata/dataset-restricted.yaml", "--db=" + dbPath})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("Execute: unexpected error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "hinweis: eive (redistribution=unknown)") {
+		t.Errorf("report %q, want a hinweis line naming eive's redistribution=unknown", got)
+	}
+	if !strings.Contains(got, "nicht redistribuierbar") {
+		t.Errorf("report %q, want the notice to state it is not redistributable", got)
+	}
+}
+
 // TestIngestCommand_MissingDatasetFlag_ReturnsError pins the "not
 // implemented" stub's old exit-1 behavior (see main_test.go's TestRun,
 // which invokes "hostus ingest" with no flags at all and expects exit 1):

@@ -258,6 +258,18 @@ Spezifikation folgen in SP4+. `release-please` cuttet daraus das nächste
 - **SP2**: OpenAPI (`/v1/suggest`) und `docs/reference/http-api.md` auf den
   tatsächlichen Handler-Stand reconciled; neue Anleitung
   `docs/how-to/offline-bundle.md` für den `hostus bundle`-CLI-Workflow
+- **Reality-Check T1**: `redistribution`-Gate — jeder Backbone- und
+  Trait-Vokabular-Eintrag im Manifest trägt jetzt ein Pflichtfeld
+  `redistribution: allowed|restricted|unknown` (`internal/domain.Redistribution`,
+  schema-validiert). Lokales `hostus ingest` bleibt für jede Quelle
+  uneingeschränkt möglich (mit `hinweis:`-Zeile für nicht-`allowed`-Quellen);
+  `hostus bundle` verweigert den Export dagegen standardmäßig, sobald eine
+  nicht-`allowed`-Quelle zum Export-Scope beiträgt (Fehlermeldung nennt
+  Quelle + Wert), und `--force-include-restricted` übersteuert das bewusst,
+  protokolliert die betroffenen Quell-IDs aber unauslöschlich in
+  `bundle_meta.restricted_sources` — ein Dokumentationsversprechen wird so
+  durch eine maschinelle Prüfung ersetzt (siehe
+  `docs/how-to/trait-ingest.md`, `docs/how-to/offline-bundle.md`)
 
 ### Changed
 - `Dockerfile`: Build-Stage injiziert `main.Version`/`main.Commit`/`main.BuildDate` per Ldflags (statt `main.version` aus `VERSION`-Datei) — identische Variablenpfade wie im Makefile, damit `hostus version` im Image echte Build-Infos zeigt

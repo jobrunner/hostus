@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -62,6 +63,78 @@ func TestBundleCommand_WritesNonEmptyBundleAndPrintsReport(t *testing.T) {
 	// so the report's concept count is exactly 3.
 	if !strings.Contains(got, "concepts="+strconv.Itoa(3)) {
 		t.Errorf("report %q, want it to mention concepts=3", got)
+	}
+}
+
+// ingestRestrictedFixtureDB runs "hostus ingest" against
+// testdata/dataset-restricted.yaml (eive pinned redistribution: unknown)
+// into a fresh temp-file database, so bundle tests can exercise the
+// redistribution gate against a database that genuinely has a non-allowed
+// contributing source.
+func ingestRestrictedFixtureDB(t *testing.T) string {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
+
+	cmd := newIngestCmd()
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetArgs([]string{"--dataset=testdata/dataset-restricted.yaml", "--db=" + dbPath})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("ingesting restricted fixture: unexpected error: %v", err)
+	}
+	return dbPath
+}
+
+// TestBundleCommand_RestrictedSource_FailsByDefaultThenSucceedsWithForce is
+// the real CLI smoke test the redistribution gate exists for: "hostus
+// bundle" against a database whose eive trait vocabulary is pinned
+// redistribution: unknown must FAIL by default, naming "eive" and its
+// redistribution value; the identical invocation with
+// --force-include-restricted must then SUCCEED, and the resulting bundle's
+// bundle_meta.restricted_sources must record exactly "eive" — proving the
+// bundle can never silently carry unclearable data even when the operator
+// overrides the gate.
+func TestBundleCommand_RestrictedSource_FailsByDefaultThenSucceedsWithForce(t *testing.T) {
+	dbPath := ingestRestrictedFixtureDB(t)
+
+	failOut := filepath.Join(t.TempDir(), "bundle-refused.sqlite")
+	failCmd := newBundleCmd()
+	var failStdout bytes.Buffer
+	failCmd.SetOut(&failStdout)
+	failCmd.SetArgs([]string{"--db=" + dbPath, "--out=" + failOut, "--snapshot=v1"})
+	err := failCmd.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("Execute (no --force-include-restricted): want an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "eive") {
+		t.Errorf("error = %q, want it to name the offending source %q", err, "eive")
+	}
+	if !strings.Contains(err.Error(), "unknown") {
+		t.Errorf("error = %q, want it to state the redistribution value %q", err, "unknown")
+	}
+	if _, statErr := os.Stat(failOut); statErr == nil {
+		t.Errorf("bundle refused, but %q was still created", failOut)
+	}
+
+	forceOut := filepath.Join(t.TempDir(), "bundle-forced.sqlite")
+	forceCmd := newBundleCmd()
+	var forceStdout bytes.Buffer
+	forceCmd.SetOut(&forceStdout)
+	forceCmd.SetArgs([]string{"--db=" + dbPath, "--out=" + forceOut, "--snapshot=v1", "--force-include-restricted"})
+	if err := forceCmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("Execute (--force-include-restricted): unexpected error: %v", err)
+	}
+
+	raw, err := sql.Open("sqlite", forceOut)
+	if err != nil {
+		t.Fatalf("sql.Open(%q): unexpected error: %v", forceOut, err)
+	}
+	defer func() { _ = raw.Close() }()
+	var restrictedSources string
+	if err := raw.QueryRow(`SELECT restricted_sources FROM bundle_meta`).Scan(&restrictedSources); err != nil {
+		t.Fatalf("reading bundle_meta.restricted_sources: %v", err)
+	}
+	if restrictedSources != "eive" {
+		t.Errorf("bundle_meta.restricted_sources = %q, want %q", restrictedSources, "eive")
 	}
 }
 

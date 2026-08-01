@@ -4,8 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/jobrunner/hostus/internal/domain"
 )
 
 // BundleOpts configures ExportBundle.
@@ -22,6 +25,14 @@ type BundleOpts struct {
 	// time.Now when nil; tests inject a fixed clock so created_at is
 	// deterministic.
 	Now func() time.Time
+	// AllowRestricted opts out of the redistribution gate (see
+	// findRestrictedSources): without it, ExportBundle refuses to export
+	// when any contributing backbone/trait-vocabulary source is not
+	// domain.RedistributionAllowed. With it, the export succeeds AND the
+	// offending sources are recorded in bundle_meta.restricted_sources, so
+	// a bundle can never silently carry unclearable data. Surfaced as
+	// "hostus bundle --force-include-restricted".
+	AllowRestricted bool
 }
 
 // BundleReport summarizes one ExportBundle call.
@@ -30,6 +41,115 @@ type BundleReport struct {
 	Names    int
 	Areas    int
 	Path     string
+}
+
+// restrictedSource is one non-domain.RedistributionAllowed backbone or
+// trait-vocabulary source that contributed data (a taxon_concept, or a
+// trait_value row) to a bundle's export scope.
+type restrictedSource struct {
+	ID             string
+	Redistribution string
+}
+
+// formatRestrictedSources renders rs for ExportBundle's refusal error,
+// naming both the offending source and its redistribution value (e.g.
+// "germansl (redistribution=unknown)") — never just an id, since the whole
+// point of the message is to tell the operator WHY the export was refused.
+func formatRestrictedSources(rs []restrictedSource) string {
+	parts := make([]string, len(rs))
+	for i, r := range rs {
+		parts[i] = fmt.Sprintf("%s (redistribution=%s)", r.ID, r.Redistribution)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// restrictedSourceIDs renders rs into bundle_meta.restricted_sources' stable,
+// deterministic representation: a comma-joined, sorted list of ids only (no
+// redistribution values — the value is already recoverable from the
+// original source database's backbone_version/trait_vocabulary rows).
+func restrictedSourceIDs(rs []restrictedSource) string {
+	if len(rs) == 0 {
+		return ""
+	}
+	ids := make([]string, len(rs))
+	for i, r := range rs {
+		ids[i] = r.ID
+	}
+	sort.Strings(ids)
+	return strings.Join(ids, ",")
+}
+
+// findRestrictedSources reports every backbone or trait-vocabulary source
+// that contributes data to conceptIDs' scope (a taxon_concept belonging to
+// it, or a trait_value row on one of conceptIDs) and whose redistribution
+// is not domain.RedistributionAllowed, sorted by id for a deterministic
+// result. An empty conceptIDs (nothing in scope) trivially contributes no
+// sources.
+func findRestrictedSources(ctx context.Context, src *DB, conceptIDs []string) ([]restrictedSource, error) {
+	if len(conceptIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := placeholdersFor(len(conceptIDs))
+	args := idArgs(conceptIDs)
+
+	var out []restrictedSource
+
+	backbones, err := queryNonAllowedSources(ctx, src, `
+		SELECT DISTINCT bv.id, bv.redistribution
+		FROM backbone_version bv
+		JOIN taxon_concept tc ON tc.backbone_id = bv.id
+		WHERE tc.id IN (`+placeholders+`)`, args)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: bundle: checking backbone redistribution: %w", err)
+	}
+	out = append(out, backbones...)
+
+	vocabs, err := queryNonAllowedSources(ctx, src, `
+		SELECT DISTINCT tv.vocab, tv.redistribution
+		FROM trait_vocabulary tv
+		JOIN trait_value v ON v.vocab = tv.vocab AND v.vocab_version = tv.version
+		WHERE v.concept_id IN (`+placeholders+`)`, args)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: bundle: checking trait vocabulary redistribution: %w", err)
+	}
+	out = append(out, vocabs...)
+
+	// out[i].ID < out[j].ID vs. <=: a provable-equivalence-class boundary,
+	// same as sortedSample's len(all) > cap in traits_ingest.go. Every id
+	// this function collects is DISTINCT (backbone ids come from a DISTINCT
+	// bv.id query, vocab ids from a DISTINCT tv.vocab query), so no two
+	// elements of out ever compare equal — <= would only produce a
+	// different result from < for equal keys, which never occurs here.
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// queryNonAllowedSources runs query (with args) against src, expecting two
+// columns (id, redistribution), and returns every row whose redistribution
+// is not domain.RedistributionAllowed — the shared scan loop
+// findRestrictedSources' two queries (backbone_version, trait_vocabulary)
+// both use.
+func queryNonAllowedSources(ctx context.Context, src *DB, query string, args []any) ([]restrictedSource, error) {
+	rows, err := src.sql.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: bundle: querying %q: %w", query, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []restrictedSource
+	for rows.Next() {
+		var id, redistribution string
+		if err := rows.Scan(&id, &redistribution); err != nil {
+			return nil, fmt.Errorf("sqlite: bundle: scanning %q: %w", query, err)
+		}
+		if redistribution != string(domain.RedistributionAllowed) {
+			out = append(out, restrictedSource{ID: id, Redistribution: redistribution})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: bundle: iterating %q: %w", query, err)
+	}
+	return out, nil
 }
 
 // ExportBundle creates a new, standalone SQLite database at out (same
@@ -42,10 +162,27 @@ type BundleReport struct {
 // copying fts_name's own rows — fts_name is a contentless FTS5 table and
 // cannot be populated via a plain row copy), so the returned file is
 // independently queryable via Open + Suggest, not just direct table reads.
+//
+// Before copying anything, ExportBundle checks findRestrictedSources: by
+// default (opts.AllowRestricted == false), a bundle whose scope includes
+// data from any source that is not domain.RedistributionAllowed is refused
+// outright, naming the offending source(s) and their redistribution value
+// — local ingest of those sources is never affected, only export. With
+// opts.AllowRestricted, the export proceeds AND the offending source ids
+// are recorded into bundle_meta.restricted_sources (restrictedSourceIDs),
+// so a bundle can never silently carry unclearable data.
 func ExportBundle(ctx context.Context, src *DB, out string, opts BundleOpts) (BundleReport, error) {
 	conceptIDs, err := scopeConceptIDs(ctx, src, opts.Area)
 	if err != nil {
 		return BundleReport{}, err
+	}
+
+	restricted, err := findRestrictedSources(ctx, src, conceptIDs)
+	if err != nil {
+		return BundleReport{}, err
+	}
+	if len(restricted) > 0 && !opts.AllowRestricted {
+		return BundleReport{}, fmt.Errorf("sqlite: bundle: refusing to export: source(s) not cleared for redistribution: %s (use --force-include-restricted to override)", formatRestrictedSources(restricted))
 	}
 
 	bundle, err := Open(out)
@@ -54,7 +191,7 @@ func ExportBundle(ctx context.Context, src *DB, out string, opts BundleOpts) (Bu
 	}
 	defer func() { _ = bundle.Close() }()
 
-	report, err := populateBundle(ctx, src, bundle, conceptIDs, opts)
+	report, err := populateBundle(ctx, src, bundle, conceptIDs, opts, restrictedSourceIDs(restricted))
 	if err != nil {
 		return BundleReport{}, err
 	}
@@ -132,13 +269,16 @@ func idArgs(ids []string) []any {
 }
 
 // populateBundle copies every row scoped by conceptIDs from src into
-// bundle, rebuilds the FTS index, and writes bundle_meta, in FK-safe
-// order: backbone_version, then name (both referenced by taxon_concept),
-// then taxon_concept itself, then the concept_id-keyed tables.
-func populateBundle(ctx context.Context, src, bundle *DB, conceptIDs []string, opts BundleOpts) (BundleReport, error) {
+// bundle, rebuilds the FTS index, and writes bundle_meta (including
+// restrictedSources — see ExportBundle's doc comment — which was already
+// computed and, if non-empty, cleared for override BEFORE any copying
+// started), in FK-safe order: backbone_version, then name (both
+// referenced by taxon_concept), then taxon_concept itself, then the
+// concept_id-keyed tables.
+func populateBundle(ctx context.Context, src, bundle *DB, conceptIDs []string, opts BundleOpts, restrictedSources string) (BundleReport, error) {
 	var report BundleReport
 	if len(conceptIDs) == 0 {
-		if err := insertBundleMeta(ctx, bundle, opts, ""); err != nil {
+		if err := insertBundleMeta(ctx, bundle, opts, "", restrictedSources); err != nil {
 			return report, err
 		}
 		return report, nil
@@ -201,7 +341,7 @@ func populateBundle(ctx context.Context, src, bundle *DB, conceptIDs []string, o
 	}
 	report.Areas = areas
 
-	if err := insertBundleMeta(ctx, bundle, opts, manifestSHA); err != nil {
+	if err := insertBundleMeta(ctx, bundle, opts, manifestSHA, restrictedSources); err != nil {
 		return report, err
 	}
 	return report, nil
@@ -246,8 +386,8 @@ func copyConceptScopedTables(ctx context.Context, src, bundle *DB, placeholders 
 	}
 
 	if err := copyRows(ctx, src, bundle,
-		`SELECT vocab, version, taxonomy, license, source_url, ingested_at FROM trait_vocabulary`, nil,
-		`INSERT INTO trait_vocabulary (vocab, version, taxonomy, license, source_url, ingested_at) VALUES (?,?,?,?,?,?)`); err != nil {
+		`SELECT vocab, version, taxonomy, license, source_url, ingested_at, redistribution FROM trait_vocabulary`, nil,
+		`INSERT INTO trait_vocabulary (vocab, version, taxonomy, license, source_url, ingested_at, redistribution) VALUES (?,?,?,?,?,?,?)`); err != nil {
 		return err
 	}
 
@@ -261,7 +401,7 @@ func copyConceptScopedTables(ctx context.Context, src, bundle *DB, placeholders 
 // distinct "?" placeholders, never interpolated data.
 func backboneVersionScopeQuery(n int) string {
 	return `
-		SELECT DISTINCT bv.id, bv.version, bv.license, bv.source_url, bv.ingested_at, bv.manifest_sha
+		SELECT DISTINCT bv.id, bv.version, bv.license, bv.source_url, bv.ingested_at, bv.manifest_sha, bv.redistribution
 		FROM backbone_version bv
 		JOIN taxon_concept tc ON tc.backbone_id = bv.id
 		WHERE tc.id IN (` + placeholdersFor(n) + `)
@@ -287,15 +427,15 @@ func copyBackboneVersions(ctx context.Context, src, bundle *DB, n int, args []an
 		manifestSHA string
 	)
 	for rows.Next() {
-		var id, version, ingestedAt, sha string
+		var id, version, ingestedAt, sha, redistribution string
 		var license, sourceURL sql.NullString
-		if err := rows.Scan(&id, &version, &license, &sourceURL, &ingestedAt, &sha); err != nil {
+		if err := rows.Scan(&id, &version, &license, &sourceURL, &ingestedAt, &sha, &redistribution); err != nil {
 			return nil, "", fmt.Errorf("sqlite: bundle: scanning backbone_version row: %w", err)
 		}
 		if _, err := bundle.sql.ExecContext(ctx, `
-			INSERT INTO backbone_version (id, version, license, source_url, ingested_at, manifest_sha)
-			VALUES (?, ?, ?, ?, ?, ?)`,
-			id, version, license, sourceURL, ingestedAt, sha,
+			INSERT INTO backbone_version (id, version, license, source_url, ingested_at, manifest_sha, redistribution)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			id, version, license, sourceURL, ingestedAt, sha, redistribution,
 		); err != nil {
 			return nil, "", fmt.Errorf("sqlite: bundle: inserting backbone_version %q: %w", id, err)
 		}
@@ -509,8 +649,11 @@ func countDistinctAreas(ctx context.Context, bundle *DB) (int, error) {
 // insertBundleMeta writes the bundle's single provenance row. createdAt
 // comes from opts.Now (defaulting to time.Now) rather than a direct
 // time.Now() call here, so tests can inject a fixed clock and assert an
-// exact, deterministic timestamp.
-func insertBundleMeta(ctx context.Context, bundle *DB, opts BundleOpts, manifestSHA string) error {
+// exact, deterministic timestamp. restrictedSources is ExportBundle's
+// pre-computed restrictedSourceIDs result — non-empty only when
+// opts.AllowRestricted overrode a gate refusal — recorded verbatim so a
+// bundle can never silently carry unclearable data (see BundleOpts.AllowRestricted).
+func insertBundleMeta(ctx context.Context, bundle *DB, opts BundleOpts, manifestSHA, restrictedSources string) error {
 	now := opts.Now
 	if now == nil {
 		now = time.Now
@@ -518,9 +661,9 @@ func insertBundleMeta(ctx context.Context, bundle *DB, opts BundleOpts, manifest
 	createdAt := now().UTC().Format(time.RFC3339)
 
 	if _, err := bundle.sql.ExecContext(ctx, `
-		INSERT INTO bundle_meta (snapshot_version, area, created_at, source_manifest_sha)
-		VALUES (?, ?, ?, ?)`,
-		opts.SnapshotVersion, opts.Area, createdAt, manifestSHA,
+		INSERT INTO bundle_meta (snapshot_version, area, created_at, source_manifest_sha, restricted_sources)
+		VALUES (?, ?, ?, ?, ?)`,
+		opts.SnapshotVersion, opts.Area, createdAt, manifestSHA, restrictedSources,
 	); err != nil {
 		return fmt.Errorf("sqlite: bundle: inserting bundle_meta: %w", err)
 	}

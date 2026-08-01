@@ -20,18 +20,55 @@ Eine bereits per `hostus ingest` befüllte Quell-Datenbank (siehe
 hostus bundle --db hostus.sqlite --area AUT --out bundle.sqlite [--snapshot v1]
 ```
 
-| Flag         | Pflicht | Beschreibung                                                                 |
-|--------------|---------|-------------------------------------------------------------------------------|
-| `--db`       | ja      | Pfad zur Quell-SQLite-Datenbank (bereits ingestiert).                          |
-| `--out`      | ja      | Zielpfad für die neu erzeugte Bundle-Datei.                                    |
-| `--area`     | nein    | WGSRPD-L3-Referenzgebietscode (z. B. `AUT`) oder Kurzform (z. B. `DE`). Leer = gesamte Datenbank, ungescopt. |
-| `--snapshot` | nein    | Freitext-Versionskennung, wird unverändert in `bundle_meta.snapshot_version` geschrieben. |
+| Flag                          | Pflicht | Beschreibung                                                                 |
+|-------------------------------|---------|-------------------------------------------------------------------------------|
+| `--db`                        | ja      | Pfad zur Quell-SQLite-Datenbank (bereits ingestiert).                          |
+| `--out`                       | ja      | Zielpfad für die neu erzeugte Bundle-Datei.                                    |
+| `--area`                      | nein    | WGSRPD-L3-Referenzgebietscode (z. B. `AUT`) oder Kurzform (z. B. `DE`). Leer = gesamte Datenbank, ungescopt. |
+| `--snapshot`                  | nein    | Freitext-Versionskennung, wird unverändert in `bundle_meta.snapshot_version` geschrieben. |
+| `--force-include-restricted`  | nein    | Übersteuert das Redistribution-Gate (siehe unten) — nur explizit setzen, wenn die Weitergabe der genannten Quelle(n) bewusst in Kauf genommen wird. |
 
 **Beispiel-Ausgabe**
 
 ```
 Bundle complete: bundle.sqlite (concepts=3 names=13 areas=16)
 ```
+
+## Redistribution-Gate: ein Bundle kann keine ungeklärte Quelle mitführen
+
+Jeder Backbone- und Trait-Vokabular-Eintrag im Manifest trägt ein
+Pflichtfeld `redistribution: allowed|restricted|unknown` (siehe
+[Merkmalswerte pipeln und ingestieren](trait-ingest.md) für die volle
+Erklärung). `hostus bundle` prüft vor jedem Export, welche Quellen
+tatsächlich Daten zum gewählten Scope (`--area` oder die ganze Datenbank)
+beitragen:
+
+- **Trägt eine nicht-`allowed`-Quelle bei** (z. B. ein Trait-Vokabular mit
+  `redistribution: unknown`), **schlägt der Export standardmäßig fehl** —
+  die Fehlermeldung nennt die Quelle und ihren Redistribution-Wert:
+
+  ```
+  Error: sqlite: bundle: refusing to export: source(s) not cleared for
+  redistribution: eive (redistribution=unknown) (use --force-include-restricted
+  to override)
+  ```
+
+  Lokales Ingestieren dieser Quelle ist davon **nicht** betroffen — nur der
+  Export ist gesperrt.
+
+- **Mit `--force-include-restricted`** gelingt derselbe Export — die
+  betroffene(n) Quell-ID(s) werden zusätzlich, kommagetrennt und sortiert,
+  in `bundle_meta.restricted_sources` festgehalten:
+
+  ```bash
+  hostus bundle --db hostus.sqlite --out bundle.sqlite --force-include-restricted
+  ```
+
+  Ein leeres `bundle_meta.restricted_sources` bedeutet also entweder "der
+  Export wurde ohne `--force-include-restricted` erzeugt und war deshalb
+  garantiert frei von nicht-`allowed`-Quellen", oder "jede beitragende
+  Quelle war ohnehin `allowed`" — ein Bundle kann so nie stillschweigend
+  ungeklärte Daten mitführen.
 
 ## Was ein Bundle enthält
 
@@ -46,7 +83,8 @@ gefüllt mit nur den Zeilen, die `--area` selektiert (oder allen, wenn
   sondern aus den kopierten Zeilen neu erzeugt — ein Bundle ist also selbst
   über `GET /v1/suggest` abfragbar)
 - eine `bundle_meta`-Provenienz-Zeile (`snapshot_version`, `area`,
-  `created_at`, `source_manifest_sha`)
+  `created_at`, `source_manifest_sha`, `restricted_sources` — siehe unten,
+  "Redistribution-Gate")
 
 ## Bundle offline bedienen
 

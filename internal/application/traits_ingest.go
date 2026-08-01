@@ -54,6 +54,11 @@ type TraitIngestReport struct {
 	// resolve, so a reviewer/operator can see WHICH taxa were lost without
 	// hostus dumping every unmatched row.
 	UnmatchedSample []string
+	// Redistribution is this vocabulary's manifest-pinned redistribution
+	// value (see domain.Redistribution), surfaced here so "hostus ingest"
+	// can print a notice for anything that is not "allowed" — the local
+	// ingest itself is never gated by it.
+	Redistribution string
 }
 
 // traitResolution is one canonical taxon name's crosswalk outcome, decided
@@ -108,7 +113,7 @@ type traitResolution struct {
 // via IngestTx.UpsertTraitVocabulary — even a vocabulary version that
 // matches nothing at all should still show up in TraitVocabularies.
 func IngestTraits(ctx context.Context, repo output.Repository, src TraitRowSource, meta domain.TraitVocabMeta) (TraitIngestReport, error) {
-	report := TraitIngestReport{Vocab: string(meta.Vocab)}
+	report := TraitIngestReport{Vocab: string(meta.Vocab), Redistribution: string(meta.Redistribution)}
 	rows := src.Rows()
 	report.Rows = len(rows)
 

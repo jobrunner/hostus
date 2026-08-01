@@ -54,12 +54,19 @@ type TraitIngestReport struct {
 	// resolve, so a reviewer/operator can see WHICH taxa were lost without
 	// hostus dumping every unmatched row.
 	UnmatchedSample []string
-	// Normalized breaks the Matched count down by the deterministic
-	// normalisation rule that produced the winning lookup key (see
-	// domain.NameCandidates). It is sorted by rule name and lists only
-	// rules that actually fired — a vocabulary resolving purely on exact
-	// keys reports an empty slice. This is what keeps a normalised match
-	// from being indistinguishable from an exact one in the ingest report.
+	// Normalized breaks down, per deterministic normalisation rule (see
+	// domain.NameCandidates), the rows whose value was actually STORED
+	// under that rule. It is sorted by rule name and lists only rules that
+	// fired — a vocabulary resolving purely on exact keys reports an empty
+	// slice. This is what keeps a normalised match from being
+	// indistinguishable from an exact one in the ingest report.
+	//
+	// "Stored" is the operative word: a matched row that lost its
+	// (concept, dim) slot to another row (see selectTraitWinners) still
+	// counts in Matched but is credited to no rule here, so these counts
+	// agree with what a "SELECT resolution, COUNT(*) FROM trait_value"
+	// against the resulting database reports. Sum(Normalized.Rows) is
+	// therefore <= Matched, not equal to it.
 	Normalized []RuleCount
 	// FlaggedSample holds a bounded (unmatchedSampleCap), deterministic
 	// sample of the taxon names that matched only through a FLAGGED rule
@@ -177,8 +184,9 @@ func IngestTraits(ctx context.Context, repo output.Repository, src TraitRowSourc
 		return report, fmt.Errorf("application: recording trait vocabulary %q: %w", meta.Vocab, err)
 	}
 
+	winners := selectTraitWinners(rows, resolved)
 	tally := newTraitTally()
-	for _, row := range rows {
+	for i, row := range rows {
 		res := resolved[domain.Canonicalize(row.Taxon)]
 		switch {
 		case res.ambiguous:
@@ -187,7 +195,16 @@ func IngestTraits(ctx context.Context, repo output.Repository, src TraitRowSourc
 			report.Unmatched++
 			tally.countUnmatched(row.Taxon)
 		default:
-			tv, err := traitValueFor(row, meta)
+			report.Matched++
+			if !winners[i] {
+				// Another row of this same vocabulary already owns this
+				// (concept, dim) slot and outranks this one — see
+				// selectTraitWinners. The row still counts as matched (it DID
+				// resolve), but it stores nothing, so it must not be credited
+				// to a normalisation rule either.
+				continue
+			}
+			tv, err := traitValueFor(row, meta, res.rule)
 			if err != nil {
 				_ = tx.Rollback()
 				return report, fmt.Errorf("application: vocab %q, taxon %q: %w", meta.Vocab, row.Taxon, err)
@@ -196,7 +213,6 @@ func IngestTraits(ctx context.Context, repo output.Repository, src TraitRowSourc
 				_ = tx.Rollback()
 				return report, fmt.Errorf("application: writing trait value for concept %q, vocab %q: %w", res.conceptID, meta.Vocab, err)
 			}
-			report.Matched++
 			tally.countMatched(row.Taxon, res.rule)
 		}
 	}
@@ -213,13 +229,90 @@ func IngestTraits(ctx context.Context, repo output.Repository, src TraitRowSourc
 	return report, nil
 }
 
+// traitSlot is the identity trait_value's primary key reduces a written row
+// to WITHIN one IngestTraits call (vocab and vocab_version are fixed by meta
+// for the whole call, so only the concept and the dimension vary).
+type traitSlot struct {
+	conceptID string
+	dim       string
+}
+
+// selectTraitWinners decides, for every (concept, dim) slot, WHICH of the
+// rows resolving to it actually gets stored — returning the set of winning
+// row indices.
+//
+// It exists because the crosswalk is many-to-one: several vocabulary taxon
+// names can resolve to the same concept ("Acer opalus" exactly, and
+// "Acer opalus aggr." via the aggregate fallback), and trait_value's primary
+// key is (concept_id, vocab, vocab_version, dim). Without this, the winner
+// was simply whichever row IngestTraits happened to reach last, because
+// AddTraitValue is an INSERT OR REPLACE. That is bad two ways: an
+// exactly-matched value could be silently overwritten by an aggregate's
+// collective mean, and — since Hardening Task 5 — the stored
+// trait_value.resolution flag would then describe the slot by CSV row order
+// rather than by what is actually true of it. A flag whose value depends on
+// input ordering is not a flag a consumer can filter on.
+//
+// The rule is therefore explicit and order-independent in the only respect
+// that matters: an EXACT match always outranks a normalised one. Among rows
+// of equal rank the first in row order wins, which keeps the previous
+// behavior for the ordinary case (a vocabulary listing the same taxon twice)
+// and keeps the outcome deterministic for a given input file.
+//
+// A row whose Dim does not parse is always treated as a winner, so the write
+// loop still reaches it and still fails the ingest with the same error as
+// before rather than having it quietly filtered out here.
+func selectTraitWinners(rows []TraitRow, resolved map[string]traitResolution) map[int]bool {
+	best := make(map[traitSlot]int, len(rows))
+	winners := make(map[int]bool, len(rows))
+	for i, row := range rows {
+		res := resolved[domain.Canonicalize(row.Taxon)]
+		if !res.matched || res.ambiguous {
+			continue
+		}
+		dim, err := domain.ParseTraitDim(row.Dim)
+		if err != nil {
+			winners[i] = true
+			continue
+		}
+		slot := traitSlot{conceptID: res.conceptID, dim: string(dim)}
+		prev, seen := best[slot]
+		if !seen {
+			best[slot] = i
+			winners[i] = true
+			continue
+		}
+		// Only an exact match may displace an incumbent, and only when the
+		// incumbent is not itself exact — otherwise the first row keeps the
+		// slot.
+		prevRule := resolved[domain.Canonicalize(rows[prev].Taxon)].rule
+		if res.rule == domain.RuleExact && prevRule != domain.RuleExact {
+			delete(winners, prev)
+			best[slot] = i
+			winners[i] = true
+		}
+	}
+	return winners
+}
+
 // traitValueFor builds the domain.TraitValue one matched trait row writes,
-// parsing its dimension. Split out of IngestTraits' loop purely to keep
-// that loop readable.
-func traitValueFor(row TraitRow, meta domain.TraitVocabMeta) (domain.TraitValue, error) {
+// parsing its dimension and stamping the normalisation rule that resolved
+// the row's taxon name. Split out of IngestTraits' loop purely to keep that
+// loop readable.
+//
+// Resolution stays EMPTY for domain.RuleExact: an exact canonical match
+// needed no normalisation, and writing "exact" would turn the ordinary case
+// into a stored assertion (and a rendered wire field) for every one of the
+// ~117k trait_value rows. Non-empty means "this value reached its concept
+// through a rewrite" — see domain.TraitValue.Resolution.
+func traitValueFor(row TraitRow, meta domain.TraitVocabMeta, rule domain.NormalizationRule) (domain.TraitValue, error) {
 	dim, err := domain.ParseTraitDim(row.Dim)
 	if err != nil {
 		return domain.TraitValue{}, err
+	}
+	resolution := ""
+	if rule != domain.RuleExact {
+		resolution = string(rule)
 	}
 	return domain.TraitValue{
 		Vocab:        meta.Vocab,
@@ -228,6 +321,7 @@ func traitValueFor(row TraitRow, meta domain.TraitVocabMeta) (domain.TraitValue,
 		Value:        row.Value,
 		NicheWidth:   row.NicheWidth,
 		NSystems:     row.NSystems,
+		Resolution:   resolution,
 	}, nil
 }
 

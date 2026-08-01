@@ -689,13 +689,27 @@ Ingest-Report getrennt gezählt und namentlich bemustert:
 
 ```
   eive: rows=71266 matched=60860 unmatched=1445 ambiguous=8961
-    normalized aggregate_to_nominate: rows=2758 taxa=554 [flagged: circumscriptions equated, not identical]
-    normalized autonym: rows=1350 taxa=277 [flagged: circumscriptions equated, not identical]
-    normalized hybrid_marker_added: rows=249 taxa=51
-    normalized hybrid_marker_dropped: rows=55 taxa=11
-    normalized hybrid_spacing: rows=1751 taxa=360
-    normalized orthography_genitive: rows=85 taxa=17
-    flagged sample: Acer obtusatum subsp. obtusatum, Acer opalus aggr., …
+    normalized aggregate_to_nominate: rows=30 taxa=6 [flagged: circumscriptions equated, not identical]
+    normalized autonym: rows=18 taxa=4 [flagged: circumscriptions equated, not identical]
+    normalized hybrid_marker_added: rows=214 taxa=44
+    normalized hybrid_marker_dropped: rows=20 taxa=4
+    normalized hybrid_spacing: rows=1720 taxa=353
+    normalized orthography_genitive: rows=80 taxa=16
+    flagged sample: Alchemilla conjuncta aggr., Alchemilla fissa aggr., …
+```
+
+Diese Zahlen zählen **gespeicherte** Zeilen, nicht aufgelöste — der
+Unterschied ist der Kern von T5.5. Und seit Fix-Runde 1 lebt die Markierung
+nicht nur hier, sondern **in den Daten**: `trait_value.resolution`
+(NULL = exakter Treffer) wird persistiert, über
+`GET /v1/concept/{id}/traits` als `resolution` ausgeliefert (fehlt das Feld,
+war es ein exakter Treffer) und ins Offline-Bundle mitkopiert. Erst damit
+kann ein Konsument die beiden Ermessensfälle wirklich ausschließen — die auf
+20 Namen gedeckelte `flagged sample` konnte das nie:
+
+```sql
+-- alles, was auf einer gleichgesetzten Umgrenzung beruht:
+SELECT * FROM trait_value WHERE resolution IN ('aggregate_to_nominate','autonym');
 ```
 
 - **Autonym → Art.** Ein Autonym ist die Nominat-Unterart und damit *enger*
@@ -716,13 +730,76 @@ Ingest-Report getrennt gezählt und namentlich bemustert:
   Nutzer beim Suchen nach dem Aggregat tatsächlich nachschlägt. Markiert,
   damit ein Konsument diese Werte ausschließen kann.
 
-**Offene Auflage:** die Markierung lebt im **Ingest-Report**, nicht in
-`trait_value`. Eine Spalte `trait_value.resolution` wäre der richtige Ort,
-setzt aber einen Migrationsmechanismus voraus, den `schema.sql`
-(`CREATE TABLE IF NOT EXISTS`, kein ALTER-Pfad) heute nicht hat — das ist
-bewusst offengelassen und keine erledigte Sache.
+**Erledigt in Fix-Runde 1** (war zuvor als offene Auflage vermerkt): die
+Markierung steht jetzt in den Daten — `trait_value.resolution`, nullable,
+NULL = exakter Treffer. Der Weg dorthin ist derselbe, den Task 2 für
+`rank_verbatim` gegangen ist (Spalte in `schema.sql`, idempotent bei `Open`
+angelegt, Ingest baut neu auf): Adapter-Schreib-/Lesepfad, `ExportBundle`,
+DTO (`omitempty`), OpenAPI und `docs/reference/http-api.md`. Ein
+Migrationsmechanismus war dafür nicht nötig.
 
-### T5.5 Orthographie: was aufgenommen wurde und was nicht
+### T5.5 Ein Nebenbefund, den erst die Sichtbarmachung zutage gefördert hat
+
+Die Spalte `trait_value.resolution` hat sofort ein Problem aufgedeckt, das
+der reine Report-Zähler verdeckt hatte: der Crosswalk ist **viele-zu-eins**,
+der Primärschlüssel von `trait_value` aber
+`(concept_id, vocab, vocab_version, dim)`. EIVE führt sowohl `Acer opalus`
+als auch `Acer opalus aggr.`; beide landen auf demselben Konzept und
+derselben Dimension — und `AddTraitValue` ist ein `INSERT OR REPLACE`. Wer
+den Platz behielt, entschied damit schlicht die **Zeilenreihenfolge der
+CSV**.
+
+Das ist doppelt schlecht: ein exakt getroffener Wert konnte still durch das
+Kollektivmittel eines Aggregats ersetzt werden, und die neue
+`resolution`-Markierung hätte den Platz dann nach Zeilenreihenfolge
+beschrieben statt nach dem, was für ihn zutrifft. Eine Markierung, deren
+Wert von der Eingabereihenfolge abhängt, taugt nicht zum Filtern.
+
+Gemessen, wie oft das passierte (Ingest-Lauf vor dem Fix gegen den nach dem
+Fix, jeweils
+`SELECT resolution, COUNT(DISTINCT concept_id) FROM trait_value GROUP BY 1`):
+die Zahl der EIVE-Konzepte mit exakt aufgelöstem Wert steigt von 10.354 auf
+11.000 — **646 EIVE-Konzepte** trugen also einen normalisierten Wert,
+obwohl für dieselbe Dimension ein exakter Treffer vorlag. Bei Tichý waren es
+65 (7.007 → 7.072), bei Midolo null.
+
+`application.selectTraitWinners` entscheidet das jetzt explizit und
+reihenfolgeunabhängig: **ein exakter Treffer schlägt immer einen
+normalisierten**; unter Gleichrangigen gewinnt die erste Zeile. Wirkung auf
+die gespeicherten Daten:
+
+| gespeicherte Konzepte je Vokabular | vor dem Fix | **nach dem Fix** | M2'-Baseline |
+|---|---:|---:|---:|
+| EIVE, exakt aufgelöst | 10.354 | **11.000** | 11.000 |
+| EIVE, `aggregate_to_nominate` | 455 | **6** | — |
+| EIVE, `autonym` | 221 | **4** | — |
+| Tichý, exakt aufgelöst | 7.007 | **7.072** | 7.072 |
+| Midolo, exakt aufgelöst | 4.963 | **4.963** | 4.963 |
+
+Daraus folgt eine prüfbare Regressionsaussage, die vorher nicht galt: **die
+Zahl der exakt aufgelösten Konzepte je Vokabular ist nach der
+Normalisierung exakt die der M2'-Baseline** (11.000 / 7.072 / 4.963). Die
+Normalisierung ist damit auf Konzeptebene beweisbar rein additiv — sie hat
+keinen einzigen Baseline-Wert verdrängt. Die Gesamtabdeckung
+(`concepts_with_eive` = 11.426 usw.) ist unverändert; es ändert sich nur,
+**welcher** Wert einen umkämpften Platz besetzt.
+
+Zweite Folge, ebenfalls in T5.4 sichtbar: die per-Regel-Zahlen des
+Ingest-Reports zählen jetzt **gespeicherte** Zeilen und stimmen deshalb
+zeilengenau mit `SELECT resolution, COUNT(*) FROM trait_value` überein. Für
+EIVE fällt `aggregate_to_nominate` dadurch von 554 auf 6 Taxa — nicht weil
+die Regel weniger Namen auflöst (die Auflösbarkeit in T5.1–T5.3 ist
+unverändert), sondern weil fast alle diese Aggregatnamen auf Konzepte
+zeigen, die **ohnehin schon** einen exakten EIVE-Wert tragen. Der
+Abdeckungsgewinn der Aggregatregel ist bei EIVE also weit kleiner, als die
+Namensauflösung allein vermuten ließ; bei Tichý (152 Konzepte) und Midolo
+(105) bleibt er substanziell. Das ist eine Korrektur an der
+Wertaussage dieser Regel, und sie gehört hierher, nicht in eine Fußnote.
+
+**Laufzeit** mit Fix: 285,80 s (M1': 281,27 s) — die Vorauswahl kostet
+nichts Messbares.
+
+### T5.6 Orthographie: was aufgenommen wurde und was nicht
 
 `domain.Canonicalize` wurde **nicht** angefasst. Es ist der *gespeicherte*
 Schlüssel (`name.canonical_fold`) und paritätsgeprüft gegen SQLites
@@ -757,7 +834,7 @@ Bewusst **nicht** aufgenommen, jeweils mit gemessener Begründung:
   `Paeonia broteroi` ↔ `broteri`): keine deterministischen Umschreibungen.
   Dafür existiert der Fuzzy-Pfad, der absichtlich `requires_review` liefert.
 
-### T5.6 Was übrig bleibt
+### T5.7 Was übrig bleibt
 
 Der Rest ist substanziell, nicht mehr strukturell (`unmatched sample` aus
 `poc/measure/out/t5-ingest.log`):
@@ -775,16 +852,57 @@ Der Rest ist substanziell, nicht mehr strukturell (`unmatched sample` aus
 - **Schreibfehler** (Fuzzy-Territorium): `Artemisia siversiana`,
   `Alchemilla rhodondendrophila`, `Aconitum lycotonum subsp. vulparia`.
 
-### T5.7 Regressionen
+### T5.8 Reihenfolge der Kandidatenleiter (Fix-Runde 1)
+
+`NameCandidates` dokumentiert, dass reine Schreibweisen-Regeln **vor** den
+beiden Ermessensfällen probiert werden. Die Genitivregel stand jedoch
+zuletzt, also HINTER Aggregat und Autonym — der Code widersprach seiner
+eigenen Zusicherung. Folge: bei einem Autonym, dessen Epitheton die
+`-ii`/`-i`-Alternation trägt, wäre der Name über den markierten
+Autonym-Rückfall auf die Art zusammengefallen, auch wenn das Rückgrat das
+**infraspezifische** Taxon unter der anderen Schreibweise führt — eine
+unnötige und unnötig markierte Übertragung.
+
+Behoben (Genitivblock jetzt vor Aggregat/Autonym) und **nachgemessen statt
+angenommen**: die Zahlen in T5.1–T5.3 sind vor und nach dem Fix identisch.
+Der Grund ist auszählbar — nur **19 EIVE-Taxa** (Tichý 0, Midolo 0) sind
+überhaupt reihenfolgeempfindlich, also von beiden Regelklassen betroffen,
+und für **keines** davon löst der Genitivschlüssel in WCVP auf:
+
+```bash
+# Zählskript siehe .superpowers/sdd/2026-08-01-hardening/task-5-report.md
+# eive: 19 reihenfolgeempfindlich, davon 0 mit auflösendem Genitivschlüssel
+```
+
+Der Fix ist damit eine Korrektheitsreparatur an einer latenten Falle, kein
+Abdeckungsgewinn — gemessener Delta: **0**. Ebenfalls in dieser Runde:
+`s.str.` (sensu stricto) wurde aus den Aggregatmarkern **entfernt**. Es ist
+kein Aggregatmarker, es VERENGT; es unter einer Regel namens
+„aggregate to nominate species" zu strippen hätte die Begründung
+falsch dargestellt. Kosten: null — alle drei Vokabulare enthalten null Taxa
+mit dieser Schreibweise.
+
+### T5.9 Regressionen
 
 Keine. `MatchNames` (§B.2-Batch), das Suggest-Ranking und das
 `requires_review`-Verhalten des Fuzzy-Pfads sind unverändert — Task 5 fasst
 nur den Trait-Crosswalk an, und dort ist der erste Kandidat immer der
-unveränderte `Canonicalize`-Schlüssel. `make verify`, `make test-integration`
-und `make mutation` für alle drei berührten Pakete sind grün
-(`internal/domain`: 0 Überlebende in `normalize.go` bei 100 %
-Mutator-Abdeckung; die 6 verbleibenden Überlebenden in `match.go`/`suggest.go`
-sind die bereits vorher dokumentierten beweisbaren Äquivalente).
+unveränderte `Canonicalize`-Schlüssel. Seit dem Fix aus T5.5 gilt zusätzlich
+die stärkere, in den Daten prüfbare Aussage: die Zahl der **exakt**
+aufgelösten Konzepte je Vokabular entspricht nach der Normalisierung exakt
+der M2'-Baseline (11.000 / 7.072 / 4.963), die Normalisierung ist auf
+Konzeptebene also beweisbar rein additiv.
+
+`make verify`, `make test-integration`, `mkdocs --strict` und
+`make mutation` für alle berührten Pakete sind grün. Mutation im Detail:
+`internal/domain` 0 Überlebende in `normalize.go` bei 100 %
+Mutator-Abdeckung; `internal/adapters/http` 0 Überlebende (100 % Effizienz);
+`internal/application` und `internal/adapters/sqlite` unverändert gegenüber
+dem Stand vor Task 5 — die verbleibenden Überlebenden liegen sämtlich in
+nicht angefasstem Code bzw. sind die bereits dokumentierten beweisbaren
+Äquivalente (Sortier-Komparator über eine Menge distinkter Regeln,
+`sortedSample`-Cap).
+
 ---
 
 ## M2 — Crosswalk-Trefferquote (die Kernzahl)

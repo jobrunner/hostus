@@ -330,12 +330,14 @@ func nullableInt(i *int) any {
 
 // AddTraitValue writes one trait_value row for conceptID. tv.NicheWidth and
 // tv.NSystems are written as SQL NULL when nil, per the pointer semantics
-// domain.TraitValue documents — never coerced to 0/0.0.
+// domain.TraitValue documents — never coerced to 0/0.0. tv.Resolution
+// follows the same "absence is information" rule via nullString: an empty
+// Resolution (an exact canonical match) is stored as NULL, not as ”.
 func (t *ingestTx) AddTraitValue(conceptID string, tv domain.TraitValue) error {
 	_, err := t.tx.ExecContext(t.ctx, `
-		INSERT OR REPLACE INTO trait_value (concept_id, vocab, vocab_version, dim, value, niche_width, n_systems)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		conceptID, string(tv.Vocab), tv.VocabVersion, string(tv.Dim), tv.Value, nullableFloat(tv.NicheWidth), nullableInt(tv.NSystems),
+		INSERT OR REPLACE INTO trait_value (concept_id, vocab, vocab_version, dim, value, niche_width, n_systems, resolution)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		conceptID, string(tv.Vocab), tv.VocabVersion, string(tv.Dim), tv.Value, nullableFloat(tv.NicheWidth), nullableInt(tv.NSystems), nullString(tv.Resolution),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: adding trait value %s/%s/%s for concept %q: %w", tv.Vocab, tv.VocabVersion, tv.Dim, conceptID, err)

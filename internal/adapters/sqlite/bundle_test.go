@@ -570,6 +570,17 @@ func TestExportBundle_CarriesTraitValuesAndVocabularyMetadata(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("AddTraitValue: unexpected error: %v", err)
 	}
+	// A second value that reached this concept only through the flagged
+	// aggregate-to-nominate-species rule. An offline bundle is the copy a
+	// field user actually queries, so the "this was normalised, not matched
+	// exactly" signal has to survive the export — dropping it here would
+	// re-hide precisely what Hardening Task 5 made visible.
+	if err := tx.AddTraitValue(conceptID, domain.TraitValue{
+		Vocab: domain.VocabEIVE, VocabVersion: "1.0", Dim: domain.DimN, Value: 4.0,
+		Resolution: string(domain.RuleAggregateToNominate),
+	}); err != nil {
+		t.Fatalf("AddTraitValue(normalised): unexpected error: %v", err)
+	}
 	if err := tx.UpsertTraitVocabulary(domain.TraitVocabMeta{
 		Vocab: domain.VocabEIVE, Version: "1.0", Taxonomy: "euromed-aligned", License: "CC-BY-4.0",
 		Redistribution: domain.RedistributionAllowed,
@@ -606,8 +617,28 @@ func assertBundleTraits(t *testing.T, bundle *sqlite.DB, conceptID string) {
 	if len(sets) != 1 || sets[0].Vocab != domain.VocabEIVE || sets[0].Taxonomy != "euromed-aligned" {
 		t.Fatalf("bundle.Traits(%q) = %+v, want one eive set with Taxonomy=euromed-aligned", conceptID, sets)
 	}
-	if len(sets[0].Values) != 1 || sets[0].Values[0].NicheWidth == nil || *sets[0].Values[0].NicheWidth != 2.5 {
-		t.Fatalf("bundle.Traits(%q) values = %+v, want one M value with NicheWidth=2.5", conceptID, sets[0].Values)
+	if len(sets[0].Values) != 2 {
+		t.Fatalf("bundle.Traits(%q) values = %+v, want the M and N values", conceptID, sets[0].Values)
+	}
+	// M matched exactly (empty Resolution), N only through the flagged
+	// aggregate fallback — both must survive the export unchanged.
+	wantResolution := map[domain.TraitDim]string{
+		domain.DimM: "",
+		domain.DimN: string(domain.RuleAggregateToNominate),
+	}
+	for _, v := range sets[0].Values {
+		want, known := wantResolution[v.Dim]
+		if !known {
+			t.Errorf("unexpected dim %q in bundle traits", v.Dim)
+			continue
+		}
+		if v.Resolution != want {
+			t.Errorf("bundle %s value: Resolution = %q, want %q — the normalisation signal must survive the export",
+				v.Dim, v.Resolution, want)
+		}
+		if v.Dim == domain.DimM && (v.NicheWidth == nil || *v.NicheWidth != 2.5) {
+			t.Errorf("bundle M value = %+v, want NicheWidth=2.5", v)
+		}
 	}
 }
 

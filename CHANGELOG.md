@@ -78,12 +78,31 @@ Vegetationsaufnahme-Importe mit Tippfehlern:
   84 / 72 / 75 % — vollständige Messung inkl. marginalem Zugewinn je Regel
   in `docs/research/reality-check.md`, Abschnitt „Nach Hardening (Task 5)".
   Zwei der Regeln setzen Umgrenzungen gleich, die nicht identisch sind
-  (Aggregat → Nominatart, Autonym → Art); sie sind als `flagged`
-  gekennzeichnet, werden im `hostus ingest`-Report getrennt gezählt und
-  namentlich bemustert, statt still mitzulaufen. Die Mehrdeutigkeitsquote
-  steigt dadurch (EIVE +231 Taxa) — ausschließlich aus vorher
+  (Aggregat → Nominatart, Autonym → Art). Sie sind deshalb **in den Daten**
+  gekennzeichnet, nicht nur im Ingest-Report: neue nullable Spalte
+  `trait_value.resolution` (NULL = exakter Treffer, sonst der Regelname),
+  ausgeliefert als `resolution` auf `GET /v1/concept/{id}/traits`
+  (`omitempty` — fehlt das Feld, war es ein exakter Treffer) und in jedes
+  Offline-Bundle mitkopiert. Ein Konsument, der die Näherung nicht
+  akzeptieren kann, filtert auf `resolution IN
+  ('aggregate_to_nominate','autonym')`. Die Mehrdeutigkeitsquote steigt
+  durch die Normalisierung (EIVE +231 Taxa) — ausschließlich aus vorher
   unauflösbaren Namen; mehrdeutig heißt weiterhin: es wird nichts
   geschrieben.
+- **Exakte Treffer gewinnen den `trait_value`-Platz** (`application.
+  selectTraitWinners`). Der Crosswalk ist viele-zu-eins (EIVE führt
+  `Acer opalus` UND `Acer opalus aggr.`, beide lösen auf dasselbe Konzept
+  auf), der Primärschlüssel von `trait_value` ist aber
+  `(concept_id, vocab, vocab_version, dim)` und `AddTraitValue` ein
+  `INSERT OR REPLACE` — bis hierher entschied damit die Zeilenreihenfolge
+  der CSV, ob ein exakt getroffener Wert oder das Kollektivmittel eines
+  Aggregats gespeichert wurde. Jetzt schlägt ein exakter Treffer immer
+  einen normalisierten, unter Gleichrangigen gewinnt die erste Zeile.
+  Messbare Folge: 646 EIVE- und 65 Tichý-Konzepte behalten ihren exakten
+  Wert, den sie zuvor an einen normalisierten verloren hatten; die Zahl der
+  exakt aufgelösten Konzepte je Vokabular entspricht damit wieder exakt der
+  Baseline (11.000 / 7.072 / 4.963), die Normalisierung ist auf
+  Konzeptebene beweisbar rein additiv.
 - **Bewusster Lizenz-Scope-Schnitt (PoC R1)**: Euro+Med PlantBase,
   GermanSL, EuroSL und die FloraVeg.EU-Downloads werden NICHT ingestiert —
   für keine der vier Quellen ließ sich eine belastbare

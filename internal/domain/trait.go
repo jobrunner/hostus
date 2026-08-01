@@ -114,6 +114,21 @@ func ParseTraitVocab(s string) (TraitVocab, error) {
 // provided it and the value happens to be zero. Callers must never treat
 // these as interchangeable — collapsing nil into 0 would silently invent
 // data EIVE-only entries have but Tichý/Midolo entries do not.
+// Resolution records HOW the vocabulary's taxon name was resolved onto the
+// concept this value hangs off — the string form of the winning
+// NormalizationRule (see NameCandidates). It is EMPTY for the ordinary
+// case, an exact canonical match (RuleExact), and non-empty only when a
+// deterministic normalisation rule was needed.
+//
+// It exists because two of those rules — RuleAggregateToNominate and
+// RuleAutonym, the ones NormalizationRule.Flagged reports — equate two
+// circumscriptions that are not identical. An aggregate's collective mean
+// sitting on the nominate species is data the vocabulary never asserted
+// ABOUT THAT SPECIES; rendering it indistinguishable from a directly
+// matched value would be the same class of fabrication this type already
+// refuses for NicheWidth/NSystems (nil vs 0). A consumer that cannot accept
+// the approximation must be able to see it in the DATA, not only in the
+// ingest console — hence a persisted column, not just a report counter.
 type TraitValue struct {
 	Vocab        TraitVocab
 	VocabVersion string
@@ -121,6 +136,7 @@ type TraitValue struct {
 	Value        float64
 	NicheWidth   *float64
 	NSystems     *int
+	Resolution   string
 }
 
 // TraitSet groups all TraitValue entries hostus holds for one taxon in one

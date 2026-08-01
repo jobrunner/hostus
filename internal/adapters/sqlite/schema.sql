@@ -162,6 +162,18 @@ CREATE TABLE IF NOT EXISTS trait_value (
   value         REAL NOT NULL,
   niche_width   REAL,               -- EIVE only; NULL for Tichý/Midolo
   n_systems     INTEGER,            -- EIVE only; NULL for Tichý/Midolo
+  -- resolution records HOW the vocabulary's taxon name was crosswalked onto
+  -- concept_id: NULL for the ordinary case (an exact canonical match), else
+  -- the name of the deterministic normalisation rule that was needed
+  -- (domain.NormalizationRule: hybrid_spacing, aggregate_to_nominate,
+  -- autonym, orthography_genitive, ...). Two of those rules equate two
+  -- circumscriptions that are NOT identical — an aggregate is wider than
+  -- its nominate species, an autonym narrower than its species — so a
+  -- consumer must be able to tell such a value apart from a directly
+  -- matched one. Same "absence is information" rule as niche_width above:
+  -- NULL means "no normalisation was needed", never "unknown".
+  -- See domain.TraitValue.Resolution / domain.NormalizationRule.Flagged.
+  resolution    TEXT,
   PRIMARY KEY (concept_id, vocab, vocab_version, dim)
 );
 

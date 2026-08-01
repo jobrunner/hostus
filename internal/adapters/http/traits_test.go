@@ -124,6 +124,7 @@ type traitValueResponse struct {
 	Value      float64            `json:"value"`
 	NicheWidth *float64           `json:"niche_width"`
 	NSystems   *int               `json:"n_systems"`
+	Resolution string             `json:"resolution"`
 	Scale      traitScaleResponse `json:"scale"`
 }
 
@@ -478,5 +479,85 @@ func TestHealthReady_TraitVocabularyAloneDoesNotSatisfyReadiness(t *testing.T) {
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/health/ready", nil))
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503 (a trait vocabulary is not a backbone)", rr.Code)
+	}
+}
+
+// fakeTraitRowSource feeds hand-written rows to IngestTraits so a test can
+// exercise a specific crosswalk outcome (here: a normalised, flagged match)
+// without needing a fixture CSV that happens to contain the right spelling.
+type fakeTraitRowSource struct{ rows []application.TraitRow }
+
+func (s fakeTraitRowSource) Rows() []application.TraitRow { return s.rows }
+
+var traitsMidoloMeta = domain.TraitVocabMeta{
+	Vocab:     domain.VocabMidolo,
+	Version:   "3",
+	Taxonomy:  "floraveg-eunis-aligned",
+	License:   "CC-BY-4.0",
+	SourceURL: "https://example.org/midolo",
+}
+
+// TestHandleTraits_NormalisedValueCarriesResolutionExactOmitsIt is Hardening
+// Task 5's "visible in the DATA, not only on stdout" requirement at the wire
+// boundary.
+//
+// Two Midolo rows land on the SAME concept: one whose taxon name matches the
+// backbone exactly, and one written as an aggregate ("Corynephorus canescens
+// aggr.") that only resolves through the flagged
+// aggregate-to-nominate-species fallback. The aggregate's value is a
+// collective mean the vocabulary never asserted about the nominate species,
+// so it MUST be distinguishable on the wire; the exact one asserts no
+// normalisation and must therefore omit the field entirely rather than
+// render an invented "exact" — the same nil-vs-0 discipline
+// niche_width/n_systems already follow.
+func TestHandleTraits_NormalisedValueCarriesResolutionExactOmitsIt(t *testing.T) {
+	repo := seededTraitsRepo(t)
+	ctx := context.Background()
+
+	src := fakeTraitRowSource{rows: []application.TraitRow{
+		{Taxon: "Corynephorus canescens", Vocab: "midolo2023", VocabVersion: "3", Dim: "disturbance_severity", Value: 1.5},
+		{Taxon: "Corynephorus canescens aggr.", Vocab: "midolo2023", VocabVersion: "3", Dim: "disturbance_frequency", Value: 2.5},
+	}}
+	report, err := application.IngestTraits(ctx, repo, src, traitsMidoloMeta)
+	if err != nil {
+		t.Fatalf("IngestTraits(midolo): unexpected error: %v", err)
+	}
+	if report.Matched != 2 {
+		t.Fatalf("report.Matched = %d, want 2 (both rows must land on the concept)", report.Matched)
+	}
+
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/concept/"+corynephorusConceptID+"/traits", nil))
+	rawBody := append([]byte(nil), rr.Body.Bytes()...)
+	got := decodeJSON[traitsResponse](t, rr.Body)
+
+	midolo := traitSetByVocab(got.Traits, "midolo2023")
+	if midolo == nil {
+		t.Fatal("no midolo2023 trait set found")
+	}
+
+	exact := traitValueByDim(midolo.Values, "disturbance_severity")
+	if exact == nil {
+		t.Fatal("no midolo disturbance_severity value found")
+	}
+	if exact.Resolution != "" {
+		t.Errorf("exactly-matched value: resolution = %q, want empty", exact.Resolution)
+	}
+	// Key absence on the RAW JSON: unmarshalling alone cannot tell "omitted"
+	// from "present but empty".
+	if rawFieldPresent(t, rawBody, "midolo2023", "disturbance_severity", "resolution") {
+		t.Error("exactly-matched value: resolution key present in raw JSON, want omitted")
+	}
+
+	normalised := traitValueByDim(midolo.Values, "disturbance_frequency")
+	if normalised == nil {
+		t.Fatal("no midolo disturbance_frequency value found")
+	}
+	if normalised.Resolution != string(domain.RuleAggregateToNominate) {
+		t.Errorf("aggregate-resolved value: resolution = %q, want %q", normalised.Resolution, domain.RuleAggregateToNominate)
+	}
+	if !rawFieldPresent(t, rawBody, "midolo2023", "disturbance_frequency", "resolution") {
+		t.Error("aggregate-resolved value: resolution key missing from raw JSON, want present")
 	}
 }

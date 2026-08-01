@@ -300,6 +300,7 @@ GET /v1/concept/wcvp:concept:405825/traits?vocab=eive,tichy2023
         {
           "dim": "T",
           "value": 6.3,
+          "resolution": "aggregate_to_nominate",
           "scale": { "min": 1, "max": 12, "normalized": false }
         }
       ]
@@ -327,6 +328,29 @@ Wichtige Punkte für Clients:
   Tichý und Midolo liefern keines von beiden. Ein fehlendes Feld
   bedeutet "dieses Vokabular kennt dieses Datum nicht", ein `0`-Wert
   hätte fälschlich eine tatsächliche Nullbreite/-quellenzahl behauptet.
+- **`resolution` fehlt ganz, wenn der Taxonname des Vokabulars exakt auf
+  das Concept passte** — der Normalfall. Ist das Feld gesetzt, wurde der
+  Name über eine deterministische Normalisierungsregel aufgelöst
+  (`hybrid_spacing`, `hybrid_marker_dropped`, `hybrid_marker_added`,
+  `aggregate`, `aggregate_to_nominate`, `autonym`,
+  `orthography_genitive`). Zwei dieser Werte sind für Clients
+  entscheidend, weil sie zwei **nicht identische** Umgrenzungen
+  gleichsetzen:
+
+    - `aggregate_to_nominate` — eine Sammelart (`Acer opalus aggr.`) ist
+      WEITER als ihre Nominatart und umfasst weitere Kleinarten. Der
+      Wert ist also ein Kollektivmittel, das das Vokabular nie über
+      diese eine Art ausgesagt hat.
+    - `autonym` — ein Autonym (`Acer obtusatum subsp. obtusatum`) ist
+      ENGER als seine Art; es landet hier nur, weil das Rückgrat die
+      infraspezifische Gliederung überhaupt nicht führt.
+
+    Wer diese Näherung nicht akzeptieren kann, filtert auf genau diese
+    beiden Werte. Die übrigen Regeln korrigieren ausschließlich die
+    Schreibweise (Hybridmarker, `-ii`/`-i`-Genitiv) und lassen die
+    Umgrenzung unberührt. Hintergrund und gemessene Wirkung:
+    `docs/research/reality-check.md`, Abschnitt „Nach Hardening
+    (Task 5)".
 - **`taxonomy` fehlt ganz, wenn keine Vokabular-Metadatenzeile
   zugeordnet werden konnte** — wird nicht als leerer String
   vorgetäuscht.

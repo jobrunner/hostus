@@ -755,7 +755,13 @@ func assertNormalisationCase(t *testing.T, tc normalisationCase) {
 		t.Fatalf("Traits: unexpected error: %v", err)
 	}
 	if len(sets) != 1 || len(sets[0].Values) != 1 || sets[0].Values[0].Value != 4.0 {
-		t.Errorf("Traits(%q) = %+v, want the single M=4.0 value", tc.backbone, sets)
+		t.Fatalf("Traits(%q) = %+v, want the single M=4.0 value", tc.backbone, sets)
+	}
+	// The rule must survive into the DATA, not just the ingest report: a
+	// consumer reading this value back has to be able to tell that it
+	// reached this concept through a rewrite.
+	if got := sets[0].Values[0].Resolution; got != string(tc.wantRule) {
+		t.Errorf("persisted TraitValue.Resolution = %q, want %q", got, tc.wantRule)
 	}
 }
 
@@ -849,8 +855,13 @@ func TestIngestTraits_ExactMatchIsNeverRerouted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Traits: unexpected error: %v", err)
 	}
-	if len(sets) != 1 {
-		t.Errorf("Traits(Acer opalus) = %+v, want the exact hit's value", sets)
+	if len(sets) != 1 || len(sets[0].Values) != 1 {
+		t.Fatalf("Traits(Acer opalus) = %+v, want the exact hit's value", sets)
+	}
+	// An exact match asserts nothing about normalisation, so it stores
+	// nothing: Resolution stays empty (SQL NULL) rather than "exact".
+	if got := sets[0].Values[0].Resolution; got != "" {
+		t.Errorf("persisted TraitValue.Resolution = %q, want empty for an exact match", got)
 	}
 }
 
@@ -914,5 +925,103 @@ func TestIngestTraits_NormalizedCountsAreSortedAndAggregateAcrossRows(t *testing
 	wantFlagged := []string{"Acer obtusatum subsp. obtusatum", "Alchemilla vulgaris aggr."}
 	if !equalStrings(report.FlaggedSample, wantFlagged) {
 		t.Errorf("report.FlaggedSample = %v, want %v", report.FlaggedSample, wantFlagged)
+	}
+}
+
+// TestIngestTraits_ExactMatchWinsTheSlotRegardlessOfRowOrder pins
+// selectTraitWinners: "Acer opalus" (exact) and "Acer opalus aggr." (only
+// resolvable through the flagged aggregate fallback) both land on the SAME
+// concept and dim, so trait_value's primary key can hold only one of them.
+// The exact value must win in BOTH row orders — otherwise an aggregate's
+// collective mean could silently overwrite a directly-matched value, and the
+// stored resolution flag would describe the slot by CSV row order rather than
+// by what is true of it.
+func TestIngestTraits_ExactMatchWinsTheSlotRegardlessOfRowOrder(t *testing.T) {
+	exactRow := application.TraitRow{Taxon: "Acer opalus", Vocab: "eive", VocabVersion: "1.0", Dim: "M", Value: 1.0}
+	aggRow := application.TraitRow{Taxon: "Acer opalus aggr.", Vocab: "eive", VocabVersion: "1.0", Dim: "M", Value: 9.0}
+
+	for _, tc := range []struct {
+		name string
+		rows []application.TraitRow
+	}{
+		{"exact first", []application.TraitRow{exactRow, aggRow}},
+		{"aggregate first", []application.TraitRow{aggRow, exactRow}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { assertExactOwnsTheSlot(t, tc.rows) })
+	}
+}
+
+// assertExactOwnsTheSlot runs one row order of
+// TestIngestTraits_ExactMatchWinsTheSlotRegardlessOfRowOrder and checks that
+// the exactly-matched value is the one stored, uncredited to any rule.
+func assertExactOwnsTheSlot(t *testing.T, rows []application.TraitRow) {
+	t.Helper()
+	repo := seededMatchRepo(t)
+	ids := seedBackboneNames(t, repo, "test-slot", "Acer opalus")
+	ctx := context.Background()
+
+	report, err := application.IngestTraits(ctx, repo, fakeTraitRowSource{rows: rows}, eiveMeta)
+	if err != nil {
+		t.Fatalf("IngestTraits: unexpected error: %v", err)
+	}
+	// Both rows resolved, so both count as matched...
+	if report.Matched != 2 {
+		t.Errorf("report.Matched = %d, want 2 (both rows resolve)", report.Matched)
+	}
+	// ...but only the exact one was stored, so no rule may claim a gain.
+	if len(report.Normalized) != 0 {
+		t.Errorf("report.Normalized = %+v, want empty — the aggregate row stored nothing", report.Normalized)
+	}
+	if len(report.FlaggedSample) != 0 {
+		t.Errorf("report.FlaggedSample = %v, want empty", report.FlaggedSample)
+	}
+
+	sets, err := repo.Traits(ctx, ids["Acer opalus"], nil)
+	if err != nil {
+		t.Fatalf("Traits: unexpected error: %v", err)
+	}
+	if len(sets) != 1 || len(sets[0].Values) != 1 {
+		t.Fatalf("Traits = %+v, want exactly one stored value", sets)
+	}
+	got := sets[0].Values[0]
+	if got.Value != 1.0 {
+		t.Errorf("stored value = %v, want 1.0 (the exact match, never the aggregate's 9.0)", got.Value)
+	}
+	if got.Resolution != "" {
+		t.Errorf("stored Resolution = %q, want empty (the exact match owns the slot)", got.Resolution)
+	}
+}
+
+// TestIngestTraits_TwoNormalisedRowsOnOneSlotCreditExactlyOne guards the
+// other half of selectTraitWinners: when NO exact row competes, the first
+// row in order keeps the slot, and the loser is credited to no rule — so the
+// Normalized counts still agree with what the database actually holds.
+func TestIngestTraits_TwoNormalisedRowsOnOneSlotCreditExactlyOne(t *testing.T) {
+	repo := seededMatchRepo(t)
+	ids := seedBackboneNames(t, repo, "test-slot2", "Acer opalus")
+	ctx := context.Background()
+
+	src := fakeTraitRowSource{rows: []application.TraitRow{
+		{Taxon: "Acer opalus aggr.", Vocab: "eive", VocabVersion: "1.0", Dim: "M", Value: 7.0},
+		{Taxon: "Acer opalus s. l.", Vocab: "eive", VocabVersion: "1.0", Dim: "M", Value: 8.0},
+	}}
+	report, err := application.IngestTraits(ctx, repo, src, eiveMeta)
+	if err != nil {
+		t.Fatalf("IngestTraits: unexpected error: %v", err)
+	}
+	if report.Matched != 2 {
+		t.Errorf("report.Matched = %d, want 2", report.Matched)
+	}
+	want := []application.RuleCount{{Rule: domain.RuleAggregateToNominate, Rows: 1, Taxa: 1, Flagged: true}}
+	if len(report.Normalized) != 1 || report.Normalized[0] != want[0] {
+		t.Errorf("report.Normalized = %+v, want %+v (only the stored row is credited)", report.Normalized, want)
+	}
+
+	sets, err := repo.Traits(ctx, ids["Acer opalus"], nil)
+	if err != nil {
+		t.Fatalf("Traits: unexpected error: %v", err)
+	}
+	if len(sets) != 1 || len(sets[0].Values) != 1 || sets[0].Values[0].Value != 7.0 {
+		t.Errorf("Traits = %+v, want the FIRST row's value (7.0) to own the slot", sets)
 	}
 }

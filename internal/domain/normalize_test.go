@@ -224,8 +224,15 @@ func TestAggregateBases(t *testing.T) {
 			in:   "festuca ovina s. l.", want: []string{"festuca ovina"},
 		},
 		{
-			name: "spaced sensu stricto",
-			in:   "festuca ovina s. str.", want: []string{"festuca ovina"},
+			// Sensu stricto NARROWS, so it is not an aggregate marker and is
+			// deliberately not stripped — see aggregateMarkers' doc comment
+			// (measured occurrences across all three vocabularies: zero).
+			name: "spaced sensu stricto is NOT stripped",
+			in:   "festuca ovina s. str.", want: nil,
+		},
+		{
+			name: "unspaced sensu stricto is NOT stripped",
+			in:   "festuca ovina s.str.", want: nil,
 		},
 		{
 			// Boundary: the shortest name a SPACED sensu marker can be
@@ -528,6 +535,37 @@ func TestNameCandidates(t *testing.T) {
 				{Key: "cardamine plumierii", Rule: domain.RuleExact},
 				{Key: "cardamine × plumierii", Rule: domain.RuleHybridMarkerAdded},
 				{Key: "cardamine plumieri", Rule: domain.RuleOrthographyGenitive},
+			},
+		},
+		{
+			// An autonym whose epithet ALSO carries the -ii/-i alternation.
+			// The genitive variant is a pure spelling rewrite and must be
+			// offered BEFORE the flagged autonym collapse, so that a
+			// backbone holding the infraspecific taxon under the other
+			// spelling is found instead of the name being over-attributed to
+			// the species. Shape is real in the data — cf. the measured
+			// "Crocus biflorus subsp. adamii".
+			name: "genitive variant is offered before the flagged autonym collapse",
+			in:   "Verbascum boerhavii subsp. boerhavii",
+			want: []domain.NameCandidate{
+				{Key: "verbascum boerhavii subsp. boerhavii", Rule: domain.RuleExact},
+				{Key: "verbascum boerhavii subsp. boerhavi", Rule: domain.RuleOrthographyGenitive},
+				{Key: "verbascum boerhavii", Rule: domain.RuleAutonym},
+			},
+		},
+		{
+			// Documented limitation, pinned so it cannot change silently:
+			// GenitiveVariant rewrites the LAST token, and on an
+			// aggregate-marked name that token is the marker itself — so no
+			// genitive candidate is produced here. The rules are not
+			// composed with one another (each derives from the plain
+			// canonical key); composing them was not measured and is not
+			// claimed.
+			name: "no genitive candidate for an aggregate-marked name (last token is the marker)",
+			in:   "Alchemilla plumierii aggr.",
+			want: []domain.NameCandidate{
+				{Key: "alchemilla plumierii aggr.", Rule: domain.RuleExact},
+				{Key: "alchemilla plumierii", Rule: domain.RuleAggregateToNominate},
 			},
 		},
 		{

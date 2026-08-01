@@ -227,3 +227,61 @@ func TestTraitVocabularies_ListsIngestedMetadata(t *testing.T) {
 		t.Errorf("tichy meta = %+v, want Version=2023 Taxonomy=floraveg-eunis-aligned", tichy)
 	}
 }
+
+// TestTraits_ResolutionRoundTripsAndEmptyStaysNull pins Hardening Task 5's
+// persistence contract at the adapter boundary: the normalisation rule that
+// crosswalked a vocabulary's taxon name onto a concept must survive
+// AddTraitValue -> trait_value -> Traits, and an EMPTY Resolution (the
+// ordinary exact match) must be stored as SQL NULL rather than as ” — the
+// same "absence is information" rule niche_width/n_systems follow, so a
+// consumer can tell "matched exactly" from "reached through a rewrite".
+func TestTraits_ResolutionRoundTripsAndEmptyStaysNull(t *testing.T) {
+	db := openSeededDB(t)
+	ctx := context.Background()
+
+	tx, err := db.BeginIngest(ctx, seedBackboneVersion)
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	exact := tichyM()
+	normalised := tichyM()
+	normalised.Dim = domain.DimN
+	normalised.Resolution = string(domain.RuleAggregateToNominate)
+	if err := tx.AddTraitValue(corynephorusID, exact); err != nil {
+		t.Fatalf("AddTraitValue(exact): unexpected error: %v", err)
+	}
+	if err := tx.AddTraitValue(corynephorusID, normalised); err != nil {
+		t.Fatalf("AddTraitValue(normalised): unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+
+	sets, err := db.Traits(ctx, corynephorusID, []domain.TraitVocab{domain.VocabTichy})
+	if err != nil {
+		t.Fatalf("Traits: unexpected error: %v", err)
+	}
+	set := setByVocab(t, sets, domain.VocabTichy)
+	for _, v := range set.Values {
+		want := ""
+		if v.Dim == domain.DimN {
+			want = string(domain.RuleAggregateToNominate)
+		}
+		if v.Resolution != want {
+			t.Errorf("dim %s: Resolution = %q, want %q", v.Dim, v.Resolution, want)
+		}
+	}
+
+	// The empty case must be a real SQL NULL, not the empty string: '' would
+	// be an assertion ("resolved by a rule named nothing"), NULL is the
+	// absence the domain type means.
+	var nulls int
+	if err := db.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM trait_value WHERE concept_id = ? AND dim = 'M' AND resolution IS NULL`,
+		corynephorusID).Scan(&nulls); err != nil {
+		t.Fatalf("counting NULL resolutions: unexpected error: %v", err)
+	}
+	if nulls != 1 {
+		t.Errorf("rows with resolution IS NULL = %d, want 1 (an exact match stores NULL, never '')", nulls)
+	}
+}

@@ -169,6 +169,19 @@ func NameCandidates(verbatim string) []NameCandidate {
 		add(added, RuleHybridMarkerAdded)
 	}
 
+	// Orthography is a PURE SPELLING rewrite and must therefore be tried
+	// before the two flagged judgement calls below, not after them. Getting
+	// this order wrong is not cosmetic: for an autonym whose epithet carries
+	// the -ii/-i alternation ("Verbascum boerhavii subsp. boerhavii", and
+	// the measured "Crocus biflorus subsp. adamii" has the same shape), a
+	// genitive-last ladder would collapse the name onto its species through
+	// RuleAutonym even when the backbone holds the INFRASPECIFIC taxon under
+	// the other spelling — a needless, and needlessly flagged,
+	// over-attribution where an exact infraspecific concept was available.
+	if variant, ok := GenitiveVariant(canon); ok {
+		add(variant, RuleOrthographyGenitive)
+	}
+
 	bases := AggregateBases(canon)
 	for i, b := range bases {
 		rule := RuleAggregate
@@ -183,9 +196,6 @@ func NameCandidates(verbatim string) []NameCandidate {
 
 	if base, ok := AutonymBase(canon); ok {
 		add(base, RuleAutonym)
-	}
-	if variant, ok := GenitiveVariant(canon); ok {
-		add(variant, RuleOrthographyGenitive)
 	}
 	return out
 }
@@ -292,26 +302,45 @@ func AddHybridMarker(canon string) (string, bool) {
 }
 
 // aggregateMarkers are the single-token trailing markers that make a name
-// denote a collective species ("Sammelart") rather than one taxon. They
-// mirror internal/application's aggregateSuffixes (the §B.2 match path),
-// extended with the spellings the measured trait vocabularies actually use.
+// denote a collective species ("Sammelart") — a taxon WIDER than the
+// nominate species — rather than one taxon.
+//
+// This set deliberately DIFFERS from internal/application's
+// aggregateSuffixes (the §B.2 match path, which carries only agg./aggr./
+// s.l.), and the two are not meant to converge: aggregateSuffixes decides
+// whether an API caller's verbatim query takes the aggregate branch of
+// MatchNames, where a false positive would visibly mis-answer a request,
+// so it stays at the three spellings §B.2 names. This set instead
+// generates additional lookup keys for a trait name that has ALREADY
+// failed to resolve, where a spelling that matches nothing simply costs one
+// query — so it covers the wider spelling range the measured vocabularies
+// actually contain. Neither list is authoritative for the other; changing
+// one does not imply changing the other.
+//
+// "s.str." (sensu stricto) is deliberately ABSENT. It is not an aggregate
+// marker at all — it NARROWS rather than widens — so stripping it under a
+// rule named "aggregate to nominate species" would mischaracterise what
+// happened. Supporting it would also buy nothing measurable: all three
+// vocabularies contain zero taxa carrying it
+// (`awk -F'|' 'NR>1{print $1}' pipelines/*/output/*-canonical.csv |
+// grep -ciE 's\. ?str\.'` = 0/0/0). A "X s. str." name therefore stays
+// unmatched rather than being silently equated with the species.
 var aggregateMarkers = map[string]bool{
 	"agg.":   true,
 	"aggr.":  true,
 	"s.l.":   true,
 	"s.lat.": true,
-	"s.str.": true,
 	"sl.":    true,
 }
 
-// sensuQualifiers are the second half of the SPACED sensu construction
-// ("… s. l.", "… s. str."), which Canonicalize preserves as two tokens.
+// sensuQualifiers are the second half of the SPACED sensu-lato construction
+// ("… s. l.", "… s. lat."), which Canonicalize preserves as two tokens.
 // They are only ever a marker when directly preceded by "s." — a bare
-// trailing "l." is far more likely to be Linnaeus.
+// trailing "l." is far more likely to be Linnaeus. "str." is excluded for
+// the same reason "s.str." is excluded from aggregateMarkers above.
 var sensuQualifiers = map[string]bool{
 	"l.":   true,
 	"lat.": true,
-	"str.": true,
 }
 
 // AggregateBases peels the trailing aggregate markers off an

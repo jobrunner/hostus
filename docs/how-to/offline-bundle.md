@@ -17,16 +17,24 @@ Eine bereits per `hostus ingest` befüllte Quell-Datenbank (siehe
 ## Verwendung
 
 ```bash
-hostus bundle --db hostus.sqlite --area AUT --out bundle.sqlite [--snapshot v1]
+hostus bundle --db hostus.sqlite --area DE,AT,CH --out bundle.sqlite [--snapshot v1]
 ```
 
 | Flag                          | Pflicht | Beschreibung                                                                 |
 |-------------------------------|---------|-------------------------------------------------------------------------------|
 | `--db`                        | ja      | Pfad zur Quell-SQLite-Datenbank (bereits ingestiert).                          |
 | `--out`                       | ja      | Zielpfad für die neu erzeugte Bundle-Datei.                                    |
-| `--area`                      | nein    | WGSRPD-L3-Referenzgebietscode (z. B. `AUT`) oder Kurzform (z. B. `DE`). Leer = gesamte Datenbank, ungescopt. |
+| `--area`                      | nein    | WGSRPD-L3-Referenzgebietscode (z. B. `AUT`), Kurzform (z. B. `DE`) oder eine **kommagetrennte Liste** davon (z. B. `DE,AT,CH` für Mitteleuropa) — das Bundle enthält dann die Vereinigung aller aufgelösten Gebiete. Leer = gesamte Datenbank, ungescopt. |
 | `--snapshot`                  | nein    | Freitext-Versionskennung, wird unverändert in `bundle_meta.snapshot_version` geschrieben. |
 | `--force-include-restricted`  | nein    | Übersteuert das Redistribution-Gate (siehe unten) — nur explizit setzen, wenn die Weitergabe der genannten Quelle(n) bewusst in Kauf genommen wird. |
+
+Ein ungescopter Export (`--area` leer) funktioniert unabhängig von der
+Datenbankgröße: der Export bindet die Konzept-ID-Liste als ein einziges
+`json_each`-JSON-Parameter (dasselbe Muster, das `MatchFuzzyCandidates`
+bereits verwendet), statt einen SQL-Platzhalter je Konzept-ID zu binden.
+Vor Task 4 scheiterte ein Voll-Export an SQLites Parameterlimit
+(`SQLITE_MAX_VARIABLE_NUMBER`) — siehe
+[`docs/research/reality-check.md`](../research/reality-check.md) M5.1.
 
 **Beispiel-Ausgabe**
 
@@ -85,6 +93,42 @@ gefüllt mit nur den Zeilen, die `--area` selektiert (oder allen, wenn
 - eine `bundle_meta`-Provenienz-Zeile (`snapshot_version`, `area`,
   `created_at`, `source_manifest_sha`, `restricted_sources` — siehe unten,
   "Redistribution-Gate")
+
+### Was ein gebietsgescoptes Bundle NICHT mehr enthält (Task 4)
+
+Der Reality-Check (M5.2) maß das GER-Bundle mit 108,9 MB gegen ein
+Spec-Ziel von 10–20 MB — Faktor 5,4 zu groß — und fand den größten
+Einzelposten in `distribution`: ein gescoptes Bundle kopierte bislang die
+**vollständige globale Verbreitung** jedes ausgewählten Konzepts (bis zu
+369 WGSRPD-L3-Gebiete pro Art), nicht nur das angefragte Gebiet. Gemessen
+per `SELECT name, SUM(pgsize) FROM dbstat GROUP BY name` trug
+`distribution` plus seinen eindeutigen Index rund 39 % zur Dateigröße bei.
+
+**Seit Task 4:** Ein gebietsgescoptes Bundle (`--area` nicht leer) kopiert
+in `distribution` **nur noch die Zeilen der angefragten Gebietscodes**
+(`wgsrpd_l3`-Schema, exakt die per `--area` aufgelöste Codeliste) — nicht
+mehr die globale Verbreitung außerhalb des Scopes. Ein Bundle beantwortet
+damit "kommt dieses Konzept im angefragten Gebiet vor?", nicht mehr "wo auf
+der Welt kommt dieses Konzept überall vor?". Ein ungescopter Export
+(`--area` leer) ist davon **nicht** betroffen: er kopiert weiterhin jede
+`distribution`-Zeile unverändert, weil "alles" dort auch wirklich alles
+bedeutet.
+
+Namen/Synonyme sind von dieser Kürzung **nicht** betroffen: ein Bundle
+enthält weiterhin jedes Synonym der ausgewählten (im Scope befindlichen)
+Konzepte — Feldnutzer:innen, die einen Synonym-Namen eintippen, werden
+weiterhin auf das akzeptierte Konzept verwiesen. Synonyme von Konzepten
+**außerhalb** des Scopes waren schon vor Task 4 nie Teil eines Bundles
+(die Namen-Kopie ist über `concept_name` an die ausgewählten Konzepte
+gebunden). Trait-Werte und die FTS5-Volltextsuche sind ebenfalls
+unverändert — beides sind Daten, die ein Feldeinsatz direkt braucht, keine
+verwerfbaren Nebenprodukte.
+
+Die gemessenen Zahlen nach dieser Kürzung (Mitteleuropa-Bundle vs. die
+108,9-MB-GER-Baseline und das 10–20-MB-Spec-Ziel) stehen im
+"Nach Hardening"-Abschnitt von M5 in `docs/research/reality-check.md`
+(repo-lokal, nicht Teil der veröffentlichten Doku — siehe deren eigener
+Hinweis dazu).
 
 ## Bundle offline bedienen
 

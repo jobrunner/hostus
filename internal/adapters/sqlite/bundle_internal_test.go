@@ -44,7 +44,7 @@ func TestPopulateBundle_EmptyConceptIDs_MetaInsertErrorPropagates(t *testing.T) 
 	ctx := context.Background()
 	bundle := openBundleWithoutMeta(t)
 
-	if _, err := populateBundle(ctx, nil, bundle, nil, BundleOpts{}, ""); err == nil {
+	if _, err := populateBundle(ctx, nil, bundle, nil, nil, BundleOpts{}, ""); err == nil {
 		t.Fatal("populateBundle(no concepts): want an error when bundle_meta is missing, got nil")
 	}
 }
@@ -61,7 +61,7 @@ func TestPopulateBundle_NonEmptyConceptIDs_MetaInsertErrorPropagates(t *testing.
 	conceptID := seedCorynephorusConcept(t, src)
 	bundle := openBundleWithoutMeta(t)
 
-	if _, err := populateBundle(ctx, src, bundle, []string{conceptID}, BundleOpts{}, ""); err == nil {
+	if _, err := populateBundle(ctx, src, bundle, []string{conceptID}, nil, BundleOpts{}, ""); err == nil {
 		t.Fatal("populateBundle(with concepts): want an error when bundle_meta is missing, got nil")
 	}
 }
@@ -90,7 +90,7 @@ func TestCopyConceptScopedTables_TraitVocabularyInsertErrorPropagates(t *testing
 		t.Fatalf("dropping bundle trait_vocabulary: %v", err)
 	}
 
-	if _, err := populateBundle(ctx, src, bundle, []string{conceptID}, BundleOpts{}, ""); err == nil {
+	if _, err := populateBundle(ctx, src, bundle, []string{conceptID}, nil, BundleOpts{}, ""); err == nil {
 		t.Fatal("populateBundle: want an error when bundle's trait_vocabulary table is missing, got nil")
 	}
 }

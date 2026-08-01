@@ -15,10 +15,11 @@ import (
 // be spelled once outside of _test.go files.
 const bundleCmdName = "bundle"
 
-// newBundleCmd builds "hostus bundle --db hostus.sqlite --area AUT --out
-// bundle.sqlite [--snapshot v1]": it exports an offline, standalone
-// SQLite/FTS5 bundle scoped to --area (or the whole database, if --area is
-// empty) from the SQLite database at --db.
+// newBundleCmd builds "hostus bundle --db hostus.sqlite --area DE,AT,CH
+// --out bundle.sqlite [--snapshot v1]": it exports an offline, standalone
+// SQLite/FTS5 bundle scoped to --area (a single value, a comma-separated
+// list for a multi-area region, or the whole database if --area is empty)
+// from the SQLite database at --db.
 func newBundleCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   bundleCmdName,
@@ -26,7 +27,7 @@ func newBundleCmd() *cobra.Command {
 		RunE:  runBundle,
 	}
 	cmd.Flags().String("db", "", "path to the source SQLite database to bundle from")
-	cmd.Flags().String("area", "", "area identifier to scope the bundle to (empty = whole database)")
+	cmd.Flags().String("area", "", "comma-separated area identifier(s) to scope the bundle to, e.g. \"DE,AT,CH\" (empty = whole database)")
 	cmd.Flags().String("out", "", "output path for the bundle")
 	cmd.Flags().String("snapshot", "", "snapshot version recorded into the bundle's bundle_meta table")
 	cmd.Flags().Bool("force-include-restricted", false, "export even if a contributing source's redistribution is not \"allowed\" (records the offending source ids into bundle_meta.restricted_sources)")

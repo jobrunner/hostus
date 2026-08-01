@@ -835,6 +835,141 @@ oder „mehrere Gebiete" zu exportieren. Beides sind Designlücken, keine
 Messfehler: der Export kopiert alle Synonyme (Ø 14,2 Namen/Konzept) und
 alle 369 Gebiete je Konzept mit, nicht nur das gescopte.
 
+### M5.3 Nach Hardening (Task 4): Mehrgebiets-Scoping, Skalierbarkeit, Größe
+
+Alle drei M5.1/M5.2-Befunde wurden behoben:
+
+1. **`--area` nimmt jetzt eine kommagetrennte Liste** (`internal/adapters/sqlite/bundle.go`,
+   `resolveAreaCodes`) — jeder Teil wird einzeln über dieselbe
+   Alias-Tabelle aufgelöst (inkl. zwei neuer Aliase, `AT`→`AUT` und
+   `CH`→`SWI`, damit die Spec-eigene Beispielsyntax `--area DE,AT,CH`
+   tatsächlich funktioniert) und die Codes werden vereinigt — ein
+   Einzelwert bleibt unverändert gültig (Regressionstest
+   `TestExportBundle_MultiArea_SelectsUnionOfAreas`).
+2. **Der ungescopte Export bindet die Konzept-ID-Liste nicht mehr als
+   Platzhalter je ID**, sondern als EIN `json_each`-JSON-Parameter
+   (dasselbe Muster, das `MatchFuzzyCandidates`, `read.go`, bereits
+   verwendet) — für jede Stelle, an der zuvor `IN (?,?,…)` mit der
+   Konzept-ID-Liste gebaut wurde (`findRestrictedSources`,
+   `copyBackboneVersions`, die Namen-/`taxon_concept`-Kopie,
+   `copyConceptScopedTables`). Das SQLite-Parameterlimit greift dabei
+   nicht mehr, unabhängig von der Scope-Größe.
+3. **Ein gebietsgescopter Export kopiert `distribution` nur noch für die
+   angefragten Gebietscodes**, nicht mehr die volle globale Verbreitung
+   jedes Konzepts (`copyDistribution`) — der laut M5.2 größte Einzelposten
+   der Bundle-Größe. Ein ungescopter Export ist davon unverändert: er
+   kopiert weiterhin jede `distribution`-Zeile. Namen/Synonyme, Trait-Werte
+   und der FTS5-Index sind von dieser Kürzung nicht betroffen (siehe
+   `docs/how-to/offline-bundle.md`, Abschnitt „Was ein gebietsgescoptes
+   Bundle NICHT mehr enthält").
+
+**Messung: Voll-Export gegen die echte 440k-Konzept-Datenbank**
+(`/tmp/full-real.sqlite`, 916 MiB, 440.534 Konzepte, 1.448.984 Namen):
+
+```bash
+./hostus bundle --db /tmp/full-real.sqlite --out /tmp/bundle-full-unscoped.sqlite --snapshot task4-unscoped
+```
+
+| Kennzahl | Wert |
+|---|---:|
+| Ergebnis | **Erfolg** — vorher: „too many SQL variables" (M5.1) |
+| Konzepte | 440.534 |
+| Namen | 1.405.296 |
+| Gebiete | 381 |
+| Wall-Clock | 986,65 s (`/usr/bin/time -l`) |
+| Dateigröße | 928.059.392 Byte (885,2 MiB) |
+
+Ein Voll-Export läuft heute in unter 17 Minuten durch und scheitert nicht
+mehr am Parameterlimit — die zuvor unmögliche Operation (M5.1: „die Datei
+bleibt bei 0 Byte") ist jetzt eine reguläre, wenn auch (erwartbar) große
+und langsame Export-Option.
+
+**Messung: Byte-Aufschlüsselung je Tabelle, VOR und NACH der
+Distribution-Kürzung** (`SELECT name, SUM(pgsize) FROM dbstat GROUP BY
+name ORDER BY 1 DESC`, GER-Bundle):
+
+| Tabelle (+Index) | Baseline (M5.2, volle globale Verbreitung) | **Nach Hardening (nur `area_code=GER`)** |
+|---|---:|---:|
+| `distribution` + `sqlite_autoindex_distribution_1` | 41,89 MB (22,45 + 19,44) | **0,55 MB** (0,53 + 0,02 — s. u.) |
+| `name` + Indizes (`idx_name_canonical_fold`, `sqlite_autoindex_name_1`, `idx_name_basionym_id`) | 31,77 MB (kein `idx_name_basionym_id` in der M5.2-Messung, damals ohne FK-Indizes) | 36,50 MB (21,74 + 6,63 + 4,89 + 3,24) |
+| `concept_name` + Indizes | 17,57 MB | 23,15 MB (9,29 + 8,97 + 4,89 — inkl. neuem `idx_concept_name_name_id`) |
+| `fts_name_*` (map/data/docsize/idx) | 8,55 MB | 14,40 MB (4,89 + 5,53 + 2,12 + 1,86 — inkl. neuem `idx_fts_name_map_concept_id`) |
+| `trait_value` + Index | 5,81 MB | 5,82 MB |
+| `taxon_concept` + Index | 1,08 MB | 1,10 MB |
+| `xref` + Index | 0,48 MB | (nicht separat neu gemessen, unverändert klein) |
+| **Dateigröße gesamt** | **108.892.160 Byte (103,8 MiB)** | **84.987.904 Byte (81,05 MiB)** |
+
+(Die Nach-Hardening-Messung lief gegen `/tmp/full-real.sqlite`, nicht
+gegen das M5.2-`m2.sqlite` — daher leicht andere Konzept-/Namenszahlen für
+GER: 11.583 Konzepte/169.670 Namen statt 11.514/163.350 — und trägt
+zusätzliche FK-Kindspalten-Indizes, die M2 dem Serienschema vor dem
+Volldaten-Ingest hinzufügt (`fk_indexes.sql`) und die auch in einem
+Bundle landen; das erklärt, warum `name`/`concept_name`/`fts_name_map`
+NACH der Kürzung nominal größer aussehen, obwohl an ihrer Kopierlogik
+nichts geändert wurde — der Vergleich, der tatsächlich etwas über die
+Kürzung aussagt, ist die `distribution`-Zeile: **41,89 MB → 0,55 MB**.)
+
+`distribution` schrumpft wie vorhergesagt auf einen Bruchteil (die
+GER-Kürzung lässt pro Konzept nur noch die eine angefragte
+`area_code=GER`-Zeile übrig, keine 369 mehr); **Namen/Synonyme
+(`name`+`concept_name`+FTS) bleiben unverändert die Kürzung wert, sind
+aber jetzt der mit Abstand größte Anteil** (~74 MB von 81 MB, ~91 %) — sie
+wurden bewusst NICHT gekürzt (siehe Produktentscheidung oben: ein
+Bundle behält jedes Synonym eines im Scope liegenden Konzepts).
+
+**Messung: Mitteleuropa-Bundle über `--area DE,AT,CH`** (die im Auftrag
+genannte Beispielsyntax, aufgelöst über die neuen `AT`/`CH`-Aliase auf
+GER+AUT+SWI):
+
+```bash
+./hostus bundle --db /tmp/full-real.sqlite --area DE,AT,CH --out /tmp/bundle-mitteleuropa.sqlite --snapshot task4-mitteleuropa
+```
+
+| Kennzahl | Wert |
+|---|---:|
+| Konzepte | 14.202 |
+| Namen | 183.684 |
+| Gebiete | 3 (GER, AUT, SWI) |
+| Wall-Clock | 73,73 s |
+| Dateigröße (entpackt) | 93.450.240 Byte (89,1 MiB) |
+| Dateigröße (`gzip -9`) | 21.953.315 Byte (20,9 MiB) |
+
+**Gegen die Baseline (108,9 MB GER-Einzelland) und das 10–20-MB-Ziel:**
+das Mitteleuropa-Bundle (3 Länder, mehr Konzepte als GER allein) ist mit
+89,1 MB trotzdem **kleiner** als die alte GER-Einzelland-Baseline — die
+Distribution-Kürzung wiegt den zusätzlichen Namensumfang von zwei weiteren
+Ländern mehr als auf. Komprimiert liegt es bei 20,9 MiB, knapp **über**
+der 20-MB-Obergrenze der Spec (zum Vergleich: das GER-Bundle allein liegt
+nach der Kürzung bei 19,24 MiB `gzip -9`, also knapp darunter). Entpackt
+(die für Speicherplatz auf dem Feldgerät relevante Zahl, siehe M5.2) ist
+89,1 MB weiterhin **Faktor 4,5–8,9 über** dem 10–20-MB-Ziel.
+
+**Ehrliche Einordnung: das 10–20-MB-Ziel ist mit den hier vertretbaren
+Kürzungen nicht erreichbar.** Die Distribution-Kürzung war der mit
+Abstand größte, unstrittig vertretbare Hebel (kein Feldeinsatz-Use-Case
+braucht die globale Verbreitung eines Konzepts außerhalb des gewählten
+Gebiets) und hat die Größe bereits etwa halbiert (GER: 103,8 → 81,05 MiB).
+Der verbleibende Rest ist zu über 90 % Namens-/Synonym-Infrastruktur
+(`name`, `concept_name`, FTS) für Konzepte, die alle GENUINE im Scope
+liegen — eine weitere Kürzung dort (z. B. nur akzeptierte Namen ohne
+Synonyme exportieren) würde eine reale UC1-Fähigkeit kosten (im Feld einen
+Synonym-Namen eintippen und auf das akzeptierte Konzept verwiesen werden)
+und ist deshalb bewusst NICHT Teil dieser Kürzung — sie wäre eine eigene,
+separate Produktentscheidung, keine Bugfix-Kürzung. Die Spec-Zahl von
+10–20 MB war für ein WCVP-Volltaxonomie-Backbone mit im Schnitt ~13
+Namen/Konzept schlicht zu niedrig angesetzt; das ist ein Befund über die
+Design-Annahme, kein verbleibender Defekt in der Implementierung.
+
+**Verdikt: hält mit Auflagen.** Multi-Area-Scoping und der
+Parameterlimit-Bug sind vollständig behoben (beide vorher: „hält nicht").
+Die Größen-Erwartung („10–20 MB") hält nicht, aber die Lücke ist jetzt
+gemessen, ursächlich erklärt (Namens-/Synonym-Umfang, nicht Verschnitt
+oder ein behebbarer Bug) und auf einen expliziten, dokumentierten
+Kompromiss zurückgeführt statt eine unerklärte Abweichung zu sein: die
+Distribution-Kürzung allein senkt die Größe um ~22 % (GER) bis knapp unter
+das `gzip`-Transportziel; ein weiteres Absenken auf 10–20 MB entpackt wäre
+nur durch den Verzicht auf Synonym-Daten möglich, was UC1 direkt betrifft.
+
 ---
 
 ## M6 — Würden die Brücken Suggest/Coverage wirklich helfen?

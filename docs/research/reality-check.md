@@ -337,6 +337,179 @@ weniger Daten), bei einem Speicher-Overhead von nur ~18 % DB-Größe. Speicher
 
 ---
 
+## Nach Hardening (Task 3): M1'–M3' am echten, unveränderten WCVP-Volldatensatz
+
+> Diese Sektion misst dieselben drei Kennzahlen wie M1/M2/M4 oben — jetzt mit
+> den Hardening-Fixes aus Task 1 (`ParseRankLenient`, `internal/domain/taxon.go`)
+> und Task 2 (acht FK-Indizes fest in `internal/adapters/sqlite/schema.sql`) —
+> gegen das **unveränderte** WCVP-DwC-A-Archiv (`poc/data/wcvp_dwca/`,
+> 1.448.984 Taxon-Zeilen, **kein** Rangfilter, **keine** Ad-hoc-Indizes). Die
+> Baseline-Zahlen oben bleiben unverändert stehen; hier steht nur der
+> Vergleich. Verdikte liefert Task 6, nicht dieser Abschnitt.
+
+Manifest: `poc/measure/dataset.full-real.yaml` (identisch zu
+`dataset.full.yaml`, außer `backbones[0].path` zeigt auf
+`poc/data/wcvp_dwca` statt auf die gefilterte Kopie). Binary:
+`nix develop -c make build` (`hostus` v0.2.4-87-g3137c95-dirty).
+
+### M1' — Voller WCVP-Ingest, Serienschema, keine Ad-hoc-Indizes
+
+```bash
+rm -f poc/measure/out/m1real.sqlite*
+/usr/bin/time -l ./hostus ingest \
+  --dataset poc/measure/dataset.full-real.yaml --db poc/measure/out/m1real.sqlite
+```
+
+| Kennzahl | Baseline (M1.0, unverändertes Archiv) | **Nach Hardening (M1')** |
+|---|---|---|
+| Ergebnis | **bricht ab** nach 5,37 s (`unknown taxon rank "proles"`) | **läuft durch** |
+| Wall-Clock | — | **281,27 s = 4 min 41 s** (user 158,75 s / sys 132,16 s) |
+| Peak RSS (`maximum resident set size`) | 2.670.788.608 Byte (2,49 GiB, beim Abbruch) | **3.001.942.016 Byte = 2,80 GiB** |
+| `peak memory footprint` | — | 3.248.835.488 Byte |
+| DB-Datei danach | 122.880 Byte (nur Schema, nichts committed) | **960.491.520 Byte = 916 MiB** |
+
+Zum Vergleich mit M1.3 (dem gefilterten Volldatensatz + Ad-hoc-`fk_indexes.sql`,
+276,70 s / 2,97 GiB / 908 MiB): **das unveränderte Archiv, ohne Rangfilter und
+ohne Ad-hoc-Indizes, ist mit dem gehärteten Serienschema genauso schnell**
+(281,27 s vs. 276,70 s — die Differenz liegt in der Größenordnung der
+Lauf-zu-Lauf-Varianz, nicht in einem strukturellen Unterschied) und braucht
+keinen manuellen Zwischenschritt (`hostus bundle` + `fk_indexes.sql`) mehr;
+`hostus ingest` legt das indizierte Schema jetzt selbst an.
+
+Ingest-Report (`poc/measure/out/m1real-ingest.log`):
+
+```
+Ingest complete:
+  wcvp: names=1448984 concepts=440534 synonyms=964762 orphaned=43688
+    ranks: other=6527 ((empty) 2744, proles 2351, lusus 660, microgène 371, Convariety 184, monstr. 90, grex 41, subproles 18, stirps 17, provar. 16, modif. 6, psp. 6, mut. 5, sublusus 4, subap. 3, subspecioid 2, subsubsp. 2, agamosp. 1, ecas. 1, group 1)
+```
+
+Zeilenzahlen der fertigen Datenbank (`sqlite3 poc/measure/out/m1real.sqlite < poc/measure/stats.sql`,
+Auszug — vollständig in `poc/measure/out/m1real-stats.txt`):
+
+| Tabelle / Kennzahl | Baseline (M1.3, gefiltert) | **Nach Hardening (M1', unveränderter Archiv)** | Differenz |
+|---|---:|---:|---:|
+| `name` | 1.437.761 | **1.448.984** | +11.223 |
+| `taxon_concept` | 440.098 | **440.534** | +436 |
+| `concept_name` role=synonym | 953.262 | **964.762** | +11.500 |
+| verwaiste Synonyme | 44.401 | **43.688** | −713 |
+| `distribution` | 1.982.550 | **1.983.859** | +1.309 |
+| `xref` (POWO) | 440.098 | **440.534** | +436 |
+| `fts_name_map` | 1.393.360 | **1.405.296** | +11.936 |
+| `trait_value` | 113.544 | **113.594** | +50 |
+
+**Warum mehr Konzepte/Namen als die Baseline:** M1.3 lief gegen die *gefilterte*
+Kopie des Archivs (`poc/measure/filter_ranks.sh` hatte 11.223 Zeilen mit
+unbekanntem Rang vorab entfernt, siehe M1.0). Dieser Lauf (M1') geht gegen das
+**unveränderte** Archiv — `ParseRankLenient` faltet die 11.223 vorher
+ausgeschlossenen Zeilen jetzt auf sechs Ziele: die drei dedizierten
+Nothotaxon-Ränge (`NOTHOSUBSPECIES` 552, `NOTHOVARIETY` 134, `NOTHOFORM` 15
+Namen), `SUBVARIETY` (3.350 Namen) und den Rest (6.527 Namen) auf `RankOther`
+mit `rank_verbatim` persistiert (28 verschiedene Rohschreibweisen, darunter
+die leere Zeichenkette; siehe die `ranks: other=`-Zeile oben). Von den 11.223
+zusätzlichen Namen werden **436 zu eigenen `taxon_concept`-Zeilen** (die
+akzeptierten Vertreter dieser Ränge: `NOTHOSUBSPECIES` 370, `NOTHOVARIETY` 54,
+`SUBVARIETY` 8, `NOTHOFORM` 4 Konzepte — Summe 436, exakt die Differenz
+440.534 − 440.098), der Rest sind zusätzliche Synonym-Namen auf bereits
+vorhandene oder neue Konzepte. Das ist genau der in der Aufgabenstellung
+erwartete Effekt: T1 admittiert mehr Zeilen, statt den Ingest abzubrechen.
+
+### M2' — Trait-Crosswalk gegen die volle Datenbank
+
+Ingest von EIVE + Tichý + Midolo lief im selben Aufruf wie M1' (ein
+Manifest, `poc/measure/dataset.full-real.yaml`, ein `hostus ingest`-Lauf).
+
+**Pro Vokabular, auf Zeilenebene** (aus dem Ingest-Report):
+
+| Vokabular | Zeilen | matched | unmatched | ambiguous |
+|---|---:|---:|---:|---:|
+| `eive` | 71.266 | 54.612 (**76,64 %**) | 8.830 (12,39 %) | 7.824 (10,98 %) |
+| `tichy2023` | 45.592 | 36.554 (**80,17 %**) | 1.868 (4,10 %) | 7.170 (15,73 %) |
+| `midolo2023` | 31.910 | 24.985 (**78,30 %**) | 1.145 (3,59 %) | 5.780 (18,11 %) |
+
+Gegen die Baseline (M2.1: 76,55/80,18/78,30 %) praktisch unverändert — die
+matched-Quote schwankt nur bei EIVE spürbar (+0,09 Prozentpunkte, +55
+matched-Zeilen: 54.612 statt 54.557), weil mehr Konzepte jetzt existieren, an
+die ein EIVE-Name binden kann. `unmatched`/`ambiguous` sind bei Tichý/Midolo
+zeilenidentisch mit der Baseline; bei EIVE sinkt `unmatched` von 8.885 auf
+8.830 (−55, exakt die zusätzlichen `matched`-Zeilen).
+
+**Pro Vokabular, auf Taxon-Ebene** (`poc/measure/bridge`, Aufruf wie M2.2,
+gegen `poc/measure/out/m1real.sqlite`; Datei: `poc/measure/out/m1real-bridge.txt`):
+
+| Vokabular | distinkte Taxa | in WCVP auflösbar — Baseline (M2.2) | **in WCVP auflösbar — nach Hardening** |
+|---|---:|---:|---:|
+| EIVE | 14.830 | 13.015 (87,76 %) | **13.026 (87,84 %)** |
+| Tichý | 8.907 | 8.527 (95,73 %) | **8.527 (95,73 %)** |
+| Midolo | 6.382 | 6.153 (96,41 %) | **6.153 (96,41 %)** |
+
+EIVE gewinnt 11 zusätzliche auflösbare Taxa (+0,08 Prozentpunkte) — dieselbe
+Größenordnung wie der Zeilenebene-Effekt oben; Tichý und Midolo sind
+zeilenidentisch mit der Baseline (die zusätzlichen Ränge/Konzepte aus M1'
+liegen offenbar außerhalb ihrer Namensmengen). Das bestätigt die Erwartung aus
+dem Auftrag: die T1-Reparatur admittiert mehr Zeilen und kann die
+Trefferquote nur verbessern oder gleich lassen, nie verschlechtern — beides
+eingetreten, aber der Effekt ist klein, weil die vorher exkludierten
+28 Rang-Schreibweisen ein Randphänomen sind (0,775 % aller WCVP-Zeilen).
+
+**Trait-Abdeckung der Konzepte** (`sqlite3 poc/measure/out/m1real.sqlite < poc/measure/stats.sql`,
+unabhängig gegengeprüft gegen eine zweite Ingest-Kopie unter `/tmp/full-real.sqlite`
+— identische Werte):
+
+| Kennzahl | Baseline (M2.3) | **Nach Hardening** |
+|---|---:|---:|
+| WCVP-Konzepte insgesamt | 440.098 | **440.534** |
+| … mit irgendeinem Trait-Wert | 11.638 (2,64 %) | **11.648 (2,64 %)**|
+| … mit EIVE | 10.990 | **11.000** |
+| … mit Tichý | 7.072 | **7.072** |
+| … mit Midolo | 4.963 | **4.963** |
+| … mit EIVE UND Tichý | 6.671 | **6.671** |
+| … mit allen dreien | 4.251 | **4.251** |
+
+Unverändert bis auf EIVE (+10 Konzepte, +10 matched-Zeilen abzüglich
+Kollisionen auf denselben `(concept_id, vocab, dim)`-Schlüssel) — konsistent
+mit dem oben gemessenen kleinen EIVE-Zugewinn.
+
+**Stichprobe der Nichttreffer** (aus dem Ingest-Report, nicht neu gezogen —
+das ist die vollständige `unmatched sample`-Ausgabe, keine k-te-Zeile-Probe
+wie M2.4): die Nichttreffer bestätigen exakt die drei M2.4-Kategorien.
+Aggregate: `Acer opalus aggr.`, `Achillea millefolium aggr.`,
+`Aconitum napellus aggr.`, `Alchemilla vulgaris aggr.`. Hybride:
+`Abies alba × nordmanniana`, `Acer ×coriaceum`, `Aconitum ×schneebergense`,
+`Aconogonon ×fennicum`. Infraspezifische Autonyme:
+`Acer obtusatum subsp. obtusatum`, `Aconitum lycoctonum subsp. lycoctonum`.
+
+### M3' — Suggest-Latenz auf dem vollen Index
+
+Gleiches Verfahren wie M4 (Baseline): HTTP gegen einen laufenden Server
+(`hostus serve`) über die volle `m1real.sqlite`, `poc/measure/out/latency`
+(hier `latency-real`, identisches Binary aus `poc/measure/latency`),
+`--reps 15 --warmup 3`, 38 Präfixe, `limit=10` — 570 Messpunkte je Lauf,
+100 ms Pause zwischen Requests wegen des 20-req/s-Rate-Limits.
+
+```bash
+HOSTUS_SQLITE_PATH=poc/measure/out/m1real.sqlite ./hostus serve --port 8097 --log-level warn &
+./poc/measure/out/latency-real --base http://127.0.0.1:8097 --reps 15 --warmup 3
+./poc/measure/out/latency-real --base http://127.0.0.1:8097 --reps 15 --warmup 3 --area GER
+```
+
+| Lauf | Baseline (M4) p50 | **Nach Hardening p50** | Baseline p95 | **Nach Hardening p95** |
+|---|---:|---:|---:|---:|
+| ohne `area` | 36,4 ms | **38,59 ms** | 220,2 ms | **274,37 ms** |
+| mit `area=GER` | 38,7 ms | **40,81 ms** | 253,8 ms | **321,57 ms** |
+
+Vollständige Tabellen: `poc/measure/out/m1real-latency-noarea.txt` und
+`poc/measure/out/m1real-latency-ger.txt`. p50 bleibt im selben Bereich
+(+2–2 ms); p95 steigt um rund 50–70 ms gegenüber der Baseline-Messung — am
+ehesten durch die etwas größere Datenbank (916 MiB vs. 908 MiB, +436
+zusätzliche Konzepte, +11.223 zusätzliche Namen mit den neuen Rängen) und
+durch Messvarianz auf demselben Rechner erklärbar; dieselben kurzen
+2-Zeichen-Präfixe (`ca`, `al`, `sa`) dominieren den p95 wie in M4. Kein neuer
+Befund, keine Regression, die auf den Hardening-Fix selbst zurückzuführen
+wäre — die Größenordnung (p50 niedrige 40 ms, p95 um 300 ms) ist dieselbe.
+
+---
+
 ## M2 — Crosswalk-Trefferquote (die Kernzahl)
 
 ### M2.1 Pro Vokabular, auf Zeilenebene

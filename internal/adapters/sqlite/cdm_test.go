@@ -646,3 +646,52 @@ func TestExportBundleDoesNotLeakSecTitlesOutOfScope(t *testing.T) {
 		t.Errorf("bundle carries %d sec. citation(s) from an out-of-scope source: %+v", len(secs), secs)
 	}
 }
+
+func TestOpenReportsADanglingRowInAnInterruptedRebuild(t *testing.T) {
+	// The recovery fold-back runs with foreign keys OFF, deliberately: with
+	// enforcement on, a scratch row whose end no longer resolves makes the
+	// INSERT fail — and since recovery runs on EVERY Open, the database would
+	// be permanently unopenable behind an opaque driver error. That is the
+	// same terminal outcome the transactional rebuild exists to eliminate, so
+	// it must not reappear here.
+	//
+	// Instead the recovery completes and answers to the FK check, which names
+	// the problem; and because the recovery is one transaction, the refusal
+	// leaves the database untouched rather than half-recovered.
+	db, path := openTempDB(t)
+	ingestCDMFixture(t, db, nil)
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	execOnDB(t, path, `
+		DROP TABLE concept_relation;
+		CREATE TABLE concept_relation_sp5 (
+			from_concept  TEXT NOT NULL REFERENCES taxon_concept(id),
+			to_concept    TEXT NOT NULL REFERENCES taxon_concept(id),
+			relation      TEXT NOT NULL,
+			source        TEXT,
+			PRIMARY KEY (from_concept, to_concept, relation, source)
+		);
+		INSERT INTO concept_relation_sp5 VALUES ('cdm:concept:aaa','cdm:concept:ghost','congruent','legacy');`)
+
+	_, err := sqlite.Open(path)
+	if err == nil {
+		t.Fatal("want an error for a scratch row with an unresolvable end")
+	}
+	if !strings.Contains(err.Error(), "taxon_concept that does not exist") {
+		t.Errorf("error %q does not explain the dangling end", err)
+	}
+	if strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
+		t.Errorf("error %q is the opaque driver error, not the named one", err)
+	}
+	// Nothing may have been consumed: the scratch table is still there, so a
+	// fixed artifact (or a manual repair) can still be recovered from.
+	if got := countRows(t, path, "concept_relation_sp5"); got != 1 {
+		t.Errorf("scratch table has %d rows, want the original 1 left intact", got)
+	}
+
+	// And the failure must stay diagnosable rather than degrading on retry.
+	if _, err2 := sqlite.Open(path); err2 == nil || !strings.Contains(err2.Error(), "taxon_concept that does not exist") {
+		t.Errorf("second Open gave %v, want the same named error", err2)
+	}
+}

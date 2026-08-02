@@ -72,7 +72,10 @@ type RelationRow struct {
 // unparseable is_concept_relation flag). Such rows are SKIPPED and reported
 // rather than aborting the read — the same defensive posture the traits/xref
 // readers take for bulk pipeline data — so one corrupt line in 51.466 never
-// costs a 16–20 h crawl.
+// costs a 16–20 h crawl. Damaged records never truncate the traversal
+// either: every later row is still read, however many bad ones precede it.
+// The single exception is a read that consumes no input at all (see
+// maxStalledReads), which is a hard error rather than a collected one.
 type ConceptDataset struct {
 	Rows   []ConceptRow
 	Errors []error
@@ -84,10 +87,11 @@ type RelationDataset struct {
 	Errors []error
 }
 
-// maxConsecutiveRowErrors bounds how many consecutive unreadable records
-// readCSV will report before it stops reading the file — see the loop in
-// readCSV for why an unbounded count is not merely untidy.
-const maxConsecutiveRowErrors = 20
+// maxStalledReads bounds how many consecutive reads that consumed NO INPUT
+// readCSV tolerates before it gives up with a hard error. It deliberately
+// does not bound reads that merely FAILED — see the loop in readCSV for why
+// the distinction is the whole point.
+const maxStalledReads = 20
 
 var conceptColumns = []string{
 	"concept_uuid", "scientific_name", "authorship", "rank", "status",
@@ -182,8 +186,8 @@ func readCSV(path, what string, columns []string, emit func(line int, get func(s
 // decodeCSV is readCSV without the file handling — the seam that lets a test
 // inject a reader which FAILS rather than merely containing bad bytes. That
 // distinction matters: a failing Read is the one error mode that does not
-// consume input, and therefore the only one the consecutive-error bound is
-// there for. path is carried through for the error messages only.
+// consume input, and therefore the only one maxStalledReads bounds. path is
+// carried through for the error messages only.
 func decodeCSV(src io.Reader, path, what string, columns []string, emit func(line int, get func(string) string), collect func(error)) error {
 	r := csv.NewReader(src)
 	r.Comma = '|'
@@ -237,36 +241,49 @@ func decodeCSV(src io.Reader, path, what string, columns []string, emit func(lin
 	// per record would drift there, and the drift would end up in the
 	// short-row message pointing an operator at the wrong line).
 	record := 1
-	consecutive := 0
+	stalled := 0
 	for {
 		record++
+		offsetBefore := r.InputOffset()
 		row, err := r.Read()
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
 			collect(fmt.Errorf("cdm: %s: %s:%d: %w", what, path, errorLine(err, record), err))
-			// A sticky I/O error makes Read return the same error forever
-			// without ever advancing, so the loop must not trust EOF alone to
-			// end it — without this bound, ds.Errors grows until the process
-			// runs out of memory. A file with this many consecutive bad
-			// records is not the "one corrupt line in 51.466" case this
-			// reader tolerates; it is a broken artifact, and saying so once
-			// is more useful than a million identical messages.
+			// Distinguish the two error modes by whether the reader CONSUMED
+			// anything, which is the property that actually matters:
 			//
-			// The bound sits HERE and not on the short-row branch below on
-			// purpose: a short row (like a bad is_concept_relation flag)
-			// consumes input, so those error counts are already bounded by
-			// the size of the file. A failing Read is the only case that can
-			// loop forever without making progress.
-			consecutive++
-			if consecutive >= maxConsecutiveRowErrors {
-				collect(fmt.Errorf("cdm: %s: %s: giving up after %d consecutive unreadable records", what, path, consecutive))
-				return nil
+			//   - A csv.ParseError (bare quote, unterminated quote) advances
+			//     past the offending record. The loop makes progress, reaches
+			//     EOF, and reports one error per bad record — bounded by the
+			//     size of the file. Every LATER record is still read. This is
+			//     the "one corrupt line in 51.466" case the reader exists to
+			//     tolerate, and a wall of them must NOT stop the traversal:
+			//     silently discarding the rest of a 51.466-row artifact and
+			//     still returning success would produce a partial backbone
+			//     indistinguishable from a complete one. That is strictly
+			//     worse than a failed ingest.
+			//
+			//   - A sticky I/O error (a bad block, a disconnected volume)
+			//     returns the same error forever WITHOUT advancing. EOF never
+			//     comes, so the loop must end itself, and ds.Errors would
+			//     otherwise grow until the process runs out of memory.
+			//
+			// Only the second case is bounded, and it is a HARD error rather
+			// than a collected one: the file could not be read, so no caller
+			// should be able to mistake the result for a complete parse.
+			if r.InputOffset() != offsetBefore {
+				stalled = 0
+				continue
+			}
+			stalled++
+			if stalled >= maxStalledReads {
+				return fmt.Errorf("cdm: %s: %s: aborting after %d reads that consumed no input (last error: %w)", what, path, stalled, err)
 			}
 			continue
 		}
-		consecutive = 0
+		stalled = 0
 		line, _ := r.FieldPos(0)
 		if len(row) < minFields {
 			collect(fmt.Errorf("cdm: %s: %s:%d: short row: got %d fields, want at least %d", what, path, line, len(row), minFields))

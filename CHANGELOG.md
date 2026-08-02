@@ -61,9 +61,22 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   `Open` zurückgeführt.
 - `internal/adapters/cdm`: Zeilennummern kommen aus `csv.Reader.FieldPos`
   bzw. `csv.ParseError` statt aus einem Satzzähler (der bei mehrzeiligen
-  gequoteten Feldern driftet), und aufeinanderfolgende Lesefehler sind
-  begrenzt — ein klebriger I/O-Fehler ließ `Errors` vorher unbegrenzt
-  wachsen.
+  gequoteten Feldern driftet). Beschädigte Sätze brechen den Durchlauf
+  **nicht** mehr ab — ein `csv.ParseError` verbraucht Eingabe, also wird
+  jede spätere Zeile weiter gelesen; begrenzt (und dann ein **harter**
+  Fehler) ist nur noch der Lesevorgang, der **gar keine Eingabe
+  verbraucht** (klebriger I/O-Fehler). Vorher hätten 20 beschädigte Zeilen
+  den Rest der Datei still verworfen und trotzdem Erfolg gemeldet.
+- Die Wiederherstellung einer abgebrochenen `concept_relation`-Migration
+  läuft jetzt **innerhalb** des `foreign_keys=OFF`-Fensters und prüft
+  danach `PRAGMA foreign_key_check`. Vorher machte eine Scratch-Zeile mit
+  nicht auflösbarem Ende die Datenbank dauerhaft unöffenbar — mit einem
+  opaken Treiberfehler statt der benannten Meldung.
+- Beide Migrationstransaktionen nutzen `BEGIN IMMEDIATE` (sie lesen und
+  schreiben; unter WAL scheitert die Aufwertung eines einfachen `BEGIN`
+  sonst mit `SQLITE_BUSY_SNAPSHOT`, das `busy_timeout` nicht wiederholt),
+  und ein fehlgeschlagenes `PRAGMA foreign_keys = ON` verdeckt den
+  Migrationsfehler nicht mehr (`errors.Join`).
 - `internal/app/integration_test.go` an die neue `app.Ingest`-Signatur
   angepasst; `make test-integration` kompiliert und läuft wieder.
 

@@ -300,32 +300,30 @@ func TestReadConceptsLineNumbersSurviveAQuotedNewline(t *testing.T) {
 	}
 }
 
-func TestReadConceptsGivesUpOnAWallOfUnreadableRecords(t *testing.T) {
-	// The one case that does NOT advance the file on its own: a csv read
-	// error. A sticky I/O error would otherwise make Read return the same
-	// error forever and grow ds.Errors without bound. (Short rows and bad
-	// flag values are already bounded by the file, since each consumes
-	// input.) The reader reports that it gave up and stops.
+func TestReadConceptsNeverTruncatesTheFileOnParseErrors(t *testing.T) {
+	// A csv.ParseError ADVANCES past its record, so a wall of them must not
+	// stop the traversal. Stopping would discard every later row and still
+	// return success — a partial backbone indistinguishable from a complete
+	// one, which is strictly worse than a failed ingest.
+	//
+	// The good row sits at the very END, after 200 damaged ones, so this test
+	// fails the moment the reader gives up early.
 	var b strings.Builder
 	b.WriteString(conceptHeader)
 	for range 200 {
 		b.WriteString(`u|Abies "alba"|Mill.|Species|Accepted|s1|Sec One|c1|` + "\n")
 	}
+	b.WriteString("survivor|Pinus abies|L.|Species|Accepted|s1|Sec One|c1|\n")
+
 	ds, err := cdm.ReadConcepts(writeCSV(t, "allbad.csv", b.String()))
 	if err != nil {
 		t.Fatalf("ReadConcepts: %v", err)
 	}
-	if len(ds.Rows) != 0 {
-		t.Fatalf("got %d rows, want 0", len(ds.Rows))
+	if len(ds.Rows) != 1 || ds.Rows[0].ConceptUUID != "survivor" {
+		t.Fatalf("rows = %+v, want the row that follows the damaged block", ds.Rows)
 	}
-	// Exactly the bound's worth of read failures plus the one give-up line,
-	// pinned as an exact number so the bound's boundary is observable.
-	if len(ds.Errors) != 21 {
-		t.Fatalf("collected %d errors, want 21 (20 unreadable records + the give-up line)", len(ds.Errors))
-	}
-	last := ds.Errors[len(ds.Errors)-1].Error()
-	if !strings.Contains(last, "giving up after 20 consecutive unreadable records") {
-		t.Errorf("last error %q does not say the reader gave up", last)
+	if len(ds.Errors) != 200 {
+		t.Fatalf("collected %d errors, want one per damaged record", len(ds.Errors))
 	}
 }
 
@@ -357,7 +355,7 @@ func TestReadConceptsParseErrorReportsTheParseErrorsOwnLine(t *testing.T) {
 	}
 }
 
-func TestReadRelationsGivesUpOnAFileOfNothingButBadRecords(t *testing.T) {
+func TestReadRelationsReportsEveryBadFlagRowAndKeepsReading(t *testing.T) {
 	var b strings.Builder
 	b.WriteString(relationHeader)
 	for range 200 {

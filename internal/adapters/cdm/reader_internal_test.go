@@ -27,10 +27,15 @@ func (r *stickyErrorReader) Read(p []byte) (int, error) {
 	return 0, r.err
 }
 
-// TestDecodeCSVBoundsAStickyReadError is why decodeCSV exists as a seam: a
+// TestDecodeCSVAbortsOnAStickyReadError is why decodeCSV exists as a seam: a
 // FILE can only ever contain finitely many bad records, so no fixture can
-// reproduce a Read that fails without consuming input.
-func TestDecodeCSVBoundsAStickyReadError(t *testing.T) {
+// reproduce a Read that fails WITHOUT CONSUMING INPUT — the one error mode
+// that never reaches EOF and would otherwise loop forever.
+//
+// It must abort with a HARD error, not a collected one. A caller that got
+// (dataset, nil) back could not tell a truncated read from a complete one,
+// and would happily ingest a partial backbone.
+func TestDecodeCSVAbortsOnAStickyReadError(t *testing.T) {
 	src := &stickyErrorReader{
 		prefix: strings.Join(conceptColumns, "|") + "\n",
 		err:    errors.New("input/output error"),
@@ -41,21 +46,19 @@ func TestDecodeCSVBoundsAStickyReadError(t *testing.T) {
 	err := decodeCSV(src, "sticky.csv", "concepts", conceptColumns,
 		func(int, func(string) string) { rows++ },
 		func(e error) { collected = append(collected, e) })
-	if err != nil {
-		t.Fatalf("decodeCSV: %v", err)
+	if err == nil {
+		t.Fatal("a read that never consumes input must abort, not return success")
+	}
+	if !strings.Contains(err.Error(), "consumed no input") || !strings.Contains(err.Error(), "input/output error") {
+		t.Errorf("error = %q, want it to name the stall and the underlying cause", err)
 	}
 	if rows != 0 {
 		t.Fatalf("emitted %d rows, want 0", rows)
 	}
-	// Exactly maxConsecutiveRowErrors read failures plus the one "giving up"
-	// line. Pinning the exact number is what makes the bound's boundary
-	// observable rather than merely "not infinite".
-	if len(collected) != maxConsecutiveRowErrors+1 {
-		t.Fatalf("collected %d errors, want %d", len(collected), maxConsecutiveRowErrors+1)
-	}
-	last := collected[len(collected)-1].Error()
-	if !strings.Contains(last, "giving up after 20 consecutive unreadable records") {
-		t.Errorf("last error = %q", last)
+	// Exactly maxStalledReads reports before giving up — pinned as an exact
+	// number so the bound's boundary is observable, not merely finite.
+	if len(collected) != maxStalledReads {
+		t.Fatalf("collected %d errors, want %d", len(collected), maxStalledReads)
 	}
 	if !strings.Contains(collected[0].Error(), "input/output error") {
 		t.Errorf("first error = %q, want the underlying I/O error", collected[0])
@@ -73,9 +76,11 @@ func TestDecodeCSVFallsBackToTheRecordOrdinal(t *testing.T) {
 	}
 
 	var collected []error
-	_ = decodeCSV(src, "sticky.csv", "concepts", conceptColumns,
+	if err := decodeCSV(src, "sticky.csv", "concepts", conceptColumns,
 		func(int, func(string) string) {},
-		func(e error) { collected = append(collected, e) })
+		func(e error) { collected = append(collected, e) }); err == nil {
+		t.Fatal("want the stall abort")
+	}
 
 	// The header is record 1, so the first failing record is 2 and they count
 	// upward from there.

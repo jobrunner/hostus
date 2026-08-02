@@ -564,6 +564,14 @@ func copyConceptScopedTables(ctx context.Context, src, bundle *DB, idsJSON strin
 	// Scoping closes that, and it closes it structurally — a bundle can only
 	// carry a citation for a concept it also carries.
 	//
+	// Note this applies to a WHOLE-DATABASE export too, not just an
+	// area-scoped one: a sec_reference row that no concept names is dropped
+	// there as well. That is a deliberate consequence of scoping structurally
+	// rather than by export mode — an orphan citation is by definition
+	// unreachable from any concept in the bundle, so nothing can miss it.
+	// Unreachable in practice today, since the CDM ingest only ever writes a
+	// sec_reference it is about to attach to a concept.
+	//
 	// The analogous unscoped copy of xref_source/trait_vocabulary is left
 	// as-is: it is the same SHAPE of leak but only of source metadata, those
 	// tables predate this task, and narrowing them is a change to SP3/SP4

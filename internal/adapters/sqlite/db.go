@@ -111,6 +111,37 @@ const conceptRelationRebuildTable = "concept_relation_sp5"
 // PRAGMA foreign_keys is toggled OUTSIDE the transaction, which is required:
 // SQLite silently ignores the pragma while a transaction is open.
 func migrateConceptRelationPK(ctx context.Context, sqlDB *sql.DB) error {
+	// Foreign keys off for BOTH the recovery and the rebuild: each moves rows
+	// between two tables that reference taxon_concept, and enforcement
+	// mid-flight would judge an intermediate state rather than the result.
+	// Recovery in particular must be inside this window — with enforcement on,
+	// a scratch row whose end no longer resolves makes the INSERT fail, and
+	// since recovery runs on every Open the database would be permanently
+	// unopenable with an opaque driver error: precisely the terminal outcome
+	// this whole migration exists to eliminate. Instead both paths finish and
+	// then answer to checkConceptRelationForeignKeys, which names the problem.
+	//
+	// The pragma is toggled OUTSIDE any transaction, which is required:
+	// SQLite silently ignores it while one is open. Restored on every path,
+	// which matters because Open pins the pool to one connection and the
+	// setting is per-connection.
+	if _, err := sqlDB.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		return fmt.Errorf("sqlite: disabling foreign keys for concept_relation migration: %w", err)
+	}
+	migrateErr := migrateConceptRelationUnenforced(ctx, sqlDB)
+	if _, err := sqlDB.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+		// errors.Join, not a bare return: if both fail, the migration error
+		// is the informative one and must not be dropped for the pragma's.
+		return errors.Join(migrateErr,
+			fmt.Errorf("sqlite: re-enabling foreign keys after concept_relation migration: %w", err))
+	}
+	return migrateErr
+}
+
+// migrateConceptRelationUnenforced is the body of migrateConceptRelationPK,
+// running with foreign-key enforcement already off: first recover from any
+// interrupted earlier attempt, then rebuild if the key still needs widening.
+func migrateConceptRelationUnenforced(ctx context.Context, sqlDB *sql.DB) error {
 	if err := recoverInterruptedConceptRelationRebuild(ctx, sqlDB); err != nil {
 		return err
 	}
@@ -121,89 +152,110 @@ func migrateConceptRelationPK(ctx context.Context, sqlDB *sql.DB) error {
 	if migrated {
 		return nil
 	}
+	return rebuildConceptRelation(ctx, sqlDB)
+}
 
-	// Foreign keys off for the rebuild: dropping the old table while the new
-	// one already holds copies of its rows would otherwise be evaluated
-	// against the FK graph mid-flight. Restored afterwards on every path,
-	// which matters because Open pins the pool to one connection and the
-	// setting is per-connection.
-	if _, err := sqlDB.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
-		return fmt.Errorf("sqlite: disabling foreign keys for concept_relation migration: %w", err)
+// sqlTx is the subset of *sql.Tx / *sql.Conn the migration helpers need, so
+// the same code can run inside either. It exists because the migration's
+// transactions are opened with an explicit BEGIN IMMEDIATE on a dedicated
+// connection rather than via sql.DB.BeginTx (see withImmediateTx).
+type sqlTx interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// withImmediateTx runs fn inside a BEGIN IMMEDIATE transaction on a dedicated
+// connection, committing if fn returns nil and rolling back otherwise.
+//
+// BEGIN IMMEDIATE rather than sql.DB.BeginTx's plain BEGIN, because both
+// callers READ (pragma_table_info, sqlite_master) and then WRITE. Under WAL a
+// plain BEGIN takes its read snapshot at the first statement; if a second
+// process commits in between, the upgrade to a write lock fails with
+// SQLITE_BUSY_SNAPSHOT, which busy_timeout does NOT retry — the transaction
+// simply dies. Nothing is corrupted, but Open would fail with a confusing
+// busy error instead of the "sees the finished work and does nothing" outcome
+// the re-check below is written to produce. IMMEDIATE takes the write lock up
+// front, so the loser waits (busy_timeout applies) and then reads a snapshot
+// that already includes the winner's commit.
+func withImmediateTx(ctx context.Context, sqlDB *sql.DB, what string, fn func(tx sqlTx) error) error {
+	conn, err := sqlDB.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("sqlite: %s: acquiring connection: %w", what, err)
 	}
-	rebuildErr := rebuildConceptRelation(ctx, sqlDB)
-	if _, err := sqlDB.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
-		return fmt.Errorf("sqlite: re-enabling foreign keys after concept_relation migration: %w", err)
+	defer func() { _ = conn.Close() }()
+
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return fmt.Errorf("sqlite: %s: beginning transaction: %w", what, err)
 	}
-	return rebuildErr
+	if err := fn(conn); err != nil {
+		_, _ = conn.ExecContext(ctx, `ROLLBACK`)
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+		_, _ = conn.ExecContext(ctx, `ROLLBACK`)
+		return fmt.Errorf("sqlite: %s: committing: %w", what, err)
+	}
+	return nil
 }
 
 // rebuildConceptRelation performs the rebuild itself, in one transaction.
 func rebuildConceptRelation(ctx context.Context, sqlDB *sql.DB) error {
-	tx, err := sqlDB.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("sqlite: beginning concept_relation migration: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }() // no-op after a successful Commit
-
-	// Re-check the condition INSIDE the transaction. Open pins its own pool
-	// to one connection, but nothing stops a second PROCESS from opening the
-	// same file concurrently; whichever transaction gets there second must
-	// see the finished work and do nothing rather than rebuild a table that
-	// is already correct.
-	var pk int
-	err = tx.QueryRowContext(ctx, `SELECT pk FROM pragma_table_info('concept_relation') WHERE name = 'relation'`).Scan(&pk)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("sqlite: re-checking concept_relation primary key: %w", err)
-	}
-	if pk > 0 {
-		return nil
-	}
-
-	stmts := []string{
-		// Defensive: a scratch table left by a pre-transaction migration is
-		// normally cleared by recoverInterruptedConceptRelationRebuild, but
-		// CREATE must never be the statement that discovers one.
-		`DROP TABLE IF EXISTS ` + conceptRelationRebuildTable,
-		`CREATE TABLE ` + conceptRelationRebuildTable + ` (
-			from_concept  TEXT NOT NULL REFERENCES taxon_concept(id),
-			to_concept    TEXT NOT NULL REFERENCES taxon_concept(id),
-			relation      TEXT NOT NULL,
-			source        TEXT,
-			PRIMARY KEY (from_concept, to_concept, relation, source)
-		)`,
-		`INSERT OR REPLACE INTO ` + conceptRelationRebuildTable + ` (from_concept, to_concept, relation, source)
-			SELECT from_concept, to_concept, relation, source FROM concept_relation`,
-		`DROP TABLE concept_relation`,
-		`ALTER TABLE ` + conceptRelationRebuildTable + ` RENAME TO concept_relation`,
-		`CREATE INDEX IF NOT EXISTS idx_concept_relation_to_concept ON concept_relation(to_concept)`,
-	}
-	for _, stmt := range stmts {
-		if _, err := tx.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("sqlite: migrating concept_relation primary key: %w", err)
+	return withImmediateTx(ctx, sqlDB, "migrating concept_relation primary key", func(tx sqlTx) error {
+		// Re-check the condition INSIDE the transaction. Open pins its own
+		// pool to one connection, but nothing stops a second PROCESS from
+		// opening the same file concurrently; whichever transaction gets
+		// there second must see the finished work and do nothing rather than
+		// rebuild a table that is already correct.
+		var pk int
+		err := tx.QueryRowContext(ctx, `SELECT pk FROM pragma_table_info('concept_relation') WHERE name = 'relation'`).Scan(&pk)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
 		}
-	}
+		if err != nil {
+			return fmt.Errorf("sqlite: re-checking concept_relation primary key: %w", err)
+		}
+		if pk > 0 {
+			return nil
+		}
 
-	// Foreign keys were off for the rebuild, so nothing checked the copied
-	// rows. A legacy row whose end no longer resolves must be reported, not
-	// carried across as a dangling edge that the next enforced write would
-	// trip over somewhere far from here.
-	if err := checkConceptRelationForeignKeys(ctx, tx); err != nil {
-		return err
-	}
+		stmts := []string{
+			// Defensive: a scratch table left by a pre-transaction migration
+			// is normally cleared by
+			// recoverInterruptedConceptRelationRebuild, but CREATE must never
+			// be the statement that discovers one.
+			`DROP TABLE IF EXISTS ` + conceptRelationRebuildTable,
+			`CREATE TABLE ` + conceptRelationRebuildTable + ` (
+				from_concept  TEXT NOT NULL REFERENCES taxon_concept(id),
+				to_concept    TEXT NOT NULL REFERENCES taxon_concept(id),
+				relation      TEXT NOT NULL,
+				source        TEXT,
+				PRIMARY KEY (from_concept, to_concept, relation, source)
+			)`,
+			`INSERT OR REPLACE INTO ` + conceptRelationRebuildTable + ` (from_concept, to_concept, relation, source)
+				SELECT from_concept, to_concept, relation, source FROM concept_relation`,
+			`DROP TABLE concept_relation`,
+			`ALTER TABLE ` + conceptRelationRebuildTable + ` RENAME TO concept_relation`,
+			`CREATE INDEX IF NOT EXISTS idx_concept_relation_to_concept ON concept_relation(to_concept)`,
+		}
+		for _, stmt := range stmts {
+			if _, err := tx.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("sqlite: migrating concept_relation primary key: %w", err)
+			}
+		}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("sqlite: committing concept_relation migration: %w", err)
-	}
-	return nil
+		// Foreign keys were off for the rebuild, so nothing checked the
+		// copied rows. A legacy row whose end no longer resolves must be
+		// reported, not carried across as a dangling edge that the next
+		// enforced write would trip over somewhere far from here.
+		return checkConceptRelationForeignKeys(ctx, tx)
+	})
 }
 
 // checkConceptRelationForeignKeys runs PRAGMA foreign_key_check over the
 // rebuilt table and fails if any row has an unresolvable end. The pragma is
 // an explicit checker and works regardless of whether enforcement is on.
-func checkConceptRelationForeignKeys(ctx context.Context, tx *sql.Tx) error {
+func checkConceptRelationForeignKeys(ctx context.Context, tx sqlTx) error {
 	rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check('concept_relation')`)
 	if err != nil {
 		return fmt.Errorf("sqlite: checking concept_relation foreign keys after migration: %w", err)
@@ -251,25 +303,24 @@ func recoverInterruptedConceptRelationRebuild(ctx context.Context, sqlDB *sql.DB
 		return fmt.Errorf("sqlite: looking for an interrupted concept_relation migration: %w", err)
 	}
 
-	tx, err := sqlDB.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("sqlite: recovering interrupted concept_relation migration: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	for _, stmt := range []string{
-		`INSERT OR IGNORE INTO concept_relation (from_concept, to_concept, relation, source)
-			SELECT from_concept, to_concept, relation, source FROM ` + conceptRelationRebuildTable,
-		`DROP TABLE ` + conceptRelationRebuildTable,
-	} {
-		if _, err := tx.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("sqlite: recovering interrupted concept_relation migration: %w", err)
+	return withImmediateTx(ctx, sqlDB, "recovering interrupted concept_relation migration", func(tx sqlTx) error {
+		for _, stmt := range []string{
+			`INSERT OR IGNORE INTO concept_relation (from_concept, to_concept, relation, source)
+				SELECT from_concept, to_concept, relation, source FROM ` + conceptRelationRebuildTable,
+			`DROP TABLE ` + conceptRelationRebuildTable,
+		} {
+			if _, err := tx.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("sqlite: recovering interrupted concept_relation migration: %w", err)
+			}
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("sqlite: committing recovery of interrupted concept_relation migration: %w", err)
-	}
-	return nil
+		// The fold-back ran with enforcement off (see migrateConceptRelationPK),
+		// so a scratch row whose end no longer resolves would otherwise be
+		// carried across unchecked. Reported here with the same named error the
+		// rebuild produces, instead of an opaque constraint failure — and, since
+		// the whole thing is one transaction, a refusal leaves the database
+		// exactly as it was rather than half-recovered.
+		return checkConceptRelationForeignKeys(ctx, tx)
+	})
 }
 
 // conceptRelationHasRelationInPK reports whether concept_relation's `relation`

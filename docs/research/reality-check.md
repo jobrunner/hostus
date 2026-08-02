@@ -2233,15 +2233,38 @@ Entscheidung.
 
 > Diese Sektion ist der Abschluss von SP4 (Task 4 von 4). Sie fasst die in
 > SP4 Task 2 (oben, "SP4 Task 2 — Xref-Ingest …") an einer Kopie der vollen
-> 440.534-Konzept-Datenbank gemessenen Zahlen als Endstand zusammen und
+> 440.534-Konzept-Datenbank gemessenen Zahlen für die Abnahme zusammen und
 > liefert das für dieses Dokument fällige Verdikt. Die Zahlen unten sind
 > **nicht neu gemessen** — es ist derselbe Lauf (`application.IngestXrefs`
 > gegen `pipelines/wikidata/output/wikidata-xref-canonical.csv`, 1.709.127
-> Zeilen), hier für die Abnahme konsolidiert; wo sie sich von den Zwischen-
-> werten im Task-2-Abschnitt oben um wenige Konzepte unterscheiden (z. B.
-> `colxr` 357.878 → 357.922), ist das der Unterschied zwischen einem
-> Zwischenstand und dem für SP4 als verbindlich erklärten Endstand, keine
-> neue Erhebung.
+> Zeilen) wie im Task-2-Abschnitt oben, hier für die Abnahme wiederholt: die
+> Konzeptzahlen pro Autorität sind exakt die des Task-2-Abschnitts.
+
+### Drei Zählweisen, ein Ergebnis: die Reconciliation
+
+Beim Zusammenstellen dieser Sektion tauchten pro Autorität zunächst drei
+unterschiedliche Zahlen auf, die leicht zu verwechseln sind, weil alle drei
+plausibel nach "Deckung" aussehen. Sie sind hier bewusst benannt und
+gegeneinander aufgelöst, statt eine davon unkommentiert stehen zu lassen:
+
+| Zählweise | Was sie zählt | wikidata | gbif | wfo | colxr | inat | floraveg | euromed |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| distinkte `ext_id`s | wie viele verschiedene externe IDs die CSV je Autorität führt (Rohdaten, vor jedem Join) | 393.172 | 384.547 | 366.033 | 357.917 | 182.884 | 24.277 | 95 |
+| distinkte `join_id`s | wie viele dieser Zeilen einen `join_id` tragen, der (vor Konfliktprüfung) im Index existiert | 392.218 | 383.917 | 365.737 | 357.878 | 182.821 | 24.274 | 95 |
+| **tatsächlich geschriebene Konzepte (T2-Tabelle, maßgeblich)** | wie viele Konzepte NACH Konfliktprüfung tatsächlich einen `xref`-Datensatz bekommen haben | **392.218** | **383.907** | **365.731** | **357.878** | **182.821** | **24.274** | **95** |
+
+Die erste Spalte (`ext_id`) liegt bei wikidata, gbif, wfo und colxr sichtbar
+über den beiden anderen — das ist keine Unstimmigkeit, sondern schlicht die
+Rohzahl vor dem ID-Join: nicht jede externe ID im CSV trägt zwangsläufig
+einen bei hostus bekannten `join_id`. Die zweite und dritte Spalte
+unterscheiden sich dagegen genau um die Typ-(a)-Konflikte: **`join_id` minus
+geschriebene Konzepte = gbif 10 + wfo 6 = 16** — exakt die 16 übersprungenen
+Konfliktzeilen (8 externe Schlüssel × 2 Zeilen) aus der Konfliktregel oben,
+alle bei `gbif` und `wfo`. Bei den übrigen Autoritäten sind `join_id`- und
+Konzeptzahl identisch, weil dort keine Konflikte auftraten. Nichts bleibt
+unerklärt — das ist eine positive Konsistenzprobe für die Konfliktbehandlung
+aus SP4 Task 2, kein offener Punkt: **die T2-Tabelle (dritte Zeile) ist die
+maßgebliche, berichtete Deckungszahl** und wird unten unverändert verwendet.
 
 ### Der End-to-End-Beweis (Schritt 1+2 dieser Aufgabe)
 
@@ -2273,7 +2296,7 @@ github.com/jobrunner/hostus/internal/app:
 DONE 4 tests in 1.232s
 ```
 
-### Die Kennzahlen (Endstand, Volldatensatz)
+### Die Kennzahlen (Volldatensatz, T2-Konzeptzahlen)
 
 Erzeugt durch `application.IngestXrefs` gegen eine Kopie der vollen
 440.534-Konzept-/440.534-`powo`-Xref-Datenbank, mit dem echten
@@ -2292,12 +2315,12 @@ SELECT authority, COUNT(DISTINCT concept_id) FROM xref GROUP BY authority;
 | Kennzahl | Wert |
 | --- | --- |
 | Konzepte mit ≥1 neuem Xref | **392.218 / 440.534 (89,03 %)** |
-| wikidata | 393.172 |
-| gbif | 384.584 |
-| wfo | 366.186 |
-| colxr | 357.922 |
+| wikidata | 392.218 |
+| gbif | 383.907 |
+| wfo | 365.731 |
+| colxr | 357.878 |
 | **inat** | **182.821 (41,50 %)** |
-| floraveg | 24.278 |
+| floraveg | 24.274 |
 | euromed | 95 |
 | Konflikte (a) — dieselbe `(authority, ext_id)`, zwei Konzepte | 16 Zeilen / 8 externe Schlüssel, ausschließlich `gbif` und `wfo` |
 | Mehrfachzuordnungen (b) — ein Konzept, mehrere `ext_id`s derselben Autorität | wikidata 954 · gbif 635 · wfo 299 · inat 63 · colxr 39 · floraveg 3 |
@@ -2319,7 +2342,7 @@ korrekt (0 Unmatched, Konflikte sauber erkannt und übersprungen, Mehrfach-
 zuordnungen sauber als solche markiert); die Grenze liegt in der
 **Datenquelle**, nicht im Code.
 
-Zum Vergleich: die anderen sechs Autoritäten liegen zwischen 89,3 % (wikidata
+Zum Vergleich: die anderen sechs Autoritäten liegen zwischen 89,03 % (wikidata
 selbst) und 81–83 % (gbif/wfo/colxr) — deutlich über inat. `floraveg` (5,5 %)
 und `euromed` (0,02 %, 95 Konzepte) sind noch schwächer als inat, aber UC2
 hängt nicht an ihnen.

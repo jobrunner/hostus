@@ -200,8 +200,8 @@ Vegetationsaufnahme-Importe mit Tippfehlern:
   - Volldaten-Messung (`docs/research/reality-check.md`, Abschnitte „SP4
     Task 2" und „SP4 Task 4 — Verdikt"): **392.218 / 440.534 Konzepte
     (89,03 %)** gewinnen mindestens einen neuen Xref; pro Autorität
-    wikidata 393.172, gbif 384.584, wfo 366.186, colxr 357.922, **inat
-    182.821 (41,50 %)**, floraveg 24.278, euromed 95; 16 echte Konflikte
+    wikidata 392.218, gbif 383.907, wfo 365.731, colxr 357.878, **inat
+    182.821 (41,50 %)**, floraveg 24.274, euromed 95; 16 echte Konflikte
     (8 externe Schlüssel, alle gbif/wfo); 0 von 1.709.127 Zeilen
     unmatched. **Verdikt: hält mit Auflagen** — der Ingest selbst ist
     vollständig korrekt und end-to-end bewiesen

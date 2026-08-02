@@ -552,20 +552,24 @@ func TestIntegration_OfflineBundleServesSuggestOffline(t *testing.T) {
 // traitsIntegrationResponse mirrors internal/adapters/http.traitsResponseDTO
 // (see traits.go), trimmed to the fields this test asserts on.
 type traitsIntegrationResponse struct {
-	ConceptID string `json:"concept_id"`
-	Traits    []struct {
-		Vocab        string `json:"vocab"`
-		VocabVersion string `json:"vocab_version"`
-		Values       []struct {
-			Dim   string  `json:"dim"`
-			Value float64 `json:"value"`
-			Scale struct {
-				Min        float64 `json:"min"`
-				Max        float64 `json:"max"`
-				Normalized bool    `json:"normalized"`
-			} `json:"scale"`
-		} `json:"values"`
-	} `json:"traits"`
+	ConceptID string                `json:"concept_id"`
+	Traits    []traitSetIntegration `json:"traits"`
+}
+
+type traitSetIntegration struct {
+	Vocab        string                  `json:"vocab"`
+	VocabVersion string                  `json:"vocab_version"`
+	Values       []traitValueIntegration `json:"values"`
+}
+
+type traitValueIntegration struct {
+	Dim   string  `json:"dim"`
+	Value float64 `json:"value"`
+	Scale struct {
+		Min        float64 `json:"min"`
+		Max        float64 `json:"max"`
+		Normalized bool    `json:"normalized"`
+	} `json:"scale"`
 }
 
 // TestIntegration_TraitsFuzzyClassification is SP3's end-to-end proof: it
@@ -655,17 +659,31 @@ func assertTraitsEndToEnd(t *testing.T, client *http.Client, baseURL string) {
 		t.Fatalf("len(traits) = %d, want 2 (eive, tichy2023)", len(body.Traits))
 	}
 
-	byVocab := make(map[string]int, len(body.Traits))
-	for i, ts := range body.Traits {
+	eive, tichy := assertTraitVocabsPresent(t, body.Traits)
+	assertTraitVocabVersions(t, eive, tichy)
+	assertTichyScales(t, tichy)
+}
+
+// assertTraitVocabsPresent locates the eive and tichy2023 trait sets within
+// traits by vocab name, failing fast if either vocabulary is missing.
+func assertTraitVocabsPresent(t *testing.T, traits []traitSetIntegration) (eive, tichy traitSetIntegration) {
+	t.Helper()
+	byVocab := make(map[string]int, len(traits))
+	for i, ts := range traits {
 		byVocab[ts.Vocab] = i
 	}
 	eiveIdx, haveEive := byVocab["eive"]
 	tichyIdx, haveTichy := byVocab["tichy2023"]
 	if !haveEive || !haveTichy {
-		t.Fatalf("traits = %+v, want both %q and %q vocabularies", body.Traits, "eive", "tichy2023")
+		t.Fatalf("traits = %+v, want both %q and %q vocabularies", traits, "eive", "tichy2023")
 	}
+	return traits[eiveIdx], traits[tichyIdx]
+}
 
-	eive, tichy := body.Traits[eiveIdx], body.Traits[tichyIdx]
+// assertTraitVocabVersions checks eive and tichy2023 carry distinct,
+// fixture-pinned vocab_version strings.
+func assertTraitVocabVersions(t *testing.T, eive, tichy traitSetIntegration) {
+	t.Helper()
 	if eive.VocabVersion == tichy.VocabVersion {
 		t.Errorf("eive.vocab_version == tichy2023.vocab_version == %q, want distinct versions", eive.VocabVersion)
 	}
@@ -675,7 +693,12 @@ func assertTraitsEndToEnd(t *testing.T, client *http.Client, baseURL string) {
 	if tichy.VocabVersion != "2.0" {
 		t.Errorf("tichy2023.vocab_version = %q, want %q", tichy.VocabVersion, "2.0")
 	}
+}
 
+// assertTichyScales checks Tichý's T and L dimensions carry different scale
+// ranges in the same response (domain.ScaleFor: T is 1-12, L is 1-9).
+func assertTichyScales(t *testing.T, tichy traitSetIntegration) {
+	t.Helper()
 	var tScale, lScale struct {
 		Min, Max   float64
 		Normalized bool
@@ -795,38 +818,13 @@ func TestIntegration_OfflineBundleConceptSuggestTraitsOffline(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "hostus.sqlite")
 	bundlePath := filepath.Join(dir, "bundle.sqlite")
+	genusConceptID := "wcvp:concept:451295"
 
 	if _, err := app.Ingest(ctx, "testdata/dataset-traits.yaml", dbPath); err != nil {
 		t.Fatalf("app.Ingest: unexpected error: %v", err)
 	}
 
-	src, err := sqlite.Open(dbPath)
-	if err != nil {
-		t.Fatalf("sqlite.Open(source): unexpected error: %v", err)
-	}
-
-	// Confirm the landmine precondition on the SOURCE db before exporting:
-	// the genus parent must actually be present but WITHOUT an AUT
-	// distribution row, so scopeConceptIDs genuinely excludes it (a stale
-	// fixture that gave the genus an AUT row too would make this test
-	// exercise nothing).
-	genusConceptID := "wcvp:concept:451295"
-	if _, _, _, _, err := src.Concept(ctx, genusConceptID); err != nil {
-		_ = src.Close()
-		t.Fatalf("source db: Concept(%q): unexpected error: %v (fixture must carry the genus concept)", genusConceptID, err)
-	}
-
-	report, err := sqlite.ExportBundle(ctx, src, bundlePath, sqlite.BundleOpts{Area: "AUT", SnapshotVersion: "v1"})
-	if err != nil {
-		_ = src.Close()
-		t.Fatalf("sqlite.ExportBundle: unexpected error: %v", err)
-	}
-	if err := src.Close(); err != nil {
-		t.Fatalf("closing source db: %v", err)
-	}
-	if report.Concepts == 0 {
-		t.Fatal("sqlite.ExportBundle: report.Concepts = 0, want at least the AUT-scoped Corynephorus canescens concept")
-	}
+	exportOfflineBundleWithGenusPrecondition(t, dbPath, bundlePath, genusConceptID)
 
 	// Open ONLY the bundle from here on.
 	bundle, err := sqlite.Open(bundlePath)
@@ -835,56 +833,123 @@ func TestIntegration_OfflineBundleConceptSuggestTraitsOffline(t *testing.T) {
 	}
 	defer func() { _ = bundle.Close() }()
 
-	// The genus parent was out of scope: it must NOT have been copied into
-	// the bundle at all.
+	assertBundleGenusOutOfScope(t, bundle, genusConceptID)
+	assertBundleConceptSurvivesExport(t, bundle)
+	assertBundleClassificationEmptyAfterExport(t, bundle)
+	assertBundleSuggestFindsCorynephorus(t, bundle)
+	assertBundleTraitsSurviveExport(t, bundle)
+}
+
+// exportOfflineBundleWithGenusPrecondition opens the source db, confirms the
+// landmine precondition on it (genusConceptID must be present but WITHOUT an
+// AUT distribution row, so scopeConceptIDs genuinely excludes it — a stale
+// fixture that gave the genus an AUT row too would make the rest of this
+// test exercise nothing), exports the AUT-scoped bundle, and closes the
+// source db.
+func exportOfflineBundleWithGenusPrecondition(t *testing.T, dbPath, bundlePath, genusConceptID string) {
+	t.Helper()
+	ctx := context.Background()
+
+	src, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open(source): unexpected error: %v", err)
+	}
+	defer func() {
+		if err := src.Close(); err != nil {
+			t.Errorf("closing source db: %v", err)
+		}
+	}()
+
+	if _, _, _, _, err := src.Concept(ctx, genusConceptID); err != nil {
+		t.Fatalf("source db: Concept(%q): unexpected error: %v (fixture must carry the genus concept)", genusConceptID, err)
+	}
+
+	report, err := sqlite.ExportBundle(ctx, src, bundlePath, sqlite.BundleOpts{Area: "AUT", SnapshotVersion: "v1"})
+	if err != nil {
+		t.Fatalf("sqlite.ExportBundle: unexpected error: %v", err)
+	}
+	if report.Concepts == 0 {
+		t.Fatal("sqlite.ExportBundle: report.Concepts = 0, want at least the AUT-scoped Corynephorus canescens concept")
+	}
+}
+
+// assertBundleGenusOutOfScope checks the out-of-scope genus concept was not
+// copied into the bundle at all.
+func assertBundleGenusOutOfScope(t *testing.T, bundle *sqlite.DB, genusConceptID string) {
+	t.Helper()
+	ctx := context.Background()
 	if _, _, _, _, err := bundle.Concept(ctx, genusConceptID); !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("bundle: Concept(%q) err = %v, want %v (out-of-scope genus must not be in the bundle)", genusConceptID, err, domain.ErrNotFound)
 	}
+}
 
-	// Concept: Corynephorus canescens itself must resolve, with its
-	// out-of-scope self-reference (parent_id) NULLed rather than the
-	// bundle write failing an FK constraint or Concept() erroring.
-	concept, _, _, _, err := bundle.Concept(ctx, corynephorusConceptID)
+// bundleConceptOnly wraps bundle.Concept for call sites that need only the
+// resolved concept, not its synonyms/xrefs/distributions.
+func bundleConceptOnly(ctx context.Context, bundle *sqlite.DB, id string) (*domain.Concept, error) {
+	concept, synonyms, xrefs, distributions, err := bundle.Concept(ctx, id)
+	_ = synonyms
+	_ = xrefs
+	_ = distributions
+	if err != nil {
+		return nil, err
+	}
+	return concept, nil
+}
+
+// assertBundleConceptSurvivesExport checks Corynephorus canescens itself
+// resolves from the bundle, with its out-of-scope self-reference
+// (parent_id) NULLed rather than the bundle write failing an FK constraint
+// or Concept() erroring.
+func assertBundleConceptSurvivesExport(t *testing.T, bundle *sqlite.DB) {
+	t.Helper()
+	concept, err := bundleConceptOnly(context.Background(), bundle, corynephorusConceptID)
 	if err != nil {
 		t.Fatalf("bundle: Concept(%q): unexpected error: %v", corynephorusConceptID, err)
 	}
 	if concept.AcceptedName.Canonical != "Corynephorus canescens" {
 		t.Errorf("bundle: concept canonical = %q, want %q", concept.AcceptedName.Canonical, "Corynephorus canescens")
 	}
+}
 
-	// Classification: must not error just because the parent it would have
-	// walked to is out of scope — an empty chain is the correct, honest
-	// result (Classification's doc comment: a NULL parent_id stops the
-	// walk without error).
-	classification, err := bundle.Classification(ctx, corynephorusConceptID)
+// assertBundleClassificationEmptyAfterExport checks Classification does not
+// error just because the parent it would have walked to is out of scope —
+// an empty chain is the correct, honest result (Classification's doc
+// comment: a NULL parent_id stops the walk without error).
+func assertBundleClassificationEmptyAfterExport(t *testing.T, bundle *sqlite.DB) {
+	t.Helper()
+	classification, err := bundle.Classification(context.Background(), corynephorusConceptID)
 	if err != nil {
 		t.Fatalf("bundle: Classification(%q): unexpected error: %v", corynephorusConceptID, err)
 	}
 	if len(classification) != 0 {
 		t.Errorf("bundle: classification = %+v, want empty (the only parent was out of scope and must have been NULLed)", classification)
 	}
+}
 
-	// Suggest: unchanged from TestIntegration_OfflineBundleServesSuggestOffline.
+// assertBundleSuggestFindsCorynephorus is unchanged from
+// TestIntegration_OfflineBundleServesSuggestOffline.
+func assertBundleSuggestFindsCorynephorus(t *testing.T, bundle *sqlite.DB) {
+	t.Helper()
+	ctx := context.Background()
 	suggestResp, err := application.Suggest(ctx, bundle, application.SuggestRequest{Q: "coryn", Area: "AUT"})
 	if err != nil {
 		t.Fatalf("application.Suggest against bundle: unexpected error: %v", err)
 	}
-	var coryn *domain.SuggestItem
 	for i := range suggestResp.Results {
 		if suggestResp.Results[i].ConceptID == corynephorusConceptID {
-			coryn = &suggestResp.Results[i]
-			break
+			return
 		}
 	}
-	if coryn == nil {
-		t.Fatalf("bundle suggest results = %+v, want an entry for %q", suggestResp.Results, corynephorusConceptID)
-	}
+	t.Fatalf("bundle suggest results = %+v, want an entry for %q", suggestResp.Results, corynephorusConceptID)
+}
 
-	// Traits: the bundle must carry both trait vocabularies for the
-	// AUT-scoped Corynephorus canescens concept (sqlite.copyConceptScopedTables
-	// copies trait_value scoped by the same concept id set, plus
-	// trait_vocabulary in full).
-	traitSets, err := bundle.Traits(ctx, corynephorusConceptID, nil)
+// assertBundleTraitsSurviveExport checks the bundle carries both trait
+// vocabularies for the AUT-scoped Corynephorus canescens concept
+// (sqlite.copyConceptScopedTables copies trait_value scoped by the same
+// concept id set, plus trait_vocabulary in full).
+func assertBundleTraitsSurviveExport(t *testing.T, bundle *sqlite.DB) {
+	t.Helper()
+	traitSets, err := bundle.Traits(context.Background(), corynephorusConceptID, nil)
 	if err != nil {
 		t.Fatalf("bundle: Traits(%q): unexpected error: %v", corynephorusConceptID, err)
 	}

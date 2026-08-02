@@ -60,19 +60,43 @@ Without `nom_status` the single criterion UC5 calls out by name — excluding *C
 
 Keep this task free of I/O so the rules are testable in isolation and the judgement is inspectable.
 
+### What Task 1 measured — this replaces the vocabulary assumption this task originally carried
+
+`nom_status` is populated on **99.252 of 1.448.984 names (6,85 %)**, 92.492 of them on synonym-role names, across **1.304 distinct values**. The top 20 cover 95,8 %; 1.225 values have fewer than 10 hits. A closed enum over three doc-named values is not a viable design, and neither is fail-loud parsing — it would abort on the long tail constantly.
+
+The decisive measurement: **the source doc's own worked example does not match its own rule.** *Corynephorus incanescens* Bubani (`wcvp:name:405842`) carries `", nom. illeg. superfl."`, **not** `", nom. superfl."`. Equality matching on the three values UC5 names would miss the very case UC5 is explained with:
+
+| match | names hit |
+|---|---|
+| exact `", nom. superfl."` | 1.716 |
+| contains `superfl` | **12.502** |
+| contains `illeg` | 49.705 |
+| contains `not validly publ` | 18.623 |
+| contains `nom. nud` | 9.230 |
+| contains `pro syn` | 6.224 |
+
+Further measured traps, all of which the design must survive:
+- Every value carries a leading `", "` (99,86 %) — WCVP concatenates a citation fragment with the status.
+- 684 cells carry **several** statuses (`", nom. illeg., later homonym"`), but splitting on `,` is wrong too: commas occur *inside* single statuses (`", contrary to Art. 23.6. (ICN, 2012)."`).
+- **141 values are not statuses at all** — citation fragments (`"[Cusc.: 184]"`) or free text (`published as "mutatio nova"`); some mix both.
+- Spelling variants coexist: `without a Latin descr.` / `without latin descr.` / `sine descr. lat.`; `nom. rej.` / `nom. rejic.`; `nom. altern.` / `nom. alt.`
+- Five values need a **botanical, not technical** decision and must be surfaced rather than guessed: `", sensu auct."` (1.115 — a misapplication, not a nomenclatural defect), `", tentatively listed as a synonym."` (290), `", fossil name."` (272), `", isonym"` (9), `", not validly publ.?"` (8, with a literal question mark).
+
 **Interfaces:**
-- `domain.NomStatus` + `ParseNomStatus(string) (NomStatus, error)` over the vocabulary **measured in Task 1**. Follow `ParseRelation`, not `ParseRankLenient`: an unmapped value must **fail loudly with the offending value in the error**, never be coerced or silently treated as "fine to publish". A silently-unrecognised `nom. illeg.` that survives into a publication list is the failure mode this endpoint exists to prevent.
+- `domain.NomStatusJudgement` — classify a raw `nom_status` string by **token containment**, not equality, into a small set of publication judgements (at minimum: *disqualifying* / *acceptable* / *unclassified*). Normalise the leading `", "` and case before matching. Every token rule must be traceable to a count measured in Task 1 — no rule for a token nobody observed.
+- The long tail gets an explicit **`unclassified`** outcome. It must **not** silently mean "fine to publish": an unclassified synonym is either withheld from the publication list or returned with its raw status visible and flagged — decide which, justify it, and make the count visible in the response (Task 3's exclusion summary). This is the same discipline as `trait_value.resolution`: an approximation is recorded in the data, not just in a comment.
+- Report the five botanical-decision values as an explicit, named open item rather than classifying them silently.
 - `domain.SynonymRelevance` — the decision for one synonym, carrying **why**: which rules excluded or ranked it. A consumer must be able to see the reason, not just the verdict.
 - `domain.RankSynonyms(items []SynonymCandidate, opts) []SynonymRelevance` — deterministic ordering, `sort.SliceStable`, same discipline as `domain.RankSuggestions` (§B.1).
 
 **Rules, in this priority (source doc §UC5):**
-1. **Exclude by nomenclatural status** — the statuses Task 1 measured as disqualifying. Excluded, not down-ranked: a `nom. nud.` does not belong in a publication at any position.
+1. **Exclude by nomenclatural status** — by token containment over the measured tokens. Excluded, not down-ranked: a `nom. nud.` does not belong in a publication at any position. The *Corynephorus incanescens* case (`", nom. illeg. superfl."`) must be excluded — it is the acceptance test for this rule.
 2. **Exclude by rank** when the caller publishes at species level — `VARIETY`, `FORM`, `SUBVARIETY`, `SUBFORM`. Caller-controlled, not hard-wired.
 3. **Homotypic before heterotypic.** `homotypic` is a **tri-state**: `true` (271.821 rows, basionym-proven), `false`, and `NULL` (692.941 rows — *unknown*, an SP3 decision not to guess). **NULL must never be treated as `false`.** Rank known-homotypic first, then unknown, then known-heterotypic — and say in the response which of the three it was.
 4. **Basionym first among homotypic synonyms** (`name.basionym_id`, 429.172 names carry one) — the source doc's worked example puts *Aira canescens* L. first for exactly this reason.
 5. Stable tiebreaker last, so identical input always yields identical output.
 
-- [ ] **Step 1: failing tests** — a `nom. superfl.` synonym is excluded and the reason is stated; an unknown status value errors with the value in the message; varieties are excluded only when the caller asks; a NULL-homotypic synonym ranks between known-homotypic and known-heterotypic and is **not** reported as heterotypic; the basionym leads the homotypic block; ordering is stable across shuffled input.
+- [ ] **Step 1: failing tests** — *Corynephorus incanescens* with the real `", nom. illeg. superfl."` string is excluded and the reason is stated (equality matching would miss it, so pin containment explicitly); an unclassified long-tail value takes the documented `unclassified` path and is counted, never silently published; varieties are excluded only when the caller asks; a NULL-homotypic synonym ranks between known-homotypic and known-heterotypic and is **not** reported as heterotypic; the basionym leads the homotypic block; ordering is stable across shuffled input.
 - [ ] **Step 2: RED → implement → GREEN.** — [ ] **Step 3: DoD.**
 - [ ] **Step 4: commit** `feat(domain): publication relevance model for synonyms`.
 

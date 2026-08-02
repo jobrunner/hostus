@@ -147,3 +147,28 @@ func TestRelationInverse(t *testing.T) {
 		}
 	}
 }
+
+// TestRelationIsEqualityOnlyCongruent pins SP5 Task 4's first
+// non-negotiable at the level it belongs to: a /translate answer may be
+// presented as "the same taxon" for exactly one relation. If a future
+// relation value is added and someone wants it to count as identity, this
+// test is the place that has to be argued with.
+func TestRelationIsEqualityOnlyCongruent(t *testing.T) {
+	if !domain.RelationCongruent.IsEquality() {
+		t.Errorf("congruent.IsEquality() = false, want true")
+	}
+	notEquality := []domain.Relation{
+		domain.RelationNotCongruent,
+		domain.RelationIncludes,
+		domain.RelationIncludedIn,
+		domain.RelationOverlaps,
+		domain.RelationUncertain,
+		domain.RelationProParte,
+		domain.RelationMisapplied,
+	}
+	for _, r := range notEquality {
+		if r.IsEquality() {
+			t.Errorf("%q.IsEquality() = true, want false — only congruent may read as identity", r)
+		}
+	}
+}

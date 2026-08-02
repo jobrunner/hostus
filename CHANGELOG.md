@@ -7,6 +7,50 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (SP5, Task 4 — `POST /v1/translate`)
+- **`POST /v1/translate`**: Übersetzung eines Konzepts zwischen
+  `sec.`-Referenzräumen (UC6). Einstieg über `concept_id` **oder**
+  `verbatim` (dieselbe Auflösung wie `POST /v1/match`, inklusive der Regel,
+  dass ein Fuzzy-Treffer **immer** `requires_review: true` setzt) plus
+  `target_space`. Die Antwort ist die **abgeleitete** `sec_inference`-
+  Struktur (Architektur-Spec §4.3) — keine persistierte Tabelle.
+- **Nur `congruent` ist eine Gleichsetzung.** `domain.Relation.IsEquality`
+  hält diese Regel an genau einer Stelle; jeder Kandidat trägt
+  `is_equality` explizit (auch `false` — ein fehlendes Feld läse sich wie
+  „unbekannt") plus eine deutschsprachige Begründung. `overlaps` und das
+  bewusst unbestimmte ⊂⊃⊕ (`includes_or_included_in_or_overlaps`) bleiben
+  als das sichtbar, was sie sind, und werden nicht eingeebnet.
+- **Ehrliche Richtung**: hostus speichert Relationen nur in der
+  Quellrichtung, deshalb liefert jeder Kandidat die gespeicherte Aussage
+  (`statement`), die Richtung (`direction`) und die quellenseitige Lesart
+  (`relation_from_source`) — letztere **fehlt**, wenn keine sinnvolle
+  Umkehrung existiert (`pro_parte`), statt eine zu erfinden.
+- **Genau ein Hop**, ohne Konfigurationsmöglichkeit: eine transitive Kette
+  ist über dieses Vokabular nicht allgemein gültig (`overlaps ∘ overlaps`
+  sagt nichts, `⊂⊃⊕ ∘ irgendwas` ist undefiniert). `max_hops` steht auf
+  jeder Antwort; `max_hops != 1` wird mit `400 INVALID_QUERY` **benannt**
+  abgelehnt statt still zu einer Ein-Hop-Antwort zu degradieren.
+- **Keine Relation ist eine Antwort, kein Fehler**: `200` mit
+  `result: "no_relation_recorded"` und leerem (nie weggelassenem)
+  `candidates`. Ein Namenstreffer wird **nie** ersatzweise als Übersetzung
+  ausgeliefert. Optional (`include_name_candidates: true`) erscheinen
+  namensgleiche Konzepte unter dem eigenen Schlüssel
+  `unrelated_name_candidates`, ohne Relationsfeld und mit
+  `requires_review: true`.
+- Fehlerabbildung: unbekannte `concept_id` **oder** unbekannter
+  `target_space` → `404 NOT_FOUND` (ein Tippfehler im Zielraum darf nicht
+  wie „keine Relation erfasst" aussehen); nicht auflösbares `verbatim` →
+  `422 UNRESOLVABLE`.
+- Neue Repository-Methoden `SecReferenceByID` und `ConceptRelationsInSec`
+  (Ein-Hop-Kanten in **beiden** gespeicherten Richtungen, Selbstkanten
+  ausgeschlossen, deterministisch sortiert; liefert das Quellkonzept mit,
+  damit „Id unbekannt" und „keine Relationen" von einer Abfrage entschieden
+  werden).
+- Doku: `docs/how-to/sec-translate-uc6.md` (deutsch — Lizenzlage der
+  CDM-Daten, Ein-Hop-Grenze, „keine Antwort heißt keine erfasste Relation")
+  und `docs/reference/http-api.md`; OpenAPI-Baseline um `/v1/translate`
+  erweitert.
+
 ### Added (SP5, Task 3 — `sec.` als erstklassige Konzeptdimension)
 - `domain.SecReference` und `domain.Relation` mit strikter `ParseRelation`:
   Das Relationsvokabular ist jetzt **gemessen statt angenommen**. Die fünf

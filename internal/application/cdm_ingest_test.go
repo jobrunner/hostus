@@ -168,6 +168,14 @@ func (r *fakeCDMRepo) Suggest(context.Context, string, output.SuggestOpts) ([]do
 
 func (r *fakeCDMRepo) BeginTraitIngest(context.Context) (output.IngestTx, error) { return r.tx, nil }
 
+func (r *fakeCDMRepo) SecReferenceByID(context.Context, string) (domain.SecReference, error) {
+	return domain.SecReference{}, nil
+}
+
+func (r *fakeCDMRepo) ConceptRelationsInSec(context.Context, string, string) (output.ConceptRelations, error) {
+	return output.ConceptRelations{}, nil
+}
+
 // --- fixtures --------------------------------------------------------------
 
 func cdmMeta() domain.BackboneVersion {

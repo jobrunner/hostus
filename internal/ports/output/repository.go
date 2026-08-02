@@ -47,6 +47,32 @@ type Repository interface {
 	// bibliographic identity of a circumscription's reference frame),
 	// ordered by id.
 	SecReferences(ctx context.Context) ([]domain.SecReference, error)
+	// SecReferenceByID resolves one sec. reference space by its id.
+	// Returns domain.ErrNotFound (wrapped) if the id is unknown — which is
+	// what lets /v1/translate tell a MISTYPED target space (404) apart from
+	// a real space that simply has no relation into it (an explicit empty
+	// answer). Conflating the two is the failure mode UC6 exists to avoid.
+	SecReferenceByID(ctx context.Context, id string) (domain.SecReference, error)
+	// ConceptRelationsInSec returns conceptID's own concept row together
+	// with every stored concept_relation row that touches it — in EITHER
+	// stored direction — whose OTHER end is a concept in the sec. reference
+	// space targetSec. It is exactly one hop: no chaining, since a
+	// transitive chain across relation types is not sound in general
+	// (congruent∘includes is defensible, overlaps∘overlaps is not), and the
+	// boundary is enforced here rather than left to the caller's
+	// discipline.
+	//
+	// Rows are returned in the direction the source states them (hostus
+	// never materializes the mirror row, see IngestTx.AddConceptRelation);
+	// ConceptRelationEdge.Outgoing says which end conceptID was on, so the
+	// application layer can decide whether to name domain.Relation.Inverse
+	// and can report honestly when no inverse exists. A relation from
+	// conceptID to itself is not a translation and is excluded.
+	//
+	// Returns domain.ErrNotFound (wrapped) if conceptID is unknown; a known
+	// concept with no relation into targetSec returns a populated Source
+	// and an empty Edges slice — callers must not conflate the two.
+	ConceptRelationsInSec(ctx context.Context, conceptID, targetSec string) (ConceptRelations, error)
 	// MatchExact returns every name (accepted or synonym) whose canonical
 	// form equals canon, leaving classification (exact vs. exact_author,
 	// etc.) to the application layer.
@@ -137,6 +163,39 @@ type MatchCandidate struct {
 	Concept     domain.Concept
 	MatchedName domain.Name
 	Role        string // accepted|synonym
+}
+
+// ConceptRelations is Repository.ConceptRelationsInSec' result: the queried
+// concept itself plus its one-hop edges into the requested sec. space. The
+// concept is returned alongside the edges rather than fetched separately so
+// "this id does not exist" and "this id has no relations" are decided by
+// one query, in one place.
+type ConceptRelations struct {
+	Source domain.Concept
+	Edges  []ConceptRelationEdge
+}
+
+// ConceptRelationEdge is one stored concept_relation row seen from one of
+// its two ends (the "source" end a Repository.ConceptRelationsInSec query
+// started at).
+//
+// Relation is the value AS STORED, in the direction the source states it —
+// never pre-inverted. Outgoing is what disambiguates that direction:
+// "A includes B" and "B included_in A" are different statements, and a
+// consumer that cannot tell which one it got cannot use either. Partner is
+// the concept at the other end, PartnerSec its resolved sec. reference
+// space (Title empty if the space has no sec_reference row).
+type ConceptRelationEdge struct {
+	Partner    domain.Concept
+	PartnerSec domain.SecReference
+	Relation   domain.Relation
+	// Outgoing is true when the queried concept is the row's from_concept
+	// (the statement reads source -> partner) and false when it is the
+	// to_concept (the statement reads partner -> source).
+	Outgoing bool
+	// Source is the id of the backbone/source asserting the relation
+	// (e.g. "cdm"), empty if the row carries none.
+	Source string
 }
 
 // SynonymName is one synonym name Repository.Concept returns for a concept:

@@ -640,3 +640,86 @@ func (db *DB) SecReferences(ctx context.Context) ([]domain.SecReference, error) 
 	}
 	return out, nil
 }
+
+// SecReferenceByID resolves one sec. reference space by id, reporting
+// domain.ErrNotFound for an unknown one so /v1/translate can answer "you
+// named a space that does not exist" rather than "no relation found".
+func (db *DB) SecReferenceByID(ctx context.Context, id string) (domain.SecReference, error) {
+	var s domain.SecReference
+	err := db.sql.QueryRowContext(ctx, `SELECT id, title FROM sec_reference WHERE id = ?`, id).Scan(&s.ID, &s.Title)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.SecReference{}, fmt.Errorf("sqlite: sec reference %q: %w", id, domain.ErrNotFound)
+	}
+	if err != nil {
+		return domain.SecReference{}, fmt.Errorf("sqlite: querying sec reference %q: %w", id, err)
+	}
+	return s, nil
+}
+
+// conceptRelationPartnerJoin resolves the OTHER end of a concept_relation
+// row relative to the queried concept: whichever of from_concept/to_concept
+// is not it. The CASE is what makes one query cover both stored directions
+// — hostus stores only the direction the source states, so an incoming edge
+// is the only way to see e.g. "X includes <me>".
+const conceptRelationPartnerJoin = `
+	FROM concept_relation cr
+	JOIN taxon_concept tc ON tc.id = CASE WHEN cr.from_concept = ? THEN cr.to_concept ELSE cr.from_concept END
+	JOIN name an ON an.id = tc.accepted_name
+	JOIN backbone_version bv ON bv.id = tc.backbone_id
+	LEFT JOIN sec_reference sr ON sr.id = tc.sec_reference`
+
+// ConceptRelationsInSec returns the one-hop concept relations between
+// conceptID and the concepts of targetSec, in the direction each is stored.
+//
+// The self-edge exclusion (tc.id <> conceptID) is deliberate: a relation
+// from a concept to itself is not a translation into another
+// circumscription, and it would also make Outgoing meaningless (both ends
+// would satisfy the CASE).
+func (db *DB) ConceptRelationsInSec(ctx context.Context, conceptID, targetSec string) (output.ConceptRelations, error) {
+	row := db.sql.QueryRowContext(ctx, `SELECT`+conceptColumns+conceptJoin+` WHERE tc.id = ?`, conceptID)
+	source, err := scanConcept(row.Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return output.ConceptRelations{}, fmt.Errorf("sqlite: concept %q: %w", conceptID, domain.ErrNotFound)
+	}
+	if err != nil {
+		return output.ConceptRelations{}, fmt.Errorf("sqlite: querying concept %q: %w", conceptID, err)
+	}
+	out := output.ConceptRelations{Source: *source}
+
+	rows, err := db.sql.QueryContext(ctx, `SELECT cr.relation, cr.from_concept, COALESCE(cr.source, ''), COALESCE(sr.title, ''),`+
+		conceptColumns+conceptRelationPartnerJoin+`
+		WHERE (cr.from_concept = ? OR cr.to_concept = ?)
+		  AND tc.sec_reference = ?
+		  AND tc.id <> ?
+		ORDER BY tc.id, cr.relation, cr.source`,
+		conceptID, conceptID, conceptID, targetSec, conceptID)
+	if err != nil {
+		return output.ConceptRelations{}, fmt.Errorf("sqlite: querying relations of concept %q: %w", conceptID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var relation, fromConcept, source, secTitle string
+		partner, err := scanConcept(func(dest ...any) error {
+			return rows.Scan(append([]any{&relation, &fromConcept, &source, &secTitle}, dest...)...)
+		})
+		if err != nil {
+			return output.ConceptRelations{}, fmt.Errorf("sqlite: scanning relation of concept %q: %w", conceptID, err)
+		}
+		rel, err := domain.ParseRelation(relation)
+		if err != nil {
+			return output.ConceptRelations{}, fmt.Errorf("sqlite: relation of concept %q: %w", conceptID, err)
+		}
+		out.Edges = append(out.Edges, output.ConceptRelationEdge{
+			Partner:    *partner,
+			PartnerSec: domain.SecReference{ID: partner.SecReference, Title: secTitle},
+			Relation:   rel,
+			Outgoing:   fromConcept == conceptID,
+			Source:     source,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return output.ConceptRelations{}, fmt.Errorf("sqlite: iterating relations of concept %q: %w", conceptID, err)
+	}
+	return out, nil
+}

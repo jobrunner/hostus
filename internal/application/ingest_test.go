@@ -735,6 +735,14 @@ func (f *fakeCapturingRepo) BeginTraitIngest(context.Context) (output.IngestTx, 
 	panic("not needed by Ingest")
 }
 
+func (f *fakeCapturingRepo) SecReferenceByID(context.Context, string) (domain.SecReference, error) {
+	panic("not needed by Ingest")
+}
+
+func (f *fakeCapturingRepo) ConceptRelationsInSec(context.Context, string, string) (output.ConceptRelations, error) {
+	panic("not needed by Ingest")
+}
+
 // fakeCapturingTx is the IngestTx fakeCapturingRepo hands out: it records
 // every Name passed to UpsertName (keyed by id, last write wins — matching
 // pass 1's "write once, sub-pass 1b may re-write with linkage filled in"

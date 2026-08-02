@@ -137,6 +137,22 @@ func (r Relation) IsConceptRelation() bool {
 	return r != RelationMisapplied
 }
 
+// IsEquality reports whether r licenses treating the two concepts as the
+// SAME taxon.
+//
+// Exactly one relation does: RelationCongruent. Everything else — including
+// RelationIncludes/RelationIncludedIn (a proper super-/subset), the
+// deliberately undecided RelationUncertain (⊂⊃⊕), RelationOverlaps,
+// RelationNotCongruent and the two directed name assertions — asserts
+// something weaker than or different from identity, and /translate must
+// never render it in a way a consumer could read as "same taxon" (SP5
+// Task 4's first non-negotiable). This predicate exists so that rule lives
+// in the domain, in ONE place, instead of being re-derived at every
+// rendering site.
+func (r Relation) IsEquality() bool {
+	return r == RelationCongruent
+}
+
 // Inverse returns the relation that holds in the opposite direction, and
 // whether one exists at all.
 //

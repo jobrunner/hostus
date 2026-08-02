@@ -1,14 +1,15 @@
 # HTTP-API
 
 !!! note "Stand"
-    Dies beschreibt den SP4-Stand: die lokale SQLite/FTS5-Rückgrat-Basis ist
+    Dies beschreibt den SP5-Stand: die lokale SQLite/FTS5-Rückgrat-Basis ist
     implementiert (`hostus ingest` befüllt die Datenbank aus WCVP/POWO-
-    DwC-A-Manifesten sowie, seit SP4, per Wikidata-Brücke angereicherten
-    Cross-References; `hostus serve` bedient `/v1/concept/{id}`, `/v1/xref`,
-    `/v1/match`, `/v1/suggest` und `/v1/concept/{id}/traits` daraus).
-    Weitere `/v1/*`-Endpunkte (`concept/{id}/synonyms`, `translate`) sowie
-    `/openapi` folgen in späteren SPs. Die maßgebliche OpenAPI-Spezifikation
-    liegt unter `api/openapi/openapi.yaml`.
+    DwC-A-Manifesten, per Wikidata-Brücke angereicherten Cross-References
+    sowie, seit SP5, der CDM-Konzeptquelle; `hostus serve` bedient
+    `/v1/concept/{id}`, `/v1/xref`, `/v1/match`, `/v1/suggest`,
+    `/v1/concept/{id}/traits` und `/v1/translate` daraus). Weitere
+    `/v1/*`-Endpunkte (`concept/{id}/synonyms`) sowie `/openapi` folgen in
+    späteren SPs. Die maßgebliche OpenAPI-Spezifikation liegt unter
+    `api/openapi/openapi.yaml`.
 
     Der Offline-Export (`hostus bundle`) ist kein HTTP-Endpunkt und daher
     nicht Teil dieser Seite oder der OpenAPI-Spezifikation — siehe
@@ -213,8 +214,8 @@ POST /v1/match
 `match_type` ist eines von `exact`, `exact_author`, `aggregate_alias` oder
 `unresolvable`. `candidates` (Liste von Kanonicalnamen) wird nur bei
 Autor-Mehrdeutigkeit gefüllt. `target_space`/`sec_hint` im Request werden
-entgegengenommen, aber in SP1 nicht ausgewertet (Sekundärraum-Übersetzung
-folgt erst in SP5 als `POST /v1/translate`).
+entgegengenommen, aber nicht ausgewertet — die Sekundärraum-Übersetzung
+liegt in [`POST /v1/translate`](#post-v1translate).
 
 ### `GET /v1/suggest?q={q}&area={area}&rank={rank}&limit={limit}`
 
@@ -378,6 +379,196 @@ Wichtige Punkte für Clients:
   Concept ohne ingestierte Merkmalswerte liefert `200 OK` mit leerem
   `traits`-Array — das ist kein Fehlerfall.
 
+## Übersetzungs-Endpunkt
+
+### `POST /v1/translate`
+
+Übersetzt ein Konzept aus seinem `sec.`-Referenzraum in einen anderen (UC6):
+„Dieses Konzept *sec.* Rothmaler — was ist es *sec.* Wisskirchen & Haeupler
+1998, und **wie genau** hängen die beiden zusammen?"
+
+Zwei Konzepte mit gleichem Namen und verschiedenem `sec.` sind in hostus
+absichtlich **getrennte Zeilen**. Dieser Endpunkt liefert die Verbindung
+zwischen ihnen — und zwar nur dann, wenn eine Quelle sie tatsächlich
+behauptet.
+
+!!! warning "Lizenz — nicht öffentlich ausliefern"
+    Die Konzeptrelationen stammen aus der CDM-Ernte
+    (`rl_standardliste`, BGBM/EDIT). Für diese Daten ist **keine Lizenz
+    auffindbar** (Portal, API und Payloads schweigen), sie sind aus
+    urheberrechtlich geschützter Floren-Literatur abgeleitet, und das
+    Manifest führt sie als `redistribution: unknown`. `/v1/translate`
+    darf auf dieser Datenbasis **nicht öffentlich** betrieben werden,
+    solange keine schriftliche Freigabe von BGBM/EDIT vorliegt — nur
+    lokale Auswertung. Der Bundle-Export verweigert CDM-Daten
+    entsprechend ohne `--force-include-restricted`.
+
+**Request**
+
+Genau eines von `concept_id` und `verbatim` muss gesetzt sein, dazu
+`target_space` (die Id eines `sec.`-Referenzraums).
+
+```json
+POST /v1/translate
+{
+  "concept_id": "cdm:concept:b7a352aa-1f73-41f3-a4e3-b24fc1c2cd5f",
+  "target_space": "060afae5-76ef-44a7-921f-1202685ef351"
+}
+```
+
+| Feld | Pflicht | Bedeutung |
+|---|---|---|
+| `concept_id` | alternativ | hostus-Konzept-Id des Ausgangskonzepts |
+| `verbatim` | alternativ | Name, der zuerst über die Auflösung von `/v1/match` aufgelöst wird |
+| `target_space` | ja | Id des Ziel-`sec.`-Referenzraums |
+| `max_hops` | nein | muss `1` sein (Default). Alles andere → `400 INVALID_QUERY` |
+| `include_name_candidates` | nein | schaltet den ausdrücklich **nicht**-relationalen Namensblock frei (Default `false`) |
+
+**Beispiel-Response (`200 OK`, congruent)**
+
+```json
+{
+  "source": {
+    "concept_id": "cdm:concept:b7a352aa-1f73-41f3-a4e3-b24fc1c2cd5f",
+    "canonical": "Abies alba",
+    "authorship": "Mill.",
+    "rank": "SPECIES",
+    "sec": { "id": "87ed3300-…", "title": "Schubert & Vent (eds.) 1990: Exkursionsflora … Rothmaler, 8. Aufl." }
+  },
+  "target_space": { "id": "060afae5-…", "title": "Wisskirchen & Haeupler 1998: Standardliste …" },
+  "entry": { "mode": "concept_id" },
+  "max_hops": 1,
+  "result": "translated",
+  "candidates": [
+    {
+      "concept_id": "cdm:concept:872088a4-95f4-472c-ae79-a29028bb3fbf",
+      "canonical": "Abies alba",
+      "authorship": "Mill.",
+      "rank": "SPECIES",
+      "status": "ACCEPTED",
+      "sec": { "id": "060afae5-…", "title": "Wisskirchen & Haeupler 1998: Standardliste …" },
+      "relation": "congruent",
+      "relation_from_source": "congruent",
+      "direction": "source_to_target",
+      "statement": {
+        "from": "cdm:concept:b7a352aa-…",
+        "relation": "congruent",
+        "to": "cdm:concept:872088a4-…"
+      },
+      "is_equality": true,
+      "hops": 1,
+      "source": "cdm"
+    }
+  ],
+  "requires_review": false,
+  "backbone_versions": { "wcvp": "2026-06-15", "cdm": "2026-08-02" }
+}
+```
+
+#### Nur `congruent` ist eine Gleichsetzung
+
+`is_equality` ist das **einzige** Feld, das als „dasselbe Taxon" gelesen
+werden darf. Es steht auf jedem Kandidaten und ist bei genau einer Relation
+`true`:
+
+| `relation` | Symbol | `is_equality` | Bedeutung |
+|---|---|---|---|
+| `congruent` | ≜ | **`true`** | gleiche Umgrenzung |
+| `not_congruent` | — | `false` | ausdrücklich **nicht** gleich |
+| `includes` | ⊃ | `false` | Quelle ist die **weitere** Umgrenzung |
+| `included_in` | ⊂ | `false` | Quelle ist die **engere** Umgrenzung |
+| `overlaps` | ⊕ | `false` | teilweise Überschneidung, keine Gleichsetzung |
+| `includes_or_included_in_or_overlaps` | ⊂⊃⊕ | `false` | Quelle **legt sich nicht fest**, welche der drei gilt |
+| `pro_parte` | p.p. | `false` | gerichtete Teilaussage über den Namen der From-Seite |
+
+`includes_or_included_in_or_overlaps` wird **nie** auf `overlaps`
+eingeebnet: die Quelle sagt ausdrücklich, dass sie sich nicht festlegt, und
+eine Einebnung würde eine unsichere Aussage still zu einer definiten
+aufwerten. Jeder Kandidat mit `is_equality: false` trägt zusätzlich ein
+deutschsprachiges `note`-Feld, das das in Prosa sagt.
+
+`misapplied` kommt hier nie vor: CDM flaggt diese Zeilen
+`conceptRelationship: false`, weil sie eine Aussage über **Namensverwendung**
+und nicht über Umgrenzungen sind — der Ingest verwirft sie (gezählt und
+bemustert), statt sie unter derselben Spalte mitzuführen.
+
+#### Richtung: `A includes B` ist nicht `B included_in A`
+
+hostus speichert eine Relation **in der Richtung, in der die Quelle sie
+nennt**, und legt keine gespiegelte Zeile an. Die Antwort macht das sichtbar:
+
+- `statement` ist die gespeicherte Aussage, wortwörtlich — geordnetes Paar
+  plus Relation.
+- `direction` ist `source_to_target`, wenn das Ausgangskonzept die
+  From-Seite ist, sonst `target_to_source`.
+- `relation_from_source` ist dieselbe Kante quellenseitig gelesen (bei einer
+  eingehenden `includes`-Kante also `included_in`).
+- Bei `pro_parte` **fehlt `relation_from_source` ganz**, wenn die Kante
+  eingehend ist: eine gerichtete Aussage über den Namen der Gegenseite hat
+  keine sinnvolle Umkehrung, und hostus erfindet keine. Das `note`-Feld sagt
+  das.
+
+Ein Konzeptpaar kann zwei **verschiedene** Relationstypen tragen (der
+Primärschlüssel von `concept_relation` ist
+`(from_concept, to_concept, relation, source)`). Beide erscheinen als eigene
+Kandidaten; sie werden nicht zusammengefasst.
+
+#### Genau ein Hop
+
+`/v1/translate` folgt **genau einer** Relationskante. Eine transitive Kette
+ist über das gemessene Vokabular nicht allgemein gültig: `congruent ∘
+includes` wäre vertretbar, `overlaps ∘ overlaps` sagt gar nichts (zwei
+Umgrenzungen, die beide eine dritte überlappen, können disjunkt sein), und
+`⊂⊃⊕ ∘ irgendwas` ist per Konstruktion undefiniert. Deshalb komponiert
+hostus nicht. `max_hops` steht auf jeder Antwort; ein Request mit
+`max_hops != 1` wird mit `400 INVALID_QUERY` **benannt abgelehnt**, statt
+still eine Ein-Hop-Antwort zu liefern.
+
+#### Keine Relation ist eine Antwort, kein Fehler
+
+```json
+{
+  "result": "no_relation_recorded",
+  "candidates": [],
+  "note": "Keine erfasste Relation in den Zielreferenzraum. Das bedeutet NICHT, dass keine Beziehung besteht — nur, dass keine Quelle eine erfasst hat.",
+  "…": "…"
+}
+```
+
+`candidates` wird in diesem Fall als **leeres Array** ausgeliefert, nicht
+weggelassen, und `result` sagt den Ausgang ausdrücklich. Ein
+Namenstreffer wird **nie** ersatzweise als Übersetzung präsentiert — genau
+diese Verwechslung soll UC6 verhindern.
+
+Wer trotzdem einen Anhaltspunkt braucht, setzt
+`include_name_candidates: true`. Namensgleiche Konzepte des Zielraums
+erscheinen dann unter dem eigenen Schlüssel `unrelated_name_candidates`,
+jeder Eintrag mit `requires_review: true`, ohne jedes Relationsfeld, und die
+Antwort als Ganzes trägt `requires_review: true`. Sobald eine echte Relation
+existiert, entfällt der Block.
+
+#### Einstieg über einen Namen
+
+Mit `verbatim` statt `concept_id` läuft die Auflösung durch dieselbe Logik
+wie `POST /v1/match`. `entry` protokolliert das Ergebnis
+(`mode`, `verbatim`, `match_type`, `confidence`, `note`). Ein
+**Fuzzy-Treffer setzt `requires_review: true`** auf der gesamten Antwort —
+ausnahmslos. Ein Name, der sich nicht auf **genau ein** Konzept auflösen
+lässt (kein Treffer oder mehrdeutig über mehrere `sec.`-Räume), liefert
+`422 UNRESOLVABLE`.
+
+#### Fehlerfälle
+
+| Fall | Status | Code |
+|---|---|---|
+| Body nicht parsbar; keins oder beides von `concept_id`/`verbatim`; `target_space` fehlt; `max_hops != 1` | `400` | `INVALID_QUERY` |
+| Unbekannte `concept_id` **oder** unbekannter `target_space` | `404` | `NOT_FOUND` |
+| `verbatim` nicht auf genau ein Konzept auflösbar | `422` | `UNRESOLVABLE` |
+
+Ein unbekannter `target_space` ist ausdrücklich ein `404` und keine leere
+Antwort: ein Tippfehler im Zielraum darf nicht wie „keine Relation erfasst"
+aussehen.
+
 ## Fehlerformat
 
 Alle Fach-Endpunkte liefern Fehler einheitlich als JSON:
@@ -397,7 +588,7 @@ Alle Fach-Endpunkte liefern Fehler einheitlich als JSON:
 | `RATE_LIMIT_EXCEEDED` | 429  | Rate-Limit überschritten                                |
 | `UPSTREAM_OVERLOADED` | 503  | Load-Shedding aktiv                                     |
 | `NOT_FOUND`           | 404  | Unbekannte Concept-/Xref-ID                             |
-| `UNRESOLVABLE`        | —    | Kein HTTP-Fehler: `POST /v1/match` rendert eine nicht auflösbare Anfrage als normales `200`-Ergebnis mit `match_type: "unresolvable"`, siehe oben |
+| `UNRESOLVABLE`        | 422  | `POST /v1/translate`: `verbatim` lässt sich nicht auf genau ein Konzept auflösen. Bei `POST /v1/match` **kein** HTTP-Fehler — dort ist eine nicht auflösbare Anfrage ein normales `200`-Ergebnis mit `match_type: "unresolvable"`, siehe oben |
 | `GBIF_TIMEOUT`        | 504  | GBIF-Anfrage Timeout (nur Ingest-/Enrichment-Pfad)      |
 | `GBIF_UNAVAILABLE`    | 502  | GBIF nicht erreichbar (nur Ingest-/Enrichment-Pfad)     |
 | `INTERNAL_ERROR`      | 500  | Interner Serverfehler                                   |

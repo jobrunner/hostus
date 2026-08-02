@@ -139,18 +139,15 @@ func TestClassifyNomStatus_PendingProposalsAreMasked(t *testing.T) {
 	}
 }
 
-// TestClassifyNomStatus_BotanicalOpenItems: the five values that need a
-// botanical, not a technical, decision must be surfaced as open items and
-// never classified silently. ", not validly publ.?" (8, literal question
-// mark) is the sharp one — plain containment would read it as the 18.623
-// "not validly publ." defect although the SOURCE itself is unsure.
+// TestClassifyNomStatus_BotanicalOpenItems: the values that need a botanical,
+// not a technical, decision must be surfaced as open items and never
+// classified silently.
 func TestClassifyNomStatus_BotanicalOpenItems(t *testing.T) {
 	for _, raw := range []string{
 		", sensu auct.",
 		", tentatively listed as a synonym.",
 		", fossil name.",
 		", isonym",
-		", not validly publ.?",
 	} {
 		v := domain.ClassifyNomStatus(raw)
 		if v.Judgement != domain.JudgementUnclassified {
@@ -163,6 +160,31 @@ func TestClassifyNomStatus_BotanicalOpenItems(t *testing.T) {
 
 	if got := len(domain.BotanicalOpenItems()); got != 5 {
 		t.Fatalf("BotanicalOpenItems() has %d entries, want the 5 named in Task 1 §5.3", got)
+	}
+}
+
+// TestClassifyNomStatus_UncertaintyMarkerIsGeneric: a literal question mark
+// means the SOURCE is unsure, and that has to be treated the same way
+// wherever it appears. All three measured values carrying "?" take the same
+// path — including ", nom. superfl. ?" (1 name), which the bare "superfl"
+// rule would otherwise call disqualifying: the identical epistemic situation
+// as ", not validly publ.?" (8), the opposite verdict.
+func TestClassifyNomStatus_UncertaintyMarkerIsGeneric(t *testing.T) {
+	for _, raw := range []string{", not validly publ.?", ", an nom. valid.?", ", nom. superfl. ?"} {
+		v := domain.ClassifyNomStatus(raw)
+		if v.Judgement != domain.JudgementUnclassified {
+			t.Errorf("ClassifyNomStatus(%q) = %q, want %q", raw, v.Judgement, domain.JudgementUnclassified)
+		}
+		if len(v.Matched) == 0 || v.Matched[0].Fragment != "?" || !v.Matched[0].OpenItem {
+			t.Errorf("ClassifyNomStatus(%q) matched %v, want the uncertainty marker first", raw, v.Matched)
+		}
+	}
+
+	// The marker overrides the verdict but does NOT hide what else fired:
+	// the reason still names the token the cell would have been judged on.
+	v := domain.ClassifyNomStatus(", nom. superfl. ?")
+	if len(v.Matched) != 2 || v.Matched[1].Fragment != "superfl" {
+		t.Fatalf("matched = %v, want the marker plus the token it overrides", v.Matched)
 	}
 }
 
@@ -350,6 +372,11 @@ func TestRankSynonyms_UnclassifiedIsWithheldAndCounted(t *testing.T) {
 	if sum.Total != 3 || sum.Publishable != 1 {
 		t.Fatalf("summary = %+v, want 3 total / 1 publishable", sum)
 	}
+	// The one publishable name rests on an ABSENT status, not on a
+	// soundness assertion — the audit trail has to say so.
+	if sum.Absent != 1 {
+		t.Fatalf("summary absent count = %d, want 1", sum.Absent)
+	}
 	if sum.Excluded[domain.ExclusionUnclassifiedStatus] != 2 {
 		t.Fatalf("summary unclassified count = %d, want 2", sum.Excluded[domain.ExclusionUnclassifiedStatus])
 	}
@@ -402,9 +429,11 @@ func TestRankSynonyms_StatusExclusionOutranksRank(t *testing.T) {
 	}
 }
 
-// TestRankSynonyms_DeterministicAcrossShuffledInput: identical input in any
+// TestRankSynonyms_DeterministicAcrossShuffledInput: identical input in ANY
 // order must yield identical output — the tiebreaker is total, not merely
-// stable.
+// stable. All 120 permutations of the five candidates are checked; cyclic
+// shifts alone would not exercise the comparator hard enough to notice a
+// merely-stable sort.
 func TestRankSynonyms_DeterministicAcrossShuffledInput(t *testing.T) {
 	items := []domain.SynonymCandidate{
 		{NameID: "n1", Homotypic: boolPtr(true)},
@@ -415,11 +444,30 @@ func TestRankSynonyms_DeterministicAcrossShuffledInput(t *testing.T) {
 	}
 	want := ids(domain.RankSynonyms(items, domain.SynonymOptions{}))
 
-	for shift := 1; shift < len(items); shift++ {
-		shuffled := append(append([]domain.SynonymCandidate{}, items[shift:]...), items[:shift]...)
-		if got := ids(domain.RankSynonyms(shuffled, domain.SynonymOptions{})); !reflect.DeepEqual(got, want) {
-			t.Fatalf("shift %d: order = %v, want %v", shift, got, want)
+	seen := 0
+	permute(items, 0, func(p []domain.SynonymCandidate) {
+		seen++
+		in := ids(domain.RankSynonyms(p, domain.SynonymOptions{}))
+		if !reflect.DeepEqual(in, want) {
+			t.Fatalf("permutation %v: order = %v, want %v", idsOf(p), in, want)
 		}
+	})
+	if seen != 120 {
+		t.Fatalf("checked %d permutations, want 120", seen)
+	}
+}
+
+// permute calls fn for every permutation of items. It restores items before
+// returning, so the caller's slice is unchanged.
+func permute(items []domain.SynonymCandidate, i int, fn func([]domain.SynonymCandidate)) {
+	if i == len(items) {
+		fn(items)
+		return
+	}
+	for j := i; j < len(items); j++ {
+		items[i], items[j] = items[j], items[i]
+		permute(items, i+1, fn)
+		items[i], items[j] = items[j], items[i]
 	}
 }
 
@@ -441,8 +489,12 @@ func TestRankSynonyms_Empty(t *testing.T) {
 		t.Fatalf("RankSynonyms(nil) = %v, want empty", got)
 	}
 	sum := domain.SummarizeSynonyms(nil)
-	if sum.Total != 0 || sum.Publishable != 0 || len(sum.Excluded) != 0 || len(sum.UnclassifiedStatuses) != 0 {
+	if sum.Total != 0 || sum.Publishable != 0 || sum.Absent != 0 || len(sum.Excluded) != 0 || len(sum.UnclassifiedStatuses) != 0 {
 		t.Fatalf("SummarizeSynonyms(nil) = %+v, want zero", sum)
+	}
+	// Excluded is always allocated, so Task 3 can increment into it.
+	if sum.Excluded == nil {
+		t.Fatal("SummarizeSynonyms(nil).Excluded is nil, want an empty map")
 	}
 }
 
@@ -481,6 +533,14 @@ func TestNomStatusVerdict_Reason(t *testing.T) {
 			t.Errorf("disqualifying reason = %q, want it to contain %q", got, want)
 		}
 	}
+}
+
+func idsOf(items []domain.SynonymCandidate) []string {
+	out := make([]string, 0, len(items))
+	for _, c := range items {
+		out = append(out, c.NameID)
+	}
+	return out
 }
 
 func ids(rel []domain.SynonymRelevance) []string {

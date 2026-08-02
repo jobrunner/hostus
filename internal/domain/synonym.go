@@ -73,23 +73,41 @@ type NomStatusRule struct {
 	Note string
 }
 
+// nomStatusUncertainty is the ONE rule that overrides everything, including a
+// disqualifying token: a literal question mark means the SOURCE ITSELF is
+// unsure, and hostus does not resolve an uncertainty WCVP declined to
+// resolve. It is deliberately generic rather than tied to one value.
+//
+// Measured: 13 names carry "?" in nom_status, across exactly three values —
+// ", not validly publ.?" (8), ", an nom. valid.?" (4) and
+// ", nom. superfl. ?" (1). An earlier revision guarded only the first of
+// them, which classified ", nom. superfl. ?" as disqualifying via the bare
+// "superfl" rule: the identical epistemic situation, the opposite verdict.
+// One name's worth of blast radius, but the principle has to hold, so the
+// marker is now matched wherever it appears.
+//
+// Unlike a guard the marker is NOT masked out: the other rules still run and
+// still appear in Matched, so the reason shows what the cell would have said
+// had the source been sure. Only the verdict is overridden — always towards
+// unclassified, i.e. withheld, never towards publishable.
+var nomStatusUncertainty = NomStatusRule{
+	Fragment: "?", Judgement: JudgementUnclassified, Names: 13, OpenItem: true,
+	Note: "literal question mark: the source itself is unsure; covers ', not validly publ.?' (8), ', an nom. valid.?' (4), ', nom. superfl. ?' (1)",
+}
+
 // nomStatusGuards run BEFORE nomStatusRules and their match is MASKED OUT of
 // the cell, so a broader token cannot fire on text a narrower rule has
 // already claimed. Two kinds live here:
 //
-//   - the five botanical open items (OpenItem), including
-//     ", not validly publ.?" (8 names, literal question mark) which plain
-//     containment would otherwise fold into the 18.623 "not validly publ."
-//     defect although the source itself is unsure; and
+//   - botanical open items (OpenItem) — see BotanicalOpenItems; and
 //   - pending nomenclatural PROPOSALS, where the decision has not been
 //     taken: "nom. cons. prop." would read as conserved, "nom. rej. prop."
 //     as rejected.
 //
 // A guard never overrides a defect found elsewhere in the same cell — see
-// ClassifyNomStatus's precedence.
+// ClassifyNomStatus's precedence. The uncertainty marker above is the sole
+// exception, and it is not a guard.
 var nomStatusGuards = []NomStatusRule{
-	{Fragment: "not validly publ.?", Judgement: JudgementUnclassified, Names: 8, OpenItem: true,
-		Note: "literal question mark: the source itself is unsure whether the name was validly published"},
 	{Fragment: "sensu auct.", Judgement: JudgementUnclassified, Names: 1117, OpenItem: true,
 		Note: "a misapplication, not a nomenclatural defect — whether UC5 excludes it is a botanical decision"},
 	{Fragment: "tentatively listed as a synonym", Judgement: JudgementUnclassified, Names: 290, OpenItem: true,
@@ -119,6 +137,12 @@ var nomStatusGuards = []NomStatusRule{
 //     (7) are conserved spellings, the opposite verdict from "orth. var.".
 //   - bare "descr." (1.411) — ", descr. ampl." (2) is an amplified
 //     description, not a defect.
+//
+// The clearest PROMOTABLE candidates in the unclassified tail are
+// ", typ. cons." (4) and ", nom. & typ. cons." (2): they assert a CONSERVED
+// TYPE and contain neither "nom. cons." nor "type", so they fall through to
+// unclassified and are withheld. Withheld is the safe direction and one
+// table row promotes them once a botanist confirms the reading.
 var nomStatusRules = []NomStatusRule{
 	{Fragment: "illeg", Judgement: JudgementDisqualifying, Names: 49705,
 		Note: "illegitimate; covers nom. illeg. homonym. post. (36.424), nom. illeg. superfl. (10.768), nom. illeg. (2.405)"},
@@ -142,7 +166,7 @@ var nomStatusRules = []NomStatusRule{
 		Note: "type-citation defect; every one of the 1.099 cells containing 'type' states a defect (verified by grouping all distinct values)"},
 	{Fragment: "nom. rej", Judgement: JudgementDisqualifying, Names: 894,
 		Note: "rejected; merges nom. rej. (831) and nom. rejic. (10) — the '. prop.' proposals are masked by a guard"},
-	{Fragment: "contrary to art", Judgement: JudgementDisqualifying, Names: 416,
+	{Fragment: "contrary to art", Judgement: JudgementDisqualifying, Names: 432,
 		Note: "published contrary to a named ICN/ICBN article"},
 	{Fragment: "nom. provis", Judgement: JudgementDisqualifying, Names: 363,
 		Note: "provisional name — not validly published"},
@@ -152,7 +176,7 @@ var nomStatusRules = []NomStatusRule{
 		Note: "combination not made / not validly published"},
 	{Fragment: "sphalm", Judgement: JudgementDisqualifying, Names: 199,
 		Note: "sphalmate — a printing error, not a name"},
-	{Fragment: "nom. utique rej", Judgement: JudgementDisqualifying, Names: 150,
+	{Fragment: "nom. utique rej", Judgement: JudgementDisqualifying, Names: 151,
 		Note: "utterly rejected; the '. prop.' proposals are masked by a guard"},
 	{Fragment: "not effectively publ", Judgement: JudgementDisqualifying, Names: 66,
 		Note: "not effectively published; merges publ./published spellings"},
@@ -179,22 +203,30 @@ var nomStatusRules = []NomStatusRule{
 		Note: "conserved spelling; also covers nom. & orth. cons. (7)"},
 }
 
-// NomStatusRules returns the complete rule table — guards first, then the
-// containment rules — as a copy, so callers (and the docs generator) can
-// render the token/count/note table without reaching into package state.
+// NomStatusRules returns the complete rule table — the uncertainty marker,
+// then the guards, then the containment rules — as a copy, so callers (and
+// the docs generator) can render the token/count/note table without reaching
+// into package state.
 func NomStatusRules() []NomStatusRule {
-	out := make([]NomStatusRule, 0, len(nomStatusGuards)+len(nomStatusRules))
-	out = append(out, nomStatusGuards...)
-	out = append(out, nomStatusRules...)
+	out := make([]NomStatusRule, len(nomStatusTable))
+	copy(out, nomStatusTable)
 	return out
 }
+
+// nomStatusTable is the concatenated rule table in presentation order. It
+// exists so NomStatusRules can hand out a copy without recomputing the
+// concatenation on every call.
+var nomStatusTable = append(
+	append([]NomStatusRule{nomStatusUncertainty}, nomStatusGuards...),
+	nomStatusRules...,
+)
 
 // BotanicalOpenItems returns the values whose UC5 treatment is a BOTANICAL,
 // not a technical, decision (Task 1 §5.3). They are classified
 // JudgementUnclassified on purpose: hostus surfaces them instead of guessing
 // a verdict a botanist has not given.
 func BotanicalOpenItems() []NomStatusRule {
-	var out []NomStatusRule
+	out := []NomStatusRule{nomStatusUncertainty}
 	for _, r := range nomStatusGuards {
 		if r.OpenItem {
 			out = append(out, r)
@@ -243,14 +275,16 @@ func (v NomStatusVerdict) Reason() string {
 // ClassifyNomStatus classifies a raw `nom_status` cell by token containment.
 //
 // Precedence, in order:
-//  1. any disqualifying token in the guard-masked cell wins — a recorded
-//     defect is a defect even when the cell also asserts something sound
+//  1. the uncertainty marker "?" wins over everything — the source itself is
+//     unsure, so hostus withholds rather than resolve it (nomStatusUncertainty);
+//  2. any disqualifying token in the guard-masked cell — a recorded defect is
+//     a defect even when the cell also asserts something sound
 //     (", nom. cons., nom. illeg.") or carries an open-item token
 //     (", nom. illeg., later homonym of a fossil name.");
-//  2. otherwise a guard match (botanical open item or pending proposal)
+//  3. otherwise a guard match (botanical open item or pending proposal)
 //     yields JudgementUnclassified;
-//  3. otherwise an acceptable token yields JudgementAcceptable;
-//  4. otherwise JudgementUnclassified — the long tail, with no rule matched.
+//  4. otherwise an acceptable token yields JudgementAcceptable;
+//  5. otherwise JudgementUnclassified — the long tail, with no rule matched.
 //
 // An empty cell yields JudgementAbsent.
 func ClassifyNomStatus(raw string) NomStatusVerdict {
@@ -261,6 +295,10 @@ func ClassifyNomStatus(raw string) NomStatusVerdict {
 	}
 
 	rest := v.Normalized
+	uncertain := strings.Contains(rest, nomStatusUncertainty.Fragment)
+	if uncertain {
+		v.Matched = append(v.Matched, nomStatusUncertainty)
+	}
 	guarded := false
 	for _, g := range nomStatusGuards {
 		if strings.Contains(rest, g.Fragment) {
@@ -285,6 +323,8 @@ func ClassifyNomStatus(raw string) NomStatusVerdict {
 	v.Matched = append(v.Matched, acceptable...)
 
 	switch {
+	case uncertain:
+		v.Judgement = JudgementUnclassified
 	case len(disqualified) > 0:
 		v.Judgement = JudgementDisqualifying
 	case guarded:
@@ -417,8 +457,18 @@ type SynonymRelevance struct {
 //  2. exclude on rank, only for the ranks the caller listed;
 //  3. homotypic before unknown before heterotypic (see Typification);
 //  4. the basionym leads its typification block;
-//  5. NameID as a total tiebreaker, so any permutation of the same input
-//     yields byte-identical output.
+//  5. NameID as the final tiebreaker.
+//
+// PRECONDITION: NameIDs must be UNIQUE within items. Under that precondition
+// the sort key is a TOTAL order and any permutation of the same input yields
+// byte-identical output. It is not merely stable — see
+// TestRankSynonyms_TotalOrder, which permutes exhaustively. Duplicate NameIDs
+// break the guarantee: the comparator then reports the pair as neither less
+// nor greater and sort.SliceStable falls back to input order, so a shuffled
+// input can come back shuffled. The precondition is free to satisfy —
+// concept_name's primary key is (concept_id, name_id), and the measured
+// corpus contains zero duplicate pairs — but it is a precondition, not an
+// invariant this package can enforce.
 //
 // RankSynonyms is pure and does not mutate its input.
 func RankSynonyms(items []SynonymCandidate, opts SynonymOptions) []SynonymRelevance {
@@ -479,8 +529,15 @@ func judgeSynonym(c SynonymCandidate, excludedRanks map[Rank]bool) SynonymReleva
 // values hostus could not classify. Task 3 renders it into the response so
 // an unclassified value is visible rather than silently dropped.
 type SynonymExclusionSummary struct {
-	Total                int
-	Publishable          int
+	Total       int
+	Publishable int
+	// Absent counts the publishable synonyms whose nom_status was EMPTY.
+	// "Nothing was recorded" is not "checked and found clean", so the audit
+	// trail has to say how much of a publication list rests on an absence
+	// rather than on a soundness assertion.
+	Absent int
+	// Excluded is always non-nil, even when nothing was excluded, so Task 3
+	// can increment into it without a nil-map panic.
 	Excluded             map[SynonymExclusion]int
 	UnclassifiedStatuses []string
 }
@@ -489,15 +546,15 @@ type SynonymExclusionSummary struct {
 // the distinct raw nom_status values that fell through to unclassified,
 // sorted for determinism.
 func SummarizeSynonyms(rel []SynonymRelevance) SynonymExclusionSummary {
-	sum := SynonymExclusionSummary{Total: len(rel)}
+	sum := SynonymExclusionSummary{Total: len(rel), Excluded: map[SynonymExclusion]int{}}
 	seen := map[string]bool{}
 	for _, r := range rel {
 		if r.Publishable {
 			sum.Publishable++
+			if r.Status.Judgement == JudgementAbsent {
+				sum.Absent++
+			}
 			continue
-		}
-		if sum.Excluded == nil {
-			sum.Excluded = map[SynonymExclusion]int{}
 		}
 		sum.Excluded[r.Exclusion]++
 		if r.Exclusion == ExclusionUnclassifiedStatus && !seen[r.Candidate.NomStatus] {

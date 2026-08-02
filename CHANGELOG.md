@@ -28,12 +28,23 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 - **`domain.Typification` ist dreiwertig.** `concept_name.homotypic` ist
   auf 692.941 Zeilen `NULL` — das heißt *unbekannt*, nicht „heterotypisch“.
   Sortierung: bekannt homotypisch → unbekannt → bekannt heterotypisch, und
-  welcher der drei Fälle vorlag, steht im Ergebnis.
+  welcher der drei Fälle vorlag, steht im Ergebnis. **Hinweis:** im
+  aktuellen Index gibt es keine einzige `homotypic = 0`-Zeile, `heterotypic`
+  ist heute also unerreichbar (siehe Task-2-Report §4).
+- **Ein literales Fragezeichen schlägt jede andere Regel.** Ist die Quelle
+  selbst unsicher, löst hostus die Unsicherheit nicht auf: alle 13 Namen mit
+  `?` im `nom_status` (`", not validly publ.?"` 8, `", an nom. valid.?"` 4,
+  `", nom. superfl. ?"` 1) werden `unclassified`. Die Regel ist bewusst
+  generisch — eine wertspezifische Variante stufte `", nom. superfl. ?"`
+  über das blanke `superfl` als `disqualifying` ein und bewertete damit
+  dieselbe erkenntnistheoretische Lage gegenteilig.
 - **`domain.BotanicalOpenItems`** benennt die fünf Werte, die eine
-  botanische statt einer technischen Entscheidung brauchen (`sensu auct.`
-  1.117, `tentatively listed as a synonym` 290, `fossil name` 274,
-  `isonym` 13, `not validly publ.?` 8) — sie werden ausgewiesen, nicht
-  geraten.
+  botanische statt einer technischen Entscheidung brauchen (Fragezeichen 13,
+  `sensu auct.` 1.117, `tentatively listed as a synonym` 290, `fossil name`
+  274, `isonym` 13) — sie werden ausgewiesen, nicht geraten.
+- `SummarizeSynonyms` zählt zusätzlich `Absent` (wie viele publizierbare
+  Synonyme allein auf einem *fehlenden* Status beruhen); `Excluded` ist
+  immer allokiert.
 - Rang-Ausschluss (`VARIETY`, `SUBVARIETY`, `FORM`, `SUBFORM`) ist
   **Aufrufer-gesteuert** (`domain.RanksBelowSpecies()`), nicht fest
   verdrahtet.

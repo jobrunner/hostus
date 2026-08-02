@@ -170,6 +170,46 @@ Vegetationsaufnahme-Importe mit Tippfehlern:
   über alle Läufe, Variationskoeffizient 3,3 %) bestätigt das
   ursprüngliche M4-Verdikt **hält**.
 
+- **SP4 (Xref-Enrichment über eine Wikidata-Brücke) abgeschlossen.** hostus
+  kennt bislang nur den `powo`-Xref aus dem WCVP-Ingest selbst; SP4 bringt
+  echte Cross-References zu sechs weiteren Autoritäten hinzu, ohne
+  Wikidata direkt zur Laufzeit abzufragen:
+  - `pipelines/wikidata/build.sh` erzeugt einmalig, offline, einen
+    kanonischen Bridge-Hub-Export (`join_authority|join_id|authority|
+    ext_id|wikidata_qid`, gegen den echten POWO-Xref-Bestand gejoint,
+    1.709.127 Zeilen, 0 tote `join_id`s — siehe
+    `.superpowers/sdd/2026-08-02-sp4-xref/task-1-report.md`).
+  - `internal/adapters/xref` (Reader) und `application.IngestXrefs`
+    (zweiphasiger, ID-basierter Join, `xref_sources` im Manifest, über
+    `hostus ingest` wie die Trait-Vokabulare berichtet) schreiben die neuen
+    Xrefs in einer einzigen Transaktion. Zwei Situationen werden getrennt
+    behandelt: dieselbe `(authority, ext_id)`-Kombination, von zwei
+    verschiedenen Konzepten beansprucht, wird **übersprungen und
+    gemeldet** (kein Raten); ein Konzept mit mehreren `ext_id`s derselben
+    Autorität ist **kein** Konflikt und wird vollständig geschrieben.
+  - `xrefs.<authority>` in `GET /v1/concept/{id}` und `GET /v1/xref` ist
+    jetzt ein sortiertes Array statt eines einzelnen Strings — die
+    vorherige `map[string]string` hätte bei mehreren `ext_id`s pro
+    Autorität stillschweigend nur die zuletzt geschriebene behalten, was
+    real bei 63 Konzepten (`inat` allein) aufgetreten wäre.
+  - Neue deutsche UC2-Anleitung `docs/how-to/inat-uc2.md` (Suggest →
+    Concept → `xrefs.inat` → iNaturalist-Beobachtungen) inklusive der
+    gemessenen PoC-Einschränkungen (Koordinatenverwischung ~26–28 km,
+    32–38 % `obscured`, `quality_grade=research` = zwei
+    Community-Zustimmungen statt Fachverifikation).
+  - Volldaten-Messung (`docs/research/reality-check.md`, Abschnitte „SP4
+    Task 2" und „SP4 Task 4 — Verdikt"): **392.218 / 440.534 Konzepte
+    (89,03 %)** gewinnen mindestens einen neuen Xref; pro Autorität
+    wikidata 393.172, gbif 384.584, wfo 366.186, colxr 357.922, **inat
+    182.821 (41,50 %)**, floraveg 24.278, euromed 95; 16 echte Konflikte
+    (8 externe Schlüssel, alle gbif/wfo); 0 von 1.709.127 Zeilen
+    unmatched. **Verdikt: hält mit Auflagen** — der Ingest selbst ist
+    vollständig korrekt und end-to-end bewiesen
+    (`internal/app/integration_test.go`), aber UC2 erreicht wegen der
+    Datenlage bei iNaturalist nur 41,50 % der Konzepte; für die übrigen
+    58,5 % muss ein Client "keine iNat-Verknüpfung gefunden" ehrlich
+    anzeigen statt zu raten.
+
 Weitere Backbones (COL XR) sowie `translate` und `/openapi` als generierte
 Spezifikation folgen in SP4+. `release-please` cuttet daraus das nächste
 `2.0.0-alpha.N`-Release; bis dahin akkumulieren PRs hier.

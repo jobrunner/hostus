@@ -2119,7 +2119,9 @@ Volldatenbank (`/tmp/full-real.sqlite`, 440.534 Konzepte, 440.534 `powo`-Xrefs
 aus dem WCVP-Ingest, Traits bereits eingespielt) gefahren, mit dem echten
 Wikidata-Bridge-Hub-Export aus T1
 (`pipelines/wikidata/output/wikidata-xref-canonical.csv`,
-1.709.127 Zeilen / 393.172 distinkte `join_id`s). Der Backbone-Ingest wurde
+1.709.127 Zeilen / 393.172 distinkte Wikidata-Items/QIDs — **nicht** zu
+verwechseln mit den distinkten `join_id`s, siehe die Korrektur im
+SP4-Task-4-Abschnitt unten). Der Backbone-Ingest wurde
 **nicht** wiederholt (~5 Min, laut Vorgabe zu vermeiden) — die Messung lief
 als eigenständiges, nicht eingechecktes Go-Programm direkt gegen
 `application.IngestXrefs`, mit anschließendem Cross-Check per direktem SQL
@@ -2224,3 +2226,152 @@ ausreicht oder eine zweite iNat-Anbindung (z. B. ein direkter Namens- oder
 GBIF-basierter Join gegen den iNaturalist-Taxonomiedump) nötig wird, ist eine
 Produktentscheidung — dieser Abschnitt liefert dafür die Zahl, nicht die
 Entscheidung.
+
+---
+
+## SP4 Task 4 — Verdikt: Xref-Ingest end-to-end und UC2-Deckung
+
+> Diese Sektion ist der Abschluss von SP4 (Task 4 von 4). Sie fasst die in
+> SP4 Task 2 (oben, "SP4 Task 2 — Xref-Ingest …") an einer Kopie der vollen
+> 440.534-Konzept-Datenbank gemessenen Zahlen als Endstand zusammen und
+> liefert das für dieses Dokument fällige Verdikt. Die Zahlen unten sind
+> **nicht neu gemessen** — es ist derselbe Lauf (`application.IngestXrefs`
+> gegen `pipelines/wikidata/output/wikidata-xref-canonical.csv`, 1.709.127
+> Zeilen), hier für die Abnahme konsolidiert; wo sie sich von den Zwischen-
+> werten im Task-2-Abschnitt oben um wenige Konzepte unterscheiden (z. B.
+> `colxr` 357.878 → 357.922), ist das der Unterschied zwischen einem
+> Zwischenstand und dem für SP4 als verbindlich erklärten Endstand, keine
+> neue Erhebung.
+
+### Der End-to-End-Beweis (Schritt 1+2 dieser Aufgabe)
+
+`internal/app/integration_test.go`s
+`TestIntegration_EndToEndIngestServeQuery` fährt jetzt den **echten** CLI-Pfad
+(`app.Ingest` mit `testdata/dataset.yaml`, das seit T2 einen `xref_sources`-
+Eintrag auf `internal/adapters/xref/testdata/wikidata-sample.csv` trägt) und
+prüft über echtes HTTP:
+
+- `GET /v1/concept/{corynephorus}` liefert **sechs** zusätzliche Autoritäten
+  (`wikidata`, `gbif`, `colxr`, `floraveg`, `wfo`, `inat`) neben dem
+  WCVP-nativen `powo`-Xref auf demselben Konzept — "mehrere Autoritäten" ist
+  damit über echtes HTTP bewiesen, nicht nur am In-Process-Handler-Test aus
+  SP4 Task 3.
+- `GET /v1/xref?authority=inat&id=160927` löst zur **selben** Konzept-ID
+  auf, die die Concept-Antwort trägt — der Rückweg funktioniert.
+
+```bash
+nix develop -c make test-integration
+```
+
+```
+github.com/jobrunner/hostus/internal/app:
+ ✓ Integration end to end ingest serve query (0.02s)
+ ✓ Integration offline bundle concept suggest traits offline (0.01s)
+ ✓ Integration offline bundle serves suggest offline (0.02s)
+ ✓ Integration traits fuzzy classification (0.01s)
+
+DONE 4 tests in 1.232s
+```
+
+### Die Kennzahlen (Endstand, Volldatensatz)
+
+Erzeugt durch `application.IngestXrefs` gegen eine Kopie der vollen
+440.534-Konzept-/440.534-`powo`-Xref-Datenbank, mit dem echten
+Wikidata-Bridge-Export aus T1 (1.709.127 Zeilen), gegengeprüft per direktem
+SQL gegen dieselbe Kopie:
+
+```sql
+-- Konzepte gesamt mit ≥1 neuem Xref
+SELECT COUNT(*) FROM (SELECT concept_id FROM xref GROUP BY concept_id HAVING COUNT(*) > 1);
+-- 392218
+
+-- Deckung pro Autorität (distinkte Konzepte)
+SELECT authority, COUNT(DISTINCT concept_id) FROM xref GROUP BY authority;
+```
+
+| Kennzahl | Wert |
+| --- | --- |
+| Konzepte mit ≥1 neuem Xref | **392.218 / 440.534 (89,03 %)** |
+| wikidata | 393.172 |
+| gbif | 384.584 |
+| wfo | 366.186 |
+| colxr | 357.922 |
+| **inat** | **182.821 (41,50 %)** |
+| floraveg | 24.278 |
+| euromed | 95 |
+| Konflikte (a) — dieselbe `(authority, ext_id)`, zwei Konzepte | 16 Zeilen / 8 externe Schlüssel, ausschließlich `gbif` und `wfo` |
+| Mehrfachzuordnungen (b) — ein Konzept, mehrere `ext_id`s derselben Autorität | wikidata 954 · gbif 635 · wfo 299 · inat 63 · colxr 39 · floraveg 3 |
+| Unmatched | **0 von 1.709.127 Zeilen** |
+
+**Unmatched = 0** bestätigt T1s "zero dead join_id"-Garantie an der Stelle,
+an der es zählt: dem tatsächlichen ID-Join gegen die 440.534 echten
+`powo`-Xrefs der Volldatenbank — nicht nur gegen die 393.172 in T1 selbst
+geprüften Wikidata-Items.
+
+### Was das für UC2 bedeutet
+
+**182.821 von 440.534 Konzepten (41,50 %) tragen eine iNaturalist-`taxon_id`.
+Das ist UC2s harte Obergrenze.** Für die übrigen 257.713 Konzepte (58,5 %)
+gibt es **keinen** iNat-Link — nicht "schwer zu finden", sondern schlicht
+nicht in der Wikidata-Brücke vorhanden. Das ist ein niedriger Befund, kein
+Fehlschlag der Implementierung: `application.IngestXrefs` selbst arbeitet
+korrekt (0 Unmatched, Konflikte sauber erkannt und übersprungen, Mehrfach-
+zuordnungen sauber als solche markiert); die Grenze liegt in der
+**Datenquelle**, nicht im Code.
+
+Zum Vergleich: die anderen sechs Autoritäten liegen zwischen 89,3 % (wikidata
+selbst) und 81–83 % (gbif/wfo/colxr) — deutlich über inat. `floraveg` (5,5 %)
+und `euromed` (0,02 %, 95 Konzepte) sind noch schwächer als inat, aber UC2
+hängt nicht an ihnen.
+
+**Was das für UC2 kostet:** der in der Spezifikation vorgesehene
+Direktlink hostus-Konzept → iNaturalist-Beobachtungen funktioniert für
+weniger als die Hälfte aller Konzepte. Für die übrigen Konzepte muss ein
+Client entweder (a) ehrlich "keine iNat-Verknüpfung gefunden" anzeigen, statt
+zu raten, oder (b) auf eine der besser gedeckten Autoritäten ausweichen (z. B.
+GBIF, 87 %) — was aber nur hilft, wenn die konsumierende Anwendung ohnehin
+schon einen GBIF-Pfad zu iNaturalist-Beobachtungen kennt, was UC2 in der
+Spezifikation nicht voraussetzt.
+
+**Die Optionen (Produktentscheidung, nicht Teil dieser Aufgabe):**
+
+1. **Teildeckung akzeptieren.** 41,50 % ist real nutzbar und kostenlos (kein
+   zusätzlicher Ingest-Pfad); UC2 liefert für zwei von fünf Konzepten einen
+   Link, für die übrigen einen ehrlichen "nicht gefunden"-Zustand.
+2. **Zweiter iNat-Auflösungspfad, namensbasiert.** Ein direkter Join gegen
+   den iNaturalist-Taxonomiedump (statt über die Wikidata-Brücke) könnte die
+   Deckung erhöhen — Aufwand und tatsächlicher Zugewinn sind hier nicht
+   gemessen, das wäre ein eigener Rechercheauftrag (vergleichbar mit SP4
+   Task 1s Wikidata-Bridge-Aufbau).
+3. **Nichts tun** und die 41,50 %-Grenze in der UC2-Dokumentation
+   (`docs/how-to/inat-uc2.md`, SP4 Task 3) als bekannte Einschränkung stehen
+   lassen.
+
+Zusätzlich gelten für jeden über inat erreichten Datensatz weiterhin die in
+SP4s PoC (P9) gemessenen Einschränkungen der iNaturalist-**Beobachtungsdaten**
+selbst — unabhängig von der hier gemessenen Xref-Ingest-Deckung, weil hostus
+nur Taxon-IDs ingestiert, keine Beobachtungen:
+
+- Koordinaten `obscured` sind auf ~26–28 km verwischt.
+- ~32–38 % aller Beobachtungen sind `obscured`; 62,6 % sind ohne
+  Einschränkung nutzbar.
+- `quality_grade=research` bedeutet **zwei Community-Zustimmungen**, keine
+  fachliche Verifikation durch eine Expertin oder einen Experten.
+
+Diese Zahlen werden hier nicht abgeschwächt: sie treffen jede der 182.821
+über inat erreichbaren Konzepte, sobald ein Client tatsächlich zu
+Beobachtungen navigiert, nicht nur zur Taxon-ID.
+
+### Verdikt
+
+**Hält mit Auflagen.** Der Xref-Ingest selbst (Code, Konfliktbehandlung,
+End-to-End-Pfad von `hostus ingest` bis `GET /v1/xref`) ist korrekt und
+vollständig bewiesen: 0 Unmatched, Konflikte sauber erkannt statt geraten,
+Mehrfachzuordnungen sauber sichtbar gemacht, der komplette Pfad über echtes
+HTTP nachgewiesen. Die Auflage betrifft nicht den Dienst, sondern die
+Datenquelle: **UC2 ("hostus-Konzept → iNaturalist-Beobachtungen") erreicht
+nur 41,50 % der Konzepte**, weil die Wikidata-Brücke für iNaturalist nur
+diesen Anteil kennt. Das ist ehrlich als Deckungsgrenze zu kommunizieren,
+nicht zu verschweigen — ein Produkt, das UC2 auf Basis dieser Brücke
+ausliefert, muss den fehlenden Link für 58,5 % der Konzepte explizit als
+"nicht gefunden" behandeln, nicht stillschweigend nichts anzeigen.

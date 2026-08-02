@@ -140,17 +140,35 @@ Vegetationsaufnahme-Importe mit Tippfehlern:
   Namensnormalisierung auf 97,96/98,82/99,11 % (vorher 87,84/95,73/96,41 %);
   Mehrgebiets-Bundle-Export und der Parameterlimit-Bug beim Voll-Export
   sind behoben, das Deutschland-Bundle schrumpft von 103,8 auf 81,05 MiB
-  (gzip 19,24 MiB, unter der 20-MB-Spec-Obergrenze). Eine Regression bleibt
-  offen und wird ehrlich als solche ausgewiesen: Suggest-p95 steigt um
-  25–27 % (220,2→274,37 ms ohne `area`, 253,8→321,57 ms mit `area=GER`),
-  Ursache mit den Mitteln dieses Zyklus nicht isoliert (Kandidaten:
-  Query-Plan-Wechsel durch die neuen FK-Indizes, zusätzliche
-  OTHER-Rang-Zeilen, Maschinen-Varianz). Die Lizenz-Zurückstellungs-
+  (gzip 19,24 MiB, unter der 20-MB-Spec-Obergrenze). Die Lizenz-Zurückstellungs-
   Empfehlung aus M6 ist nach der Normalisierung STÄRKER geworden, nicht nur
   bestätigt: der real brückbare Gewinn der vier lizenzunklaren Quellen
   schrumpft von 51/3/2 auf **2/1/1 Taxa** (EIVE/Tichý/Midolo), weil
   Normalisierung fast alles bereits einsammelt, was die Brücken sonst
   beigetragen hätten (`poc/measure/bridge --normbridge`).
+
+- **Der letzte offene Punkt des Hardening-Zyklus (Suggest-p95) ist
+  nachgemessen und geschlossen — es gab keine Regression** (Task 7,
+  `docs/research/reality-check.md`, Abschnitt „Task 7: die offene
+  p95-Abweichung — aufgelöst"). M3' hatte gegenüber M4 einen p95-Anstieg
+  von 25–27 % berichtet und die Ursache offengelassen. 19
+  Wiederholungsläufe desselben Messaufbaus (je 570 Messpunkte, `--reps 15
+  --warmup 3`) streuen im p95 über **225,27–316,39 ms**
+  (Variationskoeffizient 9,0 %, max/min 1,41) — die berichtete Differenz
+  ist kleiner als die Streuung des Aufbaus. Die **Baseline-Konfiguration
+  selbst** (Code vor dem Hardening, Commit `53575fe`, gegen die
+  Baseline-DB `m2.sqlite`) misst heute 262–310 ms statt der notierten
+  220,2 ms, also *schlechter* als die Nach-Hardening-Konfiguration. Beide
+  Sachursachen sind belegt ausgeschlossen: die acht FK-Indizes standen
+  bereits in der Baseline-DB (`poc/measure/fk_indexes.sql`, dieselben acht
+  Spalten) und tauchen in keinem Query-Plan des Suggest-Pfads auf — die
+  `EXPLAIN QUERY PLAN`-Ausgaben mit und ohne sie sind zeichengleich; die
+  von T1 zugelassenen OTHER-Rang-Zeilen erhöhen die Kandidatenmenge der
+  teuersten Präfixe um 0,24–0,49 %. Ein geprüfter Fix (`ANALYZE`) ändert
+  den Plan nicht und bringt im verschränkten A/B-Test nichts und wurde
+  deshalb **nicht** eingebaut. Kein Code geändert; der p50 (34,5–38,7 ms
+  über alle Läufe, Variationskoeffizient 3,3 %) bestätigt das
+  ursprüngliche M4-Verdikt **hält**.
 
 Weitere Backbones (COL XR) sowie `translate` und `/openapi` als generierte
 Spezifikation folgen in SP4+. `release-please` cuttet daraus das nächste

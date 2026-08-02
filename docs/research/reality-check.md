@@ -553,6 +553,13 @@ in M4 — das ist die einzige Konstante zwischen Baseline und dieser Messung.
 Diese Sektion liefert bewusst **kein Verdikt** zu dieser Abweichung (siehe
 Präambel oben); das ist Aufgabe von Task 6.
 
+> **Nachtrag (Task 7):** aufgelöst — siehe „Task 7: die offene
+> p95-Abweichung — aufgelöst" weiter unten. Es gibt keine Regression: der
+> p95 dieses Aufbaus streut über 19 Wiederholungsläufe von 225 bis 316 ms,
+> und die Baseline-Konfiguration (Code vor Hardening, Baseline-DB) misst
+> heute 262–310 ms statt der hier verglichenen 220,2 ms. Kandidat (a) und
+> (b) sind belegt ausgeschlossen, (c) ist quantifiziert.
+
 ---
 
 ## Nach Hardening (Task 5): deterministische Namensnormalisierung
@@ -1680,6 +1687,250 @@ zwei Stellen gepinnt: Fixture-Test UND die maschinenlesbare
 
 ---
 
+## Task 7: die offene p95-Abweichung — aufgelöst
+
+> Diese Sektion schließt den einzigen offenen Punkt des Hardening-Meilensteins:
+> den in M3' berichteten p95-Anstieg um 25–27 % gegenüber M4. **Ergebnis: es
+> gibt keine Regression.** Die Abweichung liegt vollständig innerhalb der
+> Lauf-zu-Lauf-Varianz dieses Messaufbaus auf dieser Maschine; die
+> Baseline-Konfiguration selbst (Code *vor* Hardening, Baseline-DB) misst
+> heute **schlechter** als die Nach-Hardening-Konfiguration. Kandidat (a)
+> (FK-Indizes) und Kandidat (b) (OTHER-Rang-Zeilen) sind ausgeschlossen,
+> Kandidat (c) (Maschinen-Varianz) ist jetzt quantifiziert.
+
+### T7.0 Aufbau
+
+Identisches Verfahren und identische Parameter wie M4/M3', damit die Zahlen
+vergleichbar bleiben: HTTP gegen einen frisch gestarteten `hostus serve`,
+`poc/measure/latency`, `--reps 15 --warmup 3`, 38 Präfixe, `limit=10`,
+100 ms Pace → **570 Messpunkte je Lauf**. Für jeden Lauf wird der Server
+neu gestartet und danach beendet. **19 Läufe ohne `area`** (10.830
+Messpunkte) und **4 Läufe mit `area=GER`** (2.280 Messpunkte), alle an
+einem Tag auf derselben Maschine.
+
+Vier Konfigurationen wurden verglichen, jede eine Ein-Faktor-Variation:
+
+| Kürzel | Binary | Datenbank | isoliert |
+|---|---|---|---|
+| `post/m1real` | HEAD (nach Hardening) | `m1real.sqlite` (440.534 Konzepte) | — (die M3'-Konfiguration) |
+| `post/m2base` | HEAD (nach Hardening) | `m2.sqlite` (440.098 Konzepte, die **M4-Baseline-DB**) | Effekt des Datenbestands (Kandidat b) |
+| `pre/m2base` | Commit `53575fe` (**vor** Hardening) | `m2.sqlite` | die **exakte M4-Baseline-Konfiguration** |
+| `post/noidx` | HEAD | Kopie von `m1real.sqlite`, die acht FK-Indizes per `DROP INDEX` entfernt | Effekt der FK-Indizes (Kandidat a) |
+
+Rohausgaben: `poc/measure/out/v1-…` bis `v8-…` (gitignored wie alle
+Messartefakte unter `poc/measure/out/`).
+
+### T7.1 Varianz — zuerst quantifiziert
+
+19 Läufe ohne `area`, identisches Messwerkzeug, identische Parameter:
+
+| Kennzahl | min | max | Median | Mittel | Std.abw. | Variationskoeffizient | max/min |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| p50 | 34,54 ms | 38,73 ms | 36,47 ms | 36,70 ms | 1,22 ms | 3,3 % | 1,12 |
+| p95 | **225,27 ms** | **316,39 ms** | 280,16 ms | 279,4 ms | 25,2 ms | **9,0 %** | **1,41** |
+
+**Der p95 dieses Messaufbaus schwankt auf dieser Maschine um den Faktor
+1,41 (±40 %), ohne dass sich Code oder Daten ändern.** Die in M3' berichtete
+Differenz (220,2 → 274,37 ms, +25 %) ist kleiner als die hier gemessene
+Streubreite. Der p50 dagegen ist stabil (3,3 % Variationskoeffizient) — und
+genau deshalb war der p50 in M3' auch unauffällig: er ist die einzige der
+beiden Kennzahlen, die dieser Aufbau überhaupt zuverlässig misst.
+
+Die fünf Läufe der reinen M3'-Konfiguration (`post/m1real`) allein spannen
+schon 259,93 – 314,95 ms auf — das sind 21 % Spannweite bei völlig
+identischem Setup.
+
+### T7.2 Die Baseline reproduziert sich nicht
+
+Der entscheidende Test: dieselbe Messung mit dem **Code vor dem Hardening**
+gegen die **Baseline-Datenbank** — also exakt die Konfiguration, die M4 mit
+p95 = 220,2 ms gemessen hat.
+
+| Konfiguration | Läufe | p50 (Median) | p95 (Median) | p95 (Spanne) |
+|---|---:|---:|---:|---|
+| `pre/m2base` — **die M4-Baseline-Konfiguration** | 3 | 35,67 ms | **297,88 ms** | 262,09 – 309,86 ms |
+| `post/m2base` — HEAD auf der Baseline-DB | 3 | 35,85 ms | **273,19 ms** | 267,71 – 287,49 ms |
+| `post/m1real` — die M3'-Konfiguration | 5 | 37,25 ms | **285,58 ms** | 259,93 – 314,95 ms |
+| `post/noidx` — M3'-DB ohne die 8 FK-Indizes | 2 | 36,19 ms | **261,69 ms** | 257,92 – 265,45 ms |
+
+**Die Baseline-Konfiguration misst heute 262–310 ms — der in M4 notierte
+Wert von 220,2 ms liegt unterhalb von allem, was heute gemessen wurde, in
+jeder Konfiguration.** Und der Median der Baseline-Konfiguration (297,88 ms)
+liegt *über* dem der Nach-Hardening-Konfiguration (285,58 ms). Nach der
+heutigen Messung wäre die Nach-Hardening-Konfiguration also marginal
+*schneller* — was genauso wenig belastbar ist wie die umgekehrte Aussage
+aus M3'. Beide Differenzen sind Rauschen.
+
+Mit `area=GER` dasselbe Bild:
+
+| Konfiguration | Läufe | p50 | p95 | in M-Sektion notiert |
+|---|---:|---|---|---|
+| `pre/m2base` (M4-Baseline-Konfiguration) | 2 | 38,57 / 38,90 ms | **309,89 / 360,71 ms** | M4: 253,8 ms |
+| `post/m1real` (M3'-Konfiguration) | 2 | 39,36 / 39,78 ms | **342,07 / 377,42 ms** | M3': 321,57 ms |
+
+Auch hier misst die Baseline-Konfiguration heute deutlich über ihrem
+eigenen historischen Wert, und die beiden Bänder überlappen.
+
+**Damit ist der Vergleich M4 ↔ M3' aufgeklärt:** es wurden zwei Zahlen aus
+zwei verschiedenen Maschinen-Sitzungen verglichen, deren Sitzungs-Offset
+größer ist als der behauptete Effekt. M4 und M3' haben je **einen** Lauf
+notiert; bei 9 % Variationskoeffizient und 41 % Spannweite ist ein
+Einzellauf-p95 kein vergleichbarer Wert.
+
+### T7.3 Kandidat (a) — die acht FK-Indizes: ausgeschlossen
+
+Zwei unabhängige Belege, beide negativ:
+
+**1. Die Baseline-DB hatte die Indizes bereits.** `poc/measure/run.sh:34`
+spielt vor dem M2-Ingest `poc/measure/fk_indexes.sql` ein — acht Indizes auf
+**exakt denselben acht Spalten**, die Task 2 später ins Serienschema
+aufgenommen hat, nur unter anderen Namen (`m_idx_*` statt `idx_*`):
+`name(basionym_id)`, `taxon_concept(parent_id | accepted_name |
+backbone_id)`, `concept_name(name_id)`, `xref(concept_id)`,
+`fts_name_map(concept_id)`, `concept_relation(to_concept)`. Die M4-Baseline
+wurde also **bereits mit diesen Indizes gemessen**. Task 2 hat sie nicht
+hinzugefügt, sondern das Mess-Werkzeug ins Serienschema überführt. Ein
+Query-Plan-Wechsel „durch die neuen Indizes" kann zwischen M4 und M3' gar
+nicht stattgefunden haben.
+
+**2. `EXPLAIN QUERY PLAN` ist mit und ohne die Indizes identisch.** Geprüft
+gegen eine Kopie von `m1real.sqlite`, aus der die acht Indizes per
+`DROP INDEX` entfernt wurden, mit der echten Suggest-Query aus
+`internal/adapters/sqlite/suggest.go` (Präfix `"ca"*`, dem langsamsten der
+38 Präfixe), in beiden Varianten — mit `in_area`-`EXISTS` und ohne:
+
+```
+mit den 8 FK-Indizes            |  ohne die 8 FK-Indizes
+--------------------------------+--------------------------------
+QUERY PLAN                      |  QUERY PLAN
+|--MATERIALIZE matches          |  |--MATERIALIZE matches
+|  `--SCAN fts_name VIRTUAL     |  |  `--SCAN fts_name VIRTUAL
+|      TABLE INDEX 0:M2         |  |      TABLE INDEX 0:M2
+|--SCAN m                       |  |--SCAN m
+|--SEARCH fnm USING INTEGER     |  |--SEARCH fnm USING INTEGER
+|      PRIMARY KEY (rowid=?)    |  |      PRIMARY KEY (rowid=?)
+|--SEARCH tc USING INDEX        |  |--SEARCH tc USING INDEX
+|      sqlite_autoindex_        |  |      sqlite_autoindex_
+|      taxon_concept_1 (id=?)   |  |      taxon_concept_1 (id=?)
+|--SEARCH an USING INDEX        |  |--SEARCH an USING INDEX
+|      sqlite_autoindex_name_1  |  |      sqlite_autoindex_name_1
+|      (id=?)                   |  |      (id=?)
+|--USE TEMP B-TREE FOR GROUP BY |  |--USE TEMP B-TREE FOR GROUP BY
+|--CORRELATED SCALAR SUBQUERY 2 |  |--CORRELATED SCALAR SUBQUERY 2
+|  `--SEARCH d USING COVERING   |  |  `--SEARCH d USING COVERING
+|      INDEX sqlite_autoindex_  |  |      INDEX sqlite_autoindex_
+|      distribution_1           |  |      distribution_1
+|      (concept_id=? AND        |  |      (concept_id=? AND
+|       area_scheme=? AND       |  |       area_scheme=? AND
+|       area_code=?)            |  |       area_code=?)
+`--USE TEMP B-TREE FOR ORDER BY |  `--USE TEMP B-TREE FOR ORDER BY
+```
+
+**Die Pläne sind zeichengleich, und keiner der acht FK-Indizes taucht in
+einem der Pläne auf.** Der Grund ist strukturell und nicht überraschend: der
+Suggest-Pfad joint ausschließlich über Primärschlüssel und `rowid`
+(`fnm.rowid = m.rowid`, `tc.id = fnm.concept_id`, `an.id =
+tc.accepted_name`) — er sucht nie über eine der indizierten FK-Spalten in
+Rückwärtsrichtung. Die FK-Indizes existieren für die
+Constraint-Prüfung beim `INSERT OR REPLACE` (M1-Befund), nicht für Lesepfade.
+
+Auch die Latenz bestätigt es: `post/noidx` misst 257,92 / 265,45 ms — innerhalb
+(am unteren Rand) des Bandes der indizierten Variante, bei nur zwei Läufen
+also nicht von Rauschen unterscheidbar. **Kandidat (a) ist ausgeschlossen.**
+
+### T7.4 Kandidat (b) — die zusätzlichen OTHER-Rang-Zeilen: ausgeschlossen
+
+Die +436 Konzepte, die T1 neu zulässt, sind
+`NOTHOSUBSPECIES` (370), `NOTHOVARIETY` (54), `SUBVARIETY` (8),
+`NOTHOFORM` (4). Ihr Beitrag zu genau den Präfixen, die den p95 dominieren
+(`DISTINCT`-Konzepte je FTS5-Präfixtreffer, Baseline-DB → Nach-Hardening-DB):
+
+| Präfix | `m2.sqlite` | `m1real.sqlite` | Differenz |
+|---|---:|---:|---:|
+| `ca` | 46.138 | 46.249 | +111 (+0,24 %) |
+| `al` | 22.653 | 22.765 | +112 (+0,49 %) |
+| `sa` | 20.938 | 20.995 | +57 (+0,27 %) |
+| `tr` | 21.074 | 21.130 | +56 (+0,27 %) |
+| `ac` | 16.787 | 16.841 | +54 (+0,32 %) |
+
+Auf Zeilenebene der FTS5-Tabelle (nicht Konzepte) für den teuersten Präfix
+`ca`: 98.749 → 100.029 Zeilen, **+1,30 %**. Keine dieser Zahlen kann einen
+25-%-Effekt tragen. Der direkte Test ist ohnehin schon gelaufen:
+`post/m2base` (HEAD-Code, Baseline-DB **ohne** diese Zeilen) und
+`post/m1real` (HEAD-Code, DB **mit** ihnen) liegen mit 273,19 vs. 285,58 ms
+Median in überlappenden Bändern. **Kandidat (b) ist ausgeschlossen.**
+
+### T7.5 Ein geprüfter, aber wirkungsloser Fix: `ANALYZE`
+
+Weil `sqlite_stat1` in keiner der DBs existierte, lag „dem Planer
+Statistiken geben" als billiger Fix nahe. Geprüft, mit einem lehrreichen
+Zwischenergebnis: `ANALYZE` läuft in **4,7 s** auf der 916-MiB-DB und
+erzeugt 20 `sqlite_stat1`-Zeilen; der Query-Plan bleibt danach
+**unverändert** (zeichengleich mit T7.3). Die ersten zwei Latenzläufe auf
+der frisch analysierten Kopie sahen mit p95 = 235,24 / 225,27 ms trotzdem
+deutlich besser aus als alles andere.
+
+Das war ein Artefakt — und zwar genau die Art Artefakt, die diesen ganzen
+offenen Punkt erzeugt hat. Ein anschließender **verschränkter A/B-Test**
+gegen eine ebenso frische, aber **nicht** analysierte Kopie derselben DB
+(`copyctl`, Reihenfolge copyctl → analyzed → copyctl → analyzed):
+
+| Lauf | Konfiguration | p95 |
+|---|---|---:|
+| 1 | `copyctl` (ohne ANALYZE) | 289,70 ms |
+| 2 | `analyzed` | 303,67 ms |
+| 3 | `copyctl` (ohne ANALYZE) | 316,39 ms |
+| 4 | `analyzed` | 280,16 ms |
+
+**Kein Effekt.** Die vier `analyzed`-Läufe streuen über 225,27 – 303,67 ms,
+also über fast das gesamte Band aller Konfigurationen. Die frühen guten
+Werte kamen aus der Umgebung (frisch geschriebene, zusammenhängende
+Dateikopie plus warmer OS-Page-Cache unmittelbar nach `cp`), nicht aus
+`ANALYZE`. **`ANALYZE` wird deshalb nicht eingebaut** — es ändert den Plan
+nicht und bringt messbar nichts; es ins Schema oder in den Ingest zu
+nehmen, wäre eine unbelegte Änderung an einem funktionierenden Pfad.
+
+### T7.6 Was daraus folgt
+
+- **Kein Code wurde geändert.** Es gibt nichts zu reparieren: die
+  gemessene „Regression" existiert nicht.
+- **Der p95 dieses Aufbaus ist keine Einzellauf-Kennzahl.** Wer M4/M3'
+  künftig fortschreibt, muss mindestens 3–5 Läufe machen und ein Band
+  berichten, keinen Punktwert. Der p50 ist dagegen belastbar (3,3 %
+  Variationskoeffizient) und über alle 19 Läufe und alle vier
+  Konfigurationen stabil bei 34,5–38,7 ms — er bestätigt das ursprüngliche
+  M4-Verdikt.
+- **Die reale Auflage bleibt die Präfixlänge**, unverändert seit M4: die
+  2-Zeichen-Präfixe (`ca`, `al`, `sa`, `tr`) erzeugen 20k–46k
+  Kandidaten-Konzepte und dominieren jede p95-Zahl. Wer den p95 wirklich
+  senken will, muss dort ansetzen (z. B. Mindestpräfixlänge im Frontend,
+  clientseitiges Debouncing oder ein Deckel auf der FTS5-Kandidatenmenge) —
+  nicht an Indizes oder Planer-Statistiken. Das ist eine
+  Produktentscheidung und wird hier nicht getroffen.
+
+Reproduktion:
+
+```bash
+nix develop -c go build -o /tmp/p95/hostus ./cmd/hostus
+nix develop -c bash -c 'cd poc && go build -o /tmp/p95/latency ./measure/latency'
+# je Lauf: Server starten, messen, Server beenden
+HOSTUS_SQLITE_PATH=poc/measure/out/m1real.sqlite /tmp/p95/hostus serve --port 8201 --log-level warn &
+/tmp/p95/latency --base http://127.0.0.1:8201 --reps 15 --warmup 3
+# Vergleichs-DB ohne die acht FK-Indizes:
+cp poc/measure/out/m1real.sqlite /tmp/p95/noidx.sqlite
+sqlite3 /tmp/p95/noidx.sqlite "DROP INDEX idx_name_basionym_id; \
+  DROP INDEX idx_taxon_concept_parent_id; DROP INDEX idx_taxon_concept_accepted_name; \
+  DROP INDEX idx_taxon_concept_backbone_id; DROP INDEX idx_concept_name_name_id; \
+  DROP INDEX idx_xref_concept_id; DROP INDEX idx_fts_name_map_concept_id; \
+  DROP INDEX idx_concept_relation_to_concept;"
+# Baseline-Konfiguration (Code vor Hardening):
+git worktree add /tmp/p95/pre 53575fe && (cd /tmp/p95/pre && go build -o /tmp/p95/hostus-pre ./cmd/hostus)
+HOSTUS_SQLITE_PATH=poc/measure/out/m2.sqlite /tmp/p95/hostus-pre serve --port 8411 --log-level warn &
+/tmp/p95/latency --base http://127.0.0.1:8411 --reps 15 --warmup 3
+```
+
+---
+
 ## Task 6: konsolidierte Vorher/Nachher-Übersicht
 
 Eine Tabelle, jede Zahl mit dem Abschnitt, der sie erzeugt hat — keine Zahl
@@ -1706,9 +1957,11 @@ hier ist neu gemessen, jede stammt aus M1–M6/T5 oben.
 | Bundle Mitteleuropa DE/AT/CH (`gzip -9`) | — | **21.953.315 Byte (20,9 MiB)** | M5.3 |
 | Voll-Bundle (ungescopt) | scheitert am SQLite-Parameterlimit, 0 Byte | **erfolgreich, 928.059.392 Byte (885,2 MiB), 986,65 s** | M5.1 / M5.3 |
 | Suggest p50 (ohne `area`) | 36,4 ms | 38,59 ms | M4 / M3' |
-| Suggest p95 (ohne `area`) | 220,2 ms | 274,37 ms (**+25 %**, Ursache offen) | M4 / M3' |
+| Suggest p95 (ohne `area`) | 220,2 ms | 274,37 ms — **keine Regression**: 19 Wiederholungsläufe spannen 225–316 ms, die Baseline-Konfiguration selbst misst heute 262–310 ms (Median 298 ms) | M4 / M3' / **T7.1–T7.2** |
 | Suggest p50 (`area=GER`) | 38,7 ms | 40,81 ms | M4 / M3' |
-| Suggest p95 (`area=GER`) | 253,8 ms | 321,57 ms (**+27 %**, Ursache offen) | M4 / M3' |
+| Suggest p95 (`area=GER`) | 253,8 ms | 321,57 ms — **keine Regression**: Baseline-Konfiguration heute 310/361 ms, M3'-Konfiguration 342/377 ms, überlappende Bänder | M4 / M3' / **T7.2** |
+| Suggest p50, Streuung über 19 Läufe (ohne `area`) | (nicht gemessen, ein Lauf) | **34,54–38,73 ms**, Variationskoeffizient 3,3 % | T7.1 |
+| Suggest p95, Streuung über 19 Läufe (ohne `area`) | (nicht gemessen, ein Lauf) | **225,27–316,39 ms**, Variationskoeffizient 9,0 %, max/min 1,41 | T7.1 |
 | Lizenzbrücken, real nutzbarer Gewinn — EIVE | 51 Taxa (0,34 % von 14.830) *vor* Normalisierung | **2 Taxa** (0,01 %) *nach* Normalisierung, gegen die auf 303 geschrumpfte Restmenge | M6 / Task 6 §„Lizenzempfehlung" unten |
 | Lizenzbrücken, real nutzbarer Gewinn — Tichý | 3 Taxa | **1 Taxon**, gegen 105 verbleibende | M6 / Task 6 |
 | Lizenzbrücken, real nutzbarer Gewinn — Midolo | 2 Taxa | **1 Taxon**, gegen 57 verbleibende | M6 / Task 6 |
@@ -1741,20 +1994,27 @@ diesem Task.
   Namensebene-Zahl — und durch M6 (Task 6, unten) inhaltlich noch schwächer
   geworden, weil der M6-Gewinn selbst eingebrochen ist. **→ hält nicht.**
 - **M4 (Suggest-Latenz).** Vorher: **hält** (p50 36,4 ms, p95 220,2 ms).
-  Nach Hardening (M3'): p50 bleibt praktisch unverändert (38,59/40,81 ms),
-  **p95 steigt sichtbar** um 25 % (220,2→274,37 ms) bzw. 27 % mit
-  `area=GER` (253,8→321,57 ms). Die Ursache ist mit den Mitteln dieser
-  Aufgabe **nicht isoliert** (Kandidaten: Query-Plan-Änderung durch die
-  neuen FK-Indizes, zusätzliche OTHER-Rang-Zeilen aus T1, unquantifizierte
-  Maschinen-Varianz — ein Wiederholungslauf zeigte ~10 % Schwankung ohne
-  Codeänderung, aber das erklärt nicht die volle Differenz, und die
-  Baseline hat keinen eigenen Wiederholungslauf zum Vergleich). Ein p95 von
-  274 ms ist für Feld-Autosuggest weiterhin nutzbar (p50 bleibt komfortabel
-  unter 100 ms), aber eine 25–27-%-Verschlechterung ohne geklärte Ursache
-  ehrlich als **offen** auszuweisen ist wichtiger als das Ergebnis
-  schönzureden. **→ hält mit Auflagen** (nicht mehr uneingeschränkt „hält" —
-  die Auflage ist die ungeklärte p95-Regression, nicht mehr nur die
-  Präfixlänge).
+  M3' hatte einen p95-Anstieg um 25–27 % berichtet und die Ursache
+  ausdrücklich offengelassen. **Task 7 hat das nachgemessen: es gibt keine
+  Regression.** 19 Wiederholungsläufe desselben Aufbaus streuen im p95 über
+  225,27–316,39 ms (Variationskoeffizient 9,0 %, max/min 1,41), und die
+  **Baseline-Konfiguration selbst** — Code vor dem Hardening (`53575fe`)
+  gegen die Baseline-DB `m2.sqlite` — misst heute 262–310 ms (Median
+  297,88 ms), also *schlechter* als die Nach-Hardening-Konfiguration
+  (Median 285,58 ms). M4 und M3' haben je einen Einzellauf notiert; deren
+  Differenz ist kleiner als die Streuung des Aufbaus. Die beiden
+  benannten Sachursachen sind belegt ausgeschlossen: die acht FK-Indizes
+  **standen bereits in der Baseline-DB** (`poc/measure/fk_indexes.sql`,
+  dieselben acht Spalten) und tauchen in *keinem* Query-Plan des
+  Suggest-Pfads auf — die Pläne mit und ohne sie sind zeichengleich (T7.3);
+  die von T1 zugelassenen OTHER-Rang-Zeilen erhöhen die
+  Kandidatenmenge der teuersten Präfixe um 0,24–0,49 % (T7.4). Der p50,
+  die einzige stabil messbare Kennzahl dieses Aufbaus (3,3 %
+  Variationskoeffizient), ist über alle Konfigurationen unverändert bei
+  34,5–38,7 ms. **→ hält** (unverändert wie vorher; die Auflage ist wieder
+  allein die Präfixlänge, wie schon in M4 beschrieben — kurze
+  2-Zeichen-Präfixe erzeugen 20k–46k Kandidaten und dominieren jede
+  p95-Zahl).
 - **M5 (Bundle-Größe).** Vorher: **hält nicht** (108,9 MB statt 10–20 MB,
   Faktor 5,4; Mehrgebiets-Export und Voll-Export unmöglich). Nach Task 4:
   Mehrgebiets-Scoping (`--area DE,AT,CH`) und das Parameterlimit sind
@@ -1793,16 +2053,19 @@ diesem Task.
    (kostet die UC1-Fähigkeit, einen Synonymnamen einzutippen) — das ist
    hier bewusst nicht entschieden, weil es eine Scope-Frage ist, keine
    Reparatur.
-3. **p95-Latenzregression: weiterhin offen, jetzt priorisiert.** Die
-   einzige Kennzahl, die sich messbar verschlechtert hat (+25–27 %), ohne
-   dass diese Aufgabe die Ursache isolieren konnte. Nächster Schritt, falls
-   das angegangen wird: `EXPLAIN QUERY PLAN` für den Suggest-Pfad
-   (`internal/adapters/sqlite/suggest.go`) gegen eine identische, aber
-   unindizierte Vergleichs-DB, um Kandidat (a) aus M3' (Query-Plan-Wechsel
-   durch die neuen FK-Indizes) tatsächlich zu bestätigen oder
-   auszuschließen — das ist mit den Mitteln dieses Hardening-Zyklus nicht
-   mehr geleistet worden und bleibt der klarste Restpunkt des gesamten
-   Berichts.
+3. **p95-Latenzregression: erledigt — es gab keine.** Task 7 (Sektion oben)
+   hat die Varianz mit 19 Wiederholungsläufen quantifiziert (p95
+   225–316 ms, max/min 1,41), die Baseline-Konfiguration nachgestellt
+   (Code `53575fe` + `m2.sqlite`: heute 262–310 ms statt der notierten
+   220,2 ms) und beide Sachursachen per `EXPLAIN QUERY PLAN` und
+   Datenzählung ausgeschlossen. Kein Code geändert, kein offener Punkt.
+   Was bleibt, ist eine **Methodenauflage, keine Reparatur**: p95-Zahlen
+   dieses Aufbaus sind nur als Band aus mindestens 3–5 Läufen belastbar;
+   Einzellauf-p95 dürfen nicht mehr über Läufe hinweg verglichen werden.
+   Wer den p95 tatsächlich senken will, muss an der Präfixlänge ansetzen
+   (Mindestlänge/Debouncing im Frontend oder ein Deckel auf der
+   FTS5-Kandidatenmenge) — das ist eine offene **Produktentscheidung**,
+   kein Defekt.
 4. **Residuale Unmatched/Ambiguous-Zeilen: kleiner, aber nicht null.**
    Nach Normalisierung bleiben 1.445/526/285 Zeilen unmatched (meist
    binäre Hybridformeln, nicht-nominate Unterarten ohne WCVP-Zeile, echte

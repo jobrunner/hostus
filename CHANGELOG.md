@@ -7,6 +7,85 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (SP6, Task 4 — Offenlegung, End-to-End-Beweis und Verdikt)
+- **Neue Anleitung
+  [„Publikationsfähige Synonyme filtern (UC5)"](docs/how-to/synonyms-uc5.md)**
+  mit dem durchgerechneten *Corynephorus-canescens*-Beispiel und einem
+  ausdrücklichen Abschnitt **„Was dieser Filter nicht kann"**. UC5 nennt
+  fünf Relevanzkriterien; SP6 liefert zwei vollständig, eines teilweise
+  und **zwei überhaupt nicht**. Das steht jetzt in der Anleitung des
+  Endpunkts selbst und nicht in einer Forschungsdatei: Wer
+  `relevance=publication` liest und regionale Filterung annimmt,
+  veröffentlicht die falsche Synonymliste.
+  - **Keine regionale Filterung** („im Bezugsraum verwendet"):
+    `distribution` hängt am *Konzept*, ein Synonym ist ein *Name* — mit
+    dem aktuellen Schema nicht ausdrückbar. Die Anleitung nennt, was es
+    bräuchte (eine Name-×-Gebiet-Relation mit Quelle je Zeile).
+  - **Keine Filterung nach Standardwerken**: ROTHMALER, OBERDORFER, HEGI
+    und SCHMEIL-FITSCHEN sind vier der 18 CDM-Klassifikationen aus SP5,
+    aber `redistribution: unknown` und die Ernte ist unfertig.
+  - **Die Typisierung ist ein Zwei-Wege-Split**: `homotypic = 1` auf
+    271.821 Synonymzeilen, NULL (= *unbekannt*) auf 692.941,
+    `heterotypic` auf **0**.
+  - **Ein fehlender `nom_status` ist kein Unbedenklichkeitsnachweis** —
+    die Spalte ist auf 99.252 von 1.448.984 Namen (6,85 %) belegt.
+  - Zwei benannte Ranglücken: **SUBSPECIES wird spec-treu nicht
+    ausgeschlossen** (45.526 Synonymnamen) und 190 Nothotaxon-Zeilen
+    passieren `rank=species`.
+  - Offener **fachlicher** Punkt, gemessen: fünf Werte halten **1.697
+    Namen** zurück, davon 1.117 mit `, sensu auct.`. Sollen
+    Fehlanwendungen als *auct. non* geführt werden, ist das eine Zeile in
+    `nomStatusGuards`, keine Codeänderung.
+- **End-to-End-Beweis über echtes HTTP** in
+  `internal/app/integration_test.go`: `ingest -> serve -> GET
+  /v1/concept/{id}/synonyms`, gefiltert gegen ungefiltert, mit
+  Namensprüfungen statt bloßer Zählungen. *Festuca ovina* verliert genau
+  *Avena dura* (`", nom. illeg. superfl."`) und *Festuca ovina* var.
+  *vulgaris* (`", not validly publ."`) und behält *Avena ovina*, *Bromus
+  ovinus* und *Festuca duriuscula*; bei *Corynephorus canescens* fallen
+  drei Rangausschlüsse weg, während subsp. *maritimus* bleibt — die
+  SUBSPECIES-Lücke ist damit als Test festgeschrieben, nicht nur
+  dokumentiert. Das Ausschluss-Summary muss die Differenz erklären.
+- **SP6-Verdikt in `docs/research/reality-check.md`**, gemessen mit dem
+  echten Domänencode über alle 964.762 Synonymzeilen: Der Filter ändert
+  bei **103.674 von 236.030** Konzepten die Antwort, **69,2 %** landen im
+  UC5-Zielkorridor von ein bis drei Namen (häufigster Fall ist aber **1**,
+  nicht 2–3), **20,2 %** behalten mehr als drei, und **24.918 Konzepte
+  (10,6 %)** bleiben ohne ein einziges publikationsfähiges Synonym.
+  Verdikt: **hält mit Auflagen**.
+
+### Changed (SP6, Task 4 — Mutations-Gate)
+- **`make mutation` erzwingt jetzt `Not covered: 0`.** Ein überlebender
+  Mutant heißt „ein Test läuft durch die Zeile, prüft aber zu lasch" und
+  ist begründbar; ein NOT-COVERED-Mutant heißt „kein Test führt diesen
+  Code aus" und ist es nie. Der harte Fehlschlag hängt deshalb genau an
+  `Not covered` und nicht an einer Efficacy-Schwelle, die gegen die
+  bestehenden dokumentiert-gerechtfertigten Überlebenden spröde wäre.
+  Fehlt die Zeile `Not covered: N` im Report, bricht das Target ebenfalls
+  ab — ein Gate ohne Signal darf nicht grün melden. Genau eine Ausnahme:
+  `No results to report.` bei gesetztem `PKG` (ein Paket ohne mutierbare
+  Stelle, z. B. `./internal/httperr`) ist eine gültige Antwort; ohne `PKG`
+  ist es die bekannte gremlins-Grenze bei `./...` und damit ein Fehlschlag.
+- **Zwei Altlasten, die das neue Gate aufgedeckt hat, sind behoben** —
+  beide waren „kein Test führt diesen Code aus", keiner davon neu:
+  - `internal/app/bundle.go`: `app.Bundle` war nur über `cmd/hostus`
+    getestet, also aus Sicht von `make mutation PKG=./internal/app` gar
+    nicht. Neues `internal/app/bundle_test.go` deckt Erfolgs- und
+    Fehlerpfad im eigenen Paket ab (`Not covered: 1 -> 0`).
+  - `internal/adapters/telemetry/telemetry.go`: der `otlpEnabled`-Zweig von
+    `Setup` wurde von keinem Test betreten. Neuer Test mit aktiviertem OTLP
+    gegen einen toten Endpunkt (hermetisch — die Exporter bauen ihren
+    Client lazy und wählen nichts) (`Not covered: 2 -> 0`).
+- **`internal/domain/synonym.go`: zwei Bedingungspaare aus den `case`-Armen
+  hochgezogen.** Gos Coverage-Modell beendet den gezählten Block am `{`
+  eines tag-losen `switch`; eine Bedingung *im* `case`-Arm liegt damit in
+  keinem gezählten Block, und `make mutation` meldete sechs Mutanten in
+  `ClassifyNomStatus`/`judgeSynonym` dauerhaft als NOT COVERED — kein Test
+  hätte das beheben können. Als eigene Zuweisungen (`anyDisqualifying`,
+  `anyAcceptable`, `disqualifying`, `unclassified`) werden sie mutiert und
+  von der bestehenden Testsuite **gekillt**: `./internal/domain` steht
+  jetzt bei `Killed: 123, Lived: 8, Not covered: 0`.
+
 ### Added (SP6, Task 3 — `GET /v1/concept/{id}/synonyms`)
 - **Neuer Endpunkt `GET /v1/concept/{id}/synonyms?relevance=&rank=&max=`**
   (UC5): „Das Problem ist Filterung, nicht Beschaffung." Er wendet das

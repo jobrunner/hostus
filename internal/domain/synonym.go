@@ -322,14 +322,25 @@ func ClassifyNomStatus(raw string) NomStatusVerdict {
 	v.Matched = append(v.Matched, disqualified...)
 	v.Matched = append(v.Matched, acceptable...)
 
+	// The two comparisons are HOISTED out of the switch on purpose. Go's
+	// coverage model ends the enclosing basic block at a switch statement's
+	// opening brace, so a condition written inside a `case` arm sits in no
+	// counted block at all: `make mutation` reported CONDITIONALS_BOUNDARY
+	// and CONDITIONALS_NEGATION mutants here as NOT COVERED, which no test
+	// could have fixed. As plain assignments they are covered, mutated and
+	// killed; the case arms are then bare identifiers, which carry no
+	// mutants of their own.
+	anyDisqualifying := len(disqualified) > 0
+	anyAcceptable := len(acceptable) > 0
+
 	switch {
 	case uncertain:
 		v.Judgement = JudgementUnclassified
-	case len(disqualified) > 0:
+	case anyDisqualifying:
 		v.Judgement = JudgementDisqualifying
 	case guarded:
 		v.Judgement = JudgementUnclassified
-	case len(acceptable) > 0:
+	case anyAcceptable:
 		v.Judgement = JudgementAcceptable
 	default:
 		v.Judgement = JudgementUnclassified
@@ -514,11 +525,15 @@ func judgeSynonym(c SynonymCandidate, excludedRanks map[Rank]bool) SynonymReleva
 		Typification: TypificationOf(c.Homotypic),
 	}
 
+	// Hoisted for the same coverage reason as ClassifyNomStatus' switch.
+	disqualifying := rel.Status.Judgement == JudgementDisqualifying
+	unclassified := rel.Status.Judgement == JudgementUnclassified
+
 	switch {
-	case rel.Status.Judgement == JudgementDisqualifying:
+	case disqualifying:
 		rel.Exclusion = ExclusionNomStatus
 		rel.Reason = rel.Status.Reason()
-	case rel.Status.Judgement == JudgementUnclassified:
+	case unclassified:
 		rel.Exclusion = ExclusionUnclassifiedStatus
 		rel.Reason = "withheld for review: " + rel.Status.Reason()
 	case excludedRanks[c.Rank]:

@@ -71,9 +71,54 @@ test-race: ## Tests mit Race Detector
 bench: ## Benchmarks ausführen
 	$(GO) test -run='^$$' -bench=. -benchmem ./...
 
-mutation: ## Mutation-Testing (gremlins) — package-scoped, green-required (PKG=./internal/... überschreibbar)
+# Mutation-Gate: `Not covered` MUSS 0 sein.
+#
+# Ein überlebender (LIVED) Mutant heißt "ein Test läuft durch die Zeile, prüft
+# aber das Ergebnis nicht scharf genug" — der ist begründbar und wird pro Fall
+# im Report gerechtfertigt. Ein NOT COVERED Mutant heißt dagegen "kein Test
+# führt diesen Code überhaupt aus"; das ist strikt schlechter und nie
+# begründbar. Deshalb hängt der harte Fehlschlag genau an `Not covered` und
+# nicht an einer Efficacy-Schwelle: eine Schwelle wäre gegen die bestehenden,
+# dokumentiert-gerechtfertigten Überlebenden spröde und würde bei jedem
+# Refactoring falsch anschlagen.
+#
+# Fällt die Zeile "Not covered: N" ganz aus dem Report, bricht das Target
+# ebenfalls ab — ein Gate, das sein Signal nicht mehr findet, darf nicht
+# stillschweigend grün melden. Genau eine Ausnahme: gremlins meldet
+# "No results to report.", wenn es keine mutierbare Stelle gibt. Bei einem
+# EINZELNEN Paket (PKG gesetzt, z. B. ./internal/httperr) ist das eine
+# gültige Antwort. Ohne PKG dagegen ist es die bekannte v0.5.1-Grenze bei
+# Mehr-Paket-Mustern wie ./... — dann ist der Lauf wertlos und das Target
+# sagt das, statt grün zu melden.
+mutation: ## Mutation-Testing (gremlins) — package-scoped, `Not covered` = 0 erzwungen (PKG=./internal/... überschreibbar)
 	@command -v gremlins >/dev/null 2>&1 || $(GO) install github.com/go-gremlins/gremlins/cmd/gremlins@v0.5.1
-	gremlins unleash --dry-run=false $(if $(PKG),$(PKG),./...)
+	@out=$$(mktemp); rc=$$(mktemp); \
+	{ gremlins unleash --dry-run=false $(if $(PKG),$(PKG),./...); echo $$? >"$$rc"; } | tee "$$out"; \
+	status=$$(cat "$$rc"); \
+	notcovered=$$(sed -n 's/.*Not covered: \([0-9][0-9]*\).*/\1/p' "$$out" | tail -1); \
+	empty=$$(grep -c 'No results to report' "$$out" 2>/dev/null | tr -d ' '); \
+	[ "$$empty" = "0" ] && empty=""; \
+	rm -f "$$out" "$$rc"; \
+	if [ "$$status" -ne 0 ]; then exit "$$status"; fi; \
+	if [ -z "$$notcovered" ]; then \
+		if [ -n "$$empty" ] && [ -n "$(PKG)" ]; then \
+			echo "✅ mutation: $(PKG) hat keine mutierbare Stelle — nichts zu prüfen."; \
+			exit 0; \
+		fi; \
+		echo "❌ mutation: kein gremlins-Report ('Not covered: N' fehlt) — das Gate kann nichts prüfen."; \
+		echo "   gremlins v0.5.1 liefert für ein Mehr-Paket-Muster wie ./... 'No results to report.';"; \
+		echo "   dieses Target ist deshalb paketweise gedacht: make mutation PKG=./internal/domain"; \
+		echo "   (so ruft es auch .github/workflows/mutation.yml auf)."; \
+		exit 1; \
+	fi; \
+	if [ "$$notcovered" -ne 0 ]; then \
+		echo "❌ mutation: $$notcovered nicht abgedeckte Mutanten (NOT COVERED) — kein Test führt diesen Code aus."; \
+		echo "   Siehe 'NOT COVERED' oben. Hinweis: Bedingungen in case-Armen eines tag-losen switch"; \
+		echo "   liegen in Gos Coverage-Modell in KEINEM gezählten Block; dort hilft nur Hochziehen"; \
+		echo "   der Bedingung in eine eigene Zuweisung (siehe internal/domain/synonym.go)."; \
+		exit 1; \
+	fi; \
+	echo "✅ mutation: Not covered = 0"
 
 # Fuzzt alle Fuzz*-Targets im Modul (FUZZTIME je Target überschreibbar, default
 # 30s). Targets werden zur Laufzeit per `go test -list` entdeckt — keine

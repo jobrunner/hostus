@@ -59,6 +59,7 @@ nav:
       - Traits pipeln und ingestieren: how-to/trait-ingest.md
       - Von hostus zu iNaturalist (UC2): how-to/inat-uc2.md
       - "Konzepte zwischen sec.-Räumen übersetzen (UC6)": how-to/sec-translate-uc6.md
+      - "Publikationsfähige Synonyme filtern (UC5)": how-to/synonyms-uc5.md
   - Referenz:
       - reference/index.md
       - HTTP-API: reference/http-api.md

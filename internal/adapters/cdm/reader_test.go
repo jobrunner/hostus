@@ -279,3 +279,101 @@ func TestReadRelationsEmptyFile(t *testing.T) {
 		t.Fatal("want error for an empty file (no header)")
 	}
 }
+
+func TestReadConceptsLineNumbersSurviveAQuotedNewline(t *testing.T) {
+	// A quoted field may span newlines. A counter incremented once per record
+	// would then point at the wrong file line — csv.Reader.FieldPos does not.
+	path := writeCSV(t, "multiline.csv", conceptHeader+
+		"u1|\"Abies\nalba\"|Mill.|Species|Accepted|s1|Sec One|c1|\n"+
+		"u2|too|few\n")
+	ds, err := cdm.ReadConcepts(path)
+	if err != nil {
+		t.Fatalf("ReadConcepts: %v", err)
+	}
+	if len(ds.Rows) != 1 || ds.Rows[0].ScientificName != "Abies\nalba" {
+		t.Fatalf("rows = %+v", ds.Rows)
+	}
+	// The header is line 1, the quoted record spans lines 2-3, so the short
+	// row is on line 4 — not line 3, which a per-record counter would report.
+	if len(ds.Errors) != 1 || !strings.Contains(ds.Errors[0].Error(), ":4:") {
+		t.Fatalf("want one error naming line 4, got %v", ds.Errors)
+	}
+}
+
+func TestReadConceptsGivesUpOnAWallOfUnreadableRecords(t *testing.T) {
+	// The one case that does NOT advance the file on its own: a csv read
+	// error. A sticky I/O error would otherwise make Read return the same
+	// error forever and grow ds.Errors without bound. (Short rows and bad
+	// flag values are already bounded by the file, since each consumes
+	// input.) The reader reports that it gave up and stops.
+	var b strings.Builder
+	b.WriteString(conceptHeader)
+	for range 200 {
+		b.WriteString(`u|Abies "alba"|Mill.|Species|Accepted|s1|Sec One|c1|` + "\n")
+	}
+	ds, err := cdm.ReadConcepts(writeCSV(t, "allbad.csv", b.String()))
+	if err != nil {
+		t.Fatalf("ReadConcepts: %v", err)
+	}
+	if len(ds.Rows) != 0 {
+		t.Fatalf("got %d rows, want 0", len(ds.Rows))
+	}
+	// Exactly the bound's worth of read failures plus the one give-up line,
+	// pinned as an exact number so the bound's boundary is observable.
+	if len(ds.Errors) != 21 {
+		t.Fatalf("collected %d errors, want 21 (20 unreadable records + the give-up line)", len(ds.Errors))
+	}
+	last := ds.Errors[len(ds.Errors)-1].Error()
+	if !strings.Contains(last, "giving up after 20 consecutive unreadable records") {
+		t.Errorf("last error %q does not say the reader gave up", last)
+	}
+}
+
+func TestReadConceptsParseErrorReportsTheParseErrorsOwnLine(t *testing.T) {
+	// After a quoted field spanning two lines, the record ORDINAL and the
+	// real file line have diverged. A parse error must report the latter,
+	// which means taking it from the csv.ParseError rather than the ordinal.
+	path := writeCSV(t, "multiline-then-bad.csv", conceptHeader+
+		"u1|\"Abies\nalba\"|Mill.|Species|Accepted|s1|Sec One|c1|\n"+
+		`u2|Pinus "abies"|L.|Species|Accepted|s1|Sec One|c1|`+"\n")
+	ds, err := cdm.ReadConcepts(path)
+	if err != nil {
+		t.Fatalf("ReadConcepts: %v", err)
+	}
+	if len(ds.Rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(ds.Rows))
+	}
+	if len(ds.Errors) != 1 {
+		t.Fatalf("got %d errors, want 1: %v", len(ds.Errors), ds.Errors)
+	}
+	// Header is line 1, the quoted record spans lines 2-3, so the bad record
+	// sits on line 4 — while its record ordinal is only 3.
+	got := ds.Errors[0].Error()
+	if !strings.Contains(got, ".csv:4:") {
+		t.Errorf("error %q does not report file line 4", got)
+	}
+	if strings.Contains(got, ".csv:3:") {
+		t.Errorf("error %q reports the record ordinal instead of the file line", got)
+	}
+}
+
+func TestReadRelationsGivesUpOnAFileOfNothingButBadRecords(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(relationHeader)
+	for range 200 {
+		b.WriteString("a|b|Congruent to|≜|maybe|r\n")
+	}
+	ds, err := cdm.ReadRelations(writeCSV(t, "allbad.csv", b.String()))
+	if err != nil {
+		t.Fatalf("ReadRelations: %v", err)
+	}
+	// An unparseable FLAG is a per-row emit error, not a csv read error, so
+	// it does not trip the consecutive-read-failure bound — it is still
+	// bounded by the file, and every row is reported.
+	if len(ds.Rows) != 0 {
+		t.Fatalf("got %d rows, want 0", len(ds.Rows))
+	}
+	if len(ds.Errors) != 200 {
+		t.Fatalf("got %d errors, want one per bad row", len(ds.Errors))
+	}
+}

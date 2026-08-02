@@ -40,10 +40,32 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 - Manifest: `concept_sources:` mit `redistribution: unknown` (CDM hat
   **keine** auffindbare Lizenz), schema-validiert wie jede andere Quelle;
   `hostus ingest` gibt Konzeptquellen samt aller Verlustzähler aus.
-- Offline-Bundle: `sec_reference` und `concept_relation` (beidseitig
-  gescopet) werden mitkopiert; das Redistributionsgatter verweigert einen
-  Bundle-Export mit CDM-Daten per Default und protokolliert die Quelle unter
-  `--force-include-restricted`.
+- Offline-Bundle: `sec_reference` (auf die Referenzräume der kopierten
+  Konzepte gescopet, weil `title` geernteter Inhalt ist) und
+  `concept_relation` (beidseitig gescopet) werden mitkopiert; das
+  Redistributionsgatter verweigert einen Bundle-Export mit CDM-Daten per
+  Default und protokolliert die Quelle unter `--force-include-restricted`.
+
+### Fixed (SP5, Task 3 — Review)
+- CDM-Ingest schreibt `parent_id` in einem **zweiten Unterlauf** (wie der
+  WCVP-Pfad). Vorher brach der Ingest ab, sobald ein Kind vor seinem Elter
+  in der Datei stand — gemessen am echten Artefakt betrifft das 312 der 697
+  Zeilen mit `parent_uuid`. Die Fixture kann das nicht zeigen, daher ein
+  SQLite-Test mit umgekehrter Reihenfolge.
+- Der Umbau des `concept_relation`-Primärschlüssels läuft jetzt in **einer
+  Transaktion**, prüft die Bedingung darin erneut, räumt eine
+  Scratch-Tabelle vorher weg und verifiziert das Ergebnis per
+  `PRAGMA foreign_key_check`. Beide Abbruchfenster der vorigen Fassung
+  (unöffenbare Datenbank bzw. stiller Datenverlust) sind zusätzlich
+  rückwärts reparierbar: eine liegengebliebene Scratch-Tabelle wird beim
+  `Open` zurückgeführt.
+- `internal/adapters/cdm`: Zeilennummern kommen aus `csv.Reader.FieldPos`
+  bzw. `csv.ParseError` statt aus einem Satzzähler (der bei mehrzeiligen
+  gequoteten Feldern driftet), und aufeinanderfolgende Lesefehler sind
+  begrenzt — ein klebriger I/O-Fehler ließ `Errors` vorher unbegrenzt
+  wachsen.
+- `internal/app/integration_test.go` an die neue `app.Ingest`-Signatur
+  angepasst; `make test-integration` kompiliert und läuft wieder.
 
 ### Added (SP5, Vorarbeit)
 - Pipeline `pipelines/cdm/` (`build.sh`, `crawl.py`, `convert.py`,

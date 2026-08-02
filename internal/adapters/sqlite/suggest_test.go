@@ -64,6 +64,20 @@ func wcvpReaderFor(b application.Backbone) (application.RowSource, error) {
 // Finalize), not seeded by a test shortcut.
 func ingestWCVPFixture(t *testing.T) *sqlite.DB {
 	t.Helper()
+	db, err := sqlite.Open(":memory:")
+	if err != nil {
+		t.Fatalf("sqlite.Open(:memory:): unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	ingestWCVPInto(t, db)
+	return db
+}
+
+// ingestWCVPInto runs the same real ingest into an EXISTING database, so a
+// test can combine the WCVP fixture with another source in one file-backed
+// database (see the bundle scoping tests in cdm_test.go).
+func ingestWCVPInto(t *testing.T, db *sqlite.DB) {
+	t.Helper()
 	ctx := context.Background()
 
 	ds, err := manifest.Parse("../../application/testdata/dataset.yaml")
@@ -83,16 +97,9 @@ func ingestWCVPFixture(t *testing.T) *sqlite.DB {
 	}
 	appDS := &application.Dataset{Backbones: backbones, ManifestSHA: ds.ManifestSHA}
 
-	db, err := sqlite.Open(":memory:")
-	if err != nil {
-		t.Fatalf("sqlite.Open(:memory:): unexpected error: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
 	if _, err := application.Ingest(ctx, appDS, wcvpReaderFor, db); err != nil {
 		t.Fatalf("application.Ingest: unexpected error: %v", err)
 	}
-	return db
 }
 
 func conceptIDs(items []domain.SuggestItem) map[string]domain.SuggestItem {

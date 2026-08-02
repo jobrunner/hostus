@@ -402,10 +402,27 @@ func cdmRelationKey(row CDMRelationRow) string {
 	return fmt.Sprintf("%s->%s", row.FromUUID, row.ToUUID)
 }
 
-// writeCDM is phase 2: writes only, no repository reads. sec_reference rows
-// go first (a concept's sec_reference id names one), then each name with its
-// concept and the accepted link, then the relations — which come last
-// because concept_relation FKs both ends to taxon_concept.
+// writeCDM is phase 2: writes only, no repository reads.
+//
+// It runs in FOUR ordered sub-passes, and the order is load-bearing because
+// SQLite's foreign-key enforcement is IMMEDIATE (`PRAGMA foreign_keys = ON`,
+// no deferred constraints): every reference must already resolve at the
+// moment the row is written, not merely by the time the transaction commits.
+//
+//	2a  sec_reference rows      — a concept's sec_reference id names one
+//	2b  names + concepts + the accepted link, WITHOUT parent_id
+//	2c  parent_id, re-upserted onto the concepts that have one
+//	2d  concept relations       — both ends FK onto taxon_concept
+//
+// Sub-pass 2c exists for exactly the reason internal/application/ingest.go
+// splits pass 1 into 1a/1b (see pass1AcceptedAndNames' comment): a concept's
+// parent may be a uuid that appears LATER in the source file than the child
+// referencing it. That is not a theoretical ordering worry — measured on the
+// real artifact, 697 of 51.466 rows carry a parent_uuid and 312 of those name
+// a parent that appears later in the file. Writing parent_id on the first
+// insert therefore aborts the ingest on a FOREIGN KEY constraint, and the
+// committed fixture cannot show it (its one parent_uuid points outside the
+// file, so it lands in UnresolvedParents instead).
 func writeCDM(tx output.IngestTx, plan *cdmPlan, meta domain.BackboneVersion, report *CDMIngestReport) error {
 	for _, s := range plan.secs {
 		if err := tx.UpsertSecReference(s); err != nil {
@@ -416,13 +433,24 @@ func writeCDM(tx output.IngestTx, plan *cdmPlan, meta domain.BackboneVersion, re
 		if err := tx.UpsertName(plan.names[i]); err != nil {
 			return fmt.Errorf("application: writing CDM name %q: %w", plan.names[i].ID, err)
 		}
-		if err := tx.UpsertConcept(c); err != nil {
+		// Deliberately parent-less on this pass — see the doc comment.
+		parentless := c
+		parentless.ParentID = ""
+		if err := tx.UpsertConcept(parentless); err != nil {
 			return fmt.Errorf("application: writing CDM concept %q: %w", c.ID, err)
 		}
 		if err := tx.LinkName(c.ID, plan.names[i].ID, "accepted", nil); err != nil {
 			return fmt.Errorf("application: linking CDM name %q to concept %q: %w", plan.names[i].ID, c.ID, err)
 		}
 		report.ConceptsWritten++
+	}
+	for _, c := range plan.conceptOf {
+		if c.ParentID == "" {
+			continue
+		}
+		if err := tx.UpsertConcept(c); err != nil {
+			return fmt.Errorf("application: linking parent %q of CDM concept %q: %w", c.ParentID, c.ID, err)
+		}
 	}
 	for _, r := range plan.relations {
 		if err := tx.AddConceptRelation(r.from, r.to, r.rel, meta.ID); err != nil {

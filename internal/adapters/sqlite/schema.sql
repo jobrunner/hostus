@@ -82,7 +82,9 @@ CREATE INDEX IF NOT EXISTS idx_name_basionym_id ON name(basionym_id);
 -- vernacular.concept_id (PK is (concept_id, lang, name)),
 -- trait_value.concept_id (PK is (concept_id, vocab, vocab_version, dim)),
 -- and concept_relation.from_concept (PK is
--- (from_concept, to_concept, source)). Every other FK child column gets
+-- (from_concept, to_concept, relation, source) since SP5 widened it — see
+-- the note on that table below; from_concept is still the LEADING column,
+-- so the conclusion is unchanged). Every other FK child column gets
 -- an explicit index below, next to the table it lives on.
 
 -- Taxonomy.

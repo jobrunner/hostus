@@ -119,11 +119,11 @@ func TestIntegration_EndToEndIngestServeQuery(t *testing.T) {
 	manifestPath := "testdata/dataset.yaml"
 
 	ctx := context.Background()
-	report, _, _, err := app.Ingest(ctx, manifestPath, dbPath)
+	reports, err := app.Ingest(ctx, manifestPath, dbPath)
 	if err != nil {
 		t.Fatalf("app.Ingest: unexpected error: %v", err)
 	}
-	if len(report.Backbones) == 0 {
+	if len(reports.Backbone.Backbones) == 0 {
 		t.Fatal("app.Ingest: empty report, want at least the wcvp backbone")
 	}
 
@@ -572,7 +572,7 @@ type traitsIntegrationResponse struct {
 // ingests the WCVP fixture together with the EIVE and Tichý trait fixtures
 // (testdata/dataset-traits.yaml — a manifest dedicated to this test so the
 // SP1/SP4 fixture manifest testdata/dataset.yaml, shared with
-// internal/app/ingest_test.go's len(traitReports)==1 assertion, stays
+// internal/app/ingest_test.go's len(reports.Traits)==1 assertion, stays
 // untouched) through the real CLI/app path, then drives three real-HTTP
 // guarantees SP3 added on top of SP1/SP2:
 //
@@ -598,13 +598,13 @@ func TestIntegration_TraitsFuzzyClassification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("app.Ingest: unexpected error: %v", err)
 	}
-	if len(backboneReport.Backbones) == 0 {
+	if len(reports.Backbone.Backbones) == 0 {
 		t.Fatal("app.Ingest: empty backbone report, want at least the wcvp backbone")
 	}
-	if len(traitReports) != 2 {
-		t.Fatalf("len(traitReports) = %d, want 2 (eive, tichy2023)", len(traitReports))
+	if len(reports.Traits) != 2 {
+		t.Fatalf("len(reports.Traits) = %d, want 2 (eive, tichy2023)", len(reports.Traits))
 	}
-	for _, tr := range traitReports {
+	for _, tr := range reports.Traits {
 		if tr.Matched == 0 {
 			t.Errorf("trait vocab %q: Matched = 0, want the fixture's WCVP-resolvable rows to have been written", tr.Vocab)
 		}

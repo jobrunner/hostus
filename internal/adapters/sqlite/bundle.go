@@ -549,11 +549,33 @@ func copyConceptScopedTables(ctx context.Context, src, bundle *DB, idsJSON strin
 		return err
 	}
 
-	// sec_reference in full (metadata, like xref_source/trait_vocabulary
-	// above): a copied concept's sec_reference id is useless without the
-	// citation it names.
+	// sec_reference SCOPED to the reference spaces the copied concepts
+	// actually name — deliberately NOT copied in full the way xref_source and
+	// trait_vocabulary above are.
+	//
+	// The difference is what the rows contain. xref_source and
+	// trait_vocabulary hold provenance ABOUT a source (id, version, license,
+	// source url); sec_reference.title holds harvested CONTENT — the citation
+	// strings lifted out of the source itself. Copying all of them unscoped
+	// would ship 18 citations from a redistribution=unknown source into an
+	// area-scoped bundle whose gate never fired, because CDM concepts carry
+	// no distribution rows and so fall out of scopeConceptIDs entirely: no
+	// refusal, and nothing recorded in bundle_meta.restricted_sources either.
+	// Scoping closes that, and it closes it structurally — a bundle can only
+	// carry a citation for a concept it also carries.
+	//
+	// The analogous unscoped copy of xref_source/trait_vocabulary is left
+	// as-is: it is the same SHAPE of leak but only of source metadata, those
+	// tables predate this task, and narrowing them is a change to SP3/SP4
+	// behavior that belongs with its own measurement rather than smuggled in
+	// here.
 	if err := copyRows(ctx, src, bundle,
-		`SELECT id, title FROM sec_reference`, nil,
+		`SELECT id, title FROM sec_reference
+		 WHERE id IN (
+			SELECT DISTINCT sec_reference FROM taxon_concept
+			WHERE id IN (SELECT value FROM json_each(?))
+			  AND sec_reference IS NOT NULL AND sec_reference <> ''
+		 )`, []any{idsJSON},
 		`INSERT INTO sec_reference (id, title) VALUES (?,?)`); err != nil {
 		return err
 	}

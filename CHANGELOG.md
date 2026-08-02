@@ -7,6 +7,22 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Fixed (SP6, Task 1 — nomenklatorischer Status und Publikation)
+- **`nom_status` und `published_in` gingen beim Ingest verloren.** Der
+  WCVP-Reader las `nomenclaturalstatus`/`namepublishedin`, `domain.Name`
+  hatte beide Felder, der SQLite-Adapter schrieb beide Spalten — aber die
+  DTO `application.TaxonRow` und der Mapper in `pass1AcceptedAndNames`
+  kannten sie nicht. Im echten Index waren beide Spalten deshalb bei **0
+  von 1.448.984** Namen belegt. Jetzt: 99.252 Namen (6,85 %) mit
+  `nom_status`, 1.448.934 (99,997 %) mit `published_in`. Das ist die
+  Voraussetzung für den Publikations-Relevanzfilter von
+  `GET /v1/concept/{id}/synonyms` (UC5).
+- Beide Spalten werden als SQL `NULL` gespeichert, wenn die Quelle nichts
+  liefert — ein leerer Quellwert wird nicht zu einem Platzhalter.
+- Das tatsächlich gemessene `nom_status`-Vokabular (1.304 distinkte Werte,
+  Verteilung, Präfix-Artefakt `", "`, Mehrfachstatus je Zelle) ist in
+  `docs/research/reality-check.md`, Abschnitt „SP6 Task 1", dokumentiert.
+
 ### Added (SP5, Task 4 — `POST /v1/translate`)
 - **`POST /v1/translate`**: Übersetzung eines Konzepts zwischen
   `sec.`-Referenzräumen (UC6). Einstieg über `concept_id` **oder**

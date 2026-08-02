@@ -70,6 +70,8 @@ func (s wcvpRowSource) Taxa() []application.TaxonRow {
 			POWOID:          t.POWOID(),
 			ParentTaxonID:   t.ParentNameUsageID,
 			BasionymTaxonID: t.OriginalNameUsageID,
+			PublishedIn:     t.PublishedIn,
+			NomStatus:       t.NomenclaturalStatus,
 		})
 	}
 	return out

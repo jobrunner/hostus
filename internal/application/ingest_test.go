@@ -35,6 +35,8 @@ func (s wcvpRowSource) Taxa() []application.TaxonRow {
 			POWOID:          t.POWOID(),
 			ParentTaxonID:   t.ParentNameUsageID,
 			BasionymTaxonID: t.OriginalNameUsageID,
+			PublishedIn:     t.PublishedIn,
+			NomStatus:       t.NomenclaturalStatus,
 		})
 	}
 	return out
@@ -276,6 +278,67 @@ func TestIngest_WCVPFixture_UnresolvableBasionymStaysEmpty(t *testing.T) {
 	concept := mustConcept(ctx, t, repo, jacobaeaDunensisID)
 	if concept.AcceptedName.BasionymID != "" {
 		t.Errorf("concept.AcceptedName.BasionymID = %q, want empty (originalnameusageid 3082804 is absent from the fixture, a dangling reference that must not be invented)", concept.AcceptedName.BasionymID)
+	}
+}
+
+// TestIngest_WCVPFixture_CarriesNomStatusAndPublishedIn proves the two
+// nomenclatural columns survive the whole ingest path — WCVP's
+// nomenclaturalstatus/namepublishedin -> application.TaxonRow ->
+// domain.Name -> the name row -> read back. Both were parsed by the reader
+// and written by the SQLite adapter all along, but the mapper in between
+// built domain.Name without them, so every ingested name had them empty
+// (0 of 1.448.984 in the real index). SP6's UC5 publication-relevance
+// filter is defined in terms of nom_status, so this is a prerequisite.
+//
+// Empty source values must stay empty rather than become a placeholder:
+// "no recorded nomenclatural problem" is not a status value.
+func TestIngest_WCVPFixture_CarriesNomStatusAndPublishedIn(t *testing.T) {
+	ds := loadDataset(t)
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+
+	if _, err := application.Ingest(ctx, ds, wcvpReaderFor, repo); err != nil {
+		t.Fatalf("Ingest: unexpected error: %v", err)
+	}
+
+	const festucaOvinaID = "wcvp:concept:415853"
+	concept := mustConcept(ctx, t, repo, festucaOvinaID)
+	if got, want := concept.AcceptedName.PublishedIn, "Sp. Pl.: 73 (1753)"; got != want {
+		t.Errorf("Festuca ovina.PublishedIn = %q, want %q", got, want)
+	}
+	if got := concept.AcceptedName.NomStatus; got != "" {
+		t.Errorf("Festuca ovina.NomStatus = %q, want empty (the fixture row's nomenclaturalstatus is empty and must not gain a placeholder)", got)
+	}
+
+	byCanonical := make(map[string]output.SynonymName)
+	for _, s := range mustSynonyms(ctx, t, repo, festucaOvinaID) {
+		byCanonical[s.Canonical] = s
+	}
+
+	// Avena dura (397471) carries a real nomenclaturalstatus — verbatim,
+	// including WCVP's own leading ", " (99,86 % of the 99.252 real values
+	// carry it — docs/research/reality-check.md, SP6 Task 1). Normalizing
+	// it belongs to the vocabulary layer, not to the ingest.
+	avena, ok := byCanonical["Avena dura"]
+	if !ok {
+		t.Fatalf("synonyms of %q = %+v, want an entry for %q", festucaOvinaID, byCanonical, "Avena dura")
+	}
+	if got, want := avena.NomStatus, ", nom. illeg. superfl."; got != want {
+		t.Errorf("Avena dura.NomStatus = %q, want %q", got, want)
+	}
+	if got, want := avena.PublishedIn, "Prodr. Stirp. Chap. Allerton: 22 (1796)"; got != want {
+		t.Errorf("Avena dura.PublishedIn = %q, want %q", got, want)
+	}
+
+	bromus, ok := byCanonical["Bromus ovinus"]
+	if !ok {
+		t.Fatalf("synonyms of %q = %+v, want an entry for %q", festucaOvinaID, byCanonical, "Bromus ovinus")
+	}
+	if got := bromus.NomStatus; got != "" {
+		t.Errorf("Bromus ovinus.NomStatus = %q, want empty", got)
+	}
+	if got, want := bromus.PublishedIn, "Fl. Carniol., ed. 2, 1: 77 (1771)"; got != want {
+		t.Errorf("Bromus ovinus.PublishedIn = %q, want %q", got, want)
 	}
 }
 

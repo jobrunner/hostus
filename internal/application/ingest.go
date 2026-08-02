@@ -67,6 +67,13 @@ type TaxonRow struct {
 	// ingestState.presentTaxonIDs), since every row (not just accepted
 	// ones) gets its own Name.
 	BasionymTaxonID string
+	// PublishedIn and NomStatus are the source row's nomenclatural
+	// provenance (WCVP namepublishedin / nomenclaturalstatus), carried
+	// verbatim. NomStatus in particular is what SP6's UC5 publication
+	// relevance filter is defined on, so it must not be normalized,
+	// defaulted or dropped here — an empty source value stays empty.
+	PublishedIn string
+	NomStatus   string
 }
 
 // DistributionRow is one area assignment, joined to a TaxonRow by TaxonID.
@@ -329,11 +336,13 @@ func (st *ingestState) pass1AcceptedAndNames(taxa []TaxonRow, report *BackboneRe
 		// so every name's ipni_id is populated straight from it, not just
 		// the accepted row's powo xref.
 		name := domain.Name{
-			ID:         nameID(b.ID, row.TaxonID),
-			Canonical:  row.Canonical,
-			Authorship: row.Authorship,
-			Rank:       rank,
-			IPNIID:     row.POWOID,
+			ID:          nameID(b.ID, row.TaxonID),
+			Canonical:   row.Canonical,
+			Authorship:  row.Authorship,
+			Rank:        rank,
+			IPNIID:      row.POWOID,
+			PublishedIn: row.PublishedIn,
+			NomStatus:   row.NomStatus,
 		}
 		if rank == domain.RankOther {
 			name.RankVerbatim = verbatim

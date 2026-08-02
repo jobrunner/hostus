@@ -2403,3 +2403,139 @@ diesen Anteil kennt. Das ist ehrlich als Deckungsgrenze zu kommunizieren,
 nicht zu verschweigen — ein Produkt, das UC2 auf Basis dieser Brücke
 ausliefert, muss den fehlenden Link für 58,5 % der Konzepte explizit als
 "nicht gefunden" behandeln, nicht stillschweigend nichts anzeigen.
+
+## SP6 Task 1 — `nom_status`/`published_in`: das tatsächlich gemessene Vokabular
+
+Ausgangsbefund: der WCVP-Reader las `nomenclaturalstatus` und
+`namepublishedin`, `domain.Name` hatte die Felder, der SQLite-Adapter schrieb
+die Spalten — aber der Mapper dazwischen (`internal/application/ingest.go`,
+und schon davor die DTO `application.TaxonRow` selbst) baute den Namen ohne
+beide Werte. Ergebnis im echten Index: `nom_status` bei **0 von 1.448.984**
+Namen gesetzt, `published_in` ebenso.
+
+### Messung
+
+Volle WCVP-DwC-A (`wcvp_taxon.csv`, 508 MB, 1.448.984 Namen / 440.534
+Konzepte / 964.762 Synonyme), Ingest über `hostus ingest` in eine frische
+SQLite-Datei, Laufzeit **5:03 min**. Also der komplette Korpus, keine
+Stichprobe, keine Hochrechnung.
+
+| Kennzahl | Wert |
+| --- | --- |
+| Namen gesamt | 1.448.984 |
+| davon mit nicht-leerem `nom_status` | **99.252 (6,85 %)** |
+| davon mit nicht-leerem `published_in` | **1.448.934 (99,997 %)** — nur 50 Namen ohne |
+| distinkte `nom_status`-Werte | **1.304** |
+| distinkte `published_in`-Werte | 853.152 |
+| `basionym_id` gesetzt (Kontrollwert, unverändert) | 429.172 |
+
+92.492 der 99.252 Namen mit `nom_status` stehen in der Rolle `synonym` —
+das Feld trifft also genau die Menge, die UC5 filtern soll.
+
+### Die drei Befunde, auf die sich Task 2 einstellen muss
+
+**1. Jeder Wert trägt WCVP-eigenes `", "` als Präfix.** 99.111 von 99.252
+Werten (99,86 %) beginnen mit Komma und Leerzeichen — WCVP hängt den Status
+an ein Zitatfragment an und exportiert die Konkatenation. Der Ingest schreibt
+den Wert bewusst verbatim; das Normalisieren ist Aufgabe der Vokabularschicht,
+nicht des Imports.
+
+**2. Das Vokabular ist kein Enum, sondern ein langer Freitextschwanz.** 1.304
+distinkte Werte, davon 12 mit ≥ 1.000 Treffern, 28 mit ≥ 100, 1.225 mit < 10
+(zusammen 1.812 Namen). Die zehn häufigsten decken 90,56 % ab, die Top 20
+95,82 %, die Top 200 erst 98,75 %. Eine vollständige Abbildung aller 1.304
+Werte ist weder nötig noch sinnvoll; ein `default: unbekannt` ist Pflicht.
+
+Die 20 häufigsten Werte (verbatim, mit kumulierter Deckung):
+
+| n | kumuliert | Wert |
+| ---: | ---: | --- |
+| 36.424 | 36,70 % | `, nom. illeg. homonym. post.` |
+| 18.220 | 55,06 % | `, not validly publ.` |
+| 10.768 | 65,91 % | `, nom. illeg. superfl.` |
+| 9.210 | 75,18 % | `, nom. nud.` |
+| 6.218 | 81,45 % | `, pro syn.` |
+| 2.405 | 83,87 % | `, nom. illeg.` |
+| 2.193 | 86,08 % | `, orth. var.` |
+| 1.716 | 87,81 % | `, nom. superfl.` |
+| 1.527 | 89,35 % | `, opus utique oppr.` |
+| 1.202 | 90,56 % | `, nom. cons.` |
+| 1.132 | 91,70 % | `, without a Latin descr.` |
+| 1.115 | 92,82 % | `, sensu auct.` |
+| 831 | 93,66 % | `, nom. rej.` |
+| 471 | 94,14 % | `, without basionym ref.` |
+| 443 | 94,58 % | `, without indication of the type.` |
+| 362 | 94,95 % | `, nom. provis.` |
+| 290 | 95,24 % | `, tentatively listed as a synonym.` |
+| 236 | 95,48 % | `, nom. subnud.` |
+| 199 | 95,68 % | `, sphalm.` |
+| 142 | 95,82 % | `, without type.` |
+
+**3. Der Beispielfall aus dem Entwurfsdokument trägt nicht den Wert, den das
+Entwurfsdokument annimmt.** *Corynephorus incanescens* Bubani
+(`wcvp:name:405842`) hat `nom_status = ", nom. illeg. superfl."`, **nicht**
+`", nom. superfl."`. Ein Gleichheitsvergleich gegen die drei im Entwurf
+genannten Werte (`nom. nud.`, `nom. superfl.`, `pro syn.`) würde genau den
+Fall verfehlen, an dem UC5 erklärt wird — und zusätzlich die 10.768 Namen
+mit `nom. illeg. superfl.` sowie die 36.424 mit `nom. illeg. homonym. post.`
+Der Filter muss also auf Token-Enthaltensein prüfen, nicht auf Gleichheit.
+Token-Trefferzahlen über den Volldatensatz:
+
+| Token | Namen, deren `nom_status` es enthält |
+| --- | ---: |
+| `nom. illeg.` | 49.694 |
+| `not validly publ.` | 18.606 |
+| `nom. nud.` | 9.222 |
+| `pro syn.` | 6.222 |
+| `orth. var.` | 2.196 |
+| `nom. superfl.` | 1.729 |
+| `opus utique` | 1.640 |
+| `nom. cons.` | 1.237 |
+| `sensu auct.` | 1.117 |
+| `nom. rej.` | 884 |
+| `fossil name.` | 272 |
+
+### Weitere Auffälligkeiten, die eine Einordnung brauchen
+
+- **Mehrfachstatus in einer Zelle.** 684 Namen tragen mehr als einen
+  kommaseparierten Status (664 mit zwei, 16 mit drei, 4 mit vier oder fünf),
+  z. B. `, nom. illeg., later homonym`. Ein Filter, der die Zelle als einen
+  einzigen Wert behandelt, verfehlt den zweiten Status.
+- **Kommas kommen auch innerhalb eines Status vor**, etwa
+  `, contrary to Art. 23.6. (ICN, 2012).` — naives Splitten an `,` zerlegt
+  diese Werte falsch. Der ganze Zellwert ist die verlässlichere Einheit.
+- **141 Werte sind gar kein Status, sondern ein Zitatfragment**, z. B.
+  `[Cusc.: 184]`, `[Conv. Or.: 60]`, oder Freitext wie
+  `published as "mutatio nova"` und `as stabilized hybrids derived from
+  C. collina × C. ser. Molles`. Diese Zellen enthalten keine
+  nomenklatorische Aussage; einige mischen beides (`[Cusc.: 183], nom.
+  illeg.`).
+- **Schreibvarianten desselben Sachverhalts** existieren nebeneinander:
+  `without a Latin descr.` (1.132) / `without latin descr.` (33) /
+  `without Latin descr.` (19) / `sine descr. lat.` (15);
+  `not effectively publ.` (29) / `not effectively published.` (23);
+  `nom. altern.` (103) / `nom. alt.` (35); `nom. rej.` (831) /
+  `nom. rejic.` (9). Eine Abbildung muss diese zusammenführen oder bewusst
+  getrennt lassen — raten darf sie nicht.
+- **Nicht klassifizierbar ohne fachliche Entscheidung**, hier ausdrücklich
+  markiert statt stillschweigend einsortiert: `, sensu auct.` (1.115) ist
+  eine Fehlanwendung, kein nomenklatorischer Mangel; `, tentatively listed
+  as a synonym.` (290) ist eine taxonomische Unsicherheit, keine
+  Publikationsfrage; `, fossil name.` (272) und `, isonym` (9) sagen nichts
+  über die Gültigkeit; `, not validly publ.?` (8) trägt ein Fragezeichen
+  mitten im Wert. Ob diese Fälle in UC5 ausgeschlossen werden, ist eine
+  fachliche und keine technische Entscheidung.
+
+### `published_in`
+
+Praktisch flächendeckend belegt (1.448.934 von 1.448.984). Die Form ist eine
+Kurzzitation im IPNI-Stil `Werk Band: Seite (Jahr)`:
+
+- `Sp. Pl.: 73 (1753)`
+- `Phytotaxa 275: 217 (2016)`
+- `F.W.H.von Humboldt, A.J.A.Bonpland & C.S.Kunth, Nov. Gen. Sp. 6: 127 (1823)`
+- `Acta Bot. Acad. Sci. Hung. 17: 121 (1971 publ. 1972)`
+
+Zu beachten: **20.989 Namen tragen den Literalwert `Unknown`** — das ist ein
+belegtes Feld ohne Information, kein NULL. Wer `published_in` als
+Relevanzsignal verwendet, muss `Unknown` wie "nicht vorhanden" behandeln.

@@ -26,3 +26,10 @@ trait_vocabularies:
     source: https://example.org/tichy
     path: ../../traits/testdata/tichy-sample.csv
     redistribution: allowed
+xref_sources:
+  - id: wikidata
+    version: "2026-08-02"
+    license: CC0
+    source: https://query.wikidata.org/sparql
+    path: ../../xref/testdata/wikidata-sample.csv
+    redistribution: allowed

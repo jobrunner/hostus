@@ -75,6 +75,58 @@ func TestParse_ValidManifestTraitVocabularies(t *testing.T) {
 	}
 }
 
+func TestParse_ValidManifestXrefSources(t *testing.T) {
+	ds, err := manifest.Parse("testdata/dataset-valid.yaml")
+	if err != nil {
+		t.Fatalf("Parse: unexpected error: %v", err)
+	}
+
+	if got, want := len(ds.XrefSources), 1; got != want {
+		t.Fatalf("len(XrefSources) = %d, want %d", got, want)
+	}
+	wikidata := ds.XrefSources[0]
+	if wikidata.ID != "wikidata" {
+		t.Errorf("XrefSources[0].ID = %q, want %q", wikidata.ID, "wikidata")
+	}
+	if wikidata.Version != "2026-08-02" {
+		t.Errorf("XrefSources[0].Version = %q, want %q", wikidata.Version, "2026-08-02")
+	}
+	if wikidata.License != "CC0" {
+		t.Errorf("XrefSources[0].License = %q, want %q", wikidata.License, "CC0")
+	}
+	if wikidata.SourceURL != "https://query.wikidata.org/sparql" {
+		t.Errorf("XrefSources[0].SourceURL = %q, want %q", wikidata.SourceURL, "https://query.wikidata.org/sparql")
+	}
+	if wikidata.Redistribution != "allowed" {
+		t.Errorf("XrefSources[0].Redistribution = %q, want %q", wikidata.Redistribution, "allowed")
+	}
+	wantXrefPath := filepath.Join("testdata", "..", "..", "xref", "testdata", "wikidata-sample.csv")
+	if wikidata.Path != wantXrefPath {
+		t.Errorf("XrefSources[0].Path = %q, want %q (relative paths resolved against the manifest's directory)", wikidata.Path, wantXrefPath)
+	}
+}
+
+func TestParse_RejectsXrefSourceMissingRequiredField(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dataset.yaml")
+	content := "backbones:\n" +
+		"  - id: wcvp\n" +
+		"    version: \"1.0\"\n" +
+		"    path: /tmp/x\n" +
+		"    redistribution: allowed\n" +
+		"xref_sources:\n" +
+		"  - id: wikidata\n" +
+		"    version: \"1.0\"\n" +
+		"    path: /tmp/x.csv\n" +
+		"    redistribution: allowed\n" // missing license/source
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	if _, err := manifest.Parse(path); err == nil {
+		t.Fatal("Parse: expected error for xref_sources entry missing required license/source, got nil")
+	}
+}
+
 func TestParse_ValidExampleManifest(t *testing.T) {
 	ds, err := manifest.Parse("../../../dataset.example.yaml")
 	if err != nil {
@@ -85,6 +137,12 @@ func TestParse_ValidExampleManifest(t *testing.T) {
 	}
 	if got, want := len(ds.TraitVocabularies), 3; got != want {
 		t.Fatalf("len(TraitVocabularies) = %d, want %d", got, want)
+	}
+	if got, want := len(ds.XrefSources), 1; got != want {
+		t.Fatalf("len(XrefSources) = %d, want %d", got, want)
+	}
+	if ds.XrefSources[0].ID != "wikidata" {
+		t.Errorf("XrefSources[0].ID = %q, want %q", ds.XrefSources[0].ID, "wikidata")
 	}
 	ids := make(map[string]bool, len(ds.Backbones))
 	for _, b := range ds.Backbones {

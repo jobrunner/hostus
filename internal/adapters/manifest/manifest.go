@@ -59,10 +59,28 @@ type TraitVocabulary struct {
 	Redistribution string `yaml:"redistribution" json:"redistribution"`
 }
 
+// XrefSource is one pinned cross-reference source entry (SP4): an
+// immutable version/license/source-URL identity plus the local filesystem
+// path to its canonical xref CSV (see internal/adapters/xref), resolved to
+// an absolute path relative to the manifest file by Parse, exactly like
+// Backbone.Path/TraitVocabulary.Path.
+type XrefSource struct {
+	ID        string `yaml:"id" json:"id"`
+	Version   string `yaml:"version" json:"version"`
+	License   string `yaml:"license" json:"license"`
+	SourceURL string `yaml:"source" json:"source"`
+	Path      string `yaml:"path" json:"path"`
+	// Redistribution is required (schema-enforced): allowed|restricted|unknown.
+	// See internal/domain.Redistribution — it gates ExportBundle, never
+	// local ingest. Wikidata itself is CC0 (allowed).
+	Redistribution string `yaml:"redistribution" json:"redistribution"`
+}
+
 // Dataset is the parsed, validated contents of a dataset.yaml manifest.
 type Dataset struct {
 	Backbones         []Backbone        `yaml:"backbones" json:"backbones"`
 	TraitVocabularies []TraitVocabulary `yaml:"trait_vocabularies,omitempty" json:"trait_vocabularies,omitempty"`
+	XrefSources       []XrefSource      `yaml:"xref_sources,omitempty" json:"xref_sources,omitempty"`
 
 	// Raw holds the exact bytes read from disk, and ManifestSHA their
 	// SHA-256 hex digest — so an ingest can record manifest_sha and bind
@@ -127,6 +145,11 @@ func Parse(path string) (*Dataset, error) {
 	for i, tv := range ds.TraitVocabularies {
 		if tv.Path != "" && !filepath.IsAbs(tv.Path) {
 			ds.TraitVocabularies[i].Path = filepath.Join(baseDir, tv.Path)
+		}
+	}
+	for i, xs := range ds.XrefSources {
+		if xs.Path != "" && !filepath.IsAbs(xs.Path) {
+			ds.XrefSources[i].Path = filepath.Join(baseDir, xs.Path)
 		}
 	}
 

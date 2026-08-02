@@ -29,6 +29,13 @@ type Repository interface {
 	// ConceptByXref resolves a taxon_concept via a cross-reference to an
 	// external authority (e.g. authority="powo", extID="396681-1").
 	ConceptByXref(ctx context.Context, authority, extID string) (*domain.Concept, error)
+	// ConceptIDsByXref batch-resolves extIDs against xref for a single
+	// authority, returning only the ones that matched: map[extID]conceptID.
+	// An extID with no xref row for authority is simply absent from the
+	// result — this is the ID-based join application.IngestXrefs' resolve
+	// phase uses, sized for resolving hundreds of thousands of ids in one
+	// call (see the sqlite adapter's doc comment on the json_each binding).
+	ConceptIDsByXref(ctx context.Context, authority string, extIDs []string) (map[string]string, error)
 	// MatchExact returns every name (accepted or synonym) whose canonical
 	// form equals canon, leaving classification (exact vs. exact_author,
 	// etc.) to the application layer.

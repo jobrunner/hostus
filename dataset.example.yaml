@@ -75,3 +75,16 @@ trait_vocabularies:
     source: https://doi.org/10.5281/zenodo.7116957
     path: pipelines/midolo/output/midolo-canonical.csv
     redistribution: allowed # CC-BY-4.0, docs/research/quellenregister.md
+
+# Cross-Reference-Quellen (SP4). Wikidata dient als Bridge-Hub: über die
+# powo/ipni-ID jedes Konzepts liefert dieselbe Wikidata-Position gleich
+# mehrere externe Autoritäten (u.a. iNaturalist, GBIF, COL, WFO) — ein
+# ID-basierter Join, kein Namensabgleich, daher ohne Normalisierungsfragen,
+# aber mit ungewisser Deckung (siehe docs/research/reality-check.md, SP4).
+xref_sources:
+  - id: wikidata
+    version: "2026-08-02" # Datum des WDQS-Harvests, niemals "latest"
+    license: CC0
+    source: https://query.wikidata.org/sparql
+    path: pipelines/wikidata/output/wikidata-xref-canonical.csv
+    redistribution: allowed # CC0

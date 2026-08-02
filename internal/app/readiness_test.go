@@ -42,7 +42,7 @@ func TestNew_ReadinessGatedOnDB(t *testing.T) {
 		t.Fatalf("ready before ingest: got %d, want 503 (body: %s)", rr.Code, rr.Body.String())
 	}
 
-	if _, _, err := app.Ingest(context.Background(), "testdata/dataset.yaml", dbPath); err != nil {
+	if _, _, _, err := app.Ingest(context.Background(), "testdata/dataset.yaml", dbPath); err != nil {
 		t.Fatalf("Ingest: unexpected error: %v", err)
 	}
 

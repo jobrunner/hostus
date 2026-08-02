@@ -702,6 +702,9 @@ func (f *fakeCapturingRepo) Classification(context.Context, string) ([]domain.Cl
 func (f *fakeCapturingRepo) ConceptByXref(context.Context, string, string) (*domain.Concept, error) {
 	panic("not needed by Ingest")
 }
+func (f *fakeCapturingRepo) ConceptIDsByXref(context.Context, string, []string) (map[string]string, error) {
+	panic("not needed by Ingest")
+}
 func (f *fakeCapturingRepo) MatchExact(context.Context, string) ([]output.MatchCandidate, error) {
 	panic("not needed by Ingest")
 }

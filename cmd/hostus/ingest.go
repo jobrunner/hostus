@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -50,13 +51,14 @@ func runIngest(cmd *cobra.Command, _ []string) error {
 		return errors.New("ingest: --db is required")
 	}
 
-	report, traitReports, err := app.Ingest(cmd.Context(), datasetPath, dbPath)
+	report, traitReports, xrefReports, err := app.Ingest(cmd.Context(), datasetPath, dbPath)
 	if err != nil {
 		return err
 	}
 
 	printIngestReport(cmd.OutOrStdout(), report)
 	printTraitReports(cmd.OutOrStdout(), traitReports)
+	printXrefReports(cmd.OutOrStdout(), xrefReports)
 	return nil
 }
 
@@ -138,4 +140,44 @@ func printTraitReports(w io.Writer, reports []application.TraitIngestReport) {
 		}
 		printRedistributionNotice(w, r.Vocab, r.Redistribution)
 	}
+}
+
+// printXrefReports renders one line per ingested xref source, including its
+// per-authority coverage and both conflict-sample lines — mirroring
+// printTraitReports' visibility posture: the ID-based join's two loss modes
+// (unmatched join ids, conflicting external ids) must be seen by whoever
+// runs "hostus ingest", never silently swallowed.
+func printXrefReports(w io.Writer, reports []application.XrefIngestReport) {
+	if len(reports) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintln(w, "Xref sources:")
+	for _, r := range reports {
+		_, _ = fmt.Fprintf(w, "  %s: rows=%d matched=%d unmatched=%d conflicting=%d\n",
+			r.Source, r.Rows, r.Matched, r.Unmatched, r.Conflicting)
+		for _, authority := range sortedKeys(r.PerAuthority) {
+			_, _ = fmt.Fprintf(w, "    %s: concepts=%d\n", authority, r.PerAuthority[authority])
+		}
+		for _, authority := range sortedKeys(r.MultiPerAuthority) {
+			_, _ = fmt.Fprintf(w, "    %s: %d concept(s) hold more than one id (not a conflict)\n", authority, r.MultiPerAuthority[authority])
+		}
+		if len(r.UnmatchedSample) > 0 {
+			_, _ = fmt.Fprintf(w, "    unmatched sample: %s\n", strings.Join(r.UnmatchedSample, ", "))
+		}
+		if len(r.ConflictSample) > 0 {
+			_, _ = fmt.Fprintf(w, "    conflict sample: %s\n", strings.Join(r.ConflictSample, ", "))
+		}
+		printRedistributionNotice(w, r.Source, r.Redistribution)
+	}
+}
+
+// sortedKeys returns m's keys in sorted order, so printXrefReports' output
+// is deterministic across runs — Go map iteration order is randomized.
+func sortedKeys(m map[string]int) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

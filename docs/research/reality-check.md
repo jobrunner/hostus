@@ -2111,3 +2111,116 @@ diesem Task.
      --list germansl=pipelines/germansl/output/germansl-canonical.csv \
      --list floraveg=pipelines/floraveg/output/floraveg-canonical.csv
    ```
+
+## SP4 Task 2 — Xref-Ingest (ID-basierter Join): Deckung und Konflikte
+
+**Aufbau.** `application.IngestXrefs` wurde gegen eine **Kopie** der echten
+Volldatenbank (`/tmp/full-real.sqlite`, 440.534 Konzepte, 440.534 `powo`-Xrefs
+aus dem WCVP-Ingest, Traits bereits eingespielt) gefahren, mit dem echten
+Wikidata-Bridge-Hub-Export aus T1
+(`pipelines/wikidata/output/wikidata-xref-canonical.csv`,
+1.709.127 Zeilen / 393.172 distinkte `join_id`s). Der Backbone-Ingest wurde
+**nicht** wiederholt (~5 Min, laut Vorgabe zu vermeiden) — die Messung lief
+als eigenständiges, nicht eingechecktes Go-Programm direkt gegen
+`application.IngestXrefs`, mit anschließendem Cross-Check per direktem SQL
+gegen dieselbe Kopie. Beide Wege stimmen exakt überein (siehe Tabelle unten),
+das ist die Bestätigung, dass der Report nichts verschweigt.
+
+### Konfliktregel (der Kern dieser Aufgabe)
+
+`xref`s Primärschlüssel ist `(authority, ext_id)` — ein externer Datensatz
+kann zu genau einem Konzept gehören. Zwei strukturell verschiedene
+Situationen müssen getrennt behandelt werden:
+
+- **(a) Echter Konflikt**: dieselbe `(authority, ext_id)`-Kombination wird
+  von zwei UNTERSCHIEDLICHEN `join_id`s beansprucht, die auf zwei
+  UNTERSCHIEDLICHE Konzepte auflösen (ein Datenfehler stromaufwärts — z. B.
+  zwei IPNI-IDs, die Wikidata fälschlich derselben GBIF-ID zuordnet). Regel:
+  **skip-and-report** — keine der beiden Zeilen wird geschrieben, beide
+  zählen in `Conflicting`, der externe Schlüssel landet in `ConflictSample`.
+  Das ist der von der Aufgabe vorgegebene sichere Default: raten, welches
+  Konzept gemeint war, wäre falsch; und da `AddXref` ein `INSERT OR REPLACE`
+  auf genau diesem Schlüssel ist, würde ohne diese Prüfung die zuletzt
+  verarbeitete Zeile die andere stillschweigend überschreiben.
+- **(b) Legitime Mehrfachzuordnung**: EIN Konzept bekommt mehrere
+  UNTERSCHIEDLICHE `ext_id`s für dieselbe `authority` (z. B. zwei
+  Wikidata-Items, die beide dieselbe IPNI-ID tragen, liefern zwei
+  QIDs für dasselbe Konzept). Das ist **kein** Konflikt — `xref`s PK
+  kollidiert nicht, da die `ext_id`s verschieden sind — sondern wird
+  einfach **beide** geschrieben. `MultiPerAuthority`/`MultiSample` machen
+  das Phänomen sichtbar, ohne es zu verhindern.
+
+`PerAuthority` zählt bewusst **distinkte Konzepte**, nicht Zeilen — das ist
+die für UC2 relevante Zahl (siehe unten).
+
+### Messergebnis
+
+| Kennzahl | Wert |
+| --- | --- |
+| Konzepte gesamt | 440.534 |
+| Zeilen gesamt | 1.709.127 |
+| Matched | 1.709.111 |
+| Unmatched | 0 |
+| Conflicting | 16 (8 externe Schlüssel × 2 Zeilen) |
+| **Konzepte mit ≥1 neuem Xref** | **392.218 / 440.534 (89,03 %)** |
+
+Direkter SQL-Cross-Check (`SELECT COUNT(*) FROM (SELECT concept_id FROM xref
+GROUP BY concept_id HAVING COUNT(*) > 1)`) liefert exakt dieselbe Zahl,
+392.218 — der Report und die Datenbank stimmen überein.
+
+**Deckung pro Autorität** (distinkte Konzepte, Report und Direkt-SQL
+identisch):
+
+| authority | Konzepte | Anteil |
+| --- | --- | --- |
+| wikidata | 392.218 | 89,03 % |
+| gbif | 383.907 | 87,15 % |
+| wfo | 365.731 | 83,02 % |
+| colxr | 357.878 | 81,24 % |
+| **inat** | **182.821** | **41,50 %** |
+| floraveg | 24.274 | 5,51 % |
+| euromed | 95 | 0,02 % |
+
+**Die für UC2 entscheidende Zahl: 182.821 von 440.534 Konzepten (41,50 %)
+tragen eine iNaturalist-`taxon_id`.** Das ist die Obergrenze, mit der UC2
+("von einem hostus-Konzept zu iNaturalist-Beobachtungen") tatsächlich
+arbeiten kann — für die übrigen 58,5 % der Konzepte hat der Bridge-Hub keinen
+iNat-Datensatz gefunden. Das ist ein niedriger Befund, kein Fehlschlag: die
+Wikidata-Brücke bewegt sich zwischen "fast vollständig" (wikidata selbst,
+gbif, wfo, colxr — alle über 80 %) und "eng" (inat bei 41,5 %, floraveg bei
+5,5 %, euromed praktisch nicht vorhanden bei 0,02 %). Für UC2 heißt das
+konkret: **weniger als die Hälfte** aller Konzepte kann den in der
+Spezifikation vorgesehenen Direktlink zu iNaturalist-Beobachtungen anbieten;
+für die anderen 257.713 Konzepte müsste ein Client entweder auf eine andere
+Autorität ausweichen oder dem Nutzer ehrlich "keine iNat-Verknüpfung
+gefunden" anzeigen.
+
+**Konflikte (a):** 16 Zeilen (8 externe Schlüssel, je zwei Zeilen), alle bei
+`gbif` (5 Schlüssel) und `wfo` (3 Schlüssel) — keine bei `inat`, `colxr`,
+`wikidata`, `floraveg` oder `euromed`. Beispiele aus `ConflictSample`:
+`gbif:11378793`, `gbif:2783144`, `wfo:wfo-0000100690`. Das sind Fälle, in
+denen zwei verschiedene IPNI/POWO-IDs im Wikidata-Export auf dieselbe
+GBIF- bzw. WFO-ID verweisen — bei 1,7 Mio. Zeilen ein verschwindend kleiner
+Anteil (0,0009 %), aber genau der Fall, den die Skip-and-report-Regel ohne
+Raten auffängt.
+
+**Mehrfachzuordnungen (b):** am häufigsten bei `wikidata` selbst (954
+Konzepte mit ≥2 QIDs), gefolgt von `gbif` (635), `wfo` (299), `colxr` (39),
+`inat` (63), `floraveg` (3) — überall im niedrigen einstelligen bis
+niedrigen dreistelligen Promillebereich der jeweils erreichten Konzepte,
+also ein Rand-, kein Regelfall.
+
+**Unmatched: 0 von 1.709.127 Zeilen.** Das bestätigt T1s Garantie ("zero
+dead join_ids") an der Stelle, an der es zählt: dem tatsächlichen ID-Join
+gegen die 440.534 echten `powo`-Xrefs, nicht nur gegen die 393.172 in T1
+selbst geprüften distinkten IDs. Kein Befund, keine offene Frage.
+
+**Was das für UC2 bedeutet.** Die Wikidata-Brücke ist für GBIF/WFO/COL-XR/
+Wikidata selbst eine sehr gute Ergänzung (81–89 % Konzeptdeckung), aber für
+das von der Spezifikation genannte Zielsystem iNaturalist nur eine
+Teillösung: 41,5 % Deckung bedeutet, dass UC2 für weniger als die Hälfte
+der 440.534 Konzepte tatsächlich funktioniert. Ob das für den Produktschnitt
+ausreicht oder eine zweite iNat-Anbindung (z. B. ein direkter Namens- oder
+GBIF-basierter Join gegen den iNaturalist-Taxonomiedump) nötig wird, ist eine
+Produktentscheidung — dieser Abschnitt liefert dafür die Zahl, nicht die
+Entscheidung.

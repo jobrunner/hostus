@@ -8,6 +8,7 @@ import (
 	"github.com/jobrunner/hostus/internal/adapters/sqlite"
 	"github.com/jobrunner/hostus/internal/adapters/traits"
 	"github.com/jobrunner/hostus/internal/adapters/wcvp"
+	"github.com/jobrunner/hostus/internal/adapters/xref"
 	"github.com/jobrunner/hostus/internal/application"
 	"github.com/jobrunner/hostus/internal/domain"
 )
@@ -145,41 +146,95 @@ func ingestTraitVocab(ctx context.Context, tv manifest.TraitVocabulary, repo *sq
 	return application.IngestTraits(ctx, repo, traitVocabRowSource{ds: ds}, meta)
 }
 
+// xrefSourceRowSource adapts a *xref.Dataset (T1/T2's reader output) into
+// application.XrefRowSource, so application never imports
+// internal/adapters/xref directly (depguard) — the xref-source counterpart
+// of wcvpRowSource/traitVocabRowSource above.
+type xrefSourceRowSource struct{ ds *xref.Dataset }
+
+func (s xrefSourceRowSource) Rows() []application.XrefRow {
+	out := make([]application.XrefRow, 0, len(s.ds.Rows))
+	for _, r := range s.ds.Rows {
+		out = append(out, application.XrefRow{
+			JoinAuthority: r.JoinAuthority,
+			JoinID:        r.JoinID,
+			Authority:     r.Authority,
+			ExtID:         r.ExtID,
+		})
+	}
+	return out
+}
+
+// ingestXrefSource opens xs's canonical xref CSV and runs
+// application.IngestXrefs against repo, adapting the manifest's XrefSource
+// entry into the domain.XrefSourceMeta the use case records.
+func ingestXrefSource(ctx context.Context, xs manifest.XrefSource, repo *sqlite.DB) (application.XrefIngestReport, error) {
+	ds, err := xref.Read(xs.Path)
+	if err != nil {
+		return application.XrefIngestReport{}, fmt.Errorf("app: reading xref source %q at %q: %w", xs.ID, xs.Path, err)
+	}
+	// xs.Redistribution is routed through ParseRedistribution for the same
+	// reason as adaptBackbones' backbone mapping above — see its doc
+	// comment.
+	redistribution, err := domain.ParseRedistribution(xs.Redistribution)
+	if err != nil {
+		return application.XrefIngestReport{}, fmt.Errorf("app: xref source %q: %w", xs.ID, err)
+	}
+	meta := domain.XrefSourceMeta{
+		ID:             xs.ID,
+		Version:        xs.Version,
+		License:        xs.License,
+		SourceURL:      xs.SourceURL,
+		Redistribution: redistribution,
+	}
+	return application.IngestXrefs(ctx, repo, xrefSourceRowSource{ds: ds}, meta)
+}
+
 // Ingest parses and validates the manifest at manifestPath, opens (or
 // creates) the SQLite database at dbPath, and runs application.Ingest
-// against every pinned backbone followed by application.IngestTraits
-// against every pinned trait vocabulary, returning both reports. It is the
+// against every pinned backbone, followed by application.IngestTraits
+// against every pinned trait vocabulary, followed by application.IngestXrefs
+// against every pinned xref source, returning all three reports. It is the
 // entry point "hostus ingest" calls.
-func Ingest(ctx context.Context, manifestPath, dbPath string) (application.IngestReport, []application.TraitIngestReport, error) {
+func Ingest(ctx context.Context, manifestPath, dbPath string) (application.IngestReport, []application.TraitIngestReport, []application.XrefIngestReport, error) {
 	manifestDS, err := manifest.Parse(manifestPath)
 	if err != nil {
-		return application.IngestReport{}, nil, err
+		return application.IngestReport{}, nil, nil, err
 	}
 	backbones, err := adaptBackbones(manifestDS.Backbones)
 	if err != nil {
-		return application.IngestReport{}, nil, err
+		return application.IngestReport{}, nil, nil, err
 	}
 	ds := &application.Dataset{Backbones: backbones, ManifestSHA: manifestDS.ManifestSHA}
 
 	repo, err := sqlite.Open(dbPath)
 	if err != nil {
-		return application.IngestReport{}, nil, fmt.Errorf("app: opening database %q: %w", dbPath, err)
+		return application.IngestReport{}, nil, nil, fmt.Errorf("app: opening database %q: %w", dbPath, err)
 	}
 	defer func() { _ = repo.Close() }()
 
 	backboneReport, err := application.Ingest(ctx, ds, readerFor, repo)
 	if err != nil {
-		return backboneReport, nil, err
+		return backboneReport, nil, nil, err
 	}
 
 	traitReports := make([]application.TraitIngestReport, 0, len(manifestDS.TraitVocabularies))
 	for _, tv := range manifestDS.TraitVocabularies {
 		tr, err := ingestTraitVocab(ctx, tv, repo)
 		if err != nil {
-			return backboneReport, traitReports, err
+			return backboneReport, traitReports, nil, err
 		}
 		traitReports = append(traitReports, tr)
 	}
 
-	return backboneReport, traitReports, nil
+	xrefReports := make([]application.XrefIngestReport, 0, len(manifestDS.XrefSources))
+	for _, xs := range manifestDS.XrefSources {
+		xr, err := ingestXrefSource(ctx, xs, repo)
+		if err != nil {
+			return backboneReport, traitReports, xrefReports, err
+		}
+		xrefReports = append(xrefReports, xr)
+	}
+
+	return backboneReport, traitReports, xrefReports, nil
 }

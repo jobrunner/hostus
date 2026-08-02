@@ -7,6 +7,17 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (SP5, Vorarbeit)
+- Messsonde `poc/p08b_cdm_sample/` (`probe.sh` + `cdm_sample.py`, reproduzierbar
+  über Seed `20260802` und die committete `sample.tsv`) und der Bericht
+  `docs/research/cdm-sample.md`: die Zwei-Hop-Methode aus PoC P8 an einer
+  geschichteten Stichprobe von 500 CDM-Konzepten gemessen. Kernbefunde:
+  Relationsdichte ≈ 56 % datensatzweit, Relations-UUIDs sind echte
+  Kantenidentitäten (Auflösung 100 %, Mehrdeutigkeit 0 % bei Vollcrawl,
+  75,9 % unter P8s Namensrestriktion), drei Relationstypen außerhalb des
+  angenommenen SP1-Vokabulars, `sec.`→Klassifikation nur über eine
+  handgepflegte Crosswalk-Tabelle, Vollcrawl-Kosten 14–30 h bei 1 req/s
+
 hostus wird vom zustandslosen GBIF-Autosuggest-Proxy zum lokalen
 Multi-Backbone-Namens- und Merkmalsservice umgebaut (siehe
 `docs/superpowers/specs/2026-07-31-hostus-2.0-architecture.md`). Dieser

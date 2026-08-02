@@ -124,8 +124,11 @@ func TestTranslateCongruentIsTheOnlyEqualityOnTheWire(t *testing.T) {
 			t.Errorf("%s: result = %v, want translated", tc.relType, got["result"])
 		}
 		c := firstCandidate(t, got)
-		if c["relation"] != tc.wantRelation {
-			t.Errorf("%s: relation = %v, want %q", tc.relType, c["relation"], tc.wantRelation)
+		if _, present := c["relation"]; present {
+			t.Errorf("%s: a bare \"relation\" field is on the wire — it is direction-dependent and must not carry the most inviting name", tc.relType)
+		}
+		if c["stored_relation"] != tc.wantRelation {
+			t.Errorf("%s: stored_relation = %v, want %q", tc.relType, c["stored_relation"], tc.wantRelation)
 		}
 		eq, present := c["is_equality"]
 		if !present {
@@ -154,8 +157,8 @@ func TestTranslateOverlapsCannotBeReadAsEquality(t *testing.T) {
 		t.Errorf("overlaps body claims equality: %s", body)
 	}
 	c := firstCandidate(t, decodeTranslate(t, rr))
-	if c["relation"] != "overlaps" || c["relation_from_source"] != "overlaps" {
-		t.Errorf("relation fields = %v / %v, want overlaps twice", c["relation"], c["relation_from_source"])
+	if c["stored_relation"] != "overlaps" || c["relation_from_source"] != "overlaps" {
+		t.Errorf("relation fields = %v / %v, want overlaps twice", c["stored_relation"], c["relation_from_source"])
 	}
 }
 
@@ -165,10 +168,10 @@ func TestTranslateUncertainKeepsItsOwnValue(t *testing.T) {
 	db := translateRepoDB(t, translateRelation("a", "b", "Included in or Includes or Overlaps"))
 	body := postTranslate(t, db, `{"concept_id":"`+tConceptA+`","target_space":"`+tSecB+`"}`).Body.String()
 
-	if !strings.Contains(body, `"relation":"includes_or_included_in_or_overlaps"`) {
+	if !strings.Contains(body, `"stored_relation":"includes_or_included_in_or_overlaps"`) {
 		t.Errorf("uncertain relation not rendered verbatim: %s", body)
 	}
-	if strings.Contains(body, `"relation":"overlaps"`) {
+	if strings.Contains(body, `"stored_relation":"overlaps"`) {
 		t.Errorf("uncertain relation was flattened onto overlaps: %s", body)
 	}
 }
@@ -193,8 +196,11 @@ func TestTranslateDirectionIsExplicit(t *testing.T) {
 	if incoming["direction"] != "target_to_source" {
 		t.Errorf("direction = %v, want target_to_source", incoming["direction"])
 	}
-	if incoming["relation"] != "includes" {
-		t.Errorf("relation = %v, want the stored includes", incoming["relation"])
+	if incoming["stored_relation"] != "includes" {
+		t.Errorf("stored_relation = %v, want the stored includes", incoming["stored_relation"])
+	}
+	if incoming["has_inverse"] != true {
+		t.Errorf("has_inverse = %v, want true", incoming["has_inverse"])
 	}
 	if incoming["relation_from_source"] != "included_in" {
 		t.Errorf("relation_from_source = %v, want included_in", incoming["relation_from_source"])
@@ -210,17 +216,32 @@ func TestTranslateDirectionIsExplicit(t *testing.T) {
 // and a note in its place, never a fabricated inverse.
 func TestTranslateIncomingProParteOmitsTheSourceFirstReading(t *testing.T) {
 	db := translateRepoDB(t, translateRelation("a", "b", "is pro parte synonym for"))
-	c := firstCandidate(t, decodeTranslate(t, postTranslate(t, db,
-		`{"concept_id":"`+tConceptB+`","target_space":"`+tSecA+`"}`)))
+	rr := postTranslate(t, db, `{"concept_id":"`+tConceptB+`","target_space":"`+tSecA+`"}`)
+	rawProParteBody := rr.Body.String()
+	c := firstCandidate(t, decodeTranslate(t, rr))
 
-	if _, present := c["relation_from_source"]; present {
-		t.Errorf("relation_from_source = %v, want absent for an incoming pro parte", c["relation_from_source"])
+	// The direction-safe field must be PRESENT and explicitly null, not
+	// missing: a missing key reads as "unknown", and its absence would
+	// coincide exactly with the case where a client most needs stopping.
+	fromSource, present := c["relation_from_source"]
+	if !present {
+		t.Errorf("relation_from_source key is missing; want present and null")
 	}
-	if c["relation"] != "pro_parte" {
-		t.Errorf("relation = %v, want pro_parte", c["relation"])
+	if fromSource != nil {
+		t.Errorf("relation_from_source = %v, want null for an incoming pro parte", fromSource)
 	}
-	if c["note"] == nil {
-		t.Errorf("no note explaining the missing inverse")
+	if c["has_inverse"] != false {
+		t.Errorf("has_inverse = %v, want false", c["has_inverse"])
+	}
+	if !strings.Contains(rawProParteBody, `"relation_from_source":null`) {
+		t.Errorf("explicit null is not on the wire: %s", rawProParteBody)
+	}
+	if c["stored_relation"] != "pro_parte" {
+		t.Errorf("stored_relation = %v, want pro_parte", c["stored_relation"])
+	}
+	note, _ := c["note"].(string)
+	if !strings.Contains(note, "keine Umkehrrichtung definiert") {
+		t.Errorf("note = %q, want it to name the missing inverse (the generic non-identity text would also be non-empty)", note)
 	}
 }
 
@@ -379,7 +400,7 @@ func TestTranslateEntryByVerbatimName(t *testing.T) {
 		t.Errorf("entry = %v, want the verbatim mode echoing the query", entry)
 	}
 	c := firstCandidate(t, got)
-	if c["relation"] != "overlaps" || c["is_equality"] != false {
+	if c["stored_relation"] != "overlaps" || c["is_equality"] != false {
 		t.Errorf("candidate = %v, want a non-identity overlaps result", c)
 	}
 }

@@ -612,7 +612,7 @@ components:
           type: string
     TranslateCandidate:
       type: object
-      required: [concept_id, canonical, rank, status, sec, relation, direction, statement, is_equality, hops]
+      required: [concept_id, canonical, rank, status, sec, stored_relation, relation_from_source, has_inverse, direction, statement, is_equality, hops]
       properties:
         concept_id:
           type: string
@@ -626,12 +626,16 @@ components:
           type: string
         sec:
           $ref: '#/components/schemas/SecReference'
-        relation:
+        stored_relation:
           type: string
           description: >-
-            Die Relation, wie die Quelle sie stellt.
-            `includes_or_included_in_or_overlaps` (⊂⊃⊕) wird NIE auf
-            `overlaps` eingeebnet.
+            Die Relation der GESPEICHERTEN Zeile. Ihre Richtung hängt von
+            `direction` ab und ist NICHT quellenseitig zu lesen — deshalb
+            heißt das Feld nicht `relation`: CDM emittiert ausschließlich
+            die `Includes`-Richtung, eingehende Kanten sind häufig, und ein
+            Client, der den kurzen Namen quellenseitig läse, bekäme die
+            Aussage verkehrt herum. `includes_or_included_in_or_overlaps`
+            (⊂⊃⊕) wird NIE auf `overlaps` eingeebnet.
           enum:
             - congruent
             - not_congruent
@@ -642,11 +646,27 @@ components:
             - pro_parte
         relation_from_source:
           type: string
+          nullable: true
           description: >-
-            Dieselbe Kante quellenseitig gelesen (bei eingehender
-            `includes`-Kante also `included_in`). FEHLT, wenn keine
-            sinnvolle Umkehrung existiert (`pro_parte`) — hostus erfindet
-            keine.
+            Die RICHTUNGSSICHERE Lesart (Quelle → Kandidat); bei einer
+            eingehenden `includes`-Kante also `included_in`. Immer
+            vorhanden; ausdrücklich `null`, wenn keine sinnvolle Umkehrung
+            existiert (eingehende `pro_parte`-Kante) — hostus erfindet
+            keine, und ein fehlender Schlüssel läse sich wie "unbekannt".
+          enum:
+            - congruent
+            - not_congruent
+            - includes
+            - included_in
+            - overlaps
+            - includes_or_included_in_or_overlaps
+            - pro_parte
+            - null
+        has_inverse:
+          type: boolean
+          description: >-
+            Ob `relation_from_source` einen Wert trägt — prüfbar ohne
+            Null-Behandlung. Immer vorhanden.
         direction:
           type: string
           enum: [source_to_target, target_to_source]

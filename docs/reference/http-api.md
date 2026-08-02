@@ -447,8 +447,9 @@ POST /v1/translate
       "rank": "SPECIES",
       "status": "ACCEPTED",
       "sec": { "id": "060afae5-…", "title": "Wisskirchen & Haeupler 1998: Standardliste …" },
-      "relation": "congruent",
+      "stored_relation": "congruent",
       "relation_from_source": "congruent",
+      "has_inverse": true,
       "direction": "source_to_target",
       "statement": {
         "from": "cdm:concept:b7a352aa-…",
@@ -469,17 +470,28 @@ POST /v1/translate
 
 `is_equality` ist das **einzige** Feld, das als „dasselbe Taxon" gelesen
 werden darf. Es steht auf jedem Kandidaten und ist bei genau einer Relation
-`true`:
+`true`.
 
-| `relation` | Symbol | `is_equality` | Bedeutung |
+Die folgende Tabelle beschreibt **`relation_from_source`** — die
+quellenseitige, richtungssichere Lesart. Sie gilt **nicht** unbesehen für
+`stored_relation`: das ist die gespeicherte Zeile, deren Richtung von
+`direction` abhängt (siehe [nächster Abschnitt](#richtung-a-includes-b-ist-nicht-b-included_in-a)).
+
+| `relation_from_source` | Symbol | `is_equality` | Bedeutung (Quelle → Kandidat) |
 |---|---|---|---|
 | `congruent` | ≜ | **`true`** | gleiche Umgrenzung |
 | `not_congruent` | — | `false` | ausdrücklich **nicht** gleich |
-| `includes` | ⊃ | `false` | Quelle ist die **weitere** Umgrenzung |
-| `included_in` | ⊂ | `false` | Quelle ist die **engere** Umgrenzung |
+| `includes` | ⊃ | `false` | die **Quelle** ist die weitere Umgrenzung |
+| `included_in` | ⊂ | `false` | die **Quelle** ist die engere Umgrenzung |
 | `overlaps` | ⊕ | `false` | teilweise Überschneidung, keine Gleichsetzung |
 | `includes_or_included_in_or_overlaps` | ⊂⊃⊕ | `false` | Quelle **legt sich nicht fest**, welche der drei gilt |
 | `pro_parte` | p.p. | `false` | gerichtete Teilaussage über den Namen der From-Seite |
+| `null` | — | `false` | **keine sinnvolle Umkehrung** (eingehende `pro_parte`-Kante); `has_inverse` ist dann `false`, und nur `statement` gilt |
+
+`included_in` kommt als **gespeicherter** Wert nie vor — CDM emittiert
+ausschließlich die `Includes`-Richtung. Als `relation_from_source` tritt es
+bei jeder eingehenden `includes`-Kante auf; genau dafür ist der Wert im
+Vokabular behalten worden.
 
 `includes_or_included_in_or_overlaps` wird **nie** auf `overlaps`
 eingeebnet: die Quelle sagt ausdrücklich, dass sie sich nicht festlegt, und
@@ -499,14 +511,26 @@ nennt**, und legt keine gespiegelte Zeile an. Die Antwort macht das sichtbar:
 
 - `statement` ist die gespeicherte Aussage, wortwörtlich — geordnetes Paar
   plus Relation.
+- `stored_relation` ist die Relation dieser Zeile. Ihre Richtung hängt von
+  `direction` ab; sie ist **nicht** quellenseitig zu lesen.
 - `direction` ist `source_to_target`, wenn das Ausgangskonzept die
   From-Seite ist, sonst `target_to_source`.
 - `relation_from_source` ist dieselbe Kante quellenseitig gelesen (bei einer
-  eingehenden `includes`-Kante also `included_in`).
-- Bei `pro_parte` **fehlt `relation_from_source` ganz**, wenn die Kante
-  eingehend ist: eine gerichtete Aussage über den Namen der Gegenseite hat
-  keine sinnvolle Umkehrung, und hostus erfindet keine. Das `note`-Feld sagt
-  das.
+  eingehenden `includes`-Kante also `included_in`), plus `has_inverse: true`.
+
+!!! warning "Es gibt bewusst kein Feld `relation`"
+    Der kurze, verlockende Name wird nicht vergeben. CDM emittiert
+    ausschließlich die `Includes`-Richtung, eingehende Kanten sind also
+    häufig — ein Client mit `if c.relation == "includes"` läse eine
+    eingehende Kante **genau verkehrt herum**. Wer eine
+    richtungsunabhängige Aussage braucht, nimmt `relation_from_source`;
+    wer die Rohzeile braucht, `stored_relation`/`statement`.
+
+Bei einer **eingehenden `pro_parte`-Kante** ist `relation_from_source`
+ausdrücklich `null` und `has_inverse` `false` — nicht etwa weggelassen. Eine
+gerichtete Aussage über den Namen der Gegenseite hat keine sinnvolle
+Umkehrung, hostus erfindet keine, und ein fehlender Schlüssel läse sich wie
+„unbekannt". Das `note`-Feld nennt den Grund.
 
 Ein Konzeptpaar kann zwei **verschiedene** Relationstypen tragen (der
 Primärschlüssel von `concept_relation` ist

@@ -71,11 +71,25 @@ type relationStatementDTO struct {
 // translateCandidateDTO is one concept in the target space reached by one
 // stored relation.
 //
-// IsEquality is the ONLY field a consumer may read as "the same taxon", and
-// it is never omitempty: an absent field could be mistaken for "unknown",
-// whereas an explicit false is a statement. Relation/Statement describe the
-// row as stored; RelationFromSource is the source-first reading and is
-// absent exactly when no inverse exists (pro parte).
+// The field naming is load-bearing. There is deliberately NO field called
+// plain "relation": the stored triple's relation is direction-dependent,
+// and CDM only ever emits the "Includes" direction, so incoming edges are
+// common — a client writing `if c.relation == "includes"` on an incoming
+// edge would read the claim exactly backwards. The invitingly-short name is
+// therefore not offered at all:
+//
+//   - StoredRelation is the row as stored, and says so in its name. It is
+//     fully redundant with Statement.Relation, kept only so the stored
+//     vocabulary is readable without descending into Statement.
+//   - RelationFromSource is the DIRECTION-SAFE reading (source -> candidate)
+//     and is always present, explicitly null when no sound inverse exists.
+//     A *string rather than omitempty for the same reason IsEquality is not
+//     omitempty: an absent field reads as "unknown", an explicit null is a
+//     statement — and absence would otherwise coincide exactly with the
+//     pro-parte case where a lazy client most needs to be stopped.
+//   - HasInverse makes that null checkable without null-handling.
+//
+// IsEquality is the ONLY field a consumer may read as "the same taxon".
 type translateCandidateDTO struct {
 	ConceptID          string               `json:"concept_id"`
 	Canonical          string               `json:"canonical"`
@@ -83,8 +97,9 @@ type translateCandidateDTO struct {
 	Rank               string               `json:"rank"`
 	Status             string               `json:"status"`
 	Sec                secReferenceDTO      `json:"sec"`
-	Relation           string               `json:"relation"`
-	RelationFromSource string               `json:"relation_from_source,omitempty"`
+	StoredRelation     string               `json:"stored_relation"`
+	RelationFromSource *string              `json:"relation_from_source"`
+	HasInverse         bool                 `json:"has_inverse"`
 	Direction          string               `json:"direction"`
 	Statement          relationStatementDTO `json:"statement"`
 	IsEquality         bool                 `json:"is_equality"`
@@ -234,6 +249,13 @@ func translateToDTO(res application.TranslateResult) translateResponseDTO {
 		if c.Outgoing {
 			direction = directionSourceToTarget
 		}
+		// An empty RelationFromSource means "no sound inverse", which goes
+		// on the wire as an explicit null rather than a missing key.
+		var fromSource *string
+		if c.RelationFromSource != "" {
+			s := string(c.RelationFromSource)
+			fromSource = &s
+		}
 		out.Candidates = append(out.Candidates, translateCandidateDTO{
 			ConceptID:          c.Concept.ID,
 			Canonical:          c.Concept.AcceptedName.Canonical,
@@ -241,8 +263,9 @@ func translateToDTO(res application.TranslateResult) translateResponseDTO {
 			Rank:               string(c.Concept.Rank),
 			Status:             string(c.Concept.Status),
 			Sec:                secToDTO(c.Sec),
-			Relation:           string(c.Relation),
-			RelationFromSource: string(c.RelationFromSource),
+			StoredRelation:     string(c.Relation),
+			RelationFromSource: fromSource,
+			HasInverse:         fromSource != nil,
 			Direction:          direction,
 			Statement:          relationStatementDTO{From: c.StatementFrom, Relation: string(c.Relation), To: c.StatementTo},
 			IsEquality:         c.IsEquality,

@@ -256,8 +256,12 @@ func TestTranslateIncomingProParteHasNoSourceFirstReading(t *testing.T) {
 	if got.Relation != domain.RelationProParte {
 		t.Errorf("Relation = %q, want the stored %q", got.Relation, domain.RelationProParte)
 	}
-	if got.Note == "" {
-		t.Errorf("Note is empty — the missing inverse must be explained, not silently absent")
+	// Non-empty is not enough: candidateNote(pro_parte) already returns the
+	// generic non-identity text, so dropping the noteNoInverse assignment
+	// would leave a plausible-but-wrong note. The note must NAME the
+	// missing inverse.
+	if !strings.Contains(got.Note, "keine Umkehrrichtung definiert") {
+		t.Errorf("Note = %q, want it to name the missing inverse", got.Note)
 	}
 	if got.IsEquality {
 		t.Errorf("IsEquality = true for pro parte")
@@ -279,8 +283,17 @@ func TestTranslateTwoRelationsOnOnePairAreBothReturned(t *testing.T) {
 	if len(res.Candidates) != 2 {
 		t.Fatalf("got %d candidates, want 2 (both relation types on the same pair)", len(res.Candidates))
 	}
-	if res.Candidates[0].Relation == res.Candidates[1].Relation {
-		t.Errorf("both candidates carry %q — the two relation types were collapsed", res.Candidates[0].Relation)
+	// Asserting the two VALUES, not merely that they differ: a swap would
+	// satisfy a difference check while mislabelling both edges.
+	if res.Candidates[0].Relation != domain.RelationCongruent {
+		t.Errorf("first candidate = %q, want congruent", res.Candidates[0].Relation)
+	}
+	if res.Candidates[1].Relation != domain.RelationOverlaps {
+		t.Errorf("second candidate = %q, want overlaps", res.Candidates[1].Relation)
+	}
+	if res.Candidates[0].IsEquality == res.Candidates[1].IsEquality {
+		t.Errorf("both candidates report is_equality %v — the congruent/overlaps distinction was lost",
+			res.Candidates[0].IsEquality)
 	}
 }
 
@@ -359,6 +372,12 @@ func TestTranslateNameCandidatesOptInWithNothingToShow(t *testing.T) {
 	withNames := translate(t, translateRepo(), application.TranslateRequest{
 		ConceptID: "cdm:concept:roth", TargetSec: secWH98, IncludeNameCandidates: true,
 	})
+	if !strings.Contains(withNames.Note, "KEINE Übersetzung") {
+		t.Errorf("name-block note = %q, want it to say plainly that this is not a translation", withNames.Note)
+	}
+	if strings.Contains(res.Note, "KEINE Übersetzung") {
+		t.Errorf("empty-block note = %q, want the plain no-relation wording only", res.Note)
+	}
 	if res.Note == withNames.Note {
 		t.Errorf("note %q is the same with and without name candidates", res.Note)
 	}
@@ -491,6 +510,14 @@ func TestTranslateFuzzyVerbatimEntryRequiresReview(t *testing.T) {
 	}
 	if res.Entry.Verbatim != "Abies albba" {
 		t.Errorf("Entry.Verbatim = %q, want the query as sent", res.Entry.Verbatim)
+	}
+	// The result-level flag is PROPAGATED from the match result, not
+	// re-derived from MatchType — the two must agree.
+	if !res.Entry.RequiresReview {
+		t.Errorf("Entry.RequiresReview = false, want the match result's own flag")
+	}
+	if res.Entry.RequiresReview != res.RequiresReview {
+		t.Errorf("Entry.RequiresReview = %v but result RequiresReview = %v", res.Entry.RequiresReview, res.RequiresReview)
 	}
 	// A fuzzy ENTRY must not turn the relation itself into a guess.
 	if len(res.Candidates) != 1 || !res.Candidates[0].IsEquality {

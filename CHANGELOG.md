@@ -22,9 +22,15 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   als das sichtbar, was sie sind, und werden nicht eingeebnet.
 - **Ehrliche Richtung**: hostus speichert Relationen nur in der
   Quellrichtung, deshalb liefert jeder Kandidat die gespeicherte Aussage
-  (`statement`), die Richtung (`direction`) und die quellenseitige Lesart
-  (`relation_from_source`) — letztere **fehlt**, wenn keine sinnvolle
-  Umkehrung existiert (`pro_parte`), statt eine zu erfinden.
+  (`statement`), deren Relation (`stored_relation`), die Richtung
+  (`direction`) und die richtungssichere quellenseitige Lesart
+  (`relation_from_source` + `has_inverse`). Ein Feld namens `relation` gibt
+  es **bewusst nicht**: CDM emittiert ausschließlich die
+  `Includes`-Richtung, eingehende Kanten sind also häufig, und ein Client
+  mit `if c.relation == "includes"` läse eine eingehende Kante genau
+  verkehrt herum. `relation_from_source` ist immer vorhanden und
+  ausdrücklich `null` (nicht weggelassen), wenn keine sinnvolle Umkehrung
+  existiert (eingehende `pro_parte`-Kante) — hostus erfindet keine.
 - **Genau ein Hop**, ohne Konfigurationsmöglichkeit: eine transitive Kette
   ist über dieses Vokabular nicht allgemein gültig (`overlaps ∘ overlaps`
   sagt nichts, `⊂⊃⊕ ∘ irgendwas` ist undefiniert). `max_hops` steht auf

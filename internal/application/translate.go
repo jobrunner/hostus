@@ -98,6 +98,13 @@ type TranslateEntry struct {
 	MatchType  domain.MatchType
 	Confidence float64
 	Note       string
+	// RequiresReview is MatchResult.RequiresReview, propagated rather than
+	// re-derived from MatchType. Re-deriving it as "MatchType == fuzzy"
+	// would be equivalent today but silently drop the flag the moment
+	// MatchNames marks another resolved path — MatchAggregateAlias, for
+	// instance, arguably should require review when a Sammelart is
+	// translated between circumscriptions.
+	RequiresReview bool
 }
 
 // TranslationCandidate is one concept in the target space that a stored
@@ -219,7 +226,7 @@ func Translate(ctx context.Context, repo output.Repository, req TranslateRequest
 		TargetSec:      target,
 		Entry:          entry,
 		MaxHops:        MaxTranslateHops,
-		RequiresReview: entry.MatchType == domain.MatchFuzzy,
+		RequiresReview: entry.RequiresReview,
 	}
 	for _, e := range rel.Edges {
 		res.Candidates = append(res.Candidates, toCandidate(conceptID, e))
@@ -310,11 +317,12 @@ func resolveTranslateEntry(ctx context.Context, repo output.Repository, req Tran
 		return "", TranslateEntry{}, fmt.Errorf("%w: %q", ErrUnresolvableName, req.Verbatim)
 	}
 	return m.ConceptID, TranslateEntry{
-		Mode:       EntryModeVerbatim,
-		Verbatim:   req.Verbatim,
-		MatchType:  m.MatchType,
-		Confidence: m.Confidence,
-		Note:       m.Note,
+		Mode:           EntryModeVerbatim,
+		Verbatim:       req.Verbatim,
+		MatchType:      m.MatchType,
+		Confidence:     m.Confidence,
+		Note:           m.Note,
+		RequiresReview: m.RequiresReview,
 	}, nil
 }
 

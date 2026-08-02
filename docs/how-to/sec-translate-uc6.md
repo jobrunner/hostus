@@ -65,8 +65,9 @@ curl -sS -X POST http://localhost:8080/v1/translate \
     {
       "concept_id": "cdm:concept:872088a4-95f4-472c-ae79-a29028bb3fbf",
       "canonical": "Abies alba",
-      "relation": "congruent",
+      "stored_relation": "congruent",
       "relation_from_source": "congruent",
+      "has_inverse": true,
       "direction": "source_to_target",
       "statement": { "from": "cdm:concept:b7a352aa-…", "relation": "congruent", "to": "cdm:concept:872088a4-…" },
       "is_equality": true,
@@ -90,15 +91,20 @@ dieselbe Logik wie `POST /v1/match`, und ein **Fuzzy-Treffer setzt
 darf. Es steht auf jedem Kandidaten — auch wenn es `false` ist, denn ein
 fehlendes Feld läse sich wie „unbekannt".
 
-| `relation` | Symbol | `is_equality` | Was die Quelle sagt |
+Die Tabelle gilt für **`relation_from_source`** — die quellenseitige,
+richtungssichere Lesart. Für `stored_relation` gilt sie **nicht** unbesehen;
+dessen Richtung hängt von `direction` ab (siehe nächster Abschnitt).
+
+| `relation_from_source` | Symbol | `is_equality` | Was die Quelle sagt (Quelle → Kandidat) |
 |---|---|---|---|
 | `congruent` | ≜ | **`true`** | gleiche Umgrenzung |
 | `not_congruent` | — | `false` | ausdrücklich **nicht** gleich |
-| `includes` | ⊃ | `false` | die eine Umgrenzung ist **weiter** |
-| `included_in` | ⊂ | `false` | die eine Umgrenzung ist **enger** |
+| `includes` | ⊃ | `false` | die **Quelle** ist weiter |
+| `included_in` | ⊂ | `false` | die **Quelle** ist enger |
 | `overlaps` | ⊕ | `false` | Überschneidung, aber jede Seite hat Eigenes |
 | `includes_or_included_in_or_overlaps` | ⊂⊃⊕ | `false` | die Quelle **legt sich nicht fest** |
 | `pro_parte` | p.p. | `false` | gerichtete Teilaussage über den Namen |
+| `null` | — | `false` | keine sinnvolle Umkehrung; `has_inverse: false` |
 
 `⊂⊃⊕` wird bewusst **nicht** auf `overlaps` eingeebnet. Die Quelle sagt
 ausdrücklich, dass sie offenlässt, welche der drei Beziehungen gilt; eine
@@ -112,17 +118,28 @@ UC6 verhindern soll.
 
 hostus speichert jede Relation **in der Richtung, in der die Quelle sie
 nennt**, und legt keine gespiegelte Zeile an. Deshalb trägt jeder Kandidat
-drei Angaben:
+vier Angaben:
 
 - `statement` — die gespeicherte Aussage, wortwörtlich.
+- `stored_relation` — die Relation dieser Zeile. Richtung laut `direction`,
+  **nicht** quellenseitig zu lesen.
 - `direction` — `source_to_target`, wenn das Ausgangskonzept die From-Seite
   ist, sonst `target_to_source`.
 - `relation_from_source` — dieselbe Kante quellenseitig gelesen. Bei einer
   eingehenden `includes`-Kante steht dort `included_in`.
 
-Bei `pro_parte` **fehlt `relation_from_source`**, wenn die Kante eingehend
-ist: eine gerichtete Aussage über den Namen der Gegenseite hat keine
-sinnvolle Umkehrung, und hostus erfindet keine. Das `note`-Feld sagt das.
+!!! warning "Es gibt bewusst kein Feld `relation`"
+    Der kurze Name wird nicht vergeben. CDM emittiert ausschließlich die
+    `Includes`-Richtung, eingehende Kanten sind also häufig — ein Client
+    mit `if c.relation == "includes"` läse eine eingehende Kante **genau
+    verkehrt herum**. Richtungssicher ist `relation_from_source`; die
+    Rohzeile steht in `stored_relation`/`statement`.
+
+Bei einer **eingehenden `pro_parte`-Kante** ist `relation_from_source`
+ausdrücklich `null` (nicht weggelassen) und `has_inverse` `false`: eine
+gerichtete Aussage über den Namen der Gegenseite hat keine sinnvolle
+Umkehrung, hostus erfindet keine, und ein fehlender Schlüssel läse sich wie
+„unbekannt". Das `note`-Feld sagt das.
 
 `misapplied` erscheint hier nie. CDM flaggt diese Zeilen
 `conceptRelationship: false`, weil sie über **Namensverwendung** sprechen und

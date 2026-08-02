@@ -31,7 +31,7 @@ type BundleOpts struct {
 	Now func() time.Time
 	// AllowRestricted opts out of the redistribution gate (see
 	// findRestrictedSources): without it, ExportBundle refuses to export
-	// when any contributing backbone/trait-vocabulary source is not
+	// when any contributing backbone/trait-vocabulary/xref source is not
 	// domain.RedistributionAllowed. With it, the export succeeds AND the
 	// offending sources are recorded in bundle_meta.restricted_sources, so
 	// a bundle can never silently carry unclearable data. Surfaced as
@@ -47,9 +47,10 @@ type BundleReport struct {
 	Path     string
 }
 
-// restrictedSource is one non-domain.RedistributionAllowed backbone or
-// trait-vocabulary source that contributed data (a taxon_concept, or a
-// trait_value row) to a bundle's export scope.
+// restrictedSource is one non-domain.RedistributionAllowed backbone,
+// trait-vocabulary or xref source that contributed data (a taxon_concept, a
+// trait_value row, or a source-attributed xref row) to a bundle's export
+// scope.
 type restrictedSource struct {
 	ID             string
 	Redistribution string
@@ -70,7 +71,8 @@ func formatRestrictedSources(rs []restrictedSource) string {
 // restrictedSourceIDs renders rs into bundle_meta.restricted_sources' stable,
 // deterministic representation: a comma-joined, sorted list of ids only (no
 // redistribution values — the value is already recoverable from the
-// original source database's backbone_version/trait_vocabulary rows).
+// original source database's backbone_version/trait_vocabulary/xref_source
+// rows).
 func restrictedSourceIDs(rs []restrictedSource) string {
 	if len(rs) == 0 {
 		return ""
@@ -102,12 +104,18 @@ func marshalIDs(ids []string) (string, error) {
 	return string(b), nil
 }
 
-// findRestrictedSources reports every backbone or trait-vocabulary source
-// that contributes data to conceptIDs' scope (a taxon_concept belonging to
-// it, or a trait_value row on one of conceptIDs) and whose redistribution
-// is not domain.RedistributionAllowed, sorted by id for a deterministic
-// result. An empty conceptIDs (nothing in scope) trivially contributes no
-// sources.
+// findRestrictedSources reports every backbone, trait-vocabulary or
+// xref source that contributes data to conceptIDs' scope (a taxon_concept
+// belonging to it, a trait_value row on one of conceptIDs, or an xref row on
+// one of conceptIDs attributed to it via xref.source) and whose
+// redistribution is not domain.RedistributionAllowed, sorted by id for a
+// deterministic result. An empty conceptIDs (nothing in scope) trivially
+// contributes no sources.
+//
+// The xref query deliberately joins on xref.source, so it covers exactly the
+// rows an xref-source ingest wrote; xrefs the backbone ingest derived from a
+// taxon row carry source NULL and are already gated by the backbone query
+// above (see schema.sql's note on xref.source).
 func findRestrictedSources(ctx context.Context, src *DB, conceptIDs []string) ([]restrictedSource, error) {
 	if len(conceptIDs) == 0 {
 		return nil, nil
@@ -138,6 +146,16 @@ func findRestrictedSources(ctx context.Context, src *DB, conceptIDs []string) ([
 		return nil, fmt.Errorf("sqlite: bundle: checking trait vocabulary redistribution: %w", err)
 	}
 	out = append(out, vocabs...)
+
+	xrefSources, err := queryNonAllowedSources(ctx, src, `
+		SELECT DISTINCT xs.id, xs.redistribution
+		FROM xref_source xs
+		JOIN xref x ON x.source = xs.id
+		WHERE x.concept_id IN (SELECT value FROM json_each(?))`, []any{idsJSON})
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: bundle: checking xref source redistribution: %w", err)
+	}
+	out = append(out, xrefSources...)
 
 	out = dedupeRestrictedSourcesByID(out)
 
@@ -227,8 +245,8 @@ func dedupeRestrictedSourcesByID(in []restrictedSource) []restrictedSource {
 // queryNonAllowedSources runs query (with args) against src, expecting two
 // columns (id, redistribution), and returns every row whose redistribution
 // is not domain.RedistributionAllowed — the shared scan loop
-// findRestrictedSources' two queries (backbone_version, trait_vocabulary)
-// both use.
+// findRestrictedSources' three queries (backbone_version, trait_vocabulary,
+// xref_source) all use.
 func queryNonAllowedSources(ctx context.Context, src *DB, query string, args []any) ([]restrictedSource, error) {
 	rows, err := src.sql.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -265,7 +283,8 @@ func queryNonAllowedSources(ctx context.Context, src *DB, query string, args []a
 //
 // Before copying anything, ExportBundle checks findRestrictedSources: by
 // default (opts.AllowRestricted == false), a bundle whose scope includes
-// data from any source that is not domain.RedistributionAllowed is refused
+// data (concepts, trait values or cross-references) from any source that is
+// not domain.RedistributionAllowed is refused
 // outright, naming the offending source(s) and their redistribution value
 // — local ingest of those sources is never affected, only export. With
 // opts.AllowRestricted, the export proceeds AND the offending source ids
@@ -478,7 +497,7 @@ func populateBundle(ctx context.Context, src, bundle *DB, conceptIDs, areaScope 
 
 // copyConceptScopedTables copies every remaining concept_id-keyed table
 // (concept_name, xref, distribution, vernacular, trait_value) scoped by
-// idsJSON, plus trait_vocabulary in full (metadata, not concept-scoped —
+// idsJSON, plus xref_source and trait_vocabulary in full (metadata, not concept-scoped —
 // the offline field app needs the Taxonomy/license/source provenance for
 // every trait_value row copied above). Split out of populateBundle purely
 // to keep that function's cyclomatic complexity down; it carries no logic
@@ -491,9 +510,20 @@ func copyConceptScopedTables(ctx context.Context, src, bundle *DB, idsJSON strin
 		return err
 	}
 
+	// xref_source before xref: xref.source is an FK onto it, and the bundle
+	// connection enforces foreign keys. Copied in full (metadata, not
+	// concept-scoped) for the same reason trait_vocabulary is — the bundle
+	// must carry the license/version/manifest_sha provenance of every xref
+	// row it holds.
 	if err := copyRows(ctx, src, bundle,
-		`SELECT concept_id, authority, ext_id FROM xref WHERE concept_id IN (SELECT value FROM json_each(?))`, []any{idsJSON},
-		`INSERT INTO xref (concept_id, authority, ext_id) VALUES (?,?,?)`); err != nil {
+		`SELECT id, version, license, source_url, ingested_at, manifest_sha, redistribution FROM xref_source`, nil,
+		`INSERT INTO xref_source (id, version, license, source_url, ingested_at, manifest_sha, redistribution) VALUES (?,?,?,?,?,?,?)`); err != nil {
+		return err
+	}
+
+	if err := copyRows(ctx, src, bundle,
+		`SELECT concept_id, authority, ext_id, source FROM xref WHERE concept_id IN (SELECT value FROM json_each(?))`, []any{idsJSON},
+		`INSERT INTO xref (concept_id, authority, ext_id, source) VALUES (?,?,?,?)`); err != nil {
 		return err
 	}
 

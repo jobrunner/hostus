@@ -258,6 +258,83 @@ func TestIngestXrefs_MatchesWithNoRepeatedAuthorityLeaveMultiPerAuthorityNil(t *
 	}
 }
 
+// TestIngestXrefs_ExtIDAlreadyOwnedByAnotherConcept_IsConflictNotSilentRepoint
+// is the I5 regression: conflict detection used to group only over the
+// CURRENT source's rows, so an (authority, ext_id) already in the xref table
+// pointing at concept A — from a previous run, an older CSV, or a second
+// source — was silently repointed to concept B by AddXref's INSERT OR
+// REPLACE, with no Conflicting count and no sample. The pre-existing owner
+// must now be folded into the same grouping: the row is skipped, counted and
+// sampled, and the existing xref keeps pointing where it did.
+func TestIngestXrefs_ExtIDAlreadyOwnedByAnotherConcept_IsConflictNotSilentRepoint(t *testing.T) {
+	repo := seededMatchRepo(t)
+	ctx := context.Background()
+
+	first, err := repo.ConceptByXref(ctx, "powo", "396681-1")
+	if err != nil {
+		t.Fatalf("ConceptByXref(powo, 396681-1): unexpected error: %v", err)
+	}
+
+	// Run 1 claims inat:160927 for the Corynephorus concept.
+	runOne := xrefRowSource{ds: &xref.Dataset{Rows: []xref.Row{
+		{JoinAuthority: "powo", JoinID: "396681-1", Authority: "inat", ExtID: "160927"},
+	}}}
+	if _, err := application.IngestXrefs(ctx, repo, runOne, wikidataMeta); err != nil {
+		t.Fatalf("IngestXrefs(run 1): unexpected error: %v", err)
+	}
+
+	// Run 2 claims the SAME inat id for a DIFFERENT concept.
+	runTwo := xrefRowSource{ds: &xref.Dataset{Rows: []xref.Row{
+		{JoinAuthority: "powo", JoinID: "226649-1", Authority: "inat", ExtID: "160927"},
+	}}}
+	report, err := application.IngestXrefs(ctx, repo, runTwo, wikidataMeta)
+	if err != nil {
+		t.Fatalf("IngestXrefs(run 2): unexpected error: %v", err)
+	}
+	if got, want := report.Conflicting, 1; got != want {
+		t.Errorf("report.Conflicting = %d, want %d (the key is already owned by another concept)", got, want)
+	}
+	if got, want := report.Matched, 0; got != want {
+		t.Errorf("report.Matched = %d, want %d", got, want)
+	}
+	if !containsString(report.ConflictSample, "inat:160927") {
+		t.Errorf("ConflictSample = %v, want it to contain %q", report.ConflictSample, "inat:160927")
+	}
+
+	got, err := repo.ConceptByXref(ctx, "inat", "160927")
+	if err != nil {
+		t.Fatalf("ConceptByXref(inat, 160927): unexpected error: %v", err)
+	}
+	if got.ID != first.ID {
+		t.Errorf("ConceptByXref(inat, 160927).ID = %q, want %q (a conflicting key must never be repointed)", got.ID, first.ID)
+	}
+}
+
+// TestIngestXrefs_ReingestingTheSameSourceIsIdempotent pins the other side of
+// the cross-run rule: seeding the pre-existing owner must not manufacture a
+// conflict when that owner is the SAME concept this run resolves to, so
+// re-running an unchanged source writes the same rows again and reports zero
+// conflicts.
+func TestIngestXrefs_ReingestingTheSameSourceIsIdempotent(t *testing.T) {
+	repo := seededMatchRepo(t)
+	ctx := context.Background()
+
+	first, err := application.IngestXrefs(ctx, repo, loadWikidataFixture(t), wikidataMeta)
+	if err != nil {
+		t.Fatalf("IngestXrefs(run 1): unexpected error: %v", err)
+	}
+	second, err := application.IngestXrefs(ctx, repo, loadWikidataFixture(t), wikidataMeta)
+	if err != nil {
+		t.Fatalf("IngestXrefs(run 2): unexpected error: %v", err)
+	}
+	if second.Matched != first.Matched {
+		t.Errorf("run 2 Matched = %d, want %d (unchanged source must be idempotent)", second.Matched, first.Matched)
+	}
+	if second.Conflicting != first.Conflicting {
+		t.Errorf("run 2 Conflicting = %d, want %d (a source's own prior rows are not a conflict)", second.Conflicting, first.Conflicting)
+	}
+}
+
 func containsString(haystack []string, want string) bool {
 	for _, s := range haystack {
 		if s == want {

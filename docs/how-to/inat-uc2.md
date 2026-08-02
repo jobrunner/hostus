@@ -21,14 +21,14 @@ GET /v1/suggest?q=...  →  Concept auswählen  →  GET /v1/concept/{id}
    In aller Regel reicht die erste:
 
    ```json
-   { "xrefs": { "inat": ["486076"], "powo": ["396681-1"] } }
+   { "xrefs": { "inat": ["160927"], "powo": ["396681-1"] } }
    ```
 
 4. **iNaturalist abfragen.** Mit der iNat-`taxon_id` gegen die öffentliche
    iNaturalist-API:
 
    ```
-   GET https://api.inaturalist.org/v1/observations?taxon_id=486076&geoprivacy=open
+   GET https://api.inaturalist.org/v1/observations?taxon_id=160927&geoprivacy=open
    ```
 
 ## Die 41,50-%-Obergrenze — vor Implementierung lesen

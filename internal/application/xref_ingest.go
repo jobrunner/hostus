@@ -64,8 +64,12 @@ type XrefIngestReport struct {
 	MultiSample []string
 	// Redistribution is this source's manifest-pinned redistribution value
 	// (see domain.Redistribution), surfaced for "hostus ingest" to print a
-	// notice for anything that is not "allowed" — local ingest itself is
-	// never gated by it.
+	// notice for anything that is not "allowed". Local ingest itself is
+	// never gated by it — the act it gates is EXPORT: it is persisted onto
+	// the source's xref_source row, and ExportBundle refuses to copy this
+	// source's xrefs into a bundle unless it is "allowed" (see
+	// domain.XrefSourceMeta.Redistribution and findRestrictedSources in
+	// internal/adapters/sqlite).
 	Redistribution string
 }
 
@@ -94,19 +98,29 @@ type xrefExtKey struct {
 // transaction open; phase 2 opens one transaction and only writes, never
 // reads the repository again.
 //
+// Phase 1 resolves two things, both as pre-transaction reads: each row's
+// join key (resolveXrefJoinKeys) and the concept that ALREADY owns each of
+// this source's external keys in the database, if any (resolveXrefExtOwners
+// — see the cross-run conflict case below).
+//
 // Conflict handling is the crux of this ingest, and two genuinely different
 // situations must be told apart (both counted, both sampled, never silently
 // resolved into one outcome):
 //
 //  1. The SAME (authority, ext_id) — xref's actual primary key — claimed by
-//     TWO OR MORE DISTINCT concepts (because two different join_ids in the
-//     source happen to carry the identical external id: a genuine upstream
-//     data conflict). The safe default is SKIP-AND-REPORT: every row
-//     sharing that (authority, ext_id) is counted as Conflicting and
-//     nothing is written for it, rather than guessing which concept it
-//     belongs to or letting whichever row is written last silently
-//     overwrite (AddXref is an INSERT OR REPLACE keyed on exactly this
-//     pair).
+//     TWO OR MORE DISTINCT concepts. That happens either WITHIN this source
+//     (two different join_ids carrying the identical external id: a genuine
+//     upstream data conflict) or ACROSS runs (the key is already in the xref
+//     table pointing at another concept — a previous run, an older CSV, or a
+//     second source). Both are detected, because detectXrefConflicts folds
+//     the pre-existing owner resolved in phase 1 into the same grouping. The
+//     safe default is SKIP-AND-REPORT: every row sharing that (authority,
+//     ext_id) is counted as Conflicting and nothing is written for it,
+//     rather than guessing which concept it belongs to or letting whichever
+//     row is written last silently overwrite (AddXref is an INSERT OR
+//     REPLACE keyed on exactly this pair). A key whose pre-existing owner is
+//     the SAME concept this run resolves it to is not a conflict, so
+//     re-ingesting an unchanged source stays idempotent.
 //  2. ONE concept legitimately receiving SEVERAL distinct ext_ids for the
 //     SAME authority (e.g. two Wikidata items both carrying the same IPNI
 //     id, so the same concept picks up two Wikidata QIDs). This is not a
@@ -132,11 +146,19 @@ func IngestXrefs(ctx context.Context, repo output.Repository, src XrefRowSource,
 	if err != nil {
 		return report, fmt.Errorf("application: resolving xref source %q: %w", meta.ID, err)
 	}
-	conflicted := detectXrefConflicts(rows, resolved)
+	owners, err := resolveXrefExtOwners(ctx, repo, rows)
+	if err != nil {
+		return report, fmt.Errorf("application: resolving existing xref owners for source %q: %w", meta.ID, err)
+	}
+	conflicted := detectXrefConflicts(rows, resolved, owners)
 
 	tx, err := repo.BeginTraitIngest(ctx)
 	if err != nil {
 		return report, fmt.Errorf("application: starting xref ingest for source %q: %w", meta.ID, err)
+	}
+	if err := tx.UpsertXrefSource(meta); err != nil {
+		_ = tx.Rollback()
+		return report, fmt.Errorf("application: recording xref source %q: %w", meta.ID, err)
 	}
 
 	tally := newXrefTally()
@@ -154,7 +176,7 @@ func IngestXrefs(ctx context.Context, repo output.Repository, src XrefRowSource,
 			tally.countConflict(extKey)
 			continue
 		}
-		if err := tx.AddXref(conceptID, domain.Xref{Authority: row.Authority, ExtID: row.ExtID}); err != nil {
+		if err := tx.AddXref(conceptID, domain.Xref{Authority: row.Authority, ExtID: row.ExtID}, meta.ID); err != nil {
 			_ = tx.Rollback()
 			return report, fmt.Errorf("application: writing xref %s:%s for concept %q, source %q: %w", row.Authority, row.ExtID, conceptID, meta.ID, err)
 		}
@@ -174,34 +196,77 @@ func IngestXrefs(ctx context.Context, repo output.Repository, src XrefRowSource,
 	return report, nil
 }
 
-// resolveXrefJoinKeys is IngestXrefs' phase 1: it maps every DISTINCT
-// (join_authority, join_id) occurring in rows to its concept id, batching
-// one repo.ConceptIDsByXref call per distinct join_authority (in practice
-// just "powo") rather than one query per row. It must be called with no
-// ingest transaction open — see IngestXrefs' doc comment.
+// resolveXrefJoinKeys is the first half of IngestXrefs' phase 1: it maps
+// every DISTINCT (join_authority, join_id) occurring in rows to its concept
+// id. It must be called with no ingest transaction open — see IngestXrefs'
+// doc comment.
 func resolveXrefJoinKeys(ctx context.Context, repo output.Repository, rows []XrefRow) (map[xrefJoinKey]string, error) {
+	return resolveConceptsByAuthority(ctx, repo, rows,
+		func(r XrefRow) (string, string) { return r.JoinAuthority, r.JoinID },
+		func(authority, id string) xrefJoinKey {
+			return xrefJoinKey{joinAuthority: authority, joinID: id}
+		})
+}
+
+// resolveXrefExtOwners is the second half of IngestXrefs' phase 1: it maps
+// each DISTINCT external key (authority, ext_id) this source writes to the
+// concept that ALREADY owns it in the repository, for the keys that are
+// already present. Without it, conflict detection would be intra-source
+// only: a key written by an earlier run (or an older CSV, or another
+// source) pointing at a different concept would be silently repointed by
+// AddXref's INSERT OR REPLACE, uncounted.
+//
+// It is the very same lookup resolveXrefJoinKeys performs, just keyed on
+// this source's OWN (authority, ext_id) pairs instead of its join keys —
+// hence the shared resolveConceptsByAuthority below. Like
+// resolveXrefJoinKeys it must be called with no ingest transaction open (see
+// IngestXrefs' doc comment); it is deliberately a separate pre-transaction
+// read rather than a lookup inside the write loop.
+func resolveXrefExtOwners(ctx context.Context, repo output.Repository, rows []XrefRow) (map[xrefExtKey]string, error) {
+	return resolveConceptsByAuthority(ctx, repo, rows,
+		func(r XrefRow) (string, string) { return r.Authority, r.ExtID },
+		func(authority, id string) xrefExtKey {
+			return xrefExtKey{authority: authority, extID: id}
+		})
+}
+
+// resolveConceptsByAuthority is the shared batching engine behind both
+// phase-1 lookups: pairOf extracts one (authority, id) pair per row, and the
+// DISTINCT ids per authority are resolved with ONE repo.ConceptIDsByXref
+// call each (in practice a handful of calls for 1.7 M rows) rather than one
+// query per row. keyOf turns each resolved pair back into the caller's own
+// key type. Only ids that actually have an xref row appear in the result,
+// exactly as ConceptIDsByXref documents.
+func resolveConceptsByAuthority[K comparable](
+	ctx context.Context,
+	repo output.Repository,
+	rows []XrefRow,
+	pairOf func(XrefRow) (string, string),
+	keyOf func(authority, id string) K,
+) (map[K]string, error) {
 	distinctByAuthority := make(map[string]map[string]bool)
 	for _, row := range rows {
-		ids, ok := distinctByAuthority[row.JoinAuthority]
+		authority, id := pairOf(row)
+		ids, ok := distinctByAuthority[authority]
 		if !ok {
 			ids = map[string]bool{}
-			distinctByAuthority[row.JoinAuthority] = ids
+			distinctByAuthority[authority] = ids
 		}
-		ids[row.JoinID] = true
+		ids[id] = true
 	}
 
-	resolved := make(map[xrefJoinKey]string)
-	for joinAuthority, idSet := range distinctByAuthority {
+	resolved := make(map[K]string)
+	for authority, idSet := range distinctByAuthority {
 		ids := make([]string, 0, len(idSet))
 		for id := range idSet {
 			ids = append(ids, id)
 		}
-		matched, err := repo.ConceptIDsByXref(ctx, joinAuthority, ids)
+		matched, err := repo.ConceptIDsByXref(ctx, authority, ids)
 		if err != nil {
-			return nil, fmt.Errorf("join authority %q: %w", joinAuthority, err)
+			return nil, fmt.Errorf("authority %q: %w", authority, err)
 		}
-		for joinID, conceptID := range matched {
-			resolved[xrefJoinKey{joinAuthority: joinAuthority, joinID: joinID}] = conceptID
+		for id, conceptID := range matched {
+			resolved[keyOf(authority, id)] = conceptID
 		}
 	}
 	return resolved, nil
@@ -209,10 +274,17 @@ func resolveXrefJoinKeys(ctx context.Context, repo output.Repository, rows []Xre
 
 // detectXrefConflicts groups rows by their EXTERNAL key (authority, ext_id —
 // xref's actual primary key) and reports which of those keys are claimed by
-// two or more DISTINCT resolved concepts. Rows whose join_id did not
-// resolve at all contribute no concept to their group (they are Unmatched,
-// not part of any conflict).
-func detectXrefConflicts(rows []XrefRow, resolved map[xrefJoinKey]string) map[xrefExtKey]bool {
+// two or more DISTINCT concepts. A key's claimants are every concept THIS
+// source's rows resolve it to, plus — seeded from owners
+// (resolveXrefExtOwners) — the concept that already owns it in the
+// repository, so a cross-run/cross-source disagreement is detected exactly
+// like an intra-source one. Seeding cannot manufacture a false conflict: a
+// pre-existing owner that equals the concept this run resolves to collapses
+// into the same one-element set (re-ingesting an unchanged source is
+// idempotent), and a key whose rows are all Unmatched is never written
+// either way. Rows whose join_id did not resolve at all contribute no
+// concept to their group (they are Unmatched, not part of any conflict).
+func detectXrefConflicts(rows []XrefRow, resolved map[xrefJoinKey]string, owners map[xrefExtKey]string) map[xrefExtKey]bool {
 	concepts := make(map[xrefExtKey]map[string]bool)
 	for _, row := range rows {
 		conceptID, ok := resolved[xrefJoinKey{joinAuthority: row.JoinAuthority, joinID: row.JoinID}]
@@ -222,6 +294,9 @@ func detectXrefConflicts(rows []XrefRow, resolved map[xrefJoinKey]string) map[xr
 		extKey := xrefExtKey{authority: row.Authority, extID: row.ExtID}
 		if concepts[extKey] == nil {
 			concepts[extKey] = map[string]bool{}
+			if owner, owned := owners[extKey]; owned {
+				concepts[extKey][owner] = true
+			}
 		}
 		concepts[extKey][conceptID] = true
 	}

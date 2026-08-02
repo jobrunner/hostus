@@ -173,6 +173,109 @@ func TestExportBundle_SameVocabTwoVersionsDifferentRedistribution_NamedOnce(t *t
 	}
 }
 
+// addRestrictedXrefSource records one xref_source row with
+// Redistribution=restricted plus one xref row attributed to it for
+// conceptID — the xref counterpart of addUnknownEIVETraitValue, making
+// "wikidata" a genuinely contributing, non-allowed source for the AUT-scoped
+// bundle.
+func addRestrictedXrefSource(t *testing.T, src *sqlite.DB, conceptID string) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := src.BeginTraitIngest(ctx)
+	if err != nil {
+		t.Fatalf("BeginTraitIngest: unexpected error: %v", err)
+	}
+	if err := tx.UpsertXrefSource(domain.XrefSourceMeta{
+		ID: "wikidata", Version: "2026-08-02", License: "CC0",
+		SourceURL:   "https://query.wikidata.org/sparql",
+		ManifestSHA: "cafebabe", Redistribution: domain.RedistributionRestricted,
+	}); err != nil {
+		t.Fatalf("UpsertXrefSource: unexpected error: %v", err)
+	}
+	if err := tx.AddXref(conceptID, domain.Xref{Authority: "inat", ExtID: "160927"}, "wikidata"); err != nil {
+		t.Fatalf("AddXref: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+}
+
+// TestExportBundle_RefusesByDefaultWhenXrefSourceNotAllowed is the C1
+// regression: before xref provenance existed, the redistribution gate
+// queried only backbone_version and trait_vocabulary, so a whole class of
+// data — every cross-reference harvested from an external source — was
+// copied into bundles unconditionally, no matter what its manifest's
+// (schema-REQUIRED) redistribution value said. A restricted xref source
+// contributing an xref row to the scope must now refuse the export by
+// default, naming the source and its redistribution value.
+func TestExportBundle_RefusesByDefaultWhenXrefSourceNotAllowed(t *testing.T) {
+	ctx := context.Background()
+	src := ingestWCVPFixture(t)
+	const conceptID = "wcvp:concept:405825" // Corynephorus canescens, AUT scope
+	addRestrictedXrefSource(t, src, conceptID)
+
+	out := filepath.Join(t.TempDir(), "bundle-xref-refused.sqlite")
+	_, err := sqlite.ExportBundle(ctx, src, out, sqlite.BundleOpts{Area: "AUT", SnapshotVersion: "v1"})
+	if err == nil {
+		t.Fatal("ExportBundle: want an error when a contributing xref source is not redistribution-allowed, got nil")
+	}
+	if !strings.Contains(err.Error(), "wikidata (redistribution=restricted)") {
+		t.Errorf("ExportBundle error = %q, want it to name the offending xref source and its value", err)
+	}
+	if _, statErr := os.Stat(out); statErr == nil {
+		t.Errorf("ExportBundle refused, but %q was still created", out)
+	}
+}
+
+// TestExportBundle_ForceIncludeRestrictedXrefSource_SucceedsAndRecordsSource
+// is the opt-out half of the xref gate: --force-include-restricted must
+// export, record "wikidata" in bundle_meta.restricted_sources, and carry the
+// source's own provenance row plus the xref's attribution into the bundle —
+// so the exported file itself still says where those cross-references came
+// from and that they were not cleared.
+func TestExportBundle_ForceIncludeRestrictedXrefSource_SucceedsAndRecordsSource(t *testing.T) {
+	ctx := context.Background()
+	src := ingestWCVPFixture(t)
+	const conceptID = "wcvp:concept:405825"
+	addRestrictedXrefSource(t, src, conceptID)
+
+	out := filepath.Join(t.TempDir(), "bundle-xref-forced.sqlite")
+	if _, err := sqlite.ExportBundle(ctx, src, out, sqlite.BundleOpts{
+		Area: "AUT", SnapshotVersion: "v1", AllowRestricted: true,
+	}); err != nil {
+		t.Fatalf("ExportBundle(AllowRestricted): unexpected error: %v", err)
+	}
+
+	meta := readBundleMeta(t, out)
+	if meta.RestrictedSources != "wikidata" {
+		t.Errorf("bundle_meta.restricted_sources = %q, want %q", meta.RestrictedSources, "wikidata")
+	}
+
+	raw, err := sql.Open("sqlite", out)
+	if err != nil {
+		t.Fatalf("sql.Open(%q): unexpected error: %v", out, err)
+	}
+	defer func() { _ = raw.Close() }()
+
+	var version, sha, redistribution string
+	if err := raw.QueryRow(`SELECT version, manifest_sha, redistribution FROM xref_source WHERE id = 'wikidata'`).
+		Scan(&version, &sha, &redistribution); err != nil {
+		t.Fatalf("reading xref_source from the bundle: unexpected error: %v", err)
+	}
+	if version != "2026-08-02" || sha != "cafebabe" || redistribution != "restricted" {
+		t.Errorf("bundle xref_source row = (%q, %q, %q), want (%q, %q, %q)",
+			version, sha, redistribution, "2026-08-02", "cafebabe", "restricted")
+	}
+
+	var source string
+	if err := raw.QueryRow(`SELECT source FROM xref WHERE authority = 'inat' AND ext_id = '160927'`).Scan(&source); err != nil {
+		t.Fatalf("reading xref.source from the bundle: unexpected error: %v", err)
+	}
+	if source != "wikidata" {
+		t.Errorf("bundle xref.source = %q, want %q", source, "wikidata")
+	}
+}
+
 // setBackboneRedistribution re-records src's existing "wcvp" backbone_version
 // row with redistribution set to value, via the same BeginIngest(INSERT OR
 // REPLACE) path a real re-ingest would use — so tests can make the

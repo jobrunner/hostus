@@ -146,7 +146,13 @@ type IngestTx interface {
 	UpsertName(n domain.Name) error
 	UpsertConcept(c domain.Concept) error
 	LinkName(conceptID, nameID, role string, homotypic *bool) error
-	AddXref(conceptID string, x domain.Xref) error
+	// AddXref writes one cross-reference for conceptID, attributed to the
+	// xref_source id given by source. source is "" for xrefs derived by the
+	// backbone ingest itself from a taxon row (those are already covered by
+	// the backbone's own redistribution value); every xref written by an
+	// xref-source ingest must name its source, since that attribution is
+	// what ExportBundle's redistribution gate joins against.
+	AddXref(conceptID string, x domain.Xref, source string) error
 	AddDistribution(conceptID string, d domain.Distribution) error
 	// AddTraitValue writes one trait_value row for conceptID. A nil
 	// tv.NicheWidth/tv.NSystems must be persisted as SQL NULL, not as a
@@ -156,6 +162,10 @@ type IngestTx interface {
 	// UpsertTraitVocabulary records one (vocab, version) metadata row,
 	// joined onto trait_value reads by Repository.Traits.
 	UpsertTraitVocabulary(meta domain.TraitVocabMeta) error
+	// UpsertXrefSource records one xref-source provenance row (id, version,
+	// license, manifest_sha, redistribution), which AddXref's source
+	// attribution references and ExportBundle's redistribution gate reads.
+	UpsertXrefSource(meta domain.XrefSourceMeta) error
 	// Finalize (re)builds the FTS5 autosuggest index (fts_name/fts_name_map)
 	// for every name this transaction has linked to a concept (both the
 	// accepted name and its synonyms), so Suggest can find them. Callers

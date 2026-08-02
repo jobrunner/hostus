@@ -474,10 +474,14 @@ seed union is enriched instead (the pipeline's general-purpose mode).
 ### Observed summary (live run against the real WDQS, 2026-08-02)
 
 **Join coverage — the headline:** of the 928,129 distinct Wikidata items
-carrying P961 or P5037, **393,172 have an IPNI/POWO id matching one of
-hostus's 440,534 `xref.powo` concepts — i.e. ~89% of the concept index is
-reachable from Wikidata** (measured directly against `xref` in the real
-concept DB, not estimated).
+carrying P961 or P5037, **393,172 Wikidata items have an IPNI/POWO id
+matching one of hostus's 440,534 `xref.powo` concepts, resolving to 392,218
+distinct concepts = 89.03% of the index** (measured directly against `xref`
+in the real concept DB, not estimated). The two numbers are different units
+and must not be conflated: 393,172 counts QIDs, 392,218 counts concepts —
+several Wikidata items can carry the same IPNI/POWO id. See the
+reconciliation table in `docs/research/reality-check.md` (SP4 T4) for how the
+two are derived from each other.
 
 ```
 seed_union_total=928129

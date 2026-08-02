@@ -63,7 +63,7 @@ GET /v1/concept/wcvp:concept:405825
   "rank": "SPECIES",
   "status": "ACCEPTED",
   "backbone": { "id": "wcvp", "version": "2026-06-15" },
-  "xrefs": { "powo": ["396681-1"], "inat": ["486076"] },
+  "xrefs": { "powo": ["396681-1"], "inat": ["160927"] },
   "classification": [
     { "concept_id": "wcvp:concept:451295", "canonical": "Corynephorus", "rank": "GENUS" }
   ],

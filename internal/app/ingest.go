@@ -167,8 +167,11 @@ func (s xrefSourceRowSource) Rows() []application.XrefRow {
 
 // ingestXrefSource opens xs's canonical xref CSV and runs
 // application.IngestXrefs against repo, adapting the manifest's XrefSource
-// entry into the domain.XrefSourceMeta the use case records.
-func ingestXrefSource(ctx context.Context, xs manifest.XrefSource, repo *sqlite.DB) (application.XrefIngestReport, error) {
+// entry into the domain.XrefSourceMeta the use case records. manifestSHA is
+// the checksum of the validated manifest xs was pinned by — recorded onto
+// the source's xref_source row exactly as it is onto backbone_version, so an
+// ingested database can say which harvest its xrefs came from.
+func ingestXrefSource(ctx context.Context, xs manifest.XrefSource, manifestSHA string, repo *sqlite.DB) (application.XrefIngestReport, error) {
 	ds, err := xref.Read(xs.Path)
 	if err != nil {
 		return application.XrefIngestReport{}, fmt.Errorf("app: reading xref source %q at %q: %w", xs.ID, xs.Path, err)
@@ -185,6 +188,7 @@ func ingestXrefSource(ctx context.Context, xs manifest.XrefSource, repo *sqlite.
 		Version:        xs.Version,
 		License:        xs.License,
 		SourceURL:      xs.SourceURL,
+		ManifestSHA:    manifestSHA,
 		Redistribution: redistribution,
 	}
 	return application.IngestXrefs(ctx, repo, xrefSourceRowSource{ds: ds}, meta)
@@ -229,7 +233,7 @@ func Ingest(ctx context.Context, manifestPath, dbPath string) (application.Inges
 
 	xrefReports := make([]application.XrefIngestReport, 0, len(manifestDS.XrefSources))
 	for _, xs := range manifestDS.XrefSources {
-		xr, err := ingestXrefSource(ctx, xs, repo)
+		xr, err := ingestXrefSource(ctx, xs, manifestDS.ManifestSHA, repo)
 		if err != nil {
 			return backboneReport, traitReports, xrefReports, err
 		}

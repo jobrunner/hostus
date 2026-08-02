@@ -119,11 +119,33 @@ CREATE TABLE IF NOT EXISTS concept_name (
 -- scan concept_name in full without this.
 CREATE INDEX IF NOT EXISTS idx_concept_name_name_id ON concept_name(name_id);
 
+-- Cross-reference-source provenance metadata: one row per ingested xref
+-- source (e.g. the Wikidata bridge-hub harvest), the xref counterpart of
+-- backbone_version/trait_vocabulary. It is what lets an ingested database
+-- answer "which harvest are these xrefs from?" (version + manifest_sha)
+-- and what ExportBundle's redistribution gate joins against.
+CREATE TABLE IF NOT EXISTS xref_source (
+  id             TEXT PRIMARY KEY,   -- e.g. "wikidata-bridge"
+  version        TEXT NOT NULL,      -- harvest date/version, never "latest"
+  license        TEXT,
+  source_url     TEXT,
+  ingested_at    TEXT NOT NULL,
+  manifest_sha   TEXT NOT NULL,      -- checksum of the validated manifest
+  redistribution TEXT NOT NULL DEFAULT 'unknown' -- allowed|restricted|unknown (domain.Redistribution); gates ExportBundle, never local ingest
+);
+
 -- Cross-references to external authorities.
+--
+-- source is the xref_source this row was harvested from, and is NULL for
+-- xrefs the backbone ingest itself derives from a taxon row (e.g. the powo
+-- ids WCVP carries): those are already covered by the backbone's own
+-- redistribution value via taxon_concept.backbone_id, so attributing them
+-- to a synthetic xref source would only double-count the same gate.
 CREATE TABLE IF NOT EXISTS xref (
   concept_id   TEXT NOT NULL REFERENCES taxon_concept(id),
   authority    TEXT NOT NULL,       -- powo|colxr|euromed|gbif|wikidata|wfo|inat|floraveg
   ext_id       TEXT NOT NULL,
+  source       TEXT REFERENCES xref_source(id),
   PRIMARY KEY (authority, ext_id)
 );
 

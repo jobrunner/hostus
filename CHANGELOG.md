@@ -11,7 +11,9 @@ hostus wird vom zustandslosen GBIF-Autosuggest-Proxy zum lokalen
 Multi-Backbone-Namens- und Merkmalsservice umgebaut (siehe
 `docs/superpowers/specs/2026-07-31-hostus-2.0-architecture.md`). Dieser
 Abschnitt sammelt den Abschluss von **SP0 (Harness & Skelett)**, **SP1
-(Foundation)** und **SP2 (Suggest + Offline-Bundle)**: SP1 liefert das
+(Foundation)**, **SP2 (Suggest + Offline-Bundle)**, **SP3 (Traits +
+Fuzzy-Match)** und **SP4 (Xref-Enrichment über eine Wikidata-Brücke)**: SP1
+liefert das
 lokale SQLite/FTS5-Rückgrat selbst — Ingest eines WCVP/POWO-DwC-A-Manifests
 (`hostus ingest`) in eine versionierte lokale Datenbank, gruppiert nach
 akzeptierten Concepts mit ihren Synonymen, sowie die ersten drei
@@ -187,11 +189,24 @@ Vegetationsaufnahme-Importe mit Tippfehlern:
     verschiedenen Konzepten beansprucht, wird **übersprungen und
     gemeldet** (kein Raten); ein Konzept mit mehreren `ext_id`s derselben
     Autorität ist **kein** Konflikt und wird vollständig geschrieben.
-  - `xrefs.<authority>` in `GET /v1/concept/{id}` und `GET /v1/xref` ist
-    jetzt ein sortiertes Array statt eines einzelnen Strings — die
+  - **BREAKING:** `xrefs.<authority>` in `GET /v1/concept/{id}` und
+    `GET /v1/xref` ist jetzt ein sortiertes Array (`{"inat": ["160927"]}`)
+    statt eines einzelnen Strings (`{"inat": "160927"}`) — jeder Client,
+    der den Wert als String liest, muss angepasst werden. Die
     vorherige `map[string]string` hätte bei mehreren `ext_id`s pro
     Autorität stillschweigend nur die zuletzt geschriebene behalten, was
     real bei 63 Konzepten (`inat` allein) aufgetreten wäre.
+  - Xref-Provenienz (`xref_source`-Tabelle + `xref.source`-Spalte, wie
+    `backbone_version`/`trait_vocabulary`): eine ingestierte Datenbank
+    beantwortet jetzt, aus welcher Ernte ihre Xrefs stammen (Version,
+    Lizenz, `manifest_sha`), und der Redistributions-Gate von `hostus
+    bundle` deckt damit auch Xref-Quellen ab — ein Export mit einer nicht
+    freigegebenen Xref-Quelle im Scope wird per Default verweigert,
+    `--force-include-restricted` protokolliert sie in
+    `bundle_meta.restricted_sources`. Lokaler Ingest bleibt ungegated.
+    Bestandsdatenbanken (SP1–SP3) migrieren beim nächsten `Open`
+    automatisch (`ALTER TABLE xref ADD COLUMN source`, bestehende Zeilen
+    behalten `source = NULL`).
   - Neue deutsche UC2-Anleitung `docs/how-to/inat-uc2.md` (Suggest →
     Concept → `xrefs.inat` → iNaturalist-Beobachtungen) inklusive der
     gemessenen PoC-Einschränkungen (Koordinatenverwischung ~26–28 km,
@@ -203,7 +218,9 @@ Vegetationsaufnahme-Importe mit Tippfehlern:
     wikidata 392.218, gbif 383.907, wfo 365.731, colxr 357.878, **inat
     182.821 (41,50 %)**, floraveg 24.274, euromed 95; 16 echte Konflikte
     (8 externe Schlüssel, alle gbif/wfo); 0 von 1.709.127 Zeilen
-    unmatched. **Verdikt: hält mit Auflagen** — der Ingest selbst ist
+    unmatched — Letzteres ist durch den joinable-subset-Filter der
+    Pipeline garantiert und validiert den Ingest-Join, nicht die
+    Abdeckung. **Verdikt: hält mit Auflagen** — der Ingest selbst ist
     vollständig korrekt und end-to-end bewiesen
     (`internal/app/integration_test.go`), aber UC2 erreicht wegen der
     Datenlage bei iNaturalist nur 41,50 % der Konzepte; für die übrigen
@@ -211,10 +228,20 @@ Vegetationsaufnahme-Importe mit Tippfehlern:
     anzeigen statt zu raten.
 
 Weitere Backbones (COL XR) sowie `translate` und `/openapi` als generierte
-Spezifikation folgen in SP4+. `release-please` cuttet daraus das nächste
+Spezifikation folgen in SP5+. `release-please` cuttet daraus das nächste
 `2.0.0-alpha.N`-Release; bis dahin akkumulieren PRs hier.
 
 ### Fixed
+- Xref-Konflikterkennung greift jetzt auch über Läufe hinweg: bisher
+  gruppierte `application.IngestXrefs` nur die Zeilen der GERADE
+  ingestierten Quelle, sodass eine `(authority, ext_id)`, die bereits in
+  der Datenbank auf ein anderes Konzept zeigte (früherer Lauf, ältere CSV,
+  zweite Quelle), von `INSERT OR REPLACE` stillschweigend umgehängt wurde —
+  ohne Zählung, ohne Stichprobe. Phase 1 löst den bestehenden Eigentümer
+  jedes externen Schlüssels jetzt mit auf (weiterhin ein Lesevorgang VOR
+  der Transaktion) und behandelt eine Abweichung wie einen quellinternen
+  Konflikt: übersprungen, gezählt, gesampelt. Ein unveränderter Re-Ingest
+  bleibt idempotent.
 - Trait-Ingest schreibt keine `backbone_version`-Zeilen mehr: er lief zuvor
   über `BeginIngest` mit einer synthetischen `trait:<vokabular>`-Version,
   die im `backbone_versions`-Provenienzblock JEDER `/v1/suggest`- und

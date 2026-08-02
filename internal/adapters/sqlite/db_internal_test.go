@@ -18,6 +18,7 @@ var wantTables = []string{
 	"taxon_concept",
 	"concept_name",
 	"xref",
+	"xref_source",
 	"vernacular",
 	"distribution",
 	"trait_value",
@@ -278,7 +279,7 @@ func TestIngestTx_UpsertNameConceptLinkXrefDistribution(t *testing.T) {
 	if err := tx.LinkName(concept.ID, synonym.ID, "synonym", &homotypic); err != nil {
 		t.Fatalf("LinkName(synonym): unexpected error: %v", err)
 	}
-	if err := tx.AddXref(concept.ID, domain.Xref{Authority: "powo", ExtID: "396681-1"}); err != nil {
+	if err := tx.AddXref(concept.ID, domain.Xref{Authority: "powo", ExtID: "396681-1"}, ""); err != nil {
 		t.Fatalf("AddXref: unexpected error: %v", err)
 	}
 	if err := tx.AddDistribution(concept.ID, domain.Distribution{AreaScheme: "wgsrpd_l3", AreaCode: "GER"}); err != nil {
@@ -608,4 +609,137 @@ func ftsRowCount(t *testing.T, db *DB) int {
 		t.Fatalf("counting fts_name_map: %v", err)
 	}
 	return n
+}
+
+// TestIngestTx_UpsertXrefSource_PersistsProvenanceAndAttributesXrefs is the
+// C1b regression: before xref_source existed, an ingested database could not
+// answer "which harvest are these xrefs from?" — the source's version,
+// license and manifest_sha were report-only, and no xref row said where it
+// came from. Both must now round-trip.
+func TestIngestTx_UpsertXrefSource_PersistsProvenanceAndAttributesXrefs(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	seedOneConcept(t, db) // concept id "c-1"
+
+	tx, err := db.BeginTraitIngest(ctx)
+	if err != nil {
+		t.Fatalf("BeginTraitIngest: unexpected error: %v", err)
+	}
+	meta := domain.XrefSourceMeta{
+		ID: "wikidata", Version: "2026-08-02", License: "CC0",
+		SourceURL:   "https://query.wikidata.org/sparql",
+		ManifestSHA: "cafebabe", Redistribution: domain.RedistributionAllowed,
+	}
+	if err := tx.UpsertXrefSource(meta); err != nil {
+		t.Fatalf("UpsertXrefSource: unexpected error: %v", err)
+	}
+	if err := tx.AddXref("c-1", domain.Xref{Authority: "inat", ExtID: "160927"}, meta.ID); err != nil {
+		t.Fatalf("AddXref: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+
+	var version, license, sha, redistribution string
+	if err := db.sql.QueryRowContext(ctx, `
+		SELECT version, license, manifest_sha, redistribution FROM xref_source WHERE id = ?`, meta.ID,
+	).Scan(&version, &license, &sha, &redistribution); err != nil {
+		t.Fatalf("reading xref_source: unexpected error: %v", err)
+	}
+	if version != "2026-08-02" || license != "CC0" || sha != "cafebabe" || redistribution != "allowed" {
+		t.Errorf("xref_source row = (%q, %q, %q, %q), want (%q, %q, %q, %q)",
+			version, license, sha, redistribution, "2026-08-02", "CC0", "cafebabe", "allowed")
+	}
+
+	var source sql.NullString
+	if err := db.sql.QueryRowContext(ctx, `SELECT source FROM xref WHERE authority = 'inat' AND ext_id = '160927'`).Scan(&source); err != nil {
+		t.Fatalf("reading xref.source: unexpected error: %v", err)
+	}
+	if !source.Valid || source.String != meta.ID {
+		t.Errorf("xref.source = %v, want %q", source, meta.ID)
+	}
+}
+
+// TestIngestTx_AddXref_BackboneDerivedRowHasNullSource pins the deliberate
+// asymmetry documented in schema.sql: an xref the BACKBONE ingest derives
+// from a taxon row carries source NULL (it is gated by the backbone's own
+// redistribution value), never the empty string — an empty string would be a
+// foreign-key violation against xref_source.
+func TestIngestTx_AddXref_BackboneDerivedRowHasNullSource(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	seedOneConcept(t, db) // concept id "c-1"
+
+	tx, err := db.BeginTraitIngest(ctx)
+	if err != nil {
+		t.Fatalf("BeginTraitIngest: unexpected error: %v", err)
+	}
+	if err := tx.AddXref("c-1", domain.Xref{Authority: "powo", ExtID: "396681-1"}, ""); err != nil {
+		t.Fatalf("AddXref: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+
+	var isNull bool
+	if err := db.sql.QueryRowContext(ctx, `SELECT source IS NULL FROM xref WHERE authority = 'powo'`).Scan(&isNull); err != nil {
+		t.Fatalf("reading xref.source: unexpected error: %v", err)
+	}
+	if !isNull {
+		t.Error("xref.source for a backbone-derived row is not NULL, want NULL")
+	}
+}
+
+// TestOpen_MigratesXrefSourceColumnOntoAPreExistingDatabase proves the
+// SP1–SP3 migration path: a database whose xref table was created WITHOUT the
+// source column (schema.sql's CREATE TABLE is IF NOT EXISTS, so it would
+// leave such a table untouched) must gain the column on the next Open, with
+// its existing rows preserved and their source NULL.
+func TestOpen_MigratesXrefSourceColumnOntoAPreExistingDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.sqlite")
+
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open: unexpected error: %v", err)
+	}
+	if _, err := legacy.Exec(`
+		CREATE TABLE xref (
+		  concept_id TEXT NOT NULL,
+		  authority  TEXT NOT NULL,
+		  ext_id     TEXT NOT NULL,
+		  PRIMARY KEY (authority, ext_id)
+		);
+		INSERT INTO xref (concept_id, authority, ext_id) VALUES ('c-1', 'powo', '396681-1');`); err != nil {
+		t.Fatalf("creating pre-migration xref table: unexpected error: %v", err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatalf("closing pre-migration database: unexpected error: %v", err)
+	}
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open(legacy): unexpected error: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	var conceptID string
+	var source sql.NullString
+	if err := db.sql.QueryRow(`SELECT concept_id, source FROM xref WHERE ext_id = '396681-1'`).Scan(&conceptID, &source); err != nil {
+		t.Fatalf("reading migrated xref row: unexpected error: %v", err)
+	}
+	if conceptID != "c-1" {
+		t.Errorf("migrated xref.concept_id = %q, want %q (existing rows must survive)", conceptID, "c-1")
+	}
+	if source.Valid {
+		t.Errorf("migrated xref.source = %q, want NULL", source.String)
+	}
+
+	// Idempotent: a second Open must not try to add the column again.
+	again, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open(already-migrated): unexpected error: %v", err)
+	}
+	_ = again.Close()
 }

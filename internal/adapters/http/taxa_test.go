@@ -125,7 +125,7 @@ func addXref(t *testing.T, db *sqlite.DB, authority, extID string) {
 	if err != nil {
 		t.Fatalf("BeginTraitIngest: %v", err)
 	}
-	if err := tx.AddXref(corynephorusConceptID, domain.Xref{Authority: authority, ExtID: extID}); err != nil {
+	if err := tx.AddXref(corynephorusConceptID, domain.Xref{Authority: authority, ExtID: extID}, ""); err != nil {
 		t.Fatalf("AddXref(%s, %s:%s): %v", corynephorusConceptID, authority, extID, err)
 	}
 	if err := tx.Finalize(); err != nil {

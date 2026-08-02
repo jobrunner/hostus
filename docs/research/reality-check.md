@@ -2212,10 +2212,15 @@ Konzepte mit ≥2 QIDs), gefolgt von `gbif` (635), `wfo` (299), `colxr` (39),
 niedrigen dreistelligen Promillebereich der jeweils erreichten Konzepte,
 also ein Rand-, kein Regelfall.
 
-**Unmatched: 0 von 1.709.127 Zeilen.** Das bestätigt T1s Garantie ("zero
-dead join_ids") an der Stelle, an der es zählt: dem tatsächlichen ID-Join
-gegen die 440.534 echten `powo`-Xrefs, nicht nur gegen die 393.172 in T1
-selbst geprüften distinkten IDs. Kein Befund, keine offene Frage.
+**Unmatched: 0 von 1.709.127 Zeilen — wie durch den joinable-subset-Filter
+der Pipeline garantiert.** Die kanonische CSV wird gegen
+`.cache/powo_ext_ids.txt` gebaut, einen Dump genau der `xref.powo`-IDs
+dieser Datenbank (`pipelines/wikidata/build.sh`, `convert.py`); jedes
+emittierte `join_id` ist damit per Konstruktion Element von `xref.powo`,
+Unmatched kann gar nichts anderes als 0 sein. Der Wert validiert den
+Ingest-Join (die ID-Auflösung in `IngestXrefs` findet tatsächlich jede
+Zeile wieder), **nicht** die Abdeckung — und es ist dieselbe ID-Menge, nicht
+eine zweite, unabhängige.
 
 **Was das für UC2 bedeutet.** Die Wikidata-Brücke ist für GBIF/WFO/COL-XR/
 Wikidata selbst eine sehr gute Ergänzung (81–89 % Konzeptdeckung), aber für
@@ -2326,10 +2331,10 @@ SELECT authority, COUNT(DISTINCT concept_id) FROM xref GROUP BY authority;
 | Mehrfachzuordnungen (b) — ein Konzept, mehrere `ext_id`s derselben Autorität | wikidata 954 · gbif 635 · wfo 299 · inat 63 · colxr 39 · floraveg 3 |
 | Unmatched | **0 von 1.709.127 Zeilen** |
 
-**Unmatched = 0** bestätigt T1s "zero dead join_id"-Garantie an der Stelle,
-an der es zählt: dem tatsächlichen ID-Join gegen die 440.534 echten
-`powo`-Xrefs der Volldatenbank — nicht nur gegen die 393.172 in T1 selbst
-geprüften Wikidata-Items.
+**Unmatched = 0** ist durch den joinable-subset-Filter der Pipeline
+garantiert: die CSV enthält nur Zeilen, deren `join_id` aus dem
+`xref.powo`-Dump derselben Datenbank stammt. Das validiert den Ingest-Join,
+nicht die Abdeckung.
 
 ### Was das für UC2 bedeutet
 

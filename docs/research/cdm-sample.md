@@ -14,12 +14,13 @@ Kommando, das sie erzeugt hat.
 | Messgröße | Ergebnis |
 |---|---|
 | Relationsdichte (Stichprobe) | **61,6 %** der Konzepte haben ≥ 1 Relation |
-| Relationsdichte (auf den Datensatz hochgerechnet) | **≈ 56 %** (≈ 28.800 von 51.466) |
-| Zwei-Hop-Auflösung *mit* P8s Namensrestriktion | **75,9 % eindeutig**, 0 % mehrdeutig, 24,1 % ins Leere |
-| Zwei-Hop-Auflösung *ohne* Namensrestriktion (Vollcrawl-Modell) | **100 % eindeutig, 0 % mehrdeutig** — jede Relations-UUID hat exakt 2 Endpunkte |
+| Relationsdichte (auf den Datensatz hochgerechnet) | **≈ 55 %** (grob **50–63 %**, 95-%-Cluster-Bootstrap 48–63 %) |
+| Zwei-Hop-Auflösung *mit* P8s Namensrestriktion (gemessen) | **75,9 % eindeutig**, 0 % mehrdeutig, 24,1 % ins Leere |
+| Zwei-Hop-Auflösung *ohne* Namensrestriktion (gemessen, auf 782 gecrawlten Konzepten) | **79,1 % eindeutig, 0 % mehrdeutig** |
+| Zwei-Hop-Auflösung bei Vollcrawl — **projiziert (Vollcrawl-Modell)** | **≈ 100 % eindeutig, 0 % mehrdeutig**, gestützt auf 202/202 anomaliefreie Kanten (siehe §2) |
 | Relationstypen | 6 Werte, **3 davon nicht im SP1-Vokabular** |
 | `sec.`-Auflösbarkeit | 100 % strukturierter `secSource`; Zuordnung zu den 18 Klassifikationen nur über eine **handgepflegte Crosswalk-Tabelle** |
-| Crawl-Kosten Vollcrawl | **14–20 h** (Relationen), **29–39 h** (inkl. Richtungs­abfrage) |
+| Crawl-Kosten Vollcrawl | **14–20 h** (nur Relationen) · **22–30 h** (Relationen + Richtung nur für die ≈ 55 % mit Relationen — der empfohlene Umfang) · 29–39 h (Richtung für alle) |
 
 **Empfehlung: GO** für einen Vollcrawl in Task 2 — mit einer Korrektur an der
 Methode (siehe [Go/No-Go](#gono-go-empfehlung-für-task-2)).
@@ -107,7 +108,8 @@ Der Graph ist **nicht dünn**. Zwei Befunde sind wichtig:
   Gegenüber — und heißt, dass rund ein Fünftel des Datensatzes für
   `/translate` strukturell leer bleibt.
 * Die Stichprobe überrepräsentiert absichtlich Mehrfach-`sec.`-Namen. Mit den
-  echten Schichtanteilen des Gesamtdatensatzes zurückgewichtet:
+  echten Schichtanteilen des Gesamtdatensatzes zurückgewichtet (Punktschätzung
+  ≈ 56 %, belastbar nur als Größenordnung — siehe Konfidenzintervall unten):
 
 ```console
 == 6. index-wide context ==
@@ -118,7 +120,15 @@ stratum shares in the full dataset vs. sampled density:
   D_single_sec    10691 concepts ( 20.8% of dataset), sampled density   0.0%
   E_homonym        9232 concepts ( 17.9% of dataset), sampled density  63.6%
   re-weighted dataset-wide relation density estimate: 56.0% (~28836 of 51466 concepts)
+  stratified cluster bootstrap (5000 resamples over name groups, seed 20260802): 95% CI 48% - 63%
 ```
+
+Die Punktschätzung 56,0 % ist **scheingenau**: die 500 Konzepte sind nur 159
+unabhängige Cluster (Namensgruppen), und ob ein Konzept Relationen hat, ist
+innerhalb einer Gruppe fast konstant. Ein Cluster-Bootstrap über Namensgruppen
+(stratifiziert, 5000 Resamples) liefert ein 95-%-Intervall von **48–63 %**.
+Im Text wird deshalb durchgängig **„≈ 55 % (grob 50–63 %)"** verwendet, nicht
+„56,0 %".
 
 ## 2. Zwei-Hop-Auflösungsrate
 
@@ -130,28 +140,53 @@ P8s Methode wörtlich nachgebaut: Partnerkandidaten sind die anderen Konzepte
   exactly one partner          404 / 532 =  75.9%
   ambiguous (>1 candidate)       0 / 532 =   0.0%
   dangling (0 candidates)      128 / 532 =  24.1%
-  upper bound over the whole crawled set (name restriction dropped):
-    exactly one 421, ambiguous 0, dangling 111
+  MEASURED over the whole crawled set (name restriction dropped):
+    exactly one 421, ambiguous 0, dangling 111  (= 79.1% resolved)
 ```
+
+**Gemessen sind zwei Zahlen: 75,9 % mit Namensrestriktion, 79,1 % ohne.**
+Alles darüber ist Projektion und wird hier auch so bezeichnet.
 
 **Null Mehrdeutigkeit** — auch in der Homonym-Schicht (`ambiguous cases:`
-bleibt leer). Der Grund ist strukturell und wichtiger als die Prozentzahl:
+bleibt leer). Der strukturelle Grund ist wichtiger als die Prozentzahl:
 
 ```console
-$ python3 - <<'EOF'   # über alle 782 gecrawlten Konzepte
-… holders-per-relationship-uuid histogram …
-EOF
-crawled concepts: 782
-distinct relationship uuids: 602
-holders-per-relationship-uuid histogram: {1: 346, 2: 256}
+  holders per relationship uuid over 782 crawled concepts: 1:346, 2:256
+  two-holder uuids with a direction lookup on BOTH ends: 202 (of 256; 54 not both looked up)
+    exactly one `from` + one `to`: 202, anomalous: 0
+  one-holder uuids: 53 `from`, 58 `to`, 235 unchecked -- a mix is the signature of an UNCRAWLED partner, not of a one-ended edge
+  => PROJECTION (not a measurement): a full crawl of all 51.466 concepts resolves ~100% with 0% ambiguity, provided no uuid ever acquires a third holder. Task 2 must abort the import if one does, and report the residual one-holder count.
 ```
 
-Keine einzige Relations-UUID wird von mehr als zwei Konzepten getragen. Die
-Relations-UUID ist also eine **echte Kantenidentität**, kein Typ- oder
-Gruppen­schlüssel. Damit gilt: **wer alle 51.466 Konzepte crawlt, löst
-per Definition 100 % der Relationen eindeutig auf** — die 24,1 % „ins Leere"
-sind ausschließlich eine Folge von P8s Namensrestriktion bzw. der begrenzten
-Stichprobe, kein Datenmangel.
+Drei voneinander unabhängige Belege dafür, dass eine Relations-UUID eine
+**binäre Kantenidentität** ist und kein Typ- oder Gruppenschlüssel:
+
+1. Von 602 gefundenen Relations-UUIDs trägt **keine mehr als zwei** Konzepte
+   (Histogramm `{1: 346, 2: 256}`) — kein Gegenbeispiel in 782 Konzepten.
+2. Von den 256 Zwei-Halter-UUIDs haben **202 auf beiden Seiten** eine
+   Richtungsabfrage. **Alle 202 zerfallen in genau ein `from` und genau ein
+   `to`; null Anomalien** — keine UUID mit zwei `to`- oder zwei `from`-Enden.
+   Das ist positive Bestätigung, nicht nur „kein Gegenbeispiel gesehen".
+3. Die Ein-Halter-UUIDs teilen sich in **53 `from` / 58 `to`** — genau die
+   Signatur eines *nicht mitgecrawlten Partners*. Wären es echte einseitige
+   Kanten, müsste die Richtung systematisch auf einer Seite liegen.
+
+Daraus folgt die **Projektion (Vollcrawl-Modell)**: wer alle 51.466 Konzepte
+crawlt, löst annähernd 100 % der Relationen eindeutig auf. Die 24,1 % „ins
+Leere" sind Folge von P8s Namensrestriktion bzw. der begrenzten Stichprobe,
+kein Datenmangel. Die Prämisse ist auf den 43 % der UUIDs geprüft, bei denen
+beide Enden zufällig im Crawl liegen — sie ist gut gestützt, aber nicht
+bewiesen.
+
+**Falsifikator für Task 2** (verbindlich in den Vollcrawl aufzunehmen):
+
+* Der Import **bricht ab**, sobald irgendeine Relations-UUID einen **dritten**
+  Halter bekommt. Dann ist die UUID keine Kantenidentität und das gesamte
+  Auflösungsmodell muss neu gedacht werden.
+* Der Import **meldet am Ende die verbleibende Zahl der Ein-Halter-UUIDs**.
+  Bei einem Vollcrawl muss sie gegen null gehen; tut sie das nicht, gibt es
+  Relationen zu Konzepten außerhalb des `/taxon`-Listings, und die
+  Vollständigkeit von `/translate` ist entsprechend zu deckeln.
 
 ## 3. Warum die Fehlschläge fehlschlagen
 
@@ -208,12 +243,17 @@ Kategorien:
 | 3 | **Rangwechsel / anderes Epitheton in derselben Gattung** | *Dorycnium pentaphyllum* subsp. *germanicum* ≜ *Dorycnium germanicum* |
 | 1 | **anderer Artname in derselben Gattung** | *Persicaria maculosa* ≜ *Persicaria mitis* |
 
-Die Typverteilung erklärt den Rest ohne weitere Requests: `Includes`,
-`Overlaps` und `pro parte` verbinden per Definition Konzepte
-*unterschiedlichen Umfangs*, die deshalb typischerweise auch unterschiedlich
-heißen — daher deren Ausfallquote von 78–100 % unter einer Namensrestriktion.
+**Reichweite dieser Handanalyse:** Die 16 Fälle stammen aus drei Gattungen,
+die ausgewählt wurden, *weil sie klein genug für einen vollständigen Crawl
+waren* — sie sind **keine Zufallsstichprobe** aus den 128 offenen Fällen. Für
+die übrigen 112 ist die Erklärung deshalb **Inferenz, keine Messung**: die
+Typverteilung legt sie nahe (`Includes`, `Overlaps` und `pro parte` verbinden
+per Definition Konzepte *unterschiedlichen Umfangs*, die typischerweise auch
+unterschiedlich heißen — daher deren Ausfallquote von 78–100 % unter einer
+Namensrestriktion), belegt ist sie nicht. Der Vollcrawl in Task 2 entscheidet
+das ohnehin abschließend.
 
-**Fazit dieses Abschnitts:** Der einzige gemessene Fehlermodus ist P8s
+**Fazit dieses Abschnitts:** Der einzige *gemessene* Fehlermodus ist P8s
 Heuristik „Partner teilt den Namen", nicht die Datenqualität. Genau diese
 Heuristik ist bei `Includes`/`Overlaps` — den taxonomisch *interessantesten*
 Relationen für UC6 — fast immer falsch.
@@ -231,7 +271,20 @@ Relationen für UC6 — fast immer falsch.
   False      | is misapplied name for       | misapplied for   | False     | 2
   values NOT in the SP1 vocabulary (congruent|includes|included_in|overlaps|disjoint):
   ['Included in or Includes or Overlaps', 'is misapplied name for', 'is pro parte synonym for']
+  re-weighted by stratum (dataset-wide share of relations):
+    Congruent to                          85.5%
+    Includes                               8.8%
+    Included in or Includes or Overlaps    2.5%
+    Overlaps                               2.5%
+    is misapplied name for                 0.6%
+    is pro parte synonym for               0.2%
 ```
+
+Die Rohzahlen sind **ungewichtete Stichprobenzahlen**; die Stichprobe
+überrepräsentiert Mehrfach-`sec.`-Namen. Nach derselben Schichtgewichtung wie
+bei der Dichte ergeben sich datensatzweit **≈ 85 % `Congruent to`** und
+**≈ 14 %** informativere Relationen (`Includes` 8,8 %, `⊂⊃⊕` 2,5 %,
+`Overlaps` 2,5 %).
 
 Für das SP1-Schema, das `congruent|includes|included_in|overlaps|disjoint`
 annimmt, heißt das konkret:
@@ -280,6 +333,7 @@ Typen aber unverzichtbar.
 == 5. sec. resolvability ==
 sampled concepts without a structured secSource citation: 0/500
 classifications in the dataset: 18
+  crosswalk assertion: 17 entries, all targets are real classification uuids; 17/18 classifications targeted, 1 explicitly unmapped
 sample concepts whose sec. title is EXACTLY a classification titleCache: 4/500
 index-wide exact title matches: 448/51466
 distinct sec. references in the sample: 19 (whole dataset: 120)
@@ -303,8 +357,21 @@ index-wide: 50899/51466 = 98.9%
   18 `sec.`-Räume zugeordnet. Der Rest sind Einzelfallreferenzen
   (`Excel Taxon import`, `Sell & West in Fl. Europ.`, …) aus einem Schwanz von
   120 verschiedenen Referenzen.
+* Die Tabelle ist auf **Klassifikations-UUIDs** abgebildet, nicht auf einen
+  zweiten Anzeigetext, und `assert_crosswalk()` prüft bei jedem Lauf, dass
+  **jedes Ziel eine der 18 echten UUIDs ist** und dass jede Klassifikation
+  entweder getroffen oder ausdrücklich als unabgebildet deklariert ist. Eine
+  frühere Fassung bildete auf Titel ab und enthielt zwei gekürzte Zeichen­
+  ketten (`"… Standardliste ... 1998"`), die auf gar nichts passten —
+  ausgerechnet bei WISSKIRCHEN & HAEUPLER, der Nabe des Datensatzes. Die
+  Deckungszahl war davon nicht betroffen (sie prüfte nur die Schlüsselseite),
+  der Fehler wäre aber mit der Tabelle nach Task 2 gewandert. **Die
+  Abbildungsseite ist jetzt zugesichert.**
+* Genau **eine** der 18 Klassifikationen — `Andere Referenzen (fuer Synonyme
+  p. p.)` — wird von keiner einzigen `secSource`-Referenz im Datensatz
+  angesteuert und ist deshalb bewusst unabgebildet (`CLS_UNMAPPED`).
 * Bewertung: unkritisch, aber **Kuration, keine Daten** — 17 Zeilen, die
-  versioniert und getestet gehören.
+  versioniert und zugesichert gehören.
 
 ## 6. Crawl-Kosten
 
@@ -331,10 +398,12 @@ bestätigen das (500 Konzepte in 8:21 min, 308 in 5:09 min).
 | Umfang | Requests | Wall-Clock |
 |---|---:|---|
 | Nur Relationen | 51.518 | **14–20 h** |
-| Relationen + Richtung (nur für Konzepte mit Relationen, ≈ 56 %) | ≈ 80.400 | **22–30 h** |
-| Relationen + Richtung für alle | 103.000 | **29–39 h** |
+| Relationen + Richtung (nur für Konzepte mit Relationen, ≈ 55 %) — **empfohlener Umfang** | ≈ 80.000 (± 4.000 je nach echter Dichte) | **22–30 h** |
+| Relationen + Richtung für alle (nicht nötig) | 103.000 | 29–39 h |
 
-Die Obergrenze „1 s + p95" (57 h / 114 h) ist unrealistisch pessimistisch —
+Die Zeilen sind unterschiedlich weit gefasst; die Kurzfassung oben nennt
+dieselben drei Umfänge. Die Obergrenze „1 s + p95" (57 h / 114 h) ist
+unrealistisch pessimistisch —
 p95 = 3 s tritt in Schüben auf und geht im 1-s-Fenster größtenteils unter.
 Realistisch ist **ein Wochenende**, resumierbar, mit Cache.
 
@@ -348,18 +417,27 @@ Begründung:
    Kandidatensuche „andere Konzepte mit demselben Namen" erreicht 75,9 %
    und verfehlt systematisch genau die Relationen, die UC6 am meisten
    interessieren (`Includes`/`Overlaps`: 78–100 % Ausfall). Die Korrektur ist
-   billig und beseitigt das Problem vollständig: **die Namensrestriktion
-   ersatzlos streichen** und stattdessen im Vollcrawl eine globale Map
+   billig und beseitigt das Problem aller Voraussicht nach vollständig: **die
+   Namensrestriktion ersatzlos streichen** und stattdessen im Vollcrawl eine globale Map
    `relationshipUuid → {Konzept A, Konzept B}` aufbauen. Gemessen trägt keine
    Relations-UUID mehr als zwei Endpunkte (602 UUIDs, Histogramm `{1: 346,
-   2: 256}`), die UUID ist also eine echte Kantenidentität ⇒ **Auflösung 100 %,
-   Mehrdeutigkeit 0 %**, ohne Namensheuristik und ohne Homonymrisiko.
-2. **Der Graph trägt.** ≈ 56 % der Konzepte haben mindestens eine Relation;
+   2: 256}`), und alle 202 beidseitig geprüften Kanten haben genau ein `from`-
+   und ein `to`-Ende (null Anomalien). Die UUID ist damit sehr gut gestützt
+   eine echte Kantenidentität ⇒ **projizierte Auflösung ≈ 100 %,
+   Mehrdeutigkeit 0 %**, ohne Namensheuristik und ohne Homonymrisiko. Ohne
+   Namensrestriktion *gemessen* sind 79,1 %. Der Vollcrawl muss den in §2
+   formulierten Falsifikator mitführen (Abbruch bei einem dritten Halter,
+   Meldung der Rest-Ein-Halter).
+2. **Der Graph trägt.** ≈ 55 % der Konzepte (grob 50–63 %) haben mindestens
+   eine Relation;
    das Netz ist um Wisskirchen & Haeupler 1998 als Nabe organisiert, also
    genau um den `sec.`-Raum, den UC6 als Referenz nimmt.
-3. **Die Kosten sind vertretbar:** 14–20 h für die Relationen, 22–30 h mit
-   Richtung, einmalig, resumierbar, gegen einen statischen Datensatz
-   (`created` 2013, `updated` 2021).
+3. **Die Kosten sind vertretbar:** 14–20 h für die Relationen allein;
+   **22–30 h im empfohlenen Umfang** (Relationen für alle 51.466 Konzepte plus
+   Richtungsabfrage nur für die ≈ 55 %, die überhaupt Relationen haben);
+   29–39 h, wenn die Richtung unnötigerweise für alle geholt wird. Einmalig,
+   resumierbar, gegen einen statischen Datensatz (`created` 2013,
+   `updated` 2021).
 4. **Keine Teilmenge von Klassifikationen empfehlen.** Ein Crawl auf z. B. nur
    W&H + Rothmaler spart wenig (die Nabe hängt an allen 18 Räumen) und würde
    die globale Kanten-Map wieder unvollständig machen — also genau den Fehler
@@ -385,12 +463,12 @@ bestehen:
 
 ### Was das UC6 kostet
 
-Realistisch bekommt `/translate` Antworten für rund 56 % der Konzepte; die
-restlichen 44 % sind Namen, die nur in einem `sec.`-Raum existieren, also
-strukturell nichts zu übersetzen haben. Von den gelieferten Kanten sind rund
-89 % `Congruent to` — die glatte, unspannende Antwort — und nur ≈ 11 %
-tragen die taxonomisch interessante Information (`Includes`, `Overlaps`,
-`⊂⊃⊕`). Ein `/translate`, das nur Kongruenzen liefern könnte, wäre kaum mehr
+Realistisch bekommt `/translate` Antworten für **rund 55 % der Konzepte (grob
+50–63 %)**; der Rest sind überwiegend Namen, die nur in einem `sec.`-Raum
+existieren, also strukturell nichts zu übersetzen haben. Von den gelieferten
+Kanten sind — schichtgewichtet — rund **85 % `Congruent to`**, die glatte,
+unspannende Antwort, und nur ≈ **14 %** tragen die taxonomisch interessante
+Information (`Includes`, `Overlaps`, `⊂⊃⊕`). Ein `/translate`, das nur Kongruenzen liefern könnte, wäre kaum mehr
 als ein Synonymlookup; die Korrektur aus Punkt 1 ist deshalb nicht kosmetisch,
 sondern das, was UC6 überhaupt erst rechtfertigt.
 

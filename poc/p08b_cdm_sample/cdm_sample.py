@@ -268,6 +268,15 @@ def cmd_draw(_args):
             if genus_count[gen] >= MAX_PER_GENUS:
                 continue
             members = groups[canon]
+            # KNOWN BIAS, documented rather than fixed: this cap is checked
+            # against a GLOBAL counter while the strata fill in sorted order,
+            # so whichever stratum fills last can only still admit *small*
+            # name groups. Measured effect: E_homonym got 66 of its 75-concept
+            # quota, with a sampled mean group size of 3.00 against 3.67 in the
+            # population. Filling per-stratum budgets independently would fix
+            # it, but that changes the draw and would invalidate the crawl
+            # cache for no measurable gain -- analyze prints the bias as a
+            # diagnostic instead (section 0).
             if total + len(members) > TARGET_MAX:
                 continue
             picked.append((key, canon, members))
@@ -531,55 +540,123 @@ def _resolution(sample):
 
 # The CDM API exposes NO machine link between a concept's secSource citation
 # and the 18 classifications: the Classification objects carry only a
-# titleCache (no reference uuid), and those titleCaches are written
-# differently from the corresponding Reference titleCaches. This crosswalk is
-# therefore hand-built -- it is small (17 entries cover the bulk of the
-# dataset) but it is curation, not data.
+# titleCache (no reference uuid), those titleCaches are written differently
+# from the corresponding Reference titleCaches, and /classification/{uuid}
+# is unrouted (404). This crosswalk is therefore hand-built -- small, but
+# curation, not data.
+#
+# It is keyed on the Reference titleCache and maps onto the *classification
+# uuid*, never onto another display string: an earlier version mapped onto
+# titles and two of them were elided ("... 1998"), so they silently matched
+# no classification at all -- including WISSKIRCHEN & HAEUPLER, the hub of
+# the whole dataset. assert_crosswalk() below now makes that class of typo
+# impossible to ship: every target must be one of the 18 uuids, and the
+# analysis calls it before reporting any coverage number.
+CLS_WISSKIRCHEN = "4ea7fe85-4a02-47a0-949f-5e623f0c6216"
+CLS_ROTHMALER = "1f41816b-1715-4428-9e57-8065081f24f2"
+CLS_HEGI = "b3725bbc-d05c-4769-b64c-01c4d49194e5"
+CLS_OBERDORFER = "a51d7b77-20f2-4285-88c3-cc31920935df"
+CLS_EHRENDORFER = "45006c81-98ff-4f27-ad1b-011bae53910a"
+CLS_FLORAWEB = "dc2692d4-81e2-4829-9794-40de9ea56696"
+CLS_FLORA_EUROPAEA = "c047b968-689e-4363-8fc8-7da802785edd"
+CLS_SCHMEIL_FITSCHEN = "03ba2da0-1e67-4dce-bb55-59058d4b0f26"
+CLS_MED_CHECKLIST = "1f83ed0e-6bc0-4461-99d3-cfb333820f0f"
+CLS_BRUMMITT = "4ad43f6f-0c86-4b67-8a41-93b710ad0364"
+CLS_NCU = "7063b329-c502-4414-acc2-0f4b20d3a6bb"
+CLS_ROSTANSKI = "7ef87c1f-b9fd-4fd6-9a2c-436030cdf533"
+CLS_WH_SYN_FAKTEN = "cde3c428-73af-4882-9ac7-16a6ac56077e"
+CLS_FLORAWEB_SYN_FAKTEN = "f4950cd9-67d3-42a5-b8d8-2a0a2dcec871"
+CLS_ANDERE_AUCT = "978d0b0f-61a8-408c-9303-bb7eda5958a1"
+CLS_ANDERE_SL = "02077b2e-2d80-498a-9901-250429a158a3"
+CLS_ANDERE_SSTR = "6d1dd1c4-9ee9-4ff7-abc3-e5285fb73873"
+# The 18th classification, "Andere Referenzen (fuer Synonyme p. p.)"
+# (e2289284-7cba-42a9-9f96-59fead7e5aef), has NO secSource reference pointing
+# at it anywhere in the 51.466 concepts -- it is deliberately unmapped, not
+# forgotten. assert_crosswalk() reports it as such.
+CLS_UNMAPPED = {"e2289284-7cba-42a9-9f96-59fead7e5aef"}
+
 CROSSWALK = {
     "Wisskirchen & Haeupler 1998: Standardliste der Farn- und Blütenpflanzen "
-    "Deutschlands":
-        "WISSKIRCHEN & HAEUPLER, Standardliste ... 1998",
+    "Deutschlands": CLS_WISSKIRCHEN,
     "Schubert, R. & Vent, W. (eds.) 1990: Exkursionsflora von Deutschland, "
     "begr. von Werner Rothmaler, 8. Aufl., 4. Kritischer Band: 811. \u2013 "
-    "Berlin: Volk und Wissen":
-        "ROTHMALER, Exkursionsflora von Deutschland, 8. Aufl., Kritischer Band",
-    "HEGI: Illustrierte Flora von Mitteleuropa, Aufl. 2 u. 3":
-        "HEGI, Illustrierte Flora von Mitteleuropa, Aufl. 2 u. 3",
-    "OBERDORFER: Pflanzensoziologische Exkursionsflora, ed. 7":
-        "OBERDORFER, Pflanzensoziologische Exkursionsflora, 7. Aufl",
+    "Berlin: Volk und Wissen": CLS_ROTHMALER,
+    "HEGI: Illustrierte Flora von Mitteleuropa, Aufl. 2 u. 3": CLS_HEGI,
+    "OBERDORFER: Pflanzensoziologische Exkursionsflora, ed. 7": CLS_OBERDORFER,
     "EHRENDORFER: Liste der Gefäßpflanzen Mitteleuropas, 2. Aufl":
-        "EHRENDORFER, Liste der Gefäßpflanzen Mitteleuropas, 2. Aufl",
-    "BfN: FloraWeb DB": "BfN, FloraWeb DB",
-    "TUTIN et al.: Flora Europaea": "FLORA EUROPAEA, Tutin et al.",
+        CLS_EHRENDORFER,
+    "BfN: FloraWeb DB": CLS_FLORAWEB,
+    "TUTIN et al.: Flora Europaea": CLS_FLORA_EUROPAEA,
     "SCHMEIL-FITSCHEN: Flora von Deutschland und angrenzenden Ländern, "
-    "89. Aufl":
-        "SCHMEIL-FITSCHEN, Flora von Deutschland ..., 89. Aufl",
-    "Greuter & al.: Med-Checklist bisher Bde. 1, 3 und 4":
-        "GREUTER & al., Med-Checklist bisher Bde. 1, 3 und 4",
-    "BRUMMITT 1992: Vascular Plant Families and Genera. – Kew":
-        "BRUMMITT, Vascular Plant Families and Genera. 1992",
+    "89. Aufl": CLS_SCHMEIL_FITSCHEN,
+    "Greuter & al.: Med-Checklist bisher Bde. 1, 3 und 4": CLS_MED_CHECKLIST,
+    "BRUMMITT 1992: Vascular Plant Families and Genera. – Kew": CLS_BRUMMITT,
     "Greuter & al. 1993: Names in Current Use for Extant Plant Genera. – "
-    "Königstein":
-        "Greuter & al., Names in Current Use for Extant Plant Genera. 1993",
-    "Rostanski: Rostanski (Oenothera)":
-        "ROSTANSKI in Wisskirchen & Haeupler 1998",
+    "Königstein": CLS_NCU,
+    "Rostanski: Rostanski (Oenothera)": CLS_ROSTANSKI,
     "R. Wisskirchen & H. Haeupler 1998: Standardliste (fuer Synonyme mit "
-    "Fakten)":
-        "Wisskirchen & H. Haeupler (fuer Synonyme mit Fakten)",
-    "BfN: FloraWeb DB (fuer Synonyme mit Fakten)":
-        "BfN, FloraWeb DB (fuer Synonyme mit Fakten) ",
-    "Andere Referenzen (fuer auct. Synonyme)":
-        "Andere Referenzen (fuer auct. Synonyme)",
-    "Andere Referenzen (fuer Synonyme s. l.)":
-        "Andere Referenzen (fuer Synonyme s. l.), ",
-    "Andere Referenzen (fuer Synonyme s. str.)":
-        "Andere Referenzen (fuer Synonyme s. str.), ",
+    "Fakten)": CLS_WH_SYN_FAKTEN,
+    "BfN: FloraWeb DB (fuer Synonyme mit Fakten)": CLS_FLORAWEB_SYN_FAKTEN,
+    "Andere Referenzen (fuer auct. Synonyme)": CLS_ANDERE_AUCT,
+    "Andere Referenzen (fuer Synonyme s. l.)": CLS_ANDERE_SL,
+    "Andere Referenzen (fuer Synonyme s. str.)": CLS_ANDERE_SSTR,
 }
+
+
+def assert_crosswalk(cls_titles):
+    """Every crosswalk target must be one of the 18 real classification uuids.
+
+    Task 2 will lift this table; a target that resolves to nothing must fail
+    loudly here rather than silently drop the hub `sec.` space.
+    """
+    known = set(cls_titles)
+    bad = sorted(v for v in set(CROSSWALK.values()) if v not in known)
+    if bad:
+        raise AssertionError("crosswalk targets that are not classification "
+                             "uuids: %s" % bad)
+    targeted = set(CROSSWALK.values())
+    untargeted = sorted(known - targeted - CLS_UNMAPPED)
+    if untargeted:
+        raise AssertionError("classifications neither targeted nor explicitly "
+                             "unmapped: %s" % untargeted)
+    print("  crosswalk assertion: %d entries, all targets are real "
+          "classification uuids; %d/%d classifications targeted, "
+          "%d explicitly unmapped"
+          % (len(CROSSWALK), len(targeted), len(known), len(CLS_UNMAPPED)))
+
+
+def population_strata(index):
+    """Assign every canonical name in the dataset to its stratum (same rule
+    as cmd_draw), so the sample can be compared against the population."""
+    members = defaultdict(list)
+    for row in index:
+        if row["canonical"]:
+            members[row["canonical"]].append(row)
+    out = defaultdict(list)
+    for canon, mem in members.items():
+        secs = {m["sec_citation_uuid"] for m in mem if m["sec_citation_uuid"]}
+        k = len(secs) if secs else len(mem)
+        if len({m["name"] for m in mem}) >= 2:
+            key = "E_homonym"
+        elif k >= 8:
+            key = "A_many_sec"
+        elif k >= 3:
+            key = "B_mid_sec"
+        elif k == 2:
+            key = "C_two_sec"
+        else:
+            key = "D_single_sec"
+        out[key].append(canon)
+    return out
+
+
+ALL_STRATUM_GROUPS = {}
 
 
 def cmd_analyze(_args):
     sample = load_sample()
     index = load_index()
+    ALL_STRATUM_GROUPS.update(population_strata(index))
     res = _resolution(sample)
     rel_cache = res["rel_cache"]
     n = len(sample)
@@ -589,8 +666,24 @@ def cmd_analyze(_args):
     print("concepts: %d, name groups: %d, genera: %d"
           % (n, len({r["canonical"] for r in sample}),
              len({genus_of(r["canonical"]) for r in sample})))
+    pop_groups = defaultdict(list)
+    for row in index:
+        if row["canonical"]:
+            pop_groups[row["canonical"]].append(row)
+    samp_groups = defaultdict(set)
+    for row in sample:
+        samp_groups[row["stratum"]].add(row["canonical"])
+    print("  %-14s %8s %8s %10s %10s"
+          % ("stratum", "concepts", "groups", "mean size", "pop. mean"))
     for k in sorted(strata):
-        print("  %-14s %4d" % (k, strata[k]))
+        gs = samp_groups[k]
+        popmean = (sum(len(pop_groups[g]) for g in ALL_STRATUM_GROUPS[k])
+                   / len(ALL_STRATUM_GROUPS[k])) if ALL_STRATUM_GROUPS[k] else 0
+        print("  %-14s %8d %8d %10.2f %10.2f"
+              % (k, strata[k], len(gs), strata[k] / len(gs), popmean))
+    print("  (the global 500-concept cap truncates whichever stratum fills "
+          "last and admits only SMALL groups near the cap -- compare the two "
+          "mean-size columns; see the comment at cmd_draw)")
 
     print("\n== 1. relation density ==")
     with_rel = sum(1 for r in sample if rel_cache[r["uuid"]])
@@ -608,6 +701,28 @@ def cmd_analyze(_args):
         sub = [r for r in sample if r["stratum"] == k]
         wr = sum(1 for r in sub if rel_cache[r["uuid"]])
         print("  %-14s %3d/%3d = %5.1f%%" % (k, wr, len(sub), 100.0 * wr / len(sub)))
+
+    # The 500 concepts are only 159 independent clusters: relation presence is
+    # near-constant inside a name group, so a naive binomial CI would be far
+    # too tight. Cluster bootstrap over NAME GROUPS instead.
+    groups = defaultdict(list)
+    for row in sample:
+        groups[row["canonical"]].append(row)
+    keys = sorted(groups)
+    rng = random.Random(SEED)
+    boots = []
+    for _ in range(5000):
+        num = den = 0
+        for _ in range(len(keys)):
+            for row in groups[keys[rng.randrange(len(keys))]]:
+                den += 1
+                num += 1 if rel_cache[row["uuid"]] else 0
+        boots.append(100.0 * num / den)
+    boots.sort()
+    print("cluster bootstrap over %d name groups (5000 resamples, seed %d): "
+          "95%% CI %.1f%% - %.1f%%"
+          % (len(keys), SEED, boots[int(0.025 * len(boots))],
+             boots[int(0.975 * len(boots))]))
 
     print("\n== 2. two-hop resolution ==")
     tot = res["exact"] + res["ambiguous"] + res["dangling"]
@@ -637,8 +752,58 @@ def cmd_analyze(_args):
                 g_amb += 1
             else:
                 g_dangle += 1
-    print("  upper bound over the whole crawled set (name restriction dropped):")
-    print("    exactly one %d, ambiguous %d, dangling %d" % (g_exact, g_amb, g_dangle))
+    print("  MEASURED over the whole crawled set (name restriction dropped):")
+    print("    exactly one %d, ambiguous %d, dangling %d  (= %.1f%% resolved)"
+          % (g_exact, g_amb, g_dangle,
+             100.0 * g_exact / (g_exact + g_amb + g_dangle)))
+
+    # Is a relationship uuid a genuine binary EDGE identity? If yes, a full
+    # crawl resolves everything; if no, the projection collapses. Two
+    # independent checks, both from the existing cache, no new requests.
+    hist = Counter(len(v) for v in holders.values())
+    print("  holders per relationship uuid over %d crawled concepts: %s"
+          % (len(os.listdir(os.path.join(CACHE, "rel"))),
+             ", ".join("%d:%d" % (k, hist[k]) for k in sorted(hist))))
+    if max(hist) > 2:
+        print("  !! FALSIFIED: a relationship uuid has more than two holders")
+
+    # Corroboration from the direction lookups (.cache/to): a real binary edge
+    # must have exactly one `from` end and one `to` end. Anything else (two
+    # `to`-ends, two `from`-ends) would mean the uuid is not an edge id.
+    both = one_from_one_to = anomalous = unchecked = 0
+    single_from = single_to = single_unchecked = 0
+    for ruuid, hs in holders.items():
+        dirs = []
+        for h in hs:
+            inc = incoming_rel_uuids(h)
+            dirs.append(None if inc is None else ("to" if ruuid in inc else "from"))
+        if len(hs) == 2:
+            if any(d is None for d in dirs):
+                unchecked += 1
+                continue
+            both += 1
+            if sorted(dirs) == ["from", "to"]:
+                one_from_one_to += 1
+            else:
+                anomalous += 1
+        elif len(hs) == 1:
+            if dirs[0] is None:
+                single_unchecked += 1
+            elif dirs[0] == "from":
+                single_from += 1
+            else:
+                single_to += 1
+    print("  two-holder uuids with a direction lookup on BOTH ends: %d "
+          "(of %d; %d not both looked up)" % (both, hist.get(2, 0), unchecked))
+    print("    exactly one `from` + one `to`: %d, anomalous: %d"
+          % (one_from_one_to, anomalous))
+    print("  one-holder uuids: %d `from`, %d `to`, %d unchecked -- a mix is "
+          "the signature of an UNCRAWLED partner, not of a one-ended edge"
+          % (single_from, single_to, single_unchecked))
+    print("  => PROJECTION (not a measurement): a full crawl of all 51.466 "
+          "concepts resolves ~100% with 0% ambiguity, provided no uuid ever "
+          "acquires a third holder. Task 2 must abort the import if one does, "
+          "and report the residual one-holder count.")
 
     print("\n== 3. dangling / unresolved sample (hand-analysis input) ==")
     for item in res["dangling_details"][:20]:
@@ -670,6 +835,28 @@ def cmd_analyze(_args):
     unmapped = sorted({k[1] for k in types if k[1] not in known})
     print("  values NOT in the SP1 vocabulary (congruent|includes|included_in|"
           "overlaps|disjoint): %s" % (unmapped or "none"))
+    # The raw counts above are UNWEIGHTED sample counts. The sample
+    # over-represents multi-sec. names, so re-weight per stratum the same way
+    # the density estimate is re-weighted, before quoting any dataset-wide
+    # share of "boring" congruences vs. informative relations.
+    pop_counts = Counter()
+    canon_to_stratum = {}
+    for k, canons in ALL_STRATUM_GROUPS.items():
+        for c in canons:
+            canon_to_stratum[c] = k
+    for r in index:
+        if r["canonical"] in canon_to_stratum:
+            pop_counts[canon_to_stratum[r["canonical"]]] += 1
+    samp_counts = Counter(r["stratum"] for r in sample)
+    weighted = Counter()
+    for row in sample:
+        w = pop_counts[row["stratum"]] / samp_counts[row["stratum"]]
+        for rel in rel_cache[row["uuid"]]:
+            weighted[(rel.get("type") or {}).get("representation_L10n")] += w
+    tot_w = sum(weighted.values())
+    print("  re-weighted by stratum (dataset-wide share of relations):")
+    for key, val in weighted.most_common():
+        print("    %-36s %5.1f%%" % (key, 100.0 * val / tot_w))
 
     print("\n== 4b. direction (relationsToThisTaxon) ==")
     inc_known = inc_missing = 0
@@ -698,6 +885,7 @@ def cmd_analyze(_args):
     for c in cls_recs:
         cls_titles[c["uuid"]] = c.get("titleCache", "")
     print("classifications in the dataset: %d" % len(cls_titles))
+    assert_crosswalk(cls_titles)
     cit_title = {r["sec_citation_uuid"]: r["sec_citation_title"] for r in index}
     def sec_of(row):
         return cit_title.get(row["sec_citation_uuid"], row["sec_title"])
@@ -721,11 +909,15 @@ def cmd_analyze(_args):
              100.0 * sum(1 for r in index
                          if r["sec_citation_title"] in CROSSWALK) / len(index)))
     for (u, t), c in sample_secs.most_common():
-        print("  %-4s %-46s %4d  %s"
-              % ("OK" if t in CROSSWALK else "MISS", t[:46], c, u[:8]))
-    print("\n  the 18 classification titleCaches:")
+        target = CROSSWALK.get(t)
+        print("  %-4s %-46s %4d  ref %s -> cls %s"
+              % ("OK" if target else "MISS", t[:46], c, u[:8],
+                 (cls_titles[target][:34] if target else "-")))
+    print("\n  the 18 classification titleCaches (T = targeted by the "
+          "crosswalk):")
+    targeted = set(CROSSWALK.values())
     for u, t in sorted(cls_titles.items(), key=lambda kv: kv[1]):
-        print("    %s  %s" % (u[:8], t))
+        print("    %s %s  %s" % ("T" if u in targeted else " ", u[:8], t))
 
     print("\n== 6. index-wide context ==")
     all_groups = defaultdict(set)
@@ -771,6 +963,30 @@ def cmd_analyze(_args):
     print("  re-weighted dataset-wide relation density estimate: %.1f%% "
           "(~%d of %d concepts)"
           % (100.0 * est / total_pop, int(est), total_pop))
+
+    # Same cluster problem as in section 1, one level up: stratified cluster
+    # bootstrap -- resample NAME GROUPS with replacement inside each stratum,
+    # recompute that stratum's density, re-weight by the population shares.
+    strat_groups = defaultdict(lambda: defaultdict(list))
+    for row in sample:
+        strat_groups[row["stratum"]][row["canonical"]].append(row)
+    rng2 = random.Random(SEED)
+    boots = []
+    for _ in range(5000):
+        acc = 0.0
+        for k, gmap in strat_groups.items():
+            keys = list(gmap)
+            num = den = 0
+            for _ in range(len(keys)):
+                for row in gmap[keys[rng2.randrange(len(keys))]]:
+                    den += 1
+                    num += 1 if rel_cache[row["uuid"]] else 0
+            acc += pop[k] * (num / den if den else 0.0)
+        boots.append(100.0 * acc / total_pop)
+    boots.sort()
+    print("  stratified cluster bootstrap (5000 resamples over name groups, "
+          "seed %d): 95%% CI %.0f%% - %.0f%%"
+          % (SEED, boots[int(0.025 * len(boots))], boots[int(0.975 * len(boots))]))
 
 
 def cmd_latency(_args):

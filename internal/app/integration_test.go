@@ -494,7 +494,7 @@ func TestIntegration_OfflineBundleServesSuggestOffline(t *testing.T) {
 	dbPath := filepath.Join(dir, "hostus.sqlite")
 	bundlePath := filepath.Join(dir, "bundle.sqlite")
 
-	if _, _, _, err := app.Ingest(ctx, "testdata/dataset.yaml", dbPath); err != nil {
+	if _, err := app.Ingest(ctx, "testdata/dataset.yaml", dbPath); err != nil {
 		t.Fatalf("app.Ingest: unexpected error: %v", err)
 	}
 
@@ -594,7 +594,7 @@ func TestIntegration_TraitsFuzzyClassification(t *testing.T) {
 	dbPath := filepath.Join(dir, "hostus.sqlite")
 
 	ctx := context.Background()
-	backboneReport, traitReports, _, err := app.Ingest(ctx, "testdata/dataset-traits.yaml", dbPath)
+	reports, err := app.Ingest(ctx, "testdata/dataset-traits.yaml", dbPath)
 	if err != nil {
 		t.Fatalf("app.Ingest: unexpected error: %v", err)
 	}
@@ -796,7 +796,7 @@ func TestIntegration_OfflineBundleConceptSuggestTraitsOffline(t *testing.T) {
 	dbPath := filepath.Join(dir, "hostus.sqlite")
 	bundlePath := filepath.Join(dir, "bundle.sqlite")
 
-	if _, _, _, err := app.Ingest(ctx, "testdata/dataset-traits.yaml", dbPath); err != nil {
+	if _, err := app.Ingest(ctx, "testdata/dataset-traits.yaml", dbPath); err != nil {
 		t.Fatalf("app.Ingest: unexpected error: %v", err)
 	}
 

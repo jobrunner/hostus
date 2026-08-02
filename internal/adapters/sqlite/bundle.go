@@ -549,7 +549,26 @@ func copyConceptScopedTables(ctx context.Context, src, bundle *DB, idsJSON strin
 		return err
 	}
 
-	return nil
+	// sec_reference in full (metadata, like xref_source/trait_vocabulary
+	// above): a copied concept's sec_reference id is useless without the
+	// citation it names.
+	if err := copyRows(ctx, src, bundle,
+		`SELECT id, title FROM sec_reference`, nil,
+		`INSERT INTO sec_reference (id, title) VALUES (?,?)`); err != nil {
+		return err
+	}
+
+	// concept_relation is scoped by BOTH ends, not one: the column is a
+	// foreign key on either side, and the bundle connection enforces foreign
+	// keys, so copying an edge whose partner concept is out of scope would
+	// fail the insert. An area-scoped bundle therefore carries only the
+	// relations wholly inside its scope — which is also the honest answer,
+	// since half an edge asserts nothing.
+	return copyRows(ctx, src, bundle,
+		`SELECT from_concept, to_concept, relation, source FROM concept_relation
+		 WHERE from_concept IN (SELECT value FROM json_each(?))
+		   AND to_concept IN (SELECT value FROM json_each(?))`, []any{idsJSON, idsJSON},
+		`INSERT INTO concept_relation (from_concept, to_concept, relation, source) VALUES (?,?,?,?)`)
 }
 
 // copyDistribution copies distribution rows for the concepts named by

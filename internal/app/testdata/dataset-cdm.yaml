@@ -1,0 +1,18 @@
+# SP5: the CDM rl_standardliste harvest as a second backbone, pinned by its
+# two canonical CSVs. redistribution: unknown — no license is findable
+# anywhere on the portal, the API or the payloads (pipelines/cdm/README.md).
+backbones:
+  - id: wcvp
+    version: "2026-06-15"
+    license: CC-BY-4.0
+    source: https://sftp.kew.org/pub/data-repositories/WCVP/
+    path: ../../adapters/wcvp/testdata/wcvp-sample
+    redistribution: allowed
+concept_sources:
+  - id: cdm
+    version: "2026-08-02"
+    source: https://api.cybertaxonomy.org/rl_standardliste
+    concepts: ../../../pipelines/cdm/fixtures/cdm-concepts-fixture.csv
+    relations: ../../../pipelines/cdm/fixtures/cdm-relations-fixture.csv
+    note: "Konzeptgraph fuer UC6 (/v1/translate); nur lokale Auswertung"
+    redistribution: unknown

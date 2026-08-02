@@ -1,0 +1,14 @@
+backbones:
+  - id: wcvp
+    version: "2026-06-15"
+    license: CC-BY-4.0
+    source: https://sftp.kew.org/pub/data-repositories/WCVP/
+    path: ../../adapters/wcvp/testdata/wcvp-sample
+    redistribution: allowed
+concept_sources:
+  - id: cdm
+    version: "2026-08-02"
+    source: https://api.cybertaxonomy.org/rl_standardliste
+    concepts: ./does-not-exist-concepts.csv
+    relations: ../../../pipelines/cdm/fixtures/cdm-relations-fixture.csv
+    redistribution: unknown

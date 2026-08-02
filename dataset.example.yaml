@@ -88,3 +88,25 @@ xref_sources:
     source: https://query.wikidata.org/sparql
     path: pipelines/wikidata/output/wikidata-xref-canonical.csv
     redistribution: allowed # CC0
+
+# Konzeptquellen (SP5, UC6). Eine Konzeptquelle liefert taxonomische
+# Konzepte, die je einem `sec.`-Referenzraum zugeordnet sind, plus den
+# typisierten Relationsgraphen zwischen ihnen — das, was `/v1/translate`
+# braucht. Sie ist bewusst kein `backbones:`-Eintrag: gepinnt wird sie über
+# ZWEI kanonische CSVs statt über ein Verzeichnis.
+#
+# ACHTUNG Lizenz: Für den CDM-Server der „Standardliste der Farn- und
+# Blütenpflanzen Deutschlands" ist NIRGENDS eine Lizenzangabe auffindbar —
+# weder auf dem Portal noch auf der API noch in den Payloads (siehe
+# pipelines/cdm/README.md). Daher `redistribution: unknown`: lokal
+# auswertbar, aber `hostus bundle` verweigert den Export, solange nicht
+# `--force-include-restricted` gesetzt ist (und protokolliert die Quelle
+# dann in `bundle_meta.restricted_sources`).
+concept_sources:
+  - id: cdm
+    version: "2026-08-02" # Datum des Crawls, niemals "latest"
+    source: https://api.cybertaxonomy.org/rl_standardliste
+    concepts: pipelines/cdm/output/cdm-concepts-canonical.csv
+    relations: pipelines/cdm/output/cdm-relations-canonical.csv
+    note: "51.466 Konzepte in 18 sec.-Referenzräumen; nur lokale Auswertung"
+    redistribution: unknown

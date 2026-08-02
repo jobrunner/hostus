@@ -7,6 +7,44 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (SP5, Task 3 — `sec.` als erstklassige Konzeptdimension)
+- `domain.SecReference` und `domain.Relation` mit strikter `ParseRelation`:
+  Das Relationsvokabular ist jetzt **gemessen statt angenommen**. Die fünf
+  Werte aus SP1 (`congruent|includes|included_in|overlaps|disjoint`) waren
+  eine Annahme; die Vollernte über 26.346 Relationen korrigierte sie in
+  beide Richtungen — `disjoint` kommt **nie** vor und ist entfallen, dafür
+  kamen `pro_parte`, `misapplied`, das genuin **unsichere** ⊂⊃⊕
+  (`includes_or_included_in_or_overlaps`, wird **nicht** auf `overlaps`
+  eingeebnet) und `not_congruent` (genau 1 Zeile von 26.346) hinzu. Ein
+  unbekannter Wert bricht laut ab und nennt den Wert — die
+  `ParseRank`-Lektion, diesmal ohne lenienten Zwilling, weil eine Relation
+  eine wissenschaftliche Aussage ist und kein beschreibendes Metadatum.
+- `internal/adapters/cdm`: `ReadConcepts`/`ReadRelations` für die beiden
+  kanonischen CDM-CSVs (Pipe-CSV mit RFC-4180-Quoting, gesammelte Fehler mit
+  Zeilennummern, keine Panics). `is_concept_relation` ist ein **Tri-State**
+  (`true`/`false`/leer = unbekannt), leerer `status` bleibt leer.
+- `application.IngestCDM`: strikt zweiphasiger Ingest der CDM-Konzepte als
+  **zweiter Backbone** (`cdm:concept:<uuid>`, `sec_reference` gefüllt) —
+  bewusst eigene Zeilen neben den WCVP-Konzepten desselben Namens.
+  Misapplied-Name-Zeilen (`conceptRelationship: false`) sind **keine**
+  Konzeptrelationen und werden verworfen, gezählt und bemustert;
+  Relationen werden **nur in der Quellrichtung** gespeichert (Inversion ist
+  über `domain.Relation.Inverse` eine Abfragezeit-Frage), nicht auflösbare
+  Enden werden gezählt und bemustert, brechen den Ingest aber nie ab.
+- Schema: neue Tabelle `sec_reference`, Index auf
+  `taxon_concept(sec_reference)`, erweitertes `relation`-Vokabular und ein
+  auf `(from_concept, to_concept, relation, source)` verbreiterter
+  Primärschlüssel von `concept_relation` — vorher überschrieben sich zwei
+  verschiedene Relationstypen desselben Paares still. Altbestände werden
+  beim `Open` per `PRAGMA table_info`-geprüfter Migration umgebaut.
+- Manifest: `concept_sources:` mit `redistribution: unknown` (CDM hat
+  **keine** auffindbare Lizenz), schema-validiert wie jede andere Quelle;
+  `hostus ingest` gibt Konzeptquellen samt aller Verlustzähler aus.
+- Offline-Bundle: `sec_reference` und `concept_relation` (beidseitig
+  gescopet) werden mitkopiert; das Redistributionsgatter verweigert einen
+  Bundle-Export mit CDM-Daten per Default und protokolliert die Quelle unter
+  `--force-include-restricted`.
+
 ### Added (SP5, Vorarbeit)
 - Pipeline `pipelines/cdm/` (`build.sh`, `crawl.py`, `convert.py`,
   `common.py`, README): resumierbare Ernte der 51.466 CDM-Konzepte aus

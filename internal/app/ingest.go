@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/jobrunner/hostus/internal/adapters/cdm"
 	"github.com/jobrunner/hostus/internal/adapters/manifest"
 	"github.com/jobrunner/hostus/internal/adapters/sqlite"
 	"github.com/jobrunner/hostus/internal/adapters/traits"
@@ -194,51 +196,149 @@ func ingestXrefSource(ctx context.Context, xs manifest.XrefSource, manifestSHA s
 	return application.IngestXrefs(ctx, repo, xrefSourceRowSource{ds: ds}, meta)
 }
 
+// ingestConceptSource reads cs's two canonical CDM CSVs and runs
+// application.IngestCDM against repo. This is the adapter -> application DTO
+// bridge for SP5: internal/application must not import
+// internal/adapters/cdm (depguard), so the row mapping lives here in the
+// composition root, exactly like wcvpRowSource/traitVocabRowSource above.
+//
+// Reader-level row errors are surfaced on the report rather than aborting:
+// the CSVs are the output of a 16–20 h crawl, and one malformed line out of
+// 51.466 must not cost the whole ingest. An unmapped RELATION type is the
+// opposite case and does abort — see application.IngestCDM.
+func ingestConceptSource(ctx context.Context, cs manifest.ConceptSource, manifestSHA string, repo *sqlite.DB) (application.CDMIngestReport, error) {
+	conceptsDS, err := cdm.ReadConcepts(cs.Concepts)
+	if err != nil {
+		return application.CDMIngestReport{}, fmt.Errorf("app: reading concept source %q at %q: %w", cs.ID, cs.Concepts, err)
+	}
+	relationsDS, err := cdm.ReadRelations(cs.Relations)
+	if err != nil {
+		return application.CDMIngestReport{}, fmt.Errorf("app: reading concept source %q at %q: %w", cs.ID, cs.Relations, err)
+	}
+	// cs.Redistribution is routed through ParseRedistribution for the same
+	// reason as adaptBackbones' backbone mapping above — see its doc comment.
+	redistribution, err := domain.ParseRedistribution(cs.Redistribution)
+	if err != nil {
+		return application.CDMIngestReport{}, fmt.Errorf("app: concept source %q: %w", cs.ID, err)
+	}
+	meta := domain.BackboneVersion{
+		ID:             cs.ID,
+		Version:        cs.Version,
+		License:        cs.License,
+		SourceURL:      cs.SourceURL,
+		IngestedAt:     time.Now().UTC().Format(time.RFC3339),
+		ManifestSHA:    manifestSHA,
+		Redistribution: redistribution,
+	}
+	report, err := application.IngestCDM(ctx, repo, adaptCDMConcepts(conceptsDS.Rows), adaptCDMRelations(relationsDS.Rows), meta)
+	report.ReaderErrors = len(conceptsDS.Errors) + len(relationsDS.Errors)
+	return report, err
+}
+
+func adaptCDMConcepts(rows []cdm.ConceptRow) []application.CDMConceptRow {
+	out := make([]application.CDMConceptRow, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, application.CDMConceptRow{
+			ConceptUUID:        r.ConceptUUID,
+			ScientificName:     r.ScientificName,
+			Authorship:         r.Authorship,
+			Rank:               r.Rank,
+			Status:             r.Status,
+			SecUUID:            r.SecUUID,
+			SecTitle:           r.SecTitle,
+			ClassificationUUID: r.ClassificationUUID,
+			ParentUUID:         r.ParentUUID,
+		})
+	}
+	return out
+}
+
+func adaptCDMRelations(rows []cdm.RelationRow) []application.CDMRelationRow {
+	out := make([]application.CDMRelationRow, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, application.CDMRelationRow{
+			FromUUID:          r.FromUUID,
+			ToUUID:            r.ToUUID,
+			RelationType:      r.RelationType,
+			RelationSymbol:    r.RelationSymbol,
+			IsConceptRelation: r.IsConceptRelation,
+			RelationshipUUID:  r.RelationshipUUID,
+		})
+	}
+	return out
+}
+
+// Reports bundles everything one "hostus ingest" run produced. It replaced a
+// four-value return when SP5 added a fourth kind of source: past four
+// results a positional tuple stops documenting itself, and every caller was
+// already discarding most of it with blank identifiers.
+type Reports struct {
+	Backbone       application.IngestReport
+	Traits         []application.TraitIngestReport
+	Xrefs          []application.XrefIngestReport
+	ConceptSources []application.CDMIngestReport
+}
+
 // Ingest parses and validates the manifest at manifestPath, opens (or
 // creates) the SQLite database at dbPath, and runs application.Ingest
-// against every pinned backbone, followed by application.IngestTraits
-// against every pinned trait vocabulary, followed by application.IngestXrefs
-// against every pinned xref source, returning all three reports. It is the
-// entry point "hostus ingest" calls.
-func Ingest(ctx context.Context, manifestPath, dbPath string) (application.IngestReport, []application.TraitIngestReport, []application.XrefIngestReport, error) {
+// against every pinned backbone, then application.IngestTraits against every
+// pinned trait vocabulary, then application.IngestXrefs against every pinned
+// xref source, then application.IngestCDM against every pinned concept
+// source. It is the entry point "hostus ingest" calls.
+//
+// Concept sources run LAST on purpose: their relation ends resolve against
+// taxon_concept, so anything an earlier phase wrote is already available to
+// them (see application.IngestCDM's phase 1).
+func Ingest(ctx context.Context, manifestPath, dbPath string) (Reports, error) {
+	var reports Reports
+
 	manifestDS, err := manifest.Parse(manifestPath)
 	if err != nil {
-		return application.IngestReport{}, nil, nil, err
+		return reports, err
 	}
 	backbones, err := adaptBackbones(manifestDS.Backbones)
 	if err != nil {
-		return application.IngestReport{}, nil, nil, err
+		return reports, err
 	}
 	ds := &application.Dataset{Backbones: backbones, ManifestSHA: manifestDS.ManifestSHA}
 
 	repo, err := sqlite.Open(dbPath)
 	if err != nil {
-		return application.IngestReport{}, nil, nil, fmt.Errorf("app: opening database %q: %w", dbPath, err)
+		return reports, fmt.Errorf("app: opening database %q: %w", dbPath, err)
 	}
 	defer func() { _ = repo.Close() }()
 
-	backboneReport, err := application.Ingest(ctx, ds, readerFor, repo)
+	reports.Backbone, err = application.Ingest(ctx, ds, readerFor, repo)
 	if err != nil {
-		return backboneReport, nil, nil, err
+		return reports, err
 	}
 
-	traitReports := make([]application.TraitIngestReport, 0, len(manifestDS.TraitVocabularies))
+	reports.Traits = make([]application.TraitIngestReport, 0, len(manifestDS.TraitVocabularies))
 	for _, tv := range manifestDS.TraitVocabularies {
 		tr, err := ingestTraitVocab(ctx, tv, repo)
 		if err != nil {
-			return backboneReport, traitReports, nil, err
+			return reports, err
 		}
-		traitReports = append(traitReports, tr)
+		reports.Traits = append(reports.Traits, tr)
 	}
 
-	xrefReports := make([]application.XrefIngestReport, 0, len(manifestDS.XrefSources))
+	reports.Xrefs = make([]application.XrefIngestReport, 0, len(manifestDS.XrefSources))
 	for _, xs := range manifestDS.XrefSources {
 		xr, err := ingestXrefSource(ctx, xs, manifestDS.ManifestSHA, repo)
 		if err != nil {
-			return backboneReport, traitReports, xrefReports, err
+			return reports, err
 		}
-		xrefReports = append(xrefReports, xr)
+		reports.Xrefs = append(reports.Xrefs, xr)
 	}
 
-	return backboneReport, traitReports, xrefReports, nil
+	reports.ConceptSources = make([]application.CDMIngestReport, 0, len(manifestDS.ConceptSources))
+	for _, cs := range manifestDS.ConceptSources {
+		cr, err := ingestConceptSource(ctx, cs, manifestDS.ManifestSHA, repo)
+		if err != nil {
+			return reports, err
+		}
+		reports.ConceptSources = append(reports.ConceptSources, cr)
+	}
+
+	return reports, nil
 }

@@ -17,6 +17,11 @@ import (
 // be spelled once outside of _test.go files.
 const ingestCmdName = "ingest"
 
+// redistributionAllowed is domain.RedistributionAllowed's spelling as it
+// arrives here: the report DTOs carry redistribution as a plain string, and
+// this file must not import internal/domain to compare against it.
+const redistributionAllowed = "allowed"
+
 // newIngestCmd builds "hostus ingest --dataset dataset.yaml --db
 // hostus.sqlite": it parses+validates the manifest, opens (or creates) the
 // SQLite database, and runs the WCVP-backed ingest use case against it.
@@ -51,14 +56,15 @@ func runIngest(cmd *cobra.Command, _ []string) error {
 		return errors.New("ingest: --db is required")
 	}
 
-	report, traitReports, xrefReports, err := app.Ingest(cmd.Context(), datasetPath, dbPath)
+	reports, err := app.Ingest(cmd.Context(), datasetPath, dbPath)
 	if err != nil {
 		return err
 	}
 
-	printIngestReport(cmd.OutOrStdout(), report)
-	printTraitReports(cmd.OutOrStdout(), traitReports)
-	printXrefReports(cmd.OutOrStdout(), xrefReports)
+	printIngestReport(cmd.OutOrStdout(), reports.Backbone)
+	printTraitReports(cmd.OutOrStdout(), reports.Traits)
+	printXrefReports(cmd.OutOrStdout(), reports.Xrefs)
+	printConceptSourceReports(cmd.OutOrStdout(), reports.ConceptSources)
 	return nil
 }
 
@@ -86,18 +92,7 @@ func printIngestReport(w io.Writer, report application.IngestReport) {
 // to whoever runs "hostus ingest" — the ingest itself never aborts on it —
 // mirroring printTraitReports' "unmatched sample" line below.
 func printOtherRanksNotice(w io.Writer, b application.BackboneReport) {
-	if b.OtherRanks == 0 {
-		return
-	}
-	parts := make([]string, len(b.OtherRankSample))
-	for i, rc := range b.OtherRankSample {
-		verbatim := rc.Verbatim
-		if verbatim == "" {
-			verbatim = "(empty)"
-		}
-		parts[i] = fmt.Sprintf("%s %d", verbatim, rc.Count)
-	}
-	_, _ = fmt.Fprintf(w, "    ranks: other=%d (%s)\n", b.OtherRanks, strings.Join(parts, ", "))
+	printOtherRanksLine(w, b.OtherRanks, b.OtherRankSample)
 }
 
 // printRedistributionNotice prints one "hinweis:" line for id if
@@ -106,7 +101,7 @@ func printOtherRanksNotice(w io.Writer, b application.BackboneReport) {
 // schema enforces it, but defensively handled) is treated the same as
 // "allowed": silent, no notice.
 func printRedistributionNotice(w io.Writer, id, redistribution string) {
-	if redistribution == "" || redistribution == "allowed" {
+	if redistribution == "" || redistribution == redistributionAllowed {
 		return
 	}
 	_, _ = fmt.Fprintf(w, "  hinweis: %s (redistribution=%s) — lokal genutzt, nicht redistribuierbar\n", id, redistribution)
@@ -180,4 +175,55 @@ func sortedKeys(m map[string]int) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// printConceptSourceReports renders one line per ingested concept source
+// (SP5). Its visibility posture matches printTraitReports/printXrefReports,
+// and the four loss counters it prints are the whole point: a CDM ingest
+// legitimately writes fewer relations than it read, and the operator must be
+// able to see WHY — dropped misapplied-name rows, unresolvable ends,
+// unresolvable parents, reader-level bad rows — rather than being told a
+// number that quietly does not add up.
+func printConceptSourceReports(w io.Writer, reports []application.CDMIngestReport) {
+	if len(reports) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintln(w, "Concept sources:")
+	for _, r := range reports {
+		_, _ = fmt.Fprintf(w, "  %s: concepts=%d written=%d sec_spaces=%d relations=%d written=%d\n",
+			r.Backbone, r.Concepts, r.ConceptsWritten, r.SecReferences, r.Relations, r.RelationsWritten)
+		for _, rel := range sortedKeys(r.PerRelationType) {
+			_, _ = fmt.Fprintf(w, "    %s: %d\n", rel, r.PerRelationType[rel])
+		}
+		_, _ = fmt.Fprintf(w, "    dropped: misapplied/non-concept=%d unresolved ends=%d unresolved parents=%d reader errors=%d\n",
+			r.NonConcept, r.UnresolvedEnds, r.UnresolvedParents, r.ReaderErrors)
+		_, _ = fmt.Fprintf(w, "    unknown concept-relation flag=%d, concepts without sec.=%d, empty status=%d\n",
+			r.UnknownFlag, r.ConceptsWithoutSec, r.EmptyStatus)
+		printOtherRanksLine(w, r.OtherRanks, r.OtherRankSample)
+		if len(r.NonConceptSample) > 0 {
+			_, _ = fmt.Fprintf(w, "    non-concept sample: %s\n", strings.Join(r.NonConceptSample, ", "))
+		}
+		if len(r.UnresolvedSample) > 0 {
+			_, _ = fmt.Fprintf(w, "    unresolved sample: %s\n", strings.Join(r.UnresolvedSample, ", "))
+		}
+		printRedistributionNotice(w, r.Backbone, r.Redistribution)
+	}
+}
+
+// printOtherRanksLine is the shared rendering of an "other ranks" tally,
+// extracted so printOtherRanksNotice (backbones) and the concept-source
+// report above cannot drift apart.
+func printOtherRanksLine(w io.Writer, other int, sample []application.RankVerbatimCount) {
+	if other == 0 {
+		return
+	}
+	parts := make([]string, len(sample))
+	for i, rc := range sample {
+		verbatim := rc.Verbatim
+		if verbatim == "" {
+			verbatim = "(empty)"
+		}
+		parts[i] = fmt.Sprintf("%s %d", verbatim, rc.Count)
+	}
+	_, _ = fmt.Fprintf(w, "    ranks: other=%d (%s)\n", other, strings.Join(parts, ", "))
 }

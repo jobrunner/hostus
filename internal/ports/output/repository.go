@@ -36,6 +36,17 @@ type Repository interface {
 	// phase uses, sized for resolving hundreds of thousands of ids in one
 	// call (see the sqlite adapter's doc comment on the json_each binding).
 	ConceptIDsByXref(ctx context.Context, authority string, extIDs []string) (map[string]string, error)
+	// ExistingConceptIDs reports which of ids already have a taxon_concept
+	// row, as a set: an id with no row is simply absent from the result.
+	// This is the pre-transaction read application.IngestCDM's phase 1 uses
+	// to decide whether a concept_relation's two ends can be written at all
+	// (concept_relation FKs BOTH ends to taxon_concept), sized to take the
+	// whole id list in one call like ConceptIDsByXref.
+	ExistingConceptIDs(ctx context.Context, ids []string) (map[string]bool, error)
+	// SecReferences lists every ingested sec. reference space (the
+	// bibliographic identity of a circumscription's reference frame),
+	// ordered by id.
+	SecReferences(ctx context.Context) ([]domain.SecReference, error)
 	// MatchExact returns every name (accepted or synonym) whose canonical
 	// form equals canon, leaving classification (exact vs. exact_author,
 	// etc.) to the application layer.
@@ -162,6 +173,17 @@ type IngestTx interface {
 	// UpsertTraitVocabulary records one (vocab, version) metadata row,
 	// joined onto trait_value reads by Repository.Traits.
 	UpsertTraitVocabulary(meta domain.TraitVocabMeta) error
+	// UpsertSecReference records one sec. reference space (id + citation
+	// title), so a concept's taxon_concept.sec_reference id can be resolved
+	// back to the flora it names instead of staying an opaque UUID.
+	UpsertSecReference(s domain.SecReference) error
+	// AddConceptRelation writes one typed concept relation. Both ends are
+	// foreign keys onto taxon_concept, so the caller must have written (or
+	// verified) both concepts first — see application.IngestCDM's two-phase
+	// resolution. The relation is stored in the DIRECTION THE SOURCE STATES
+	// IT; the inverse row is never synthesized (domain.Relation.Inverse
+	// exists for query-time traversal instead).
+	AddConceptRelation(fromID, toID string, rel domain.Relation, source string) error
 	// UpsertXrefSource records one xref-source provenance row (id, version,
 	// license, manifest_sha, redistribution), which AddXref's source
 	// attribution references and ExportBundle's redistribution gate reads.

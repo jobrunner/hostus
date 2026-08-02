@@ -582,3 +582,61 @@ func scanMatchCandidateRows(rows *sql.Rows, op, arg string) ([]output.MatchCandi
 	}
 	return out, nil
 }
+
+// ExistingConceptIDs reports which of ids already have a taxon_concept row.
+// Ids are bound as ONE json_each parameter for the same reason
+// MatchFuzzyCandidates and the bundle export do it (see marshalIDs in
+// bundle.go): a CDM ingest resolves tens of thousands of relation ends in a
+// single call, well past SQLITE_MAX_VARIABLE_NUMBER for a "?,?,?..." list.
+func (db *DB) ExistingConceptIDs(ctx context.Context, ids []string) (map[string]bool, error) {
+	out := make(map[string]bool, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	idsJSON, err := json.Marshal(ids)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: encoding concept id list: %w", err)
+	}
+	rows, err := db.sql.QueryContext(ctx, `
+		SELECT id FROM taxon_concept
+		WHERE id IN (SELECT value FROM json_each(?))`, string(idsJSON))
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: querying existing concept ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("sqlite: scanning concept id row: %w", err)
+		}
+		out[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: iterating concept id rows: %w", err)
+	}
+	return out, nil
+}
+
+// SecReferences lists every ingested sec. reference space, ordered by id so
+// the result is deterministic.
+func (db *DB) SecReferences(ctx context.Context) ([]domain.SecReference, error) {
+	rows, err := db.sql.QueryContext(ctx, `SELECT id, title FROM sec_reference ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: querying sec_reference: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.SecReference
+	for rows.Next() {
+		var s domain.SecReference
+		if err := rows.Scan(&s.ID, &s.Title); err != nil {
+			return nil, fmt.Errorf("sqlite: scanning sec_reference row: %w", err)
+		}
+		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: iterating sec_reference rows: %w", err)
+	}
+	return out, nil
+}

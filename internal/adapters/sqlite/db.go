@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"errors"
 	"fmt"
 	"time"
 
@@ -63,7 +64,87 @@ func Open(path string) (*DB, error) {
 		_ = sqlDB.Close()
 		return nil, err
 	}
+	if err := migrateConceptRelationPK(context.Background(), sqlDB); err != nil {
+		_ = sqlDB.Close()
+		return nil, err
+	}
 	return &DB{sql: sqlDB}, nil
+}
+
+// migrateConceptRelationPK widens concept_relation's primary key from
+// (from_concept, to_concept, source) to (from_concept, to_concept, relation,
+// source) on a database created before SP5. schema.sql cannot do it: its
+// CREATE TABLE is IF NOT EXISTS, so an existing table keeps its old key, and
+// SQLite cannot alter a primary key in place — the table has to be rebuilt.
+//
+// Without the widening, two DIFFERENT relation types between the same pair
+// of concepts from the same source collide, and AddConceptRelation's
+// INSERT OR REPLACE silently keeps only the last one. CDM emits exactly that
+// shape (a congruent and a misapplied edge on the same pair).
+//
+// Rows are carried across rather than dropped, even though concept_relation
+// has never been written to before SP5 (schema.sql called it "created here
+// but unused"): a migration that quietly discards data is a worse habit than
+// one that copies four columns it will usually find empty. Running against a
+// fresh database is a no-op.
+func migrateConceptRelationPK(ctx context.Context, sqlDB *sql.DB) error {
+	migrated, err := conceptRelationHasRelationInPK(ctx, sqlDB)
+	if err != nil {
+		return err
+	}
+	if migrated {
+		return nil
+	}
+	// PRAGMA foreign_keys must be off for the rebuild: dropping the old
+	// table while the new one already holds copies of its rows would
+	// otherwise be evaluated against the FK graph mid-flight. It is restored
+	// afterwards, which matters because Open pins the pool to one connection
+	// and the setting is per-connection.
+	if _, err := sqlDB.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		return fmt.Errorf("sqlite: disabling foreign keys for concept_relation migration: %w", err)
+	}
+	stmts := []string{
+		`CREATE TABLE concept_relation_sp5 (
+			from_concept  TEXT NOT NULL REFERENCES taxon_concept(id),
+			to_concept    TEXT NOT NULL REFERENCES taxon_concept(id),
+			relation      TEXT NOT NULL,
+			source        TEXT,
+			PRIMARY KEY (from_concept, to_concept, relation, source)
+		)`,
+		`INSERT OR REPLACE INTO concept_relation_sp5 (from_concept, to_concept, relation, source)
+			SELECT from_concept, to_concept, relation, source FROM concept_relation`,
+		`DROP TABLE concept_relation`,
+		`ALTER TABLE concept_relation_sp5 RENAME TO concept_relation`,
+		`CREATE INDEX IF NOT EXISTS idx_concept_relation_to_concept ON concept_relation(to_concept)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := sqlDB.ExecContext(ctx, stmt); err != nil {
+			_, _ = sqlDB.ExecContext(ctx, `PRAGMA foreign_keys = ON`)
+			return fmt.Errorf("sqlite: migrating concept_relation primary key: %w", err)
+		}
+	}
+	if _, err := sqlDB.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+		return fmt.Errorf("sqlite: re-enabling foreign keys after concept_relation migration: %w", err)
+	}
+	return nil
+}
+
+// conceptRelationHasRelationInPK reports whether concept_relation's `relation`
+// column is already part of the table's primary key (pragma_table_info's `pk`
+// is the 1-based position within the key, 0 for a non-key column).
+func conceptRelationHasRelationInPK(ctx context.Context, sqlDB *sql.DB) (bool, error) {
+	var pk int
+	err := sqlDB.QueryRowContext(ctx, `SELECT pk FROM pragma_table_info('concept_relation') WHERE name = 'relation'`).Scan(&pk)
+	if errors.Is(err, sql.ErrNoRows) {
+		// No such column/table: schema.sql has just created the current
+		// shape, or this database predates the table entirely. Either way
+		// there is nothing to rebuild.
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("sqlite: inspecting concept_relation primary key: %w", err)
+	}
+	return pk > 0, nil
 }
 
 // migrateXrefSourceColumn adds xref.source to a database created before that
@@ -398,6 +479,40 @@ func (t *ingestTx) UpsertTraitVocabulary(meta domain.TraitVocabMeta) error {
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: upserting trait vocabulary %s/%s: %w", meta.Vocab, meta.Version, err)
+	}
+	return nil
+}
+
+// UpsertSecReference records one sec. reference space (SP5). The title is
+// written verbatim; there is no normalisation, because a citation IS its
+// spelling.
+func (t *ingestTx) UpsertSecReference(s domain.SecReference) error {
+	_, err := t.tx.ExecContext(t.ctx, `
+		INSERT OR REPLACE INTO sec_reference (id, title)
+		VALUES (?, ?)`,
+		s.ID, s.Title,
+	)
+	if err != nil {
+		return fmt.Errorf("sqlite: upserting sec reference %q: %w", s.ID, err)
+	}
+	return nil
+}
+
+// AddConceptRelation writes one typed concept relation. Both ends are FKs
+// onto taxon_concept, so this will fail (rather than write a dangling edge)
+// if either concept is missing — application.IngestCDM resolves both ends
+// before the transaction is opened precisely so that never happens.
+//
+// The row is written in the direction given; the inverse is never
+// synthesized (see domain.Relation.Inverse).
+func (t *ingestTx) AddConceptRelation(fromID, toID string, rel domain.Relation, source string) error {
+	_, err := t.tx.ExecContext(t.ctx, `
+		INSERT OR REPLACE INTO concept_relation (from_concept, to_concept, relation, source)
+		VALUES (?, ?, ?, ?)`,
+		fromID, toID, string(rel), source,
+	)
+	if err != nil {
+		return fmt.Errorf("sqlite: adding concept relation %s -> %s (%s): %w", fromID, toID, rel, err)
 	}
 	return nil
 }

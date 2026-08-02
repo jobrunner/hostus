@@ -308,3 +308,61 @@ func writeFile(t *testing.T, path, content string) {
 		t.Fatalf("writing %s: %v", path, err)
 	}
 }
+
+func TestParseConceptSourceResolvesBothPathsAndRequiresRedistribution(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dataset.yaml")
+	if err := os.WriteFile(path, []byte(`backbones:
+  - id: wcvp
+    version: "2026-06-15"
+    path: ./backbones/wcvp
+    redistribution: allowed
+concept_sources:
+  - id: cdm
+    version: "2026-08-02"
+    source: https://api.cybertaxonomy.org/rl_standardliste
+    concepts: ./cdm/concepts.csv
+    relations: ./cdm/relations.csv
+    redistribution: unknown
+`), 0o600); err != nil {
+		t.Fatalf("writing manifest: %v", err)
+	}
+	ds, err := manifest.Parse(path)
+	if err != nil {
+		t.Fatalf("Parse: unexpected error: %v", err)
+	}
+	if len(ds.ConceptSources) != 1 {
+		t.Fatalf("got %d concept sources, want 1", len(ds.ConceptSources))
+	}
+	cs := ds.ConceptSources[0]
+	if cs.Concepts != filepath.Join(dir, "cdm/concepts.csv") {
+		t.Errorf("concepts path = %q, not resolved against the manifest dir", cs.Concepts)
+	}
+	if cs.Relations != filepath.Join(dir, "cdm/relations.csv") {
+		t.Errorf("relations path = %q, not resolved against the manifest dir", cs.Relations)
+	}
+	if cs.Redistribution != "unknown" {
+		t.Errorf("redistribution = %q, want unknown", cs.Redistribution)
+	}
+}
+
+func TestParseConceptSourceRejectsMissingRedistribution(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dataset.yaml")
+	if err := os.WriteFile(path, []byte(`backbones:
+  - id: wcvp
+    version: "2026-06-15"
+    path: ./backbones/wcvp
+    redistribution: allowed
+concept_sources:
+  - id: cdm
+    version: "2026-08-02"
+    source: https://api.cybertaxonomy.org/rl_standardliste
+    concepts: ./cdm/concepts.csv
+    relations: ./cdm/relations.csv
+`), 0o600); err != nil {
+		t.Fatalf("writing manifest: %v", err)
+	}
+	if _, err := manifest.Parse(path); err == nil {
+		t.Fatal("a concept source without redistribution must fail schema validation")
+	}
+}

@@ -378,9 +378,16 @@ join_authority|join_id|authority|ext_id|wikidata_qid
 - `join_id` is the bare IPNI id: taken directly from P961, or from P5037
   with the LSID prefix stripped, so the ingest side never has to
   re-derive either. **When both P961 and stripped-P5037 are present and
-  disagree, P961 wins** (it needs no string surgery to reach the bare
-  form) — every such disagreement is counted and printed by `convert.py`,
-  never silently dropped; see the task report for the observed count.
+  disagree**, `common.resolve_join_id` emits **whichever one is actually
+  present in `xref.powo`** (checked when a joinable-id set is supplied —
+  see the joinable-subset section below); P961 is used as a fallback only
+  when both sides match, neither does, or no joinable-id set is supplied
+  at all. Every disagreement is counted and printed by `convert.py`,
+  never silently dropped; see the task report's "fix round 1" section for
+  why this rule exists — an earlier version of this pipeline picked P961
+  unconditionally, which emitted a **non-matching, dead `join_id`** for
+  4.07% of the joinable population whenever P961 itself didn't happen to
+  be the side that matched.
 - `authority` — see the mapping table above.
 - `ext_id` — the id (or, for `floraveg`, the name) in that authority's own
   key space.
@@ -505,19 +512,37 @@ GBIF id Wikidata actually carries**, and the same holds for Euro+Med:
 Wikidata is not a usable path to Euro+Med ids, full stop. This is a
 finding about the source, not about this pipeline.
 
-**Sampling bias, made explicit — inat is the case in point.** Because
-enrichment processes the seed union in ascending-QID order (older, more
-prominently-curated items first — see the paging strategy above), a
-partial run's fill rate is a biased upper-bound estimate of the true
-population rate, not a random sample. This was directly observable
-mid-crawl: at 173,500 items enriched (QID-ordered, unrestricted), the
-inat sample rate was 53.3% — dropping to the final population figure of
-**46.5%** once the full 393,172-item joinable population was in. Every
-other property showed the same downward-or-flat pattern (gbif 99.1% →
-97.8%, wfo 97.4% → 93.1%, colxr 90.4% → 91.0%, floraveg 7.0% → 6.2%).
-**Report population-level fill rates, not partial-crawl samples, as the
-answer** — the gap is real and this pipeline's own crawl is the
-demonstration.
+**Sampling bias, made explicit — inat is the case in point, but it is not
+the whole picture.** Because enrichment processes the seed union in
+ascending-QID order (older, more prominently-curated items first — see
+the paging strategy above), a partial run's fill rate is a biased
+estimate of the true population rate, not a random sample — but the bias
+is not uniformly "the sample overstates the population" for every
+property. At 173,500 items enriched (QID-ordered, unrestricted) vs. the
+final 393,172-item joinable population:
+
+| authority | sample (n=173,500) | population (n=393,172) | direction |
+|---|---|---|---|
+| inat | 53.3% | **46.5%** | fell 6.8pp, as the QID-order-bias hypothesis predicts |
+| gbif | 99.1% | 97.8% | fell 1.3pp, same direction |
+| wfo | 97.4% | 93.1% | fell 4.3pp, same direction |
+| floraveg | 7.0% | 6.2% | fell 0.8pp, same direction |
+| **colxr** | 90.4% | **91.0%** | **rose 0.6pp — the opposite direction** |
+| **P14607 (gbif-new only)** | 0.002% | **0.03%** | **rose — opposite direction, but n is tiny (3 → 114) so the percentage move is not statistically meaningful** |
+
+Four of six properties moved the way the QID-order bias predicts. **colxr
+and P14607 moved the other way, and this pipeline does not have a
+confirmed explanation for either.** A plausible but *unverified*
+hypothesis for colxr is that Catalogue of Life coverage does not
+correlate with Wikidata item age/prominence the same way GBIF/WFO/iNat
+coverage does (COL is itself an aggregation of many regional checklists
+added to Wikidata on their own schedule, not necessarily front-loaded onto
+old/prominent items) — but this has not been tested against the data and
+should be treated as speculation, not a finding. **Report population-level
+fill rates, not partial-crawl samples, as the answer** regardless of
+direction — the point stands even where the bias didn't run the expected
+way: a partial-crawl sample is not a substitute for the full population
+count, in either direction.
 
 **P961 vs stripped-P5037 disagreement:** 16,243 items (4.5% of the
 357,067 items carrying both properties) have a P961 value that does not
@@ -525,12 +550,14 @@ equal the LSID-stripped P5037 value on the same item. Sampled cases (see
 `.superpowers/sdd/2026-08-02-sp4-xref/task-1-report.md`) show this is
 usually a genuine data-quality issue in Wikidata (one property pointing
 at a different IPNI record than the other, e.g. a homonym or a
-subsequently-corrected identifier) rather than a formatting artifact.
-Per the tie-break rule above, P961 is used for the CSV's `join_id`
-column; both raw values are still queried and any item where *either*
-raw value matches our concept table is treated as joinable (not just the
-tie-broken value), so a disagreement never silently drops a genuinely
-reachable concept.
+subsequently-corrected identifier) rather than a formatting artifact. Per
+the tie-break rule above, whichever side actually matches our concept
+table is used for the CSV's `join_id` column (P961 only as a last-resort
+fallback); both raw values are still queried and any item where *either*
+raw value matches our concept table is treated as joinable, so a
+disagreement never silently drops a genuinely reachable concept **and,
+since fix round 1, never emits a dead join_id for one either** — see the
+task report.
 
 Wall-clock: seed phase (908,799 + 892,600 rows via single-predicate
 `LIMIT 20000` pages) plus the joinable-restricted enrichment phase

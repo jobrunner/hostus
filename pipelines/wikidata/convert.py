@@ -128,16 +128,19 @@ def main():
             p961 = s.get("p961")
             p5037_raw = s.get("p5037")
 
-            join_id, disagreed = resolve_join_id(p961, p5037_raw)
+            join_id, disagreed = resolve_join_id(p961, p5037_raw, joinable_ids)
             if join_id is None:
                 # Cannot happen: seed set is defined as P961-or-P5037 holders.
                 continue
 
             if joinable_ids is not None:
-                # "Joinable" means EITHER raw value matches -- not just the
-                # tie-broken join_id -- so a P961-vs-P5037 disagreement
-                # where only the P5037 side matches our concept table
-                # still counts. See crawl.py's target_qids() docstring.
+                # "Joinable" means EITHER raw value matches -- checked
+                # independently of which one resolve_join_id ultimately
+                # picked as join_id, so a P961-vs-P5037 disagreement where
+                # only the P5037 side matches our concept table still
+                # counts (and, per the fix-round-1 correction, resolve_join_id
+                # now emits that matching P5037 value rather than the dead
+                # P961 one). See crawl.py's target_qids() docstring.
                 p5037_bare = strip_lsid(p5037_raw)
                 if not ((p961 and p961 in joinable_ids) or (p5037_bare and p5037_bare in joinable_ids)):
                     continue  # not joinable against our current concept index

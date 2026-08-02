@@ -8,6 +8,23 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unreleased]
 
 ### Added (SP5, Vorarbeit)
+- Pipeline `pipelines/cdm/` (`build.sh`, `crawl.py`, `convert.py`,
+  `common.py`, README): resumierbare Ernte der 51.466 CDM-Konzepte aus
+  `rl_standardliste` in 18 `sec.`-Referenzräumen plus des Konzept­
+  relationsgraphen, ausgegeben als zwei kanonische, pipe-getrennte CSVs
+  (`cdm-concepts-canonical.csv`, `cdm-relations-canonical.csv`). Trägt
+  bewusst das **rohe** CDM-Vokabular in `rank` und `relation_type` (22 Ränge,
+  7 Relationstypen gemessen — einer mehr als Task 1s Stichprobe sah); das
+  Mapping gehört nach Task 3, wo ein unbekannter Wert laut abbricht
+  (`ParseRank`-Lektion). Auflösung der Relationen über eine globale
+  Kanten-Map ohne P8s Namensrestriktion, mit dem verbindlichen Falsifikator
+  aus `docs/research/cdm-sample.md`: Abbruch ohne CSV, sobald eine
+  Relations-UUID einen dritten Halter bekommt, plus Meldung der
+  verbleibenden Ein-Halter-UUIDs. Crawl-Etikette (ein ehrlicher User-Agent,
+  ≤ 1 req/s, harter Stopp statt Browser-UA bei 401/403, Backoff, Plattencache)
+  ist verbindlich implementiert. Lizenzlage unverändert:
+  **keine Lizenzangabe auffindbar → `redistribution: unknown`, nur lokale
+  Auswertung**
 - Messsonde `poc/p08b_cdm_sample/` (`probe.sh` + `cdm_sample.py`, reproduzierbar
   über Seed `20260802` und die committete `sample.tsv`) und der Bericht
   `docs/research/cdm-sample.md`: die Zwei-Hop-Methode aus PoC P8 an einer

@@ -786,6 +786,9 @@ func (f *fakeCapturingRepo) TraitVocabularies(context.Context) ([]domain.TraitVo
 func (f *fakeCapturingRepo) Suggest(context.Context, string, output.SuggestOpts) ([]domain.SuggestItem, error) {
 	panic("not needed by Ingest")
 }
+func (f *fakeCapturingRepo) SynonymCandidates(context.Context, string) ([]domain.SynonymCandidate, error) {
+	panic("not needed by Ingest")
+}
 func (f *fakeCapturingRepo) ExistingConceptIDs(context.Context, []string) (map[string]bool, error) {
 	return nil, nil
 }

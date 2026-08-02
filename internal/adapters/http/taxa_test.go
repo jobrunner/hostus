@@ -43,6 +43,12 @@ func (s wcvpRowSource) Taxa() []application.TaxonRow {
 			POWOID:          t.POWOID(),
 			ParentTaxonID:   t.ParentNameUsageID,
 			BasionymTaxonID: t.OriginalNameUsageID,
+			// PublishedIn/NomStatus mirror internal/app/ingest.go's real
+			// mapping. They matter here because SP6's publication filter is
+			// defined on nom_status: a test row source that dropped it would
+			// make every fixture synonym look nomenclaturally clean.
+			PublishedIn: t.PublishedIn,
+			NomStatus:   t.NomenclaturalStatus,
 		})
 	}
 	return out

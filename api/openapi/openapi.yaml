@@ -8,7 +8,8 @@
 # changes against (breaking-change detection via oasdiff).
 #
 # SP5 adds `POST /v1/translate` (concept translation between sec. reference
-# spaces, UC6) on top of the below.
+# spaces, UC6) on top of the below. SP6 adds
+# `GET /v1/concept/{id}/synonyms` (publication relevance filter, UC5).
 #
 # SP1 adds the local SQLite/FTS5-backed `/v1/concept/{id}`, `/v1/xref` and
 # `/v1/match` endpoints on top of the SP0 health/metrics skeleton. SP2 adds
@@ -310,6 +311,122 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /v1/concept/{id}/synonyms:
+    get:
+      operationId: getConceptSynonyms
+      summary: Synonyme eines Concepts, optional publikationsrelevant gefiltert (UC5)
+      description: >-
+        Liefert die Synonyme eines Concepts — auf Wunsch reduziert auf die,
+        die in eine Publikation gehören. UC5 formuliert das Problem so:
+        "Das Problem ist Filterung, nicht Beschaffung." POWO führt für
+        *Corynephorus canescens* 26 Synonyme; eine Publikation braucht ein
+        bis drei. Im gemessenen Index trägt ein Concept im Mittel 4,09
+        Synonyme, im Maximum 1.127.
+
+
+        **Standard ist die UNGEFILTERTE Liste** (`relevance=all`). Der
+        Publikationsfilter ist stark genug, dass er ausdrücklich angefordert
+        werden muss: er hält bei *Corynephorus canescens* 20 von 26
+        Synonymen zurück. Drei Gründe: (1) dieser Endpunkt darf nicht die
+        einzige Tür werden, die Daten stillschweigend verbirgt; (2)
+        `GET /v1/concept/{id}` liefert dieselben Synonyme ungefiltert — zwei
+        Endpunkte mit unterschiedlicher Zeilenzahl auf dieselbe Frage lesen
+        sich als Fehler; (3) die Regeln fußen auf einem `nom_status`-
+        Vokabular, das nur auf 6,85 % der Namen gefüllt ist und einen
+        1.225-Werte-Schwanz hat.
+
+
+        Beide Modi liefern DIESELBE Begründung pro Synonym und DIESELBE
+        Ausschluss-Bilanz; `relevance` entscheidet nur, ob die
+        zurückgehaltenen Einträge in der Liste auftauchen.
+
+
+        **Jeder Ausschluss ist sichtbar.** `summary` beschreibt immer das
+        Concept, nie die ausgelieferte Seite: `total`, `publishable`,
+        `absent`, `excluded` (Anzahl je Regel) und die unklassifizierten
+        Rohwerte. Ein Filter, der 20 von 26 Synonymen entfernt, ohne das zu
+        sagen, ist von einer kaputten Abfrage nicht zu unterscheiden.
+      tags:
+        - taxa
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: >-
+            Concept-ID im Format `<backbone-id>:concept:<taxon-id>`, z. B.
+            `wcvp:concept:405825`.
+          schema:
+            type: string
+        - name: relevance
+          in: query
+          required: false
+          description: >-
+            `all` (Standard, auch bei fehlendem Parameter) liefert alle
+            Synonyme, jedes mit seinem Urteil. `publication` liefert nur die
+            publikationsfähigen. Jeder andere Wert ergibt 400 und nennt den
+            Wert.
+          schema:
+            type: string
+            enum: [all, publication]
+            default: all
+        - name: rank
+          in: query
+          required: false
+          description: >-
+            Die Rangstufe, auf der publiziert wird. `species` schließt die
+            von UC5 genannten untergeordneten Ränge aus (VARIETY,
+            SUBVARIETY, FORM, SUBFORM). Fehlt der Parameter, wird KEIN Rang
+            ausgeschlossen (Fall: vollständige infraspezifische
+            Behandlung). Ein syntaktisch gültiger, aber nicht unterstützter
+            Rang (z. B. `genus`) wird mit 400 ABGELEHNT statt still
+            ignoriert — ein stillschweigend ungefiltertes Ergebnis an einen
+            Aufrufer, der einen Filter angefordert hat, wäre die
+            gefährlichere Antwort.
+          schema:
+            type: string
+            enum: [species]
+        - name: max
+          in: query
+          required: false
+          description: >-
+            Obergrenze für die zurückgegebene Liste. `0` und ein fehlender
+            Parameter bedeuten beide "keine Kappung" (nicht "null Zeilen").
+            Gekappt wird IMMER NACH dem Ranking — `max=3` liefert die drei
+            besten Synonyme, nie drei beliebige. Werte außerhalb
+            [0, 2000] werden mit 400 abgelehnt, bevor irgendetwas
+            alloziert wird; 2000 liegt über dem gemessenen Maximum von
+            1.127 Synonymen pro Concept, so dass "alle" immer ausdrückbar
+            bleibt.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 2000
+      responses:
+        '200':
+          description: >-
+            Gerankte Synonymliste plus Ausschluss-Bilanz. Ein bekanntes
+            Concept ohne Synonyme liefert ein leeres `synonyms`-Array und
+            eine genullte `summary` — kein 404.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SynonymsResponse'
+        '400':
+          description: >-
+            `relevance` unbekannt, `rank` nicht unterstützt, oder `max`
+            nicht numerisch bzw. außerhalb [0, 2000]. Die Meldung nennt den
+            beanstandeten Wert.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Unbekannte Concept-ID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /v1/translate:
     post:
       operationId: postTranslate
@@ -527,6 +644,179 @@ components:
             dieses Concept liefert.
           items:
             $ref: '#/components/schemas/Distribution'
+
+    SynonymDetail:
+      type: object
+      required:
+        [position, name_id, canonical, rank, typification, is_basionym,
+         nom_status_judgement, publishable, reason]
+      description: >-
+        Ein Synonym samt Begründung. Jedes Urteilsfeld ist IMMER vorhanden,
+        auch wenn es `false` ist: `is_basionym: false` ist eine Antwort, und
+        ein weggelassenes Feld wäre von "nicht geprüft" nicht zu
+        unterscheiden.
+      properties:
+        position:
+          type: integer
+          description: 1-basierte Position in dieser Antwort.
+          example: 1
+        name_id:
+          type: string
+          example: 'wcvp:name:476481'
+        canonical:
+          type: string
+          example: Aira canescens
+        authorship:
+          type: string
+          description: Fehlt, wenn die Quelle keinen Autor führt.
+          example: L.
+        rank:
+          type: string
+          description: >-
+            Der Rang DES SYNONYMS (nicht die Publikationsstufe des
+            Aufrufers — die steht einmalig in `publication_rank`).
+          example: SPECIES
+        typification:
+          type: string
+          enum: [homotypic, unknown, heterotypic]
+          description: >-
+            Verhältnis des Typus zum akzeptierten Namen. Der Wert
+            `heterotypic` KANN AUF DEM AKTUELLEN INDEX NICHT AUFTRETEN:
+            `concept_name.homotypic` ist 1 (271.821 Zeilen) oder NULL
+            (1.133.475 Zeilen) und niemals 0. Ein Synonym ist also entweder
+            nachweislich homotypisch oder `unknown`. SP3 hat sich bewusst
+            geweigert, Heterotypie zu raten, und `/v1/concept` lässt das
+            Feld lieber weg, als `false` zu behaupten; `unknown` wird hier
+            aus demselben Grund nicht auf `heterotypic` zusammengezogen. Der
+            Wert steht im Modell, weil die Spalte dreiwertig ist — nicht,
+            weil eine Antwort ihn heute zeigen wird.
+          example: homotypic
+        is_basionym:
+          type: boolean
+          description: >-
+            Wahr, wenn dieser Name das Basionym des akzeptierten Namens ist
+            (UC5-Regel 4: das Basionym führt seinen Typisierungsblock an).
+            113.642 Synonymzeilen des gemessenen Index erfüllen das.
+          example: true
+        nom_status:
+          type: string
+          description: >-
+            Der WCVP-Rohwert, wörtlich. FEHLT, wenn die Quelle nichts
+            erfasst hat — das ist nicht dasselbe wie "geprüft und sauber",
+            weshalb `nom_status_judgement` dann ausdrücklich `absent` sagt.
+          example: ', nom. illeg. superfl.'
+        nom_status_judgement:
+          type: string
+          enum: [absent, acceptable, disqualifying, unclassified]
+          description: >-
+            Urteil über `nom_status` per Token-Containment über eine
+            gemessene Regeltabelle. `unclassified` (die Quelle hat etwas
+            erfasst, aber keine Regel deckt es) wird bewusst
+            ZURÜCKGEHALTEN, nicht publiziert — der Rohwert erscheint dafür
+            in `summary.unclassified_statuses`.
+          example: absent
+        publishable:
+          type: boolean
+          example: true
+        exclusion:
+          type: string
+          enum: [nom_status, unclassified_nom_status, rank]
+          description: >-
+            Die Regel, die dieses Synonym zurückgehalten hat. Fehlt, wenn
+            es nicht ausgeschlossen wurde (ein leerer String läse sich als
+            namenlose Ausschlussregel).
+          example: nom_status
+        reason:
+          type: string
+          description: Ein Satz, der das Urteil begründet.
+          example: 'homotypic, no nom_status recorded (not the same as verified clean)'
+
+    SynonymSummary:
+      type: object
+      required: [total, publishable, returned, truncated, absent, excluded, unclassified_statuses]
+      description: >-
+        Die Ausschluss-Bilanz. `total`, `publishable`, `absent`, `excluded`
+        und `unclassified_statuses` beschreiben IMMER alle Synonyme des
+        Concepts, nie die ausgelieferte Seite. `returned`/`truncated`
+        beschreiben die Seite.
+      properties:
+        total:
+          type: integer
+          description: Alle Synonyme des Concepts.
+          example: 26
+        publishable:
+          type: integer
+          example: 6
+        returned:
+          type: integer
+          description: Länge des `synonyms`-Arrays dieser Antwort.
+          example: 3
+        truncated:
+          type: integer
+          description: >-
+            Wie viele Einträge `max` entfernt hat. Bewusst NICHT Teil von
+            `excluded`: ein gekapptes Synonym wurde nicht als irrelevant
+            beurteilt, es hat nur nicht mehr hineingepasst.
+          example: 3
+        absent:
+          type: integer
+          description: >-
+            Wie viele der publikationsfähigen Synonyme auf einem LEEREN
+            `nom_status` beruhen — "nichts erfasst" statt "als sauber
+            erfasst".
+          example: 6
+        excluded:
+          type: object
+          additionalProperties:
+            type: integer
+          description: >-
+            Anzahl je Ausschlussregel. Immer vorhanden (leeres Objekt, wenn
+            nichts ausgeschlossen wurde).
+          example: {nom_status: 4, rank: 16}
+        unclassified_statuses:
+          type: array
+          items:
+            type: string
+          description: >-
+            Die verschiedenen `nom_status`-Rohwerte, die keine Regel
+            abdeckt. Sie wurden zurückgehalten, also müssen sie wörtlich
+            sichtbar sein — aus dieser Liste wächst die Regeltabelle.
+          example: []
+
+    SynonymsResponse:
+      type: object
+      required: [concept_id, relevance, ordering, synonyms, summary]
+      properties:
+        concept_id:
+          type: string
+          example: 'wcvp:concept:405825'
+        relevance:
+          type: string
+          enum: [all, publication]
+          description: Der AUFGELÖSTE Modus, nie der Rohparameter.
+          example: publication
+        publication_rank:
+          type: string
+          description: >-
+            Die aufgelöste Publikationsstufe. Fehlt, wenn kein Rang
+            ausgeschlossen wurde.
+          example: species
+        ordering:
+          type: string
+          description: >-
+            Die Regel, nach der `synonyms` sortiert ist — in der Antwort
+            selbst, damit "die besten drei" nachprüfbar ist. Jedes darin
+            genannte Feld wird pro Eintrag mitgeliefert.
+          example: >-
+            publishable first, then homotypic before unknown before
+            heterotypic, the basionym first within its typification block,
+            then name_id
+        synonyms:
+          type: array
+          items:
+            $ref: '#/components/schemas/SynonymDetail'
+        summary:
+          $ref: '#/components/schemas/SynonymSummary'
 
     TranslateRequest:
       type: object

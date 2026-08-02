@@ -7,6 +7,55 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (SP6, Task 3 — `GET /v1/concept/{id}/synonyms`)
+- **Neuer Endpunkt `GET /v1/concept/{id}/synonyms?relevance=&rank=&max=`**
+  (UC5): „Das Problem ist Filterung, nicht Beschaffung." Er wendet das
+  Relevanzmodell aus Task 2 auf die Synonyme eines Concepts an. Am realen
+  Index liefert *Corynephorus canescens* (`wcvp:concept:405825`) mit
+  `relevance=publication&rank=species&max=3` genau die drei erwarteten
+  Namen — *Aira canescens* L. führt als Basionym, *Corynephorus
+  incanescens* Bubani (`", nom. illeg. superfl."`) ist ausgeschlossen.
+- **Standard ist die UNGEFILTERTE Liste** (`relevance=all`). Der Filter
+  hält bei *Corynephorus canescens* 20 von 26 Synonymen zurück und muss
+  deshalb ausdrücklich angefordert werden; `/v1/concept/{id}` liefert
+  dieselben Synonyme ungefiltert, und zwei Endpunkte mit
+  unterschiedlicher Zeilenzahl auf dieselbe Frage lesen sich als Fehler.
+  Beide Modi tragen dieselbe Begründung pro Synonym und dieselbe Bilanz.
+- **Jeder Ausschluss ist sichtbar.** `summary` beschreibt immer das
+  Concept, nie die ausgelieferte Seite: `total`, `publishable`, `absent`,
+  `excluded` (Anzahl je Regel) und die unklassifizierten Rohwerte. Ein
+  Filter, der 20 von 26 Synonymen entfernt, ohne das zu sagen, ist von
+  einer kaputten Abfrage nicht zu unterscheiden.
+- **`max` kappt IMMER nach dem Ranking**, nie davor — `max=3` liefert die
+  drei besten Synonyme, nie drei beliebige. Bereich `[0, 2000]`; `0` und
+  ein fehlender Parameter bedeuten „keine Kappung". Die Obergrenze liegt
+  über dem gemessenen Maximum von 1.127 Synonymen pro Concept.
+- **Ein gültiger, aber nicht unterstützter `rank` wird abgelehnt**
+  (`400`, unter Nennung des Werts), nicht still ignoriert: UC5 definiert
+  nur für `species` eine Ausschlussmenge, und eine unbeabsichtigt
+  ungefilterte Antwort wäre die gefährlichere Variante.
+- **`output.Repository.SynonymCandidates`** (neu) trägt `nom_status`, das
+  dreiwertige `homotypic` und `is_basionym` pro Synonym. `is_basionym`
+  wird im SQLite-Adapter aufgelöst (`accepted_name.basionym_id = name.id`,
+  113.642 Synonymzeilen im gemessenen Index) und durch einen
+  Adapter-Test festgenagelt — bliebe das Flag überall `false`, würde
+  UC5-Regel 4 still zum No-op, und nichts in `internal/domain` könnte das
+  bemerken. `Concept()` und damit `/v1/concept/{id}` bleiben unverändert.
+- Dokumentation: `docs/reference/http-api.md` und
+  `api/openapi/openapi.yaml` (handgepflegt, dokumentierte Abweichung seit
+  S14). Beide benennen ausdrücklich, dass `typification: heterotypic` auf
+  dem aktuellen Index nicht auftreten kann (`concept_name.homotypic` ist
+  1 oder NULL, nie 0).
+
+### Fixed (SP6, Task 3)
+- **Drei Test-Row-Sources ließen `nom_status`/`published_in` fallen.**
+  `internal/adapters/http`, `internal/adapters/sqlite` und
+  `internal/application` bilden `wcvp.TaxonRow` je selbst auf
+  `application.TaxonRow` ab; zwei davon kannten die in Task 1 ergänzten
+  Felder nicht, so dass jedes Fixture-Synonym nomenklatorisch sauber
+  aussah. Sie spiegeln jetzt wieder das echte Mapping aus
+  `internal/app/ingest.go`.
+
 ### Added (SP6, Task 2 — Publikations-Relevanzmodell für Synonyme)
 - **`internal/domain/synonym.go`**: das reine Entscheidungsmodell für
   `GET /v1/concept/{id}/synonyms` (UC5) — ohne I/O, damit die Regeln

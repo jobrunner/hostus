@@ -74,3 +74,73 @@ INSERT INTO xref (concept_id, authority, ext_id) VALUES
 INSERT INTO distribution (concept_id, area_scheme, area_code) VALUES
   ('c-corynephorus-canescens', 'wgsrpd_l3', 'GER'),
   ('c-corynephorus-canescens', 'wgsrpd_l3', 'FRA');
+
+-- SP6 Task 3 (GET /v1/concept/{id}/synonyms) additions.
+--
+-- c-uc5-corynephorus is a REDUCED, name-disambiguated replica of the real
+-- index's Corynephorus canescens (wcvp:concept:405825, 26 synonyms): one
+-- synonym per UC5 outcome, so the publication filter, the exclusion
+-- summary and the ranking order are all decided by real-shaped data rather
+-- than by invented statuses. Every canonical carries a "uc5 " prefix so it
+-- cannot collide with the MatchExact/Suggest fixtures above.
+--
+--   n-uc5-aira-canescens          homotypic 1, IS the accepted name's
+--                                 basionym  -> publishable, ranks FIRST
+--   n-uc5-avena-canescens         homotypic 1                 -> publishable
+--   n-uc5-weingaertneria-canescens homotypic 1                -> publishable
+--   n-uc5-aira-breviculmis        homotypic NULL (unknown)    -> publishable,
+--                                 ranks after the homotypic block
+--   n-uc5-corynephorus-incanescens ", nom. illeg. superfl."   -> nom_status
+--                                 (the UC5 worked example's exclusion)
+--   n-uc5-aira-triflora           ", pro syn."                -> nom_status
+--   n-uc5-var-andinus             VARIETY + ", nom. nud."     -> nom_status
+--                                 (a defect outranks the rank rule)
+--   n-uc5-sensu-auct              ", sensu auct."             -> unclassified
+--   n-uc5-var-montana             VARIETY                     -> rank
+--   n-uc5-f-pallidus              FORM                        -> rank
+--
+-- c-uc5-genus is an accepted concept with NO synonyms at all — the
+-- "empty list, not a 404" case.
+--
+-- c-uc5-heterotypic carries the only concept_name.homotypic = 0 row in any
+-- fixture. It is NOT faithful to the measured index (which has 271.821
+-- rows at 1, 1.133.475 at NULL and ZERO at 0 — see domain.Typification):
+-- it exists solely to pin the repository scan, because an adapter that
+-- collapsed a stored 0 onto NULL, or onto a pointer-to-true, would
+-- otherwise be indistinguishable from a correct one on this corpus.
+INSERT INTO name (id, canonical, canonical_fold, authorship, rank, ipni_id, published_in, nom_status, basionym_id) VALUES
+  ('n-uc5-aira-canescens',           'uc5 aira canescens',            'uc5 aira canescens',            'L.',                  'SPECIES', NULL, NULL, NULL,                     NULL),
+  ('n-uc5-corynephorus-canescens',   'uc5 corynephorus canescens',    'uc5 corynephorus canescens',    '(L.) P.Beauv.',       'SPECIES', NULL, NULL, NULL,                     'n-uc5-aira-canescens'),
+  ('n-uc5-avena-canescens',          'uc5 avena canescens',           'uc5 avena canescens',           '(L.) Weber',          'SPECIES', NULL, NULL, NULL,                     NULL),
+  ('n-uc5-weingaertneria-canescens', 'uc5 weingaertneria canescens',  'uc5 weingaertneria canescens',  '(L.) Bernh.',         'SPECIES', NULL, NULL, NULL,                     NULL),
+  ('n-uc5-aira-breviculmis',         'uc5 aira breviculmis',          'uc5 aira breviculmis',          'Loisel.',             'SPECIES', NULL, NULL, NULL,                     NULL),
+  ('n-uc5-corynephorus-incanescens', 'uc5 corynephorus incanescens',  'uc5 corynephorus incanescens',  'Bubani',              'SPECIES', NULL, NULL, ', nom. illeg. superfl.', NULL),
+  ('n-uc5-aira-triflora',            'uc5 aira triflora',             'uc5 aira triflora',             'Willd. ex Steud.',    'SPECIES', NULL, NULL, ', pro syn.',             NULL),
+  ('n-uc5-var-andinus',              'uc5 corynephorus canescens var. andinus', 'uc5 corynephorus canescens var. andinus', 'Hack. ex Sodiro', 'VARIETY', NULL, NULL, ', nom. nud.', NULL),
+  ('n-uc5-sensu-auct',               'uc5 corynephorus fallax',       'uc5 corynephorus fallax',       'auct.',               'SPECIES', NULL, NULL, ', sensu auct.',          NULL),
+  ('n-uc5-var-montana',              'uc5 corynephorus canescens var. montana', 'uc5 corynephorus canescens var. montana', 'Cout.', 'VARIETY', NULL, NULL, NULL, NULL),
+  ('n-uc5-f-pallidus',               'uc5 corynephorus canescens f. pallidus',  'uc5 corynephorus canescens f. pallidus',  '(Beckh.) Soó', 'FORM', NULL, NULL, NULL, NULL),
+  ('n-uc5-genus',                    'uc5 corynephorus',              'uc5 corynephorus',              'P.Beauv.',            'GENUS',   NULL, NULL, NULL,                     NULL),
+  ('n-uc5-heterotypic-accepted',     'uc5 jacobaea vulgaris',         'uc5 jacobaea vulgaris',         'Gaertn.',             'SPECIES', NULL, NULL, NULL,                     NULL),
+  ('n-uc5-heterotypic-synonym',      'uc5 senecio jacobaea',          'uc5 senecio jacobaea',          'L.',                  'SPECIES', NULL, NULL, NULL,                     NULL);
+
+INSERT INTO taxon_concept (id, backbone_id, accepted_name, rank, parent_id, sec_reference, status) VALUES
+  ('c-uc5-corynephorus', 'wcvp', 'n-uc5-corynephorus-canescens', 'SPECIES', NULL, 'WCVP (2026)', 'ACCEPTED'),
+  ('c-uc5-genus',        'wcvp', 'n-uc5-genus',                  'GENUS',   NULL, 'WCVP (2026)', 'ACCEPTED'),
+  ('c-uc5-heterotypic',  'wcvp', 'n-uc5-heterotypic-accepted',   'SPECIES', NULL, 'WCVP (2026)', 'ACCEPTED');
+
+INSERT INTO concept_name (concept_id, name_id, role, homotypic) VALUES
+  ('c-uc5-corynephorus', 'n-uc5-corynephorus-canescens',   'accepted', NULL),
+  ('c-uc5-corynephorus', 'n-uc5-aira-canescens',           'synonym',  1),
+  ('c-uc5-corynephorus', 'n-uc5-avena-canescens',          'synonym',  1),
+  ('c-uc5-corynephorus', 'n-uc5-weingaertneria-canescens', 'synonym',  1),
+  ('c-uc5-corynephorus', 'n-uc5-aira-breviculmis',         'synonym',  NULL),
+  ('c-uc5-corynephorus', 'n-uc5-corynephorus-incanescens', 'synonym',  NULL),
+  ('c-uc5-corynephorus', 'n-uc5-aira-triflora',            'synonym',  NULL),
+  ('c-uc5-corynephorus', 'n-uc5-var-andinus',              'synonym',  NULL),
+  ('c-uc5-corynephorus', 'n-uc5-sensu-auct',               'synonym',  NULL),
+  ('c-uc5-corynephorus', 'n-uc5-var-montana',              'synonym',  NULL),
+  ('c-uc5-corynephorus', 'n-uc5-f-pallidus',               'synonym',  NULL),
+  ('c-uc5-genus',        'n-uc5-genus',                    'accepted', NULL),
+  ('c-uc5-heterotypic',  'n-uc5-heterotypic-accepted',     'accepted', NULL),
+  ('c-uc5-heterotypic',  'n-uc5-heterotypic-synonym',      'synonym',  0);

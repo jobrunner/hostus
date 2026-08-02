@@ -6,9 +6,8 @@
     DwC-A-Manifesten, per Wikidata-Brücke angereicherten Cross-References
     sowie, seit SP5, der CDM-Konzeptquelle; `hostus serve` bedient
     `/v1/concept/{id}`, `/v1/xref`, `/v1/match`, `/v1/suggest`,
-    `/v1/concept/{id}/traits` und `/v1/translate` daraus). Weitere
-    `/v1/*`-Endpunkte (`concept/{id}/synonyms`) sowie `/openapi` folgen in
-    späteren SPs. Die maßgebliche OpenAPI-Spezifikation liegt unter
+    `/v1/concept/{id}/traits`, `/v1/concept/{id}/synonyms` und
+    `/v1/translate` daraus). `/openapi` folgt in einem späteren SP. Die maßgebliche OpenAPI-Spezifikation liegt unter
     `api/openapi/openapi.yaml`.
 
     Der Offline-Export (`hostus bundle`) ist kein HTTP-Endpunkt und daher
@@ -378,6 +377,183 @@ Wichtige Punkte für Clients:
 - Ein unbekanntes Concept liefert `404 NOT_FOUND`. Ein **bekanntes**
   Concept ohne ingestierte Merkmalswerte liefert `200 OK` mit leerem
   `traits`-Array — das ist kein Fehlerfall.
+
+## Synonym-Endpunkt
+
+### `GET /v1/concept/{id}/synonyms?relevance={relevance}&rank={rank}&max={max}`
+
+Liefert die Synonyme eines Concepts — auf Wunsch reduziert auf die, die in
+eine Publikation gehören. UC5 formuliert das Problem so: **„Das Problem ist
+Filterung, nicht Beschaffung."** POWO führt für *Corynephorus canescens* 26
+Synonyme; eine Publikation braucht ein bis drei. Im gemessenen Index trägt
+ein Concept im Mittel **4,09** Synonyme, im Maximum **1.127**.
+
+#### Der Standard ist die ungefilterte Liste
+
+`relevance` ist ohne Parameter `all`. Das ist eine bewusste Entscheidung,
+keine Bequemlichkeit: der Publikationsfilter hält bei *Corynephorus
+canescens* 20 von 26 Synonymen zurück, und ein Filter dieser Stärke muss
+angefordert werden.
+
+1. Dieser Endpunkt darf nicht die einzige Tür werden, die Daten
+   stillschweigend verbirgt. Die ungefilterte Liste muss erreichbar sein —
+   und „erreichbar" ist als Standard mehr wert als als Opt-out, das man
+   kennen muss.
+2. `GET /v1/concept/{id}` liefert für dasselbe Concept dieselben Synonyme
+   ungefiltert. Zwei Endpunkte, die auf dieselbe Frage unterschiedlich viele
+   Zeilen liefern, und einer davon schweigend, lesen sich als Fehler in
+   demjenigen, den der Client zufällig als zweiten probiert hat.
+3. Die Publikationsregeln fußen auf einem `nom_status`-Vokabular, das auf
+   6,85 % der Namen gefüllt ist und einen Schwanz von 1.225 Werten mit
+   weniger als je 10 Treffern hat. Dieses — hostus' unsicherstes — Urteil
+   gehört nicht per Default auf den meistbenutzten Pfad.
+
+Beide Modi liefern **dieselbe Begründung pro Synonym** und **dieselbe
+Ausschluss-Bilanz**. `relevance` entscheidet nur, ob die zurückgehaltenen
+Einträge in der Liste auftauchen — nicht, wie gründlich geurteilt wurde.
+
+#### Parameter
+
+- `relevance` (optional): `all` (Standard) oder `publication`. Jeder andere
+  Wert liefert `400 INVALID_QUERY` und **nennt den Wert**.
+- `rank` (optional): die Rangstufe, auf der publiziert wird. `species`
+  schließt die von UC5 genannten untergeordneten Ränge aus (`VARIETY`,
+  `SUBVARIETY`, `FORM`, `SUBFORM`). Fehlt der Parameter, wird **kein** Rang
+  ausgeschlossen — der Fall einer vollständigen infraspezifischen
+  Behandlung. Ein syntaktisch gültiger, aber nicht unterstützter Rang
+  (`genus`) wird **abgelehnt**, nicht still ignoriert: eine
+  unbeabsichtigt ungefilterte Antwort an einen Aufrufer, der einen Filter
+  angefordert hat, wäre die gefährlichere Variante.
+- `max` (optional): Obergrenze der zurückgegebenen Liste. `0` und ein
+  fehlender Parameter bedeuten beide **keine Kappung** (nicht „null
+  Zeilen"). Gekappt wird **immer nach dem Ranking** — `max=3` liefert die
+  drei besten Synonyme, nie drei beliebige. Werte außerhalb `[0, 2000]`
+  liefern `400`, bevor irgendetwas alloziert wird. Die Obergrenze 2000
+  liegt über dem gemessenen Maximum von 1.127 Synonymen pro Concept, so
+  dass „alle" durch `max` ausdrückbar bleibt.
+
+#### Rangfolge
+
+Die Antwort nennt die Sortierregel im Feld `ordering` selbst, damit „die
+besten drei" nachprüfbar ist. Sie lautet, in dieser Reihenfolge:
+
+1. publikationsfähige zuerst;
+2. `homotypic` vor `unknown` vor `heterotypic`;
+3. das **Basionym** führt seinen Typisierungsblock an (UC5-Regel 4);
+4. `name_id` als letzter Tiebreaker (deterministisch).
+
+Jedes darin genannte Feld wird pro Eintrag mitgeliefert.
+
+#### Beispiel-Request
+
+```
+GET /v1/concept/wcvp:concept:405825/synonyms?relevance=publication&rank=species&max=3
+```
+
+**Beispiel-Response** (gegen den realen WCVP-Index, gekürzt um die
+identischen Einträge 2 und 3):
+
+```json
+{
+  "concept_id": "wcvp:concept:405825",
+  "relevance": "publication",
+  "publication_rank": "species",
+  "ordering": "publishable first, then homotypic before unknown before heterotypic, the basionym first within its typification block, then name_id",
+  "synonyms": [
+    {
+      "position": 1,
+      "name_id": "wcvp:name:476481",
+      "canonical": "Aira canescens",
+      "authorship": "L.",
+      "rank": "SPECIES",
+      "typification": "homotypic",
+      "is_basionym": true,
+      "nom_status_judgement": "absent",
+      "publishable": true,
+      "reason": "homotypic, no nom_status recorded (not the same as verified clean)"
+    },
+    {
+      "position": 2,
+      "name_id": "wcvp:name:397417",
+      "canonical": "Avena canescens",
+      "authorship": "(L.) Weber",
+      "rank": "SPECIES",
+      "typification": "homotypic",
+      "is_basionym": false,
+      "nom_status_judgement": "absent",
+      "publishable": true,
+      "reason": "homotypic, no nom_status recorded (not the same as verified clean)"
+    }
+  ],
+  "summary": {
+    "total": 26,
+    "publishable": 6,
+    "returned": 3,
+    "truncated": 3,
+    "absent": 6,
+    "excluded": { "nom_status": 4, "rank": 16 },
+    "unclassified_statuses": []
+  }
+}
+```
+
+*Corynephorus incanescens* Bubani (`wcvp:name:405842`, `", nom. illeg.
+superfl."`) ist einer der vier `nom_status`-Ausschlüsse; *Aira canescens*
+L. führt als Basionym.
+
+#### Jeder Ausschluss ist sichtbar
+
+`summary` beschreibt **immer das Concept**, nie die ausgelieferte Seite:
+`total`, `publishable`, `absent`, `excluded` und `unclassified_statuses`
+zählen alle 26 Synonyme, auch wenn die Antwort drei enthält. Ein Filter,
+der 20 von 26 Synonymen entfernt, ohne das zu sagen, ist von einer kaputten
+Abfrage nicht zu unterscheiden — dieselbe Disziplin, mit der `hostus
+ingest` `matched/unmatched/ambiguous` ausgibt und `trait_value.resolution`
+Näherungen protokolliert.
+
+- `excluded` zählt je Regel: `nom_status` (ein erfasster nomenklatorischer
+  Mangel), `unclassified_nom_status` (die Quelle hat etwas erfasst, keine
+  Regel deckt es — **zurückgehalten**, nicht publiziert) und `rank`.
+- `unclassified_statuses` listet die betroffenen Rohwerte wörtlich. Aus
+  dieser Liste wächst die Regeltabelle; ein zurückgehaltener Wert bleibt
+  sichtbar statt zu verschwinden.
+- `absent` zählt, wie viele der publikationsfähigen Synonyme auf einem
+  **leeren** `nom_status` beruhen. „Nichts erfasst" ist nicht „als sauber
+  erfasst" — im Beispiel oben ruhen alle sechs auf einer Abwesenheit.
+- `truncated` steht bewusst **außerhalb** von `excluded`: ein gekapptes
+  Synonym wurde nicht als irrelevant beurteilt, es hat nur nicht mehr
+  hineingepasst.
+
+#### `typification`: dreiwertig, aber `heterotypic` kommt nicht vor
+
+`typification` ist `homotypic`, `unknown` oder `heterotypic`. Auf dem
+aktuellen Index **kann `heterotypic` nicht auftreten**:
+`concept_name.homotypic` ist `1` (271.821 Zeilen) oder `NULL` (1.133.475
+Zeilen) und in **keiner einzigen** Zeile `0`. Ein Synonym ist damit heute
+entweder nachweislich homotypisch oder `unknown`.
+
+Das ist kein Versehen, sondern die Fortsetzung einer früheren Entscheidung:
+SP3 hat sich geweigert, Heterotypie zu raten, wo die Quelle keine
+Basionym-Verknüpfung liefert, und `/v1/concept` lässt das Feld `homotypic`
+lieber ganz weg, als `false` zu behaupten. `unknown` hier auf `heterotypic`
+zusammenzuziehen würde den größten Teil des Korpus aufgrund einer Tatsache
+herabstufen, die niemand festgestellt hat. Der Wert steht im Modell, weil
+die Spalte dreiwertig ist — nicht, weil eine Antwort ihn heute zeigen wird.
+
+#### Weitere Zusicherungen
+
+- **Jedes Urteilsfeld ist immer vorhanden**, auch wenn es `false` ist:
+  `is_basionym: false` ist eine Antwort, und ein weggelassenes Feld wäre
+  von „nicht geprüft" nicht zu unterscheiden. Ausgelassen werden nur
+  `nom_status` (die Quelle hat nichts erfasst — `nom_status_judgement`
+  sagt dann ausdrücklich `absent`), `authorship`, `exclusion` (nicht
+  ausgeschlossen) und `publication_rank` (kein Rang ausgeschlossen).
+- Ein unbekanntes Concept liefert `404 NOT_FOUND`. Ein **bekanntes**
+  Concept ohne Synonyme liefert `200 OK` mit leerem `synonyms`-Array und
+  genullter `summary` — das ist kein Fehlerfall.
+- `GET /v1/concept/{id}` bleibt unverändert: dessen `synonyms`-Array ist
+  weiterhin ungefiltert und trägt weder `nom_status` noch `is_basionym`
+  noch ein Publikationsurteil.
 
 ## Übersetzungs-Endpunkt
 

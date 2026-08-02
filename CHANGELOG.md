@@ -13,8 +13,8 @@ Multi-Backbone-Namens- und Merkmalsservice umgebaut (siehe
 Abschnitt sammelt den Abschluss von **SP0 (Harness & Skelett)**, **SP1
 (Foundation)**, **SP2 (Suggest + Offline-Bundle)**, **SP3 (Traits +
 Fuzzy-Match)** und **SP4 (Xref-Enrichment über eine Wikidata-Brücke)**: SP1
-liefert das
-lokale SQLite/FTS5-Rückgrat selbst — Ingest eines WCVP/POWO-DwC-A-Manifests
+liefert das lokale SQLite/FTS5-Rückgrat selbst — Ingest eines
+WCVP/POWO-DwC-A-Manifests
 (`hostus ingest`) in eine versionierte lokale Datenbank, gruppiert nach
 akzeptierten Concepts mit ihren Synonymen, sowie die ersten drei
 `/v1`-Leseendpunkte (`GET /v1/concept/{id}`, `GET /v1/xref`, `POST

@@ -141,6 +141,15 @@ CREATE TABLE IF NOT EXISTS xref_source (
 -- ids WCVP carries): those are already covered by the backbone's own
 -- redistribution value via taxon_concept.backbone_id, so attributing them
 -- to a synthetic xref source would only double-count the same gate.
+--
+-- Attribution is last-writer-wins: source records one origin, but AddXref
+-- is INSERT OR REPLACE. Two xref sources emitting the same (authority,
+-- ext_id) for the same concept is deliberately not a conflict, so the row
+-- keeps whichever source ingested last. Ingesting an 'allowed' source after
+-- a 'restricted' one therefore clears the bundle gate for the rows they
+-- share. Unreachable today (wikidata is the only xref source); the fix if a
+-- second one lands is a xref_source_link(concept_id, authority, ext_id,
+-- source) join table rather than a single column.
 CREATE TABLE IF NOT EXISTS xref (
   concept_id   TEXT NOT NULL REFERENCES taxon_concept(id),
   authority    TEXT NOT NULL,       -- powo|colxr|euromed|gbif|wikidata|wfo|inat|floraveg

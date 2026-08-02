@@ -74,10 +74,18 @@ type conceptDTO struct {
 	// string) for every canonically-ranked concept, same honesty pattern
 	// as synonymDTO.Homotypic/traits' niche_width: absence means "not
 	// applicable", not "unknown".
-	RankVerbatim string            `json:"rank_verbatim,omitempty"`
-	Status       string            `json:"status"`
-	Backbone     backboneRefDTO    `json:"backbone"`
-	Xrefs        map[string]string `json:"xrefs,omitempty"`
+	RankVerbatim string         `json:"rank_verbatim,omitempty"`
+	Status       string         `json:"status"`
+	Backbone     backboneRefDTO `json:"backbone"`
+	// Xrefs maps authority to ALL of its ext_ids for this concept, never
+	// just one: SP4's Wikidata-bridge ingest measured that a concept can
+	// legitimately carry several ids for one authority (954 wikidata, 635
+	// gbif, 299 wfo, 63 inat, 39 colxr, 3 floraveg in the full index) — a
+	// map[string]string would silently keep only the last one written,
+	// which is exactly the bug this shape replaces. conceptXrefs orders its
+	// rows by (authority, ext_id), so each slice here is already
+	// deterministically sorted — never dependent on ingest/query order.
+	Xrefs map[string][]string `json:"xrefs,omitempty"`
 	// Classification is the parent chain (root-first — see
 	// output.Repository.Classification's doc comment), omitted when empty
 	// (a top-level concept with no ingested parent, or one whose backbone
@@ -96,11 +104,11 @@ func conceptToDTO(c *domain.Concept, synonyms []output.SynonymName, xrefs []doma
 		display = display + " " + c.AcceptedName.Authorship
 	}
 
-	var xrefMap map[string]string
+	var xrefMap map[string][]string
 	if len(xrefs) > 0 {
-		xrefMap = make(map[string]string, len(xrefs))
+		xrefMap = make(map[string][]string, len(xrefs))
 		for _, x := range xrefs {
-			xrefMap[x.Authority] = x.ExtID
+			xrefMap[x.Authority] = append(xrefMap[x.Authority], x.ExtID)
 		}
 	}
 

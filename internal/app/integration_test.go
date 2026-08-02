@@ -64,12 +64,12 @@ func seedFestucaOvinaAggregate(t *testing.T, a *app.App) string {
 }
 
 type integrationConceptResponse struct {
-	ConceptID string            `json:"concept_id"`
-	Display   string            `json:"display"`
-	Canonical string            `json:"canonical"`
-	Rank      string            `json:"rank"`
-	Status    string            `json:"status"`
-	Xrefs     map[string]string `json:"xrefs"`
+	ConceptID string              `json:"concept_id"`
+	Display   string              `json:"display"`
+	Canonical string              `json:"canonical"`
+	Rank      string              `json:"rank"`
+	Status    string              `json:"status"`
+	Xrefs     map[string][]string `json:"xrefs"`
 	Synonyms  []struct {
 		Canonical  string `json:"canonical"`
 		Authorship string `json:"authorship"`
@@ -197,8 +197,8 @@ func assertConceptByID(t *testing.T, client *http.Client, baseURL string) {
 	if concept.Canonical != "Corynephorus canescens" {
 		t.Errorf("canonical = %q, want %q", concept.Canonical, "Corynephorus canescens")
 	}
-	if concept.Xrefs["powo"] != "396681-1" {
-		t.Errorf("xrefs[powo] = %q, want %q", concept.Xrefs["powo"], "396681-1")
+	if got := concept.Xrefs["powo"]; len(got) != 1 || got[0] != "396681-1" {
+		t.Errorf("xrefs[powo] = %v, want [396681-1]", got)
 	}
 	if !hasSynonymPrefix(t, concept.Synonyms, "Weingaertneria") {
 		t.Errorf("synonyms = %+v, want an entry starting with %q", concept.Synonyms, "Weingaertneria")

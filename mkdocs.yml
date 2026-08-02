@@ -57,6 +57,7 @@ nav:
       - Entwicklungsumgebung: how-to/development.md
       - Offline-Bundle exportieren: how-to/offline-bundle.md
       - Traits pipeln und ingestieren: how-to/trait-ingest.md
+      - Von hostus zu iNaturalist (UC2): how-to/inat-uc2.md
   - Referenz:
       - reference/index.md
       - HTTP-API: reference/http-api.md

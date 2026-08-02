@@ -22,9 +22,15 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   Relations-UUID einen dritten Halter bekommt, plus Meldung der
   verbleibenden Ein-Halter-UUIDs. Crawl-Etikette (ein ehrlicher User-Agent,
   ≤ 1 req/s, harter Stopp statt Browser-UA bei 401/403, Backoff, Plattencache)
-  ist verbindlich implementiert. Lizenzlage unverändert:
+  ist verbindlich implementiert. `status` trägt ausschließlich das rohe
+  `TaxonNodeDto.taxonStatus` und bleibt leer, wo der Baumlauf das Konzept
+  nicht erreicht hat; nichts wird synthetisiert. Beide CSVs sind
+  RFC-4180-gequotet (`csv`-Reader mit `Comma='|'` nötig, kein `split('|')`).
+  Exit-Codes trennen Falsifikator (`3`) von jedem anderen Konvertierungs­
+  fehler (`4`). Lizenzlage unverändert:
   **keine Lizenzangabe auffindbar → `redistribution: unknown`, nur lokale
-  Auswertung**
+  Auswertung**; committet ist neben den Skripten nur eine
+  De-minimis-Testfixture von 32 Zeilen, damit die Task-3-Tests offline laufen
 - Messsonde `poc/p08b_cdm_sample/` (`probe.sh` + `cdm_sample.py`, reproduzierbar
   über Seed `20260802` und die committete `sample.tsv`) und der Bericht
   `docs/research/cdm-sample.md`: die Zwei-Hop-Methode aus PoC P8 an einer

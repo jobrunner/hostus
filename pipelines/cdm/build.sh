@@ -50,6 +50,13 @@
 # relation graph through /v1/translate stays blocked until BGBM/EDIT clarify
 # in writing. See pipelines/README.md.
 #
+# EXIT CODES
+#   0  done
+#   1  crawl not yet complete -- re-run, nothing is re-fetched
+#   2  the honest User-Agent was refused -- STOP and report
+#   3  FALSIFIER tripped: a relationship uuid acquired a third holder
+#   4  conversion failed for any other reason (crash, assert_crosswalk, ...)
+#
 # USAGE
 #   bash pipelines/cdm/build.sh                # full crawl, run to completion
 #                                              # (re-run to continue after an
@@ -114,24 +121,42 @@ rm -f "${CRAWL_LOG}"
 echo "CDM: harvest complete in ${ELAPSED}s, converting to canonical CSVs"
 
 CONVERT_LOG="$(mktemp)"
+# 2>&1 INSIDE the group: the falsifier writes its per-uuid detail lines to
+# stderr, and without this they bypass the tee and never reach a file --
+# exactly the evidence you would want kept when the model breaks.
 {
   echo "source=https://api.cybertaxonomy.org/rl_standardliste"
   echo "crawl_etiquette=1 honest UA, <=1 req/s, single threaded, backoff on 429/5xx, disk cache"
-  if python3 "${SCRIPT_DIR}/convert.py" "${CACHE_DIR}" "${OUT_DIR}"; then
+  if python3 "${SCRIPT_DIR}/convert.py" "${CACHE_DIR}" "${OUT_DIR}" 2>&1; then
     echo "wall_clock_seconds=${ELAPSED}"
   else
     echo "CONVERT_FAILED rc=$?"
   fi
 } | tee "${CONVERT_LOG}"
 
-if grep -q '^CONVERT_FAILED' "${CONVERT_LOG}"; then
+CONVERT_RC="$(sed -n 's/^CONVERT_FAILED rc=//p' "${CONVERT_LOG}")"
+if [[ -n "${CONVERT_RC}" ]]; then
   echo
-  echo "CDM: conversion FAILED -- see the message above (a FALSIFIED line means"
-  echo "CDM: a relationship uuid acquired a third holder; the resolution model"
-  echo "CDM: of docs/research/cdm-sample.md must then be rethought). No CSV was"
-  echo "CDM: written and no summary is recorded."
+  if [[ "${CONVERT_RC}" -eq 3 ]]; then
+    # Exit 3 means one specific thing and must not be diluted: a relationship
+    # uuid acquired a third holder, so it is not a binary edge identity and
+    # the resolution model of docs/research/cdm-sample.md must be rethought.
+    echo "CDM: FALSIFIER TRIPPED -- a relationship uuid acquired a third"
+    echo "CDM: holder (see the FALSIFIED lines above for the uuids). The"
+    echo "CDM: resolution model of docs/research/cdm-sample.md must be"
+    echo "CDM: rethought. No CSV was written."
+    rm -f "${CONVERT_LOG}"
+    exit 3
+  fi
+  # Anything else -- a crash, a tripped assert_crosswalk(), a missing cache
+  # file -- is a conversion error, NOT a falsification. Different code so the
+  # two can never be confused by a caller or by CI.
+  echo "CDM: conversion FAILED with rc=${CONVERT_RC} (this is NOT the"
+  echo "CDM: falsifier; that is exit 3). A crosswalk assertion error means"
+  echo "CDM: the sec. -> classification table no longer matches the 18 real"
+  echo "CDM: classification uuids. See the traceback above."
   rm -f "${CONVERT_LOG}"
-  exit 3
+  exit 4
 fi
 mv "${CONVERT_LOG}" "${SUMMARY_PATH}"
 

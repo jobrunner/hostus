@@ -284,7 +284,19 @@ def phase_c(cache, max_requests=None, deadline=None):
                 if not isinstance(data, dict):
                     break
                 page += 1
-                if page >= (data.get("pagesAvailable") or 1):
+                pages_avail = data.get("pagesAvailable")
+                if pages_avail is None:
+                    # Never observed, but silently defaulting to 1 would
+                    # truncate a node's children without a trace. Say so, and
+                    # fall back to "keep paging until a short page arrives".
+                    sys.stderr.write(
+                        "  WARNING: /taxonNode/%s/childNodes page %d has no "
+                        "`pagesAvailable`; falling back to short-page "
+                        "termination\n" % (nuuid, page - 1))
+                    if len(recs) < NODE_PAGE_SIZE:
+                        break
+                    continue
+                if page >= pages_avail:
                     break
             append_ndjson(ef, {"n": nuuid})
             expanded.add(nuuid)

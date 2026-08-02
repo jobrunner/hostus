@@ -12,6 +12,11 @@ for SP5's `/v1/translate`. All of them follow the same shape: pinned source →
 download-or-reuse-cache → convert → canonical CSV in `output/`
 (gitignored) → printed summary.
 
+**Language:** this collected README is English throughout and stays that way.
+CLAUDE.md pins only the top-level `README.md`/`README.dev.md` to German, so a
+per-pipeline README may be German — `pipelines/cdm/README.md` is. Both are
+consistent with the project rules; do not "fix" either one to match the other.
+
 ## Trait pipelines
 
 Three per-vocabulary pipelines convert the raw EIVE / Tichý / Midolo
@@ -618,7 +623,7 @@ and not bypassable:
 | Phase | Requests | Endpoint | Yields |
 |---|---:|---|---|
 | A | 52 | `/portal/taxon?pageSize=1000&pageIndex=N` | every concept **with** name, raw rank, `secSource`, taxon nodes **and all outgoing relations inline** |
-| C | ~5,000–10,000 | `/classification/{c}/childNodes`, `/taxonNode/{n}/childNodes` | `parent_uuid` (walk of the 18 classification trees) |
+| C | ~5,000–10,000 **(estimated)** | `/classification/{c}/childNodes`, `/taxonNode/{n}/childNodes` | `parent_uuid` (walk of the 18 classification trees) |
 | B | 51,466 | `/taxon/{u}/relationsToThisTaxon` | the partner (`to`) end of every edge — the long pole |
 
 Task 1 costed the full crawl as `/portal/taxon/{uuid}/taxonRelationships` for
@@ -647,17 +652,66 @@ There is no bulk taxon-node endpoint (`/taxonNode?pageSize=…` → 404,
 the 18 classification trees are walked: one request per node that *has*
 children; leaves arrive free inside their parent's response.
 
-### Resumability
+### Resumability — and where it is not record-exact
 
-A 17–22 h run **will** be interrupted. Phase A caches each raw page as
-gzipped JSON written to a temp file and renamed (a kill cannot leave a
-half-written page that reads back as truth), checkpointed by page count with
-a `-1` completion sentinel. Phases B and C append one flushed NDJSON line per
-unit of work and resume from the **set** of units already present, not from a
-positional offset; a truncated trailing line is dropped on read and the unit
-is simply re-fetched. Re-running `build.sh` is therefore free and cannot
-corrupt partial state. Verified with a real `SIGKILL` mid-phase-B plus a
-deliberately torn trailing line.
+A 17–22 h run **will** be interrupted. Every phase checkpoints to disk, but
+**the three phases are not equally clean about it**, which is worth stating
+plainly rather than claiming uniform exactness.
+
+**Phases B and C are exact.** They append one flushed NDJSON line per unit of
+work and resume from the **set** of units already present, not from a
+positional offset; a truncated trailing line (a kill between `write` and
+`flush`) is dropped on read and the unit is simply re-fetched. No duplicates
+arise.
+
+**Phase A is HTTP-idempotent but not record-exact on resume.** Each raw page
+is cached as gzipped JSON written to a temp file and renamed, so a kill
+cannot leave a half-written page that reads back as truth. But the checkpoint
+advances only after a **whole page** (1,000 concepts) has been distilled. A
+kill 600 records into a page leaves the counter on the previous page, and the
+resumed run replays that page in full — roughly 599 records land in
+`concepts.ndjson` a second time.
+
+That is **fixed at convert time, not in the crawler**:
+`load_concepts_deduped()` de-duplicates on `concept_uuid` and reports
+`duplicate_concept_records_dropped`. Keeping the crawler append-only and
+cheap matters more than making it record-exact, and — decisively — a
+**running** crawl must never have to be restarted to pick up this fix.
+Relations are unaffected either way (`from_holders` is a set), so a phase-A
+replay can never trip the falsifier.
+
+Re-running `build.sh` is therefore free and cannot corrupt partial state; at
+worst it duplicates phase-A records, which collapse again at convert time.
+Verified with a real `SIGKILL` mid-phase-B, a deliberately torn trailing line,
+and a simulated phase-A page replay (600 duplicate records injected → 600
+dropped, 0 duplicate primary keys in the CSV).
+
+### How both CDM CSVs are quoted — read this before parsing them
+
+Both files are written by `csv.writer(delimiter="|")` with Python's default
+`QUOTE_MINIMAL`, i.e. **RFC-4180 quoting with `"` as the quote character** —
+the same convention as `pipelines/wikidata/convert.py`. A field containing a
+double quote is quoted and its quotes are doubled. **237 of the 51,466
+concepts hit this**, and the file really reads:
+
+```
+e18ac1cf-…|"Achillea millefolium ""Sammelart"""||Species Aggregate|…
+```
+
+A consumer **must** use a real CSV reader configured with `Comma = '|'`
+(Go: `encoding/csv`, `r.Comma = '|'`) and **never**
+`strings.Split(line, "|")`. On the line above the naive split yields
+`"Achillea millefolium ""Sammelart"""` where the correct value is
+`Achillea millefolium "Sammelart"` — the field *count* happens to come out
+right, so the bug is silent. Task 3 reads these files and must not be misled.
+
+What `_clean()` does on top is **not** escaping: newlines and carriage
+returns become spaces, and a literal `|` is replaced by `/`. That
+substitution is **lossy corruption**, not escaping — the original character
+is gone. It affects **0 fields today** and is pure belt-and-braces. Should a
+`|` ever appear in the data, the correct fix is to **delete** the
+substitution and rely on the quoting the writer already performs, not to
+keep silently mangling values.
 
 ### Canonical CSV contract (CDM concepts)
 
@@ -673,11 +727,16 @@ concept_uuid|scientific_name|authorship|rank|status|sec_uuid|sec_title|classific
   onto hostus's vocabulary here — that is Task 3's job, where an unknown
   value must fail loudly. `domain.ParseRank` assumed 6 ranks, WCVP had 34,
   and the full ingest aborted after 5.4 s.
-- `status` is `Doubtful` when the CDM Taxon carries `doubtful: true`
-  (1 concept in 51,466), otherwise the tree node's raw `taxonStatus`,
-  otherwise `Accepted`. Every record in the `/portal/taxon` listing is a CDM
-  `Taxon`; synonyms are nested inside their accepted taxon and are never
-  listed separately. Deliberately independent of how far phase C has run.
+- `status` carries **only** the raw `TaxonNodeDto.taxonStatus`, and is
+  **empty** where the tree walk has not yet reached the concept. Nothing is
+  synthesised. An earlier version fell back to `Accepted`, which would have
+  made 51,464 of 51,466 rows assert a value that was never measured — in the
+  one CSV whose entire contract is "raw vocabulary, mapping happens in
+  Task 3". Empty lets a reader distinguish *not observed* from *observed
+  accepted*.
+  The CDM `Taxon.doubtful` boolean is a **different field**, not a
+  `taxonStatus` value, so it is not folded into this column; it is reported
+  separately as `doubtful_concepts` in the summary (1 concept in 51,466).
 - `classification_uuid` comes from the hand-curated, **uuid-keyed**
   `CROSSWALK` in `common.py`, lifted from `poc/p08b_cdm_sample/cdm_sample.py`
   together with its `assert_crosswalk()` gate, which still fails loudly.
@@ -686,8 +745,14 @@ concept_uuid|scientific_name|authorship|rank|status|sec_uuid|sec_title|classific
   A concept's `taxonNodes[].classification.uuid` *is* machine-readable but
   answers a different question — where the concept is **placed in a tree**,
   not which `sec.` space it belongs to (`Abies alba sec. Wisskirchen &
-  Haeupler 1998` carries a node in the FloraWeb classification). The
-  agreement rate is printed as a diagnostic; the crosswalk decides.
+  Haeupler 1998` carries a node in the FloraWeb classification). Two
+  diagnostics are printed, and the weaker one is labelled as such:
+  `sec_space_among_taxon_node_classifications` only asks whether the
+  crosswalked space is **among** the concept's placements — which is why
+  `not_among` is 0, since a multi-placed concept counts as "among" for
+  whichever space the crosswalk picked — while
+  `concepts_also_placed_in_a_FOREIGN_classification` (5,875) measures the
+  phenomenon that actually rules tree placement out. The crosswalk decides.
 - `parent_uuid` is the parent **concept** uuid derived from the tree walk.
   A concept can sit in several trees (5,875 of 51,466 have more than one
   node); the node in the crosswalked `sec.` space wins, otherwise the
@@ -706,10 +771,14 @@ from_uuid|to_uuid|relation_type|relation_symbol|is_concept_relation|relationship
   (`Congruent to`/`≜`, `Includes`/`⊃`, `Overlaps`/`⊕`, `Included in or
   Includes or Overlaps`/`⊂⊃⊕`, `is pro parte synonym for`, `is misapplied
   name for`, `Not Congruent to`). No mapping here — Task 3.
-- `is_concept_relation` is the CDM `type.conceptRelationship` flag.
-  `is misapplied name for` is the one type where it is `false`; it does not
-  belong in the same relation table semantically and must be separated
-  downstream.
+- `is_concept_relation` is the CDM `type.conceptRelationship` flag, and is
+  **empty** — not `false` — for an edge seen only from its `to` side, because
+  phase A is the only source of the type object and the flag is then simply
+  unknown. `false` is a meaningful value here (it marks a misapplied name as
+  not belonging in the concept-relation table at all), so reporting an
+  unobserved flag as `false` would be a fabricated measurement.
+  `is misapplied name for` is the one type where it is genuinely `false`;
+  such rows must be separated out downstream.
 - `from_uuid` is the holder found in phase A (`relationsFromThisTaxon`),
   `to_uuid` the holder found in phase B (`relationsToThisTaxon`). Either is
   empty when that end is not (yet) crawled or is ambiguous.
@@ -747,46 +816,75 @@ CDM_CRAWL_ARGS="--max-pages 2 --max-concepts 400 --skip-tree" \
   bash pipelines/cdm/build.sh        # bounded validation slice
 ```
 
-Exit codes: `0` done · `1` crawl not yet complete (re-run) · `2` **honest
-User-Agent refused — stop and report** · `3` **falsifier tripped**.
+Exit codes:
 
-`output/`, `.cache/` and `cdm.summary.txt` are gitignored — no bulk data is
-committed. Committed are the scripts, the pipeline's own README and a small
-`fixtures/` slice for Task 3 (14 relations covering all six resolved types,
-plus their 18 concepts). The validation run's summary is reproduced verbatim
-below.
+| Code | Meaning |
+|---:|---|
+| `0` | done |
+| `1` | crawl not yet complete — re-run, nothing is re-fetched |
+| `2` | **honest User-Agent refused — stop and report**, never work around it |
+| `3` | **falsifier tripped**: a relationship uuid acquired a third holder. No CSV written. |
+| `4` | conversion failed for **any other** reason (crash, `assert_crosswalk()`, missing cache file). **Not** the falsifier. |
+
+`3` and `4` are deliberately separate: `3` asserts one specific thing — that
+the resolution model of `docs/research/cdm-sample.md` has been refuted — and
+a crash must not be allowed to dilute that claim.
+
+`output/`, `.cache/` and `cdm.summary.txt` are gitignored. **No bulk data is
+committed** — what is committed is the scripts, the pipeline's own README,
+and one named **de-minimis test fixture** under `fixtures/` (14 relations
+covering all six resolved types plus their 18 concepts; 32 rows in total).
+
+Why that fixture is in a public repository despite `redistribution: unknown`
+— recording the decision rather than leaving it implicit: a 32-row slice
+consists of identifiers, scientific names and controlled-vocabulary terms,
+i.e. **facts, not creative expression**, and it exists solely so Task 3's Go
+tests can run without network access. It is **not** the data base being
+shipped with the software, which is where the owner's licensing frame
+actually draws the line. **The fixture is not to be enlarged.**
+
+The validation run's summary is reproduced verbatim below.
 
 ### Observed summary (bounded validation slice, 2026-08-02)
 
-**This is not the full crawl.** Phase A is complete (all 51,466 concepts, all
-26,346 edges' `from` ends). Phase B covers only 795 of 51,466 concepts
-(308 lifted at zero request cost from `poc/p08b_cdm_sample/.cache/to`, the
-rest a 500-concept slice). Phase C was stopped after 250 node expansions.
-`resolved`, `dangling` and `residual_one_holder_uuids` therefore reflect the
-slice, not the dataset; `concepts_fetched`, the rank distribution and the
-relation-type distribution are already dataset-wide.
+**This is not the full crawl.** It is `convert.py` run against a *snapshot*
+of the cache taken while the full crawl was in progress. Phase A is complete
+(all 51,466 concepts, all 26,346 edges' `from` ends). Phase B covers only
+795 of 51,466 concepts (308 lifted at zero request cost from
+`poc/p08b_cdm_sample/.cache/to`, the rest a 500-concept slice). Phase C had
+reached 5,772 nodes at snapshot time and is still running.
 
-```
+So: `concepts_fetched`, the rank distribution and the relation-type
+distribution are already **dataset-wide and final**. `resolved`, `dangling`,
+`residual_one_holder_uuids`, `concepts_with_parent_uuid` and
+`status_distribution` reflect the **slice** and will move substantially on
+the full run.
+
+```console
+$ CDM_CRAWL_ARGS="--skip-tree --max-concepts 500" bash pipelines/cdm/build.sh
 source=https://api.cybertaxonomy.org/rl_standardliste
 crawl_etiquette=1 honest UA, <=1 req/s, single threaded, backoff on 429/5xx, disk cache
 source=https://api.cybertaxonomy.org/rl_standardliste (/portal/taxon listing + /taxon/{u}/relationsToThisTaxon + classification tree walk)
 license=NONE FOUND anywhere (portal, API, payloads) redistribution=unknown -- local evaluation only
 concepts_fetched=51466
+duplicate_concept_records_dropped=0  (phase A checkpoints per page, so an interrupted page replays in full on resume; deduped on concept_uuid here)
 concepts_with_incoming_lookup=795
 classifications=18
 crosswalk assertion: 17 entries, all targets are real classification uuids; 17/18 classifications targeted, 1 explicitly unmapped
-tree_nodes=2911 nodes_with_known_parent=697
+tree_nodes=5772 nodes_with_known_parent=3558
 relations_found=26346
 holders_per_relationship_uuid=1:25815, 2:531
 falsifier=PASS no relationship uuid acquired a third holder (max holders seen: 2)
-concepts_csv=pipelines/cdm/output/cdm-concepts-canonical.csv rows=51466
+concepts_csv=output/cdm-concepts-canonical.csv rows=51466
 sec_mapped_via_crosswalk=50899/51466 = 98.9%
-concepts_with_parent_uuid=697/51466 = 1.4%
+concepts_with_parent_uuid=3558/51466 = 6.9%
 concepts_with_multiple_taxon_nodes=5875
-crosswalk_vs_taxonnode_classification: agree=35872 disagree=0 no_node=15523  (diagnostic only -- tree placement is not the sec. space; the crosswalk decides)
+sec_space_among_taxon_node_classifications: among=35872 not_among=0 no_node_yet=15523  (diagnostic only, and a WEAK one: it asks whether the crosswalked sec. space is one of the concept's tree placements, NOT whether placement equals the sec. space)
+concepts_also_placed_in_a_FOREIGN_classification=5875  (this is why taxonNodes cannot be used as the sec. space; the crosswalk decides)
 rank_distribution(raw CDM)=Species:36146, Subspecies:6434, Genus:3711, Variety:2537, Species Aggregate:1088, Family:629, Species Group:374, Form:162, Section bot.:98, Order:90, Unranked (infraspecific):73, Subvariety:26, Subgenus:20, Class:16, Subclass:14, Unranked (infrageneric):11, Series:9, Subsection bot.:9, Subkingdom:7, Race:6, Phylum:5, Subform:1
-status_distribution(raw CDM)=Accepted:51465, Doubtful:1
-relations_csv=pipelines/cdm/output/cdm-relations-canonical.csv rows=26346
+status_distribution=(not observed):45696, Accepted:5770  (raw TaxonNodeDto.taxonStatus where the tree walk reached the concept, empty otherwise -- nothing is synthesised)
+doubtful_concepts=1  (CDM Taxon.doubtful boolean -- a DIFFERENT field, deliberately NOT folded into the status column)
+relations_csv=output/cdm-relations-canonical.csv rows=26346
 resolved=531/26346 = 2.0%
 ambiguous=0/26346 = 0.0%
 dangling=25815/26346 = 98.0%
@@ -807,8 +905,12 @@ reference_concept_relations: from=0 to=10
   <--Congruent to(≜)-- Pinus abies L. sec. BfN: FloraWeb DB (fuer Synonyme mit Fa
   <--Congruent to(≜)-- Pinus abies L. 1753 sec. Andere Referenzen (fuer auct. Synonyme
   <--is misapplied name for(misapplied for)-- Pinus abies L. 1753 sec. Andere Referenzen (fuer auct. Synonyme
-wall_clock_seconds=1
 ```
+
+(The generated summary also carries a `wall_clock_seconds` line. It is
+omitted here because on this re-run everything came from cache and it read
+`1` — meaningless. The real measured figure is **411 requests in 7:06 =
+1.037 s/request**, from the phase-B slice.)
 
 Cross-checks against Task 1's sample measurement:
 

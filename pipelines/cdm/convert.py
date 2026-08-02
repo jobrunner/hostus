@@ -89,11 +89,65 @@ TASK1_RELATION_TYPES = {
 
 
 def _clean(value):
-    """The CSV is pipe-delimited with no quoting contract -- strip the
-    delimiter and any newline rather than emit a row a naive reader would
-    mis-split."""
+    """Normalise one field value before it goes to csv.writer.
+
+    THE REAL CSV CONTRACT, so nobody downstream guesses wrong: both files are
+    written by `csv.writer(delimiter="|")` with Python's default
+    QUOTE_MINIMAL, i.e. RFC-4180 quoting with `"` as the quote character. A
+    field containing a double quote IS quoted and its quotes ARE doubled: the
+    name `Achillea millefolium "Sammelart"` is emitted as the field
+    `<Q>Achillea millefolium <Q><Q>Sammelart<Q><Q><Q>` where `<Q>` is one
+    double-quote character (spelled out because a literal example cannot be
+    written inside this docstring).
+
+    237 of the 51466 concepts hit this. A consumer must therefore use a real
+    CSV reader configured with `Comma = '|'` (Go: `encoding/csv` with
+    `r.Comma = '|'`) -- **never** `strings.Split(line, "|")`. Same convention
+    as pipelines/wikidata/convert.py.
+
+    What this function does is narrower than "escaping":
+      * newlines and carriage returns become spaces (they would otherwise be
+        quoted into multi-line records, which is legal CSV but awkward), and
+      * a literal `|` is replaced by `/`. That substitution is LOSSY
+        CORRUPTION, not escaping -- the original character is gone. It is
+        latent belt-and-braces only: 0 of the 51466 concepts and 0 relation
+        fields contain a `|` today. If that ever changes, the right fix is to
+        delete this substitution and rely on the quoting the writer already
+        does, not to keep silently mangling values.
+    """
     return (value or "").replace("|", "/").replace("\n", " ").replace(
         "\r", " ").strip()
+
+
+def load_concepts_deduped(cache):
+    """Concepts from phase A, de-duplicated on `concept_uuid`.
+
+    Phase A checkpoints per PAGE, after the whole page has been distilled. A
+    kill 600 records into a 1000-record page therefore leaves the checkpoint
+    at the previous page, and the resumed run replays that page in full --
+    `rewrite_clean()` only drops the one torn trailing line, so ~599 records
+    are appended a second time. Phases B and C cannot do this because their
+    replay is guarded by the SET of units already present; phase A is the odd
+    one out.
+
+    Left un-deduplicated, that would put duplicate `concept_uuid` primary
+    keys into the canonical CSV and inflate `concepts_fetched`. Relations are
+    unaffected (`from_holders` is a set), so the falsifier can never be
+    tripped by a phase-A replay.
+
+    Deduplicating here rather than in the crawler is deliberate: the crawler
+    must stay append-only and cheap, and a running crawl must never need to
+    be restarted to pick up this fix. First record for a uuid wins; the
+    replay writes identical content, so which one wins does not matter.
+    """
+    seen = {}
+    duplicates = 0
+    for rec in read_ndjson(os.path.join(cache, "concepts.ndjson")):
+        if rec["u"] in seen:
+            duplicates += 1
+            continue
+        seen[rec["u"]] = rec
+    return list(seen.values()), duplicates
 
 
 def main():
@@ -104,7 +158,7 @@ def main():
     cache, outdir = args.cache_dir, args.out_dir
     os.makedirs(outdir, exist_ok=True)
 
-    concepts = list(read_ndjson(os.path.join(cache, "concepts.ndjson")))
+    concepts, dup_concepts = load_concepts_deduped(cache)
     outgoing = list(read_ndjson(os.path.join(cache, "outgoing.ndjson")))
     incoming = list(read_ndjson(os.path.join(cache, "incoming.ndjson")))
     nodes = list(read_ndjson(os.path.join(cache, "tree_nodes.ndjson")))
@@ -115,6 +169,9 @@ def main():
     print("license=NONE FOUND anywhere (portal, API, payloads) "
           "redistribution=unknown -- local evaluation only")
     print("concepts_fetched=%d" % len(concepts))
+    print("duplicate_concept_records_dropped=%d  (phase A checkpoints per "
+          "page, so an interrupted page replays in full on resume; deduped "
+          "on concept_uuid here)" % dup_concepts)
     print("concepts_with_incoming_lookup=%d" % len(incoming))
 
     # ------------------------------------------------------ crosswalk gate
@@ -127,15 +184,31 @@ def main():
     # ------------------------------------------------------ tree -> parents
     node_by_uuid = {n["n"]: n for n in nodes}
     parent_taxon = {}
-    node_status = {}
+    # A concept can sit in several trees and each node carries its own
+    # taxonStatus. Collect ALL of them and resolve deterministically
+    # (lexicographically lowest) rather than first-wins: the tree walk's
+    # traversal order depends on how the run was interrupted, and first-wins
+    # would make the output non-reproducible byte-for-byte. Only "Accepted"
+    # occurs today; a conflict is counted and reported, not hidden.
+    node_statuses = defaultdict(set)
     for node in nodes:
         parent = node_by_uuid.get(node["p"])
         if parent and parent.get("t"):
             parent_taxon[node["n"]] = parent["t"]
         if node.get("st"):
-            node_status.setdefault(node["t"], node["st"])
+            node_statuses[node["t"]].add(node["st"])
+    node_status = {t: sorted(s)[0] for t, s in node_statuses.items()}
+    status_conflicts = sorted(t for t, s in node_statuses.items()
+                              if len(s) > 1)
     print("tree_nodes=%d nodes_with_known_parent=%d"
           % (len(nodes), len(parent_taxon)))
+    if status_conflicts:
+        print("!! %d concept(s) carry DIFFERENT taxonStatus values in "
+              "different classifications; the lexicographically lowest is "
+              "emitted. First few: %s"
+              % (len(status_conflicts),
+                 ", ".join("%s=%s" % (t, sorted(node_statuses[t]))
+                           for t in status_conflicts[:5])))
 
     # -------------------------------------------------- global edge map
     # Built BEFORE anything is written, so the falsifier below can refuse to
@@ -179,6 +252,8 @@ def main():
     cls_agree = cls_disagree = cls_nonode = 0
     multi_node = 0
     with_parent = 0
+    doubtful_count = 0
+    foreign_node_cls = 0
     rank_counts = Counter()
     status_counts = Counter()
     tmp = concepts_path + ".tmp"
@@ -192,12 +267,22 @@ def main():
             node_cls = {n["c"] for n in rec["nodes"] if n["c"]}
             if len(rec["nodes"]) > 1:
                 multi_node += 1
+            # Diagnostic, deliberately narrow: does the crosswalked sec.
+            # space appear AMONG the concept's tree placements at all?
+            # It is NOT a check that tree placement equals the sec. space --
+            # a concept placed in both W&H and FloraWeb counts as "among"
+            # for whichever of the two the crosswalk picked, which is exactly
+            # why "not_among" is near zero and why tree placement still
+            # cannot be used as the sec. space. `also_in_foreign_cls` below
+            # measures that second phenomenon separately.
             if not node_cls:
                 cls_nonode += 1
             elif cls_uuid and cls_uuid in node_cls:
                 cls_agree += 1
             elif cls_uuid:
                 cls_disagree += 1
+            if cls_uuid and node_cls - {cls_uuid}:
+                foreign_node_cls += 1
 
             # One parent column, several possible tree placements: prefer the
             # node sitting in the crosswalked sec. space, else the first node
@@ -214,20 +299,23 @@ def main():
             if parent:
                 with_parent += 1
 
-            # `doubtful` sits on the CDM Taxon itself and wins over the tree
-            # node's taxonStatus (a doubtful concept is still placed in the
-            # tree as "Accepted"). Otherwise take the node's RAW taxonStatus,
-            # falling back to "Accepted": every record in the /portal/taxon
-            # listing is a CDM Taxon -- synonyms are nested inside their
-            # accepted taxon, never listed separately -- so a concept the
-            # tree walk has not reached is accepted in its own sec. space.
-            # This keeps `status` independent of how far phase C has run.
-            if rec["doubtful"]:
-                status = "Doubtful"
-            else:
-                status = node_status.get(rec["u"]) or "Accepted"
+            # `status` carries ONLY the raw TaxonNodeDto.taxonStatus, and is
+            # EMPTY where the tree walk has not reached the concept. An
+            # earlier version synthesised "Doubtful" from the CDM boolean and
+            # fell back to "Accepted" for everything else -- which meant
+            # 51464 of 51466 rows asserted a status that was never measured,
+            # in a CSV whose whole contract is "raw vocabulary, mapping
+            # happens in Task 3". Empty is honest; a downstream reader can
+            # tell "not observed" from "observed accepted".
+            #
+            # The CDM `Taxon.doubtful` boolean is a DIFFERENT field, not a
+            # taxonStatus value, so it is not folded in here. It is reported
+            # as its own summary counter below so the information is not lost.
+            status = node_status.get(rec["u"], "")
             rank_counts[rec["rank"] or "(empty)"] += 1
-            status_counts[status] += 1
+            status_counts[status or "(not observed)"] += 1
+            if rec["doubtful"]:
+                doubtful_count += 1
 
             writer.writerow([
                 _clean(rec["u"]), _clean(rec["name"]), _clean(rec["auth"]),
@@ -242,14 +330,23 @@ def main():
     print("concepts_with_parent_uuid=%d/%d = %.1f%%"
           % (with_parent, len(concepts), 100.0 * with_parent / total))
     print("concepts_with_multiple_taxon_nodes=%d" % multi_node)
-    print("crosswalk_vs_taxonnode_classification: agree=%d disagree=%d "
-          "no_node=%d  (diagnostic only -- tree placement is not the sec. "
-          "space; the crosswalk decides)"
+    print("sec_space_among_taxon_node_classifications: among=%d not_among=%d "
+          "no_node_yet=%d  (diagnostic only, and a WEAK one: it asks whether "
+          "the crosswalked sec. space is one of the concept's tree "
+          "placements, NOT whether placement equals the sec. space)"
           % (cls_agree, cls_disagree, cls_nonode))
+    print("concepts_also_placed_in_a_FOREIGN_classification=%d  (this is why "
+          "taxonNodes cannot be used as the sec. space; the crosswalk "
+          "decides)" % foreign_node_cls)
     print("rank_distribution(raw CDM)=" + ", ".join(
         "%s:%d" % kv for kv in rank_counts.most_common()))
-    print("status_distribution(raw CDM)=" + ", ".join(
-        "%s:%d" % kv for kv in status_counts.most_common()))
+    print("status_distribution=" + ", ".join(
+        "%s:%d" % kv for kv in status_counts.most_common())
+        + "  (raw TaxonNodeDto.taxonStatus where the tree walk reached the "
+          "concept, empty otherwise -- nothing is synthesised)")
+    print("doubtful_concepts=%d  (CDM Taxon.doubtful boolean -- a DIFFERENT "
+          "field, deliberately NOT folded into the status column)"
+          % doubtful_count)
 
     # ------------------------------------------------------ relations CSV
     resolved = ambiguous = dangling = 0
@@ -267,7 +364,16 @@ def main():
             meta = edge_meta.get(ruuid)
             rtype = meta["t"] if meta else ""
             symbol = meta["s"] if meta else ""
-            is_cr = "true" if (meta and meta["cr"]) else "false"
+            # Empty, not "false", when the edge was only ever seen from its
+            # `to` side: phase A is the only source of the type object, so
+            # without it `conceptRelationship` is UNKNOWN. Emitting "false"
+            # would report an unobserved value as a measurement -- and
+            # "false" is meaningful here (it is what marks a misapplied name
+            # as not belonging in the concept-relation table at all).
+            if meta is None:
+                is_cr = ""
+            else:
+                is_cr = "true" if meta["cr"] else "false"
             type_counts[rtype or "(unknown - to-end only)"] += 1
             if len(froms) > 1 or len(tos) > 1:
                 ambiguous += 1

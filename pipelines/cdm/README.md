@@ -42,7 +42,7 @@ Festgelegt vom Auftraggeber, implementiert in `common.py`, nicht umgehbar:
 | Phase | Requests | Endpunkt | Liefert |
 |---|---:|---|---|
 | **A** | 52 | `/portal/taxon?pageSize=1000&pageIndex=N` | alle Konzepte **mit** Name, Rang (roh), `secSource`, Taxon-Nodes **und allen ausgehenden Relationen inline** |
-| **C** | ≈ 5.000–10.000 | `/classification/{c}/childNodes`, `/taxonNode/{n}/childNodes` | `parent_uuid` (Baumlauf über die 18 Klassifikationen) |
+| **C** | ≈ 5.000–10.000 **(geschätzt)** | `/classification/{c}/childNodes`, `/taxonNode/{n}/childNodes` | `parent_uuid` (Baumlauf über die 18 Klassifikationen) |
 | **B** | 51.466 | `/taxon/{u}/relationsToThisTaxon` | das Partner-Ende (`to`) jeder Kante — die lange Stange |
 
 ### Warum diese Form billiger ist als die von Task 1 kalkulierte
@@ -65,9 +65,11 @@ Halter-Histogramm `{1: 492}`. Die Liste gibt jede Kante also **genau einmal**
 aus, an ihrem `from`-Ende — **52 Requests ersetzen 51.466** und liefern die
 Richtung gratis mit.
 
-Neues Budget: 52 + ≈ 5.000–10.000 + 51.466 Requests. Bei den von Task 1
-gemessenen 1,139 s/Request (`max(1 s, Latenz)`, weil der Limiter ab
-Request-*Start* misst) sind das rund **17–22 h** — innerhalb von Task 1s
+Neues Budget: 52 + ≈ 5.000–10.000 **(geschätzt, nicht gemessen)** + 51.466
+Requests. Bei den von Task 1 gemessenen 1,139 s/Request (`max(1 s, Latenz)`,
+weil der Limiter ab Request-*Start* misst) sind das rund **17–22 h** — eine
+Spanne, deren Untergrenze auf einer **Schätzung** beruht und die deshalb
+nicht als gemessene Zahl zu lesen ist. Sie liegt innerhalb von Task 1s
 22–30-h-Rahmen, nicht darüber hinaus.
 
 Phase C existiert nur wegen der Spalte `parent_uuid`. Ein Bulk-Endpunkt für
@@ -77,24 +79,50 @@ Deshalb werden die 18 Klassifikationsbäume gelaufen: ein Request je Knoten
 **mit** Kindern; Blätter kosten nichts, sie kommen in der Antwort ihres
 Elternknotens mit.
 
+**Grundlage der Schätzung 5.000–10.000** (die unsicherste Zahl dieser
+Pipeline): Nach 250 Expansionen waren 2.911 Knoten bekannt, davon 476 mit
+Kindern — 16 %. Der Anteil interner Knoten sinkt mit der Baumtiefe, und
+gelaufen war zu dem Zeitpunkt erst die Baumspitze. Hochgerechnet auf
+≈ 57.000 Knoten ergibt das eine Spanne, keine Messung. Wer sie nicht bezahlen
+will, setzt `--skip-tree`; dann bleibt `parent_uuid` leer, alles andere in
+der Konzept-CSV ist unverändert vollständig.
+
 ## Resumierbarkeit
 
 Ein 17–22-h-Lauf **wird** unterbrochen. Jede Phase schreibt nach jeder
-Arbeitseinheit auf Platte und setzt dort wieder an:
+Arbeitseinheit auf Platte und setzt dort wieder an — **die drei Phasen sind
+dabei aber nicht gleich sauber**, und das gehört gesagt:
 
-* Phase A legt jede Rohseite als gzip-JSON ab, geschrieben in eine
-  Temp-Datei und umbenannt — ein Kill kann keine halbe Seite hinterlassen,
-  die ein späterer Lauf als Wahrheit liest. Die Destillation ist per
-  Seitenzähler gecheckpointet, der Abschluss per Sentinel `-1`.
-* Phase B und C hängen je Arbeitseinheit **eine geflushte NDJSON-Zeile** an
-  und setzen über die **Menge** der bereits vorhandenen Einheiten fort,
-  nicht über einen Positions-Offset. Eine abgeschnittene letzte Zeile (Kill
-  zwischen `write` und `flush`) wird beim Lesen verworfen und die Einheit
-  schlicht neu geholt.
+* **Phase B und C: exakt.** Sie hängen je Arbeitseinheit **eine geflushte
+  NDJSON-Zeile** an und setzen über die **Menge** der bereits vorhandenen
+  Einheiten fort, nicht über einen Positions-Offset. Eine abgeschnittene
+  letzte Zeile (Kill zwischen `write` und `flush`) wird beim Lesen verworfen
+  und die Einheit schlicht neu geholt. Es entstehen keine Dubletten.
+* **Phase A: idempotent auf HTTP-Ebene, aber nicht satzgenau beim
+  Fortsetzen.** Jede Rohseite liegt als gzip-JSON vor, geschrieben in eine
+  Temp-Datei und per `os.replace` umbenannt — ein Kill kann keine halbe
+  Seite hinterlassen, die ein späterer Lauf als Wahrheit liest. Der
+  Checkpoint wird jedoch **erst nach der ganzen Seite** gesetzt (1.000
+  Konzepte), der Abschluss per Sentinel `-1`. Ein Kill nach 600 von 1.000
+  destillierten Sätzen lässt den Zähler auf der vorigen Seite stehen; beim
+  Fortsetzen wird die Seite **komplett wiederholt** und rund 599 Sätze
+  landen ein zweites Mal in `concepts.ndjson`.
 
-Ein erneuter Aufruf von `build.sh` ist damit kostenlos und kann keinen
-Teilzustand beschädigen. Getestet mit einem echten `SIGKILL` mitten in
-Phase B, siehe `.superpowers/sdd/2026-08-02-sp5-sec-translate/task-2-report.md`.
+  **Das ist bewusst nicht im Crawler repariert, sondern in `convert.py`:**
+  `load_concepts_deduped()` dedupliziert auf `concept_uuid` und meldet die
+  Zahl der verworfenen Dubletten (`duplicate_concept_records_dropped`). So
+  bleibt der Crawler append-only und billig, und ein **laufender** Crawl
+  muss für diesen Fix nicht neu gestartet werden. Die Relationen sind ohnehin
+  nicht betroffen (`from_holders` ist eine Menge) — eine Wiederholung kann
+  den Falsifikator nicht auslösen.
+
+Ein erneuter Aufruf von `build.sh` ist damit kostenlos und beschädigt keinen
+Teilzustand; er kann in Phase A lediglich Sätze doppeln, die beim Konvertieren
+wieder zusammenfallen. Getestet mit einem echten `SIGKILL` mitten in Phase B,
+einer künstlich abgeschnittenen Zeile und einer simulierten
+Phase-A-Seitenwiederholung (600 Dubletten → 0 doppelte Primärschlüssel in der
+CSV); siehe
+`.superpowers/sdd/2026-08-02-sp5-sec-translate/task-2-report.md`.
 
 ## Auflösung der Relationen — die globale Kantenkarte
 
@@ -152,6 +180,42 @@ Der Validierungslauf hat **22 rohe Ränge** und **7 Relationstypen** gesehen —
 einen mehr als Task 1s Stichprobe (`Not Congruent to`, 1×). `convert.py`
 meldet jeden Typ, den Task 1 nicht gesehen hat, ausdrücklich.
 
+Aus demselben Grund ist **`status` leer**, wo der Baumlauf das Konzept nicht
+erreicht hat. Die Spalte trägt ausschließlich das rohe
+`TaxonNodeDto.taxonStatus`; nichts wird synthetisiert. Eine frühere Fassung
+setzte ersatzweise `Accepted` — damit hätten 51.464 von 51.466 Zeilen einen
+nie gemessenen Wert behauptet, in genau der CSV, deren Vertrag „rohes
+Vokabular, Mapping in Task 3" lautet. Das boolesche CDM-Feld
+`Taxon.doubtful` ist ein **anderes** Feld und wird nicht eingemischt; es
+erscheint als eigener Zähler `doubtful_concepts` in der Zusammenfassung.
+
+## Der CSV-Vertrag — bitte genau lesen
+
+Beide Dateien werden von `csv.writer(delimiter="|")` mit Pythons
+Voreinstellung `QUOTE_MINIMAL` geschrieben, also **mit RFC-4180-Quoting** und
+`"` als Quote-Zeichen. Das ist dieselbe Konvention wie in
+`pipelines/wikidata/convert.py`. Ein Feld, das ein Anführungszeichen
+enthält, wird gequotet und seine Anführungszeichen werden verdoppelt.
+**237 der 51.466 Konzepte sind betroffen**, z. B.:
+
+```
+e18ac1cf-…|"Achillea millefolium ""Sammelart"""||Species Aggregate|…
+```
+
+Ein Konsument **muss** deshalb einen echten CSV-Reader mit `Comma = '|'`
+verwenden (Go: `encoding/csv`, `r.Comma = '|'`) und **niemals**
+`strings.Split(line, "|")`. Der naive Split liefert für obige Zeile
+`"Achillea millefolium ""Sammelart"""` statt
+`Achillea millefolium "Sammelart"` — die Feldzahl stimmt zufällig, der Wert
+nicht. Das ist die Falle, in die Task 3 nicht laufen darf.
+
+Was `_clean()` zusätzlich tut, ist **kein** Escaping: Zeilenumbrüche werden
+zu Leerzeichen, und ein literales `|` wird durch `/` ersetzt. Letzteres ist
+**verlustbehaftete Korruption**, nicht Maskierung — das Original ist weg.
+Heute betrifft es **0 Felder**, es ist reine Vorsichtsmaßnahme. Sollte je ein
+`|` in den Daten auftauchen, ist die Substitution zu **entfernen** und auf
+das ohnehin vorhandene Quoting zu vertrauen, nicht beizubehalten.
+
 ## Aufruf
 
 ```bash
@@ -167,17 +231,38 @@ CDM_CRAWL_ARGS="--max-pages 2 --max-concepts 400 --skip-tree" \
   bash pipelines/cdm/build.sh
 ```
 
-Exit-Codes: `0` fertig · `1` Crawl noch nicht vollständig (erneut aufrufen) ·
-`2` **ehrlicher User-Agent abgelehnt — stoppen und melden** · `3`
-**Falsifikator ausgelöst**.
+Exit-Codes:
+
+| Code | Bedeutung |
+|---:|---|
+| `0` | fertig |
+| `1` | Crawl noch nicht vollständig — erneut aufrufen, es wird nichts doppelt geholt |
+| `2` | **ehrlicher User-Agent abgelehnt — stoppen und melden**, nicht umgehen |
+| `3` | **Falsifikator ausgelöst**: eine Relations-UUID hat einen dritten Halter bekommen. Keine CSV geschrieben. |
+| `4` | Konvertierung aus einem **anderen** Grund fehlgeschlagen (Absturz, `assert_crosswalk()`, fehlende Cache-Datei). **Nicht** der Falsifikator. |
+
+`3` und `4` sind bewusst getrennt: `3` heißt genau eine Sache, nämlich dass
+das Auflösungsmodell aus `docs/research/cdm-sample.md` widerlegt ist. Ein
+Absturz darf diese Aussage nicht verwässern.
 
 ## Artefakte
 
-`output/`, `.cache/` und `cdm.summary.txt` sind gitignoriert — Bulk-Daten
-werden nicht committet. Committet sind nur die Skripte, diese
-Dokumentation und eine kleine Fixture-Scheibe unter `fixtures/` für Task 3
-(14 Relationen, die alle sechs aufgelösten Typen abdecken, plus ihre 18
-Konzepte). Die Zusammenfassung des Validierungslaufs ist wörtlich in
+`output/`, `.cache/` und `cdm.summary.txt` sind gitignoriert. **Es werden
+keine Bulk-Daten committet** — committet sind die Skripte, diese
+Dokumentation und **eine namentlich benannte De-minimis-Testfixture** unter
+`fixtures/` (14 Relationen, die alle sechs aufgelösten Typen abdecken, plus
+ihre 18 Konzepte; 32 Zeilen insgesamt).
+
+Warum diese Fixture trotz `redistribution: unknown` im Repository liegt —
+die Entscheidung gehört festgehalten, nicht stillschweigend getroffen: Eine
+32-Zeilen-Scheibe besteht aus Identifikatoren, wissenschaftlichen Namen und
+Begriffen eines kontrollierten Vokabulars — **Fakten, keine schöpferische
+Leistung**. Sie existiert einzig, damit die Go-Tests in Task 3 ohne
+Netzzugriff laufen können. Sie ist **nicht** der Datenbestand, der mit der
+Software ausgeliefert wird — und genau dort verläuft die Linie, die die
+Lizenzlage zieht. **Die Fixture wird nicht vergrößert.**
+
+Die Zusammenfassung des Validierungslaufs ist wörtlich in
 `pipelines/README.md` festgehalten.
 
 Die beiden kanonischen CSV-Verträge sind in `pipelines/README.md`

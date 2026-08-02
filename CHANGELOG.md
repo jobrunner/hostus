@@ -7,6 +7,37 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (SP6, Task 2 — Publikations-Relevanzmodell für Synonyme)
+- **`internal/domain/synonym.go`**: das reine Entscheidungsmodell für
+  `GET /v1/concept/{id}/synonyms` (UC5) — ohne I/O, damit die Regeln
+  isoliert prüfbar bleiben. `domain.RankSynonyms` liefert **jeden**
+  Kandidaten zurück (auch die ausgeschlossenen), jeweils mit dem Grund.
+- **`domain.ClassifyNomStatus` bewertet per Token-Containment, nicht per
+  Gleichheit.** Das in Task 1 gemessene Vokabular (1.304 distinkte Werte,
+  1.225 davon mit < 10 Treffern) lässt weder ein geschlossenes Enum noch
+  fail-loud-Parsing zu. Das Lehrbeispiel aus UC5, *Corynephorus
+  incanescens* Bubani (`wcvp:name:405842`), trägt `", nom. illeg.
+  superfl."` und **nicht** `", nom. superfl."` — ein Gleichheitsvergleich
+  würde genau den Fall verfehlen, mit dem UC5 erklärt wird.
+- **`unclassified` ist ein eigenes Urteil und wird zurückgehalten**, nicht
+  stillschweigend publiziert: ein erfasster, aber nicht klassifizierbarer
+  Status wird aus der Publikationsliste genommen, behält seinen Rohwert und
+  wird in `domain.SummarizeSynonyms` gezählt. Ein *fehlender* Status
+  (`absent`, 1.349.732 Namen) ist davon strikt getrennt und bleibt
+  publizierbar.
+- **`domain.Typification` ist dreiwertig.** `concept_name.homotypic` ist
+  auf 692.941 Zeilen `NULL` — das heißt *unbekannt*, nicht „heterotypisch“.
+  Sortierung: bekannt homotypisch → unbekannt → bekannt heterotypisch, und
+  welcher der drei Fälle vorlag, steht im Ergebnis.
+- **`domain.BotanicalOpenItems`** benennt die fünf Werte, die eine
+  botanische statt einer technischen Entscheidung brauchen (`sensu auct.`
+  1.117, `tentatively listed as a synonym` 290, `fossil name` 274,
+  `isonym` 13, `not validly publ.?` 8) — sie werden ausgewiesen, nicht
+  geraten.
+- Rang-Ausschluss (`VARIETY`, `SUBVARIETY`, `FORM`, `SUBFORM`) ist
+  **Aufrufer-gesteuert** (`domain.RanksBelowSpecies()`), nicht fest
+  verdrahtet.
+
 ### Fixed (SP6, Task 1 — nomenklatorischer Status und Publikation)
 - **`nom_status` und `published_in` gingen beim Ingest verloren.** Der
   WCVP-Reader las `nomenclaturalstatus`/`namepublishedin`, `domain.Name`

@@ -30,8 +30,8 @@ func TestSynonymCandidates_CarriesNomStatusHomotypicAndRank(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SynonymCandidates(%q): unexpected error: %v", uc5ConceptID, err)
 	}
-	if len(items) != 10 {
-		t.Fatalf("got %d candidates, want 10 (see testdata/seed.sql's c-uc5-corynephorus block)", len(items))
+	if len(items) != 11 {
+		t.Fatalf("got %d candidates, want 11 (see testdata/seed.sql's c-uc5-corynephorus block)", len(items))
 	}
 
 	incanescens := findCandidate(t, items, "n-uc5-corynephorus-incanescens")
@@ -113,6 +113,30 @@ func TestSynonymCandidates_ScansHeterotypicZero(t *testing.T) {
 	}
 }
 
+// TestSynonymCandidates_CarriesRankVerbatimForOtherRanks pins the column
+// the wire shape needs to avoid rendering an exotic rank as a bare "OTHER".
+// It is asserted in BOTH directions: a canonically-ranked synonym must leave
+// it empty, since Rank already identifies that spelling exactly.
+func TestSynonymCandidates_CarriesRankVerbatimForOtherRanks(t *testing.T) {
+	db := openSeededDB(t)
+
+	items, err := db.SynonymCandidates(context.Background(), uc5ConceptID)
+	if err != nil {
+		t.Fatalf("SynonymCandidates: unexpected error: %v", err)
+	}
+
+	proles := findCandidate(t, items, "n-uc5-proles")
+	if proles.Rank != domain.RankOther {
+		t.Fatalf("proles Rank = %q, want %q", proles.Rank, domain.RankOther)
+	}
+	if proles.RankVerbatim != "proles" {
+		t.Errorf("proles RankVerbatim = %q, want %q", proles.RankVerbatim, "proles")
+	}
+	if got := findCandidate(t, items, "n-uc5-f-pallidus").RankVerbatim; got != "" {
+		t.Errorf("f. pallidus RankVerbatim = %q, want empty — FORM already names its own spelling", got)
+	}
+}
+
 func TestSynonymCandidates_OrderedByNameID(t *testing.T) {
 	db := openSeededDB(t)
 
@@ -162,8 +186,8 @@ func TestConcept_SynonymNameShapeUnchanged(t *testing.T) {
 	if concept.ID != uc5ConceptID || len(xrefs) != 0 {
 		t.Fatalf("Concept(%q) = %v with %d xrefs, want the concept itself and none", uc5ConceptID, concept, len(xrefs))
 	}
-	if len(synonyms) != 10 {
-		t.Fatalf("Concept returned %d synonyms, want 10", len(synonyms))
+	if len(synonyms) != 11 {
+		t.Fatalf("Concept returned %d synonyms, want 11", len(synonyms))
 	}
 	for _, s := range synonyms {
 		if s.ID == "n-uc5-avena-canescens" && (s.Homotypic == nil || !*s.Homotypic) {

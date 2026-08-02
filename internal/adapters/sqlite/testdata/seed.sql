@@ -98,6 +98,12 @@ INSERT INTO distribution (concept_id, area_scheme, area_code) VALUES
 --   n-uc5-sensu-auct              ", sensu auct."             -> unclassified
 --   n-uc5-var-montana             VARIETY                     -> rank
 --   n-uc5-f-pallidus              FORM                        -> rank
+--   n-uc5-proles                  OTHER + rank_verbatim 'proles' -> publishable
+--                                 (6.409 synonym rows rank OTHER, 3.731 of
+--                                 them with a verbatim spelling; NONE is
+--                                 excluded by rank=species, so they reach
+--                                 publication lists and must not render as a
+--                                 bare "OTHER")
 --
 -- c-uc5-genus is an accepted concept with NO synonyms at all — the
 -- "empty list, not a 404" case.
@@ -120,6 +126,7 @@ INSERT INTO name (id, canonical, canonical_fold, authorship, rank, ipni_id, publ
   ('n-uc5-sensu-auct',               'uc5 corynephorus fallax',       'uc5 corynephorus fallax',       'auct.',               'SPECIES', NULL, NULL, ', sensu auct.',          NULL),
   ('n-uc5-var-montana',              'uc5 corynephorus canescens var. montana', 'uc5 corynephorus canescens var. montana', 'Cout.', 'VARIETY', NULL, NULL, NULL, NULL),
   ('n-uc5-f-pallidus',               'uc5 corynephorus canescens f. pallidus',  'uc5 corynephorus canescens f. pallidus',  '(Beckh.) Soó', 'FORM', NULL, NULL, NULL, NULL),
+  ('n-uc5-proles',                   'uc5 corynephorus articulatus',  'uc5 corynephorus articulatus',  'Desf.',               'OTHER',   NULL, NULL, NULL,                     NULL),
   ('n-uc5-genus',                    'uc5 corynephorus',              'uc5 corynephorus',              'P.Beauv.',            'GENUS',   NULL, NULL, NULL,                     NULL),
   ('n-uc5-heterotypic-accepted',     'uc5 jacobaea vulgaris',         'uc5 jacobaea vulgaris',         'Gaertn.',             'SPECIES', NULL, NULL, NULL,                     NULL),
   ('n-uc5-heterotypic-synonym',      'uc5 senecio jacobaea',          'uc5 senecio jacobaea',          'L.',                  'SPECIES', NULL, NULL, NULL,                     NULL);
@@ -141,6 +148,9 @@ INSERT INTO concept_name (concept_id, name_id, role, homotypic) VALUES
   ('c-uc5-corynephorus', 'n-uc5-sensu-auct',               'synonym',  NULL),
   ('c-uc5-corynephorus', 'n-uc5-var-montana',              'synonym',  NULL),
   ('c-uc5-corynephorus', 'n-uc5-f-pallidus',               'synonym',  NULL),
+  ('c-uc5-corynephorus', 'n-uc5-proles',                   'synonym',  NULL),
   ('c-uc5-genus',        'n-uc5-genus',                    'accepted', NULL),
   ('c-uc5-heterotypic',  'n-uc5-heterotypic-accepted',     'accepted', NULL),
   ('c-uc5-heterotypic',  'n-uc5-heterotypic-synonym',      'synonym',  0);
+
+UPDATE name SET rank_verbatim = 'proles' WHERE id = 'n-uc5-proles';

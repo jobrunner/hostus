@@ -396,9 +396,17 @@ type SynonymCandidate struct {
 	Canonical  string
 	Authorship string
 	Rank       Rank
-	NomStatus  string
-	Homotypic  *bool
-	IsBasionym bool
+	// RankVerbatim is the original source "taxonrank" spelling when Rank is
+	// RankOther, empty otherwise — same contract as Name.RankVerbatim. It is
+	// carried (not used) by the relevance model: no UC5 rule reads it, but
+	// 3.731 of the 6.409 OTHER-ranked synonym rows have one (`proles`,
+	// `lusus`, `microgène`, `Convariety`, `grex`), none of them is excluded
+	// by RanksBelowSpecies, and a consumer that only saw "OTHER" could not
+	// tell what it had been handed.
+	RankVerbatim string
+	NomStatus    string
+	Homotypic    *bool
+	IsBasionym   bool
 }
 
 // SynonymExclusion names the rule that withheld a synonym from the

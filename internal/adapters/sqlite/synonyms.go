@@ -26,7 +26,7 @@ import (
 // have to scan into a bool. Comparing explicitly keeps the column a plain
 // 0/1 integer.
 const synonymCandidateQuery = `
-	SELECT n.id, n.canonical, COALESCE(n.authorship, ''), n.rank, COALESCE(n.nom_status, ''),
+	SELECT n.id, n.canonical, COALESCE(n.authorship, ''), n.rank, COALESCE(n.rank_verbatim, ''), COALESCE(n.nom_status, ''),
 	       cn.homotypic,
 	       (an.basionym_id IS NOT NULL AND an.basionym_id = n.id) AS is_basionym
 	FROM concept_name cn
@@ -62,11 +62,11 @@ func (db *DB) SynonymCandidates(ctx context.Context, conceptID string) ([]domain
 	out := []domain.SynonymCandidate{}
 	for rows.Next() {
 		var (
-			c         domain.SynonymCandidate
-			rank      string
-			homotypic sql.NullBool
+			c                  domain.SynonymCandidate
+			rank, rankVerbatim string
+			homotypic          sql.NullBool
 		)
-		if err := rows.Scan(&c.NameID, &c.Canonical, &c.Authorship, &rank, &c.NomStatus, &homotypic, &c.IsBasionym); err != nil {
+		if err := rows.Scan(&c.NameID, &c.Canonical, &c.Authorship, &rank, &rankVerbatim, &c.NomStatus, &homotypic, &c.IsBasionym); err != nil {
 			return nil, fmt.Errorf("sqlite: scanning synonym candidate of concept %q: %w", conceptID, err)
 		}
 		parsed, err := domain.ParseRank(rank)
@@ -74,6 +74,12 @@ func (db *DB) SynonymCandidates(ctx context.Context, conceptID string) ([]domain
 			return nil, fmt.Errorf("sqlite: synonym %q of concept %q: %w", c.NameID, conceptID, err)
 		}
 		c.Rank = parsed
+		// Only for RankOther, mirroring scanName/scanConcept: for every
+		// canonical rank the Rank value already identifies the spelling
+		// exactly, and echoing it twice would invite the two to disagree.
+		if parsed == domain.RankOther {
+			c.RankVerbatim = rankVerbatim
+		}
 		c.ConceptID = conceptID
 		if homotypic.Valid {
 			// homotypic.Bool must be copied into a fresh variable: taking

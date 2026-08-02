@@ -108,6 +108,7 @@ type synonymsResponse struct {
 		Canonical          string `json:"canonical"`
 		Authorship         string `json:"authorship"`
 		Rank               string `json:"rank"`
+		RankVerbatim       string `json:"rank_verbatim"`
 		Typification       string `json:"typification"`
 		IsBasionym         bool   `json:"is_basionym"`
 		NomStatus          string `json:"nom_status"`
@@ -208,6 +209,7 @@ func TestSynonyms_UC5AcceptanceCase(t *testing.T) {
 	if body.Ordering == "" {
 		t.Error("ordering is empty; the response must state the rule that ordered it")
 	}
+	assertWireSummaryReconciles(t, body)
 }
 
 // TestSynonyms_DefaultIsTheUnfilteredList pins the default-relevance
@@ -278,6 +280,7 @@ func TestSynonyms_ExclusionSummaryCountsRankExclusions(t *testing.T) {
 	if pub.Summary.Total != 4 {
 		t.Fatalf("summary.total = %d, want 4", pub.Summary.Total)
 	}
+	assertWireSummaryReconciles(t, pub)
 	if pub.Summary.Excluded["rank"] != 3 {
 		t.Errorf("excluded[rank] = %d, want 3 (two varieties and one form)", pub.Summary.Excluded["rank"])
 	}
@@ -314,6 +317,39 @@ func TestSynonyms_MaxTruncatesAfterRanking(t *testing.T) {
 	}
 	if body.Summary.Total != 5 || body.Summary.Publishable != 3 {
 		t.Errorf("truncation altered the summary (%+v); it must describe the concept, not the page", body.Summary)
+	}
+	assertWireSummaryReconciles(t, body)
+}
+
+// assertWireSummaryReconciles checks, on the WIRE shape, the arithmetic a
+// client reads the summary for:
+//
+//	publishable + Sum(excluded) == total
+//	returned + truncated        == publishable  (under relevance=publication)
+//
+// plus the rule that truncation never shows up as an exclusion reason.
+// Folding Truncated into `excluded` would break the first sum on every
+// capped response — and a capped response is the only place it can break,
+// which is why this runs on one.
+func assertWireSummaryReconciles(t *testing.T, body synonymsResponse) {
+	t.Helper()
+	if _, ok := body.Summary.Excluded["truncated"]; ok {
+		t.Errorf("excluded carries a \"truncated\" key: a capped synonym was not judged irrelevant and must not be counted as excluded (%v)", body.Summary.Excluded)
+	}
+	sum := body.Summary.Publishable
+	for _, n := range body.Summary.Excluded {
+		sum += n
+	}
+	if sum != body.Summary.Total {
+		t.Errorf("publishable + excluded = %d, want total = %d (excluded = %v)", sum, body.Summary.Total, body.Summary.Excluded)
+	}
+	if body.Summary.Returned != len(body.Synonyms) {
+		t.Errorf("summary.returned = %d, but the array carries %d entries", body.Summary.Returned, len(body.Synonyms))
+	}
+	if body.Relevance == "publication" {
+		if got := body.Summary.Returned + body.Summary.Truncated; got != body.Summary.Publishable {
+			t.Errorf("returned + truncated = %d, want publishable = %d", got, body.Summary.Publishable)
+		}
 	}
 }
 
@@ -360,8 +396,8 @@ func TestSynonyms_InvalidQueryNamesTheOffendingValue(t *testing.T) {
 		want  string
 	}{
 		{"unknown relevance", "relevance=wichtig", `unknown relevance "wichtig"`},
-		{"unsupported rank", "rank=genus", `unsupported rank "genus"`},
-		{"non-numeric max", "max=viele", "max must be an integer"},
+		{"unsupported rank", "rank=genus", `unsupported rank "genus" (supported: species; omit rank for no rank exclusion)`},
+		{"non-numeric max", "max=viele", `max "viele" is not an integer`},
 		{"negative max", "max=-1", `max "-1"`},
 		{"absurd max", "max=999999", `max "999999"`},
 	}
@@ -474,5 +510,78 @@ func TestSynonyms_RepositoryFailureIsInternalError(t *testing.T) {
 	}
 	if strings.Contains(rr.Body.String(), "disk on fire") {
 		t.Errorf("body %s leaks the internal error text", rr.Body.String())
+	}
+}
+
+// TestSynonyms_OtherRankCarriesItsVerbatimSpelling: an OTHER-ranked synonym
+// is never excluded by rank=species, so it reaches publication lists — and a
+// bare "OTHER" would tell a botanist nothing. 3.731 synonym rows in the
+// measured index carry such a spelling (`proles` 2.338, `lusus` 658,
+// `microgene` 336, `Convariety` 184, `grex` 41).
+func TestSynonyms_OtherRankCarriesItsVerbatimSpelling(t *testing.T) {
+	repo := seededRepo(t)
+	seedOtherRankSynonym(t, repo)
+
+	_, body := getSynonyms(t, repo, otherRankConceptID, "relevance=publication&rank=species")
+	if len(body.Synonyms) != 1 {
+		t.Fatalf("got %d synonyms, want 1 (an OTHER rank is not excluded by rank=species)", len(body.Synonyms))
+	}
+	s := body.Synonyms[0]
+	if s.Rank != string(domain.RankOther) {
+		t.Fatalf("rank = %q, want %q", s.Rank, domain.RankOther)
+	}
+	if s.RankVerbatim != "proles" {
+		t.Errorf("rank_verbatim = %q, want %q — otherwise the entry renders as a bare OTHER", s.RankVerbatim, "proles")
+	}
+
+	// And it is OMITTED, not empty, for a canonically-ranked synonym.
+	rr, _ := getSynonyms(t, repo, festucaOvinaConceptID, "")
+	var raw struct {
+		Synonyms []map[string]any `json:"synonyms"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, item := range raw.Synonyms {
+		if _, ok := item["rank_verbatim"]; ok {
+			t.Errorf("synonym %v renders rank_verbatim although its rank is %v; SPECIES/VARIETY already name their own spelling", item["name_id"], item["rank"])
+		}
+	}
+}
+
+const otherRankConceptID = "other:concept:corynephorus"
+
+// seedOtherRankSynonym writes one concept whose single synonym ranks OTHER
+// with a verbatim "proles", through the same output.Repository port
+// seedUC5Concept uses. The WCVP fixture carries no exotic rank.
+func seedOtherRankSynonym(t *testing.T, db *sqlite.DB) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := db.BeginIngest(ctx, domain.BackboneVersion{ID: "other", Version: "v1"})
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	accepted := domain.Name{ID: "other:name:accepted", Canonical: "Corynephorus divaricatus", Authorship: "(Pourr.) Breistr.", Rank: domain.RankSpecies}
+	proles := domain.Name{ID: "other:name:proles", Canonical: "Corynephorus articulatus", Authorship: "Desf.", Rank: domain.RankOther, RankVerbatim: "proles"}
+	for _, n := range []domain.Name{accepted, proles} {
+		if err := tx.UpsertName(n); err != nil {
+			t.Fatalf("UpsertName(%q): unexpected error: %v", n.ID, err)
+		}
+	}
+	concept := domain.Concept{ID: otherRankConceptID, BackboneID: "other", AcceptedName: accepted, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+	if err := tx.UpsertConcept(concept); err != nil {
+		t.Fatalf("UpsertConcept: unexpected error: %v", err)
+	}
+	if err := tx.LinkName(concept.ID, accepted.ID, "accepted", nil); err != nil {
+		t.Fatalf("LinkName(accepted): unexpected error: %v", err)
+	}
+	if err := tx.LinkName(concept.ID, proles.ID, "synonym", nil); err != nil {
+		t.Fatalf("LinkName(synonym): unexpected error: %v", err)
+	}
+	if err := tx.Finalize(); err != nil {
+		t.Fatalf("Finalize: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
 	}
 }

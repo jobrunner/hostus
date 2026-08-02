@@ -41,6 +41,12 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   Adapter-Test festgenagelt — bliebe das Flag überall `false`, würde
   UC5-Regel 4 still zum No-op, und nichts in `internal/domain` könnte das
   bemerken. `Concept()` und damit `/v1/concept/{id}` bleiben unverändert.
+- **`rank_verbatim` wird durchgereicht.** 6.409 Synonymzeilen ranken als
+  `OTHER`, 3.731 davon mit einer erfassten Schreibweise (`proles` 2.338,
+  `lusus` 658, `microgène` 336, `Convariety` 184, `grex` 41). Keine davon
+  wird von `rank=species` ausgeschlossen — sie landen also in
+  Publikationslisten, wo ein blankes `OTHER` nichts aussagt. Gleiche
+  Begründung wie bei `conceptDTO.rank_verbatim`.
 - Dokumentation: `docs/reference/http-api.md` und
   `api/openapi/openapi.yaml` (handgepflegt, dokumentierte Abweichung seit
   S14). Beide benennen ausdrücklich, dass `typification: heterotypic` auf
@@ -48,13 +54,13 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   1 oder NULL, nie 0).
 
 ### Fixed (SP6, Task 3)
-- **Drei Test-Row-Sources ließen `nom_status`/`published_in` fallen.**
-  `internal/adapters/http`, `internal/adapters/sqlite` und
-  `internal/application` bilden `wcvp.TaxonRow` je selbst auf
-  `application.TaxonRow` ab; zwei davon kannten die in Task 1 ergänzten
-  Felder nicht, so dass jedes Fixture-Synonym nomenklatorisch sauber
-  aussah. Sie spiegeln jetzt wieder das echte Mapping aus
-  `internal/app/ingest.go`.
+- **Zwei von drei Test-Row-Sources ließen `nom_status`/`published_in`
+  fallen.** `internal/adapters/http`, `internal/adapters/sqlite` und
+  `internal/application` besitzen je einen eigenen Mapper von
+  `wcvp.TaxonRow` auf `application.TaxonRow`; zwei davon kannten die in
+  Task 1 ergänzten Felder nicht, so dass jedes Fixture-Synonym
+  nomenklatorisch sauber aussah. Alle drei spiegeln jetzt wieder das echte
+  Mapping aus `internal/app/ingest.go` (alle zwölf Felder).
 
 ### Added (SP6, Task 2 — Publikations-Relevanzmodell für Synonyme)
 - **`internal/domain/synonym.go`**: das reine Entscheidungsmodell für

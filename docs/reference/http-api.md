@@ -7,7 +7,8 @@
     sowie, seit SP5, der CDM-Konzeptquelle; `hostus serve` bedient
     `/v1/concept/{id}`, `/v1/xref`, `/v1/match`, `/v1/suggest`,
     `/v1/concept/{id}/traits`, `/v1/concept/{id}/synonyms` und
-    `/v1/translate` daraus). `/openapi` folgt in einem späteren SP. Die maßgebliche OpenAPI-Spezifikation liegt unter
+    `/v1/translate` daraus). `/openapi` folgt in einem späteren SP. Die
+    maßgebliche OpenAPI-Spezifikation liegt unter
     `api/openapi/openapi.yaml`.
 
     Der Offline-Export (`hostus bundle`) ist kein HTTP-Endpunkt und daher
@@ -417,10 +418,16 @@ Einträge in der Liste auftauchen — nicht, wie gründlich geurteilt wurde.
 - `relevance` (optional): `all` (Standard) oder `publication`. Jeder andere
   Wert liefert `400 INVALID_QUERY` und **nennt den Wert**.
 - `rank` (optional): die Rangstufe, auf der publiziert wird. `species`
-  schließt die von UC5 genannten untergeordneten Ränge aus (`VARIETY`,
-  `SUBVARIETY`, `FORM`, `SUBFORM`). Fehlt der Parameter, wird **kein** Rang
-  ausgeschlossen — der Fall einer vollständigen infraspezifischen
-  Behandlung. Ein syntaktisch gültiger, aber nicht unterstützter Rang
+  schließt **genau die vier von UC5 genannten** untergeordneten Ränge aus:
+  `VARIETY`, `SUBVARIETY`, `FORM`, `SUBFORM`. Die Nothotaxon-Ränge
+  (`NOTHOSUBSPECIES`, `NOTHOVARIETY`, `NOTHOFORM`) sind **nicht** darunter
+  und passieren den Filter, obwohl sie unterhalb der Art stehen — im
+  gemessenen Index betrifft das 190 Synonymzeilen (130/51/9). UC5 nennt sie
+  nicht, und hostus erfindet keine Regel, die der Use Case nicht verlangt
+  hat. Ebenso wenig ausgeschlossen wird `OTHER` (6.409 Zeilen), dessen
+  ursprüngliche Schreibweise deshalb als `rank_verbatim` mitgeliefert wird.
+  Fehlt der Parameter, wird **kein** Rang ausgeschlossen — der Fall
+  einer vollständigen infraspezifischen Behandlung. Ein syntaktisch gültiger, aber nicht unterstützter Rang
   (`genus`) wird **abgelehnt**, nicht still ignoriert: eine
   unbeabsichtigt ungefilterte Antwort an einen Aufrufer, der einen Filter
   angefordert hat, wäre die gefährlichere Variante.
@@ -450,8 +457,9 @@ Jedes darin genannte Feld wird pro Eintrag mitgeliefert.
 GET /v1/concept/wcvp:concept:405825/synonyms?relevance=publication&rank=species&max=3
 ```
 
-**Beispiel-Response** (gegen den realen WCVP-Index, gekürzt um die
-identischen Einträge 2 und 3):
+**Beispiel-Response** (gegen den realen WCVP-Index; Eintrag 3,
+*Weingaertneria canescens*, ist der Kürze halber weggelassen — er ist bis
+auf Name und Position identisch mit Eintrag 2):
 
 ```json
 {
@@ -542,6 +550,12 @@ die Spalte dreiwertig ist — nicht, weil eine Antwort ihn heute zeigen wird.
 
 #### Weitere Zusicherungen
 
+- **`rank_verbatim`** trägt die ursprüngliche Schreibweise, wenn `rank`
+  `OTHER` ist (`proles`, `lusus`, `microgène`, `Convariety`, `grex`) —
+  dieselbe Begründung wie bei `GET /v1/concept/{id}`: `OTHER` ist der eine
+  Rangwert, der die Quellschreibweise durch das Sammelbecken verloren hat.
+  Bei jedem kanonisch benannten Rang fehlt das Feld, weil `rank` die
+  Schreibweise dort bereits exakt benennt.
 - **Jedes Urteilsfeld ist immer vorhanden**, auch wenn es `false` ist:
   `is_basionym: false` ist eine Antwort, und ein weggelassenes Feld wäre
   von „nicht geprüft" nicht zu unterscheiden. Ausgelassen werden nur

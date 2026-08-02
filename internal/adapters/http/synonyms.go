@@ -56,7 +56,21 @@ type synonymDetailDTO struct {
 	Authorship string `json:"authorship,omitempty"`
 	// Rank is the SYNONYM's own taxonomic rank, not the caller's
 	// publication level (that is echoed once, as publication_rank).
-	Rank               string `json:"rank"`
+	Rank string `json:"rank"`
+	// RankVerbatim is the original source "taxonrank" spelling when Rank is
+	// "OTHER", following conceptDTO.RankVerbatim's precedent for the same
+	// reason: OTHER is the one rank value that has thrown the source
+	// spelling away by collapsing it into a catch-all.
+	//
+	// It is not cosmetic here. 6.409 synonym rows in the measured index rank
+	// as OTHER and 3.731 of them carry a populated rank_verbatim (`proles`
+	// 2.338, `lusus` 658, `microgène` 336, `Convariety` 184, `grex` 41).
+	// None of them is excluded by rank=species — correctly, since UC5 names
+	// no exclusion for them — so they DO reach publication lists, where a
+	// bare "OTHER" would tell a botanist nothing about what they are
+	// looking at. Omitted for every canonically-ranked synonym, where Rank
+	// already identifies the spelling exactly.
+	RankVerbatim       string `json:"rank_verbatim,omitempty"`
 	Typification       string `json:"typification"`
 	IsBasionym         bool   `json:"is_basionym"`
 	NomStatus          string `json:"nom_status,omitempty"`
@@ -117,6 +131,7 @@ func synonymsToDTO(res application.SynonymsResult) synonymsResponseDTO {
 			Canonical:          r.Candidate.Canonical,
 			Authorship:         r.Candidate.Authorship,
 			Rank:               string(r.Candidate.Rank),
+			RankVerbatim:       r.Candidate.RankVerbatim,
 			Typification:       string(r.Typification),
 			IsBasionym:         r.Candidate.IsBasionym,
 			NomStatus:          r.Candidate.NomStatus,
@@ -185,7 +200,10 @@ func handleSynonyms(repo output.Repository) http.HandlerFunc {
 
 		max, err := parseSynonymMax(query.Get("max"))
 		if err != nil {
-			httperr.InvalidQueryError(w, "max must be an integer")
+			// Names the value like every other 400 on this endpoint (and
+			// like the OpenAPI/reference doc promise): a parse failure is
+			// still a rejected value, not a nameless one.
+			httperr.InvalidQueryError(w, fmt.Sprintf("max %q is not an integer", query.Get("max")))
 			return
 		}
 
@@ -220,7 +238,11 @@ func writeSynonymsError(w http.ResponseWriter, err error, query url.Values) {
 		httperr.InvalidQueryError(w, fmt.Sprintf("unknown relevance %q (supported: %s, %s)",
 			query.Get("relevance"), application.RelevanceAll, application.RelevancePublication))
 	case errors.Is(err, application.ErrInvalidPublicationRank):
-		httperr.InvalidQueryError(w, fmt.Sprintf("unsupported rank %q (supported: %s)",
+		// The escape hatch belongs in the message: without it "unsupported
+		// rank \"genus\"" reads as "hostus does not do genus-level
+		// synonyms", when what `rank` actually names is the level the CALLER
+		// publishes at — and omitting it disables rank exclusion entirely.
+		httperr.InvalidQueryError(w, fmt.Sprintf("unsupported rank %q (supported: %s; omit rank for no rank exclusion)",
 			query.Get("rank"), application.PublicationRankSpecies))
 	case errors.Is(err, application.ErrInvalidMax):
 		httperr.InvalidQueryError(w, fmt.Sprintf("max %q is not in [0, %d]",

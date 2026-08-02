@@ -373,15 +373,25 @@ paths:
           in: query
           required: false
           description: >-
-            Die Rangstufe, auf der publiziert wird. `species` schließt die
-            von UC5 genannten untergeordneten Ränge aus (VARIETY,
-            SUBVARIETY, FORM, SUBFORM). Fehlt der Parameter, wird KEIN Rang
-            ausgeschlossen (Fall: vollständige infraspezifische
-            Behandlung). Ein syntaktisch gültiger, aber nicht unterstützter
-            Rang (z. B. `genus`) wird mit 400 ABGELEHNT statt still
-            ignoriert — ein stillschweigend ungefiltertes Ergebnis an einen
-            Aufrufer, der einen Filter angefordert hat, wäre die
-            gefährlichere Antwort.
+            Die Rangstufe, auf der publiziert wird — NICHT ein Filter auf
+            den Rang der Synonyme. `species` schließt genau die vier von
+            UC5 genannten untergeordneten Ränge aus: VARIETY, SUBVARIETY,
+            FORM, SUBFORM. Die Nothotaxon-Ränge (NOTHOSUBSPECIES 130,
+            NOTHOVARIETY 51, NOTHOFORM 9) und OTHER (6.409) sind NICHT
+            darunter und passieren den Filter, obwohl sie unterhalb der Art
+            stehen: UC5 nennt sie nicht, und hostus erfindet keine Regel,
+            die der Use Case nicht verlangt hat.
+
+
+            Fehlt der Parameter, wird KEIN Rang ausgeschlossen (Fall:
+            vollständige infraspezifische Behandlung). Ein syntaktisch
+            gültiger, aber nicht unterstützter Rang (z. B. `genus`) wird
+            mit 400 ABGELEHNT statt still ignoriert — ein stillschweigend
+            ungefiltertes Ergebnis an einen Aufrufer, der einen Filter
+            angefordert hat, wäre die gefährlichere Antwort. Die
+            Fehlermeldung nennt deshalb auch den Ausweg ("omit rank for no
+            rank exclusion"), damit sie nicht als "hostus kennt keine
+            Gattungs-Synonyme" missverstanden wird.
           schema:
             type: string
             enum: [species]
@@ -414,8 +424,9 @@ paths:
         '400':
           description: >-
             `relevance` unbekannt, `rank` nicht unterstützt, oder `max`
-            nicht numerisch bzw. außerhalb [0, 2000]. Die Meldung nennt den
-            beanstandeten Wert.
+            nicht numerisch bzw. außerhalb [0, 2000]. Die Meldung nennt in
+            JEDEM dieser vier Fälle den beanstandeten Wert wörtlich — auch
+            beim reinen Parse-Fehler (`max "viele" is not an integer`).
           content:
             application/json:
               schema:
@@ -676,6 +687,19 @@ components:
             Der Rang DES SYNONYMS (nicht die Publikationsstufe des
             Aufrufers — die steht einmalig in `publication_rank`).
           example: SPECIES
+        rank_verbatim:
+          type: string
+          description: >-
+            Die ursprüngliche Schreibweise aus der Quelle, wenn `rank`
+            `OTHER` ist — sonst weggelassen, da `rank` die Schreibweise
+            dort bereits exakt benennt (gleiche Regel wie bei
+            `Concept.rank_verbatim`). 6.409 Synonymzeilen ranken als
+            `OTHER`, 3.731 davon mit erfasster Schreibweise (`proles`
+            2.338, `lusus` 658, `microgène` 336, `Convariety` 184, `grex`
+            41). Keine davon wird von `rank=species` ausgeschlossen, sie
+            erreichen also Publikationslisten — wo ein blankes `OTHER`
+            nichts aussagt.
+          example: proles
         typification:
           type: string
           enum: [homotypic, unknown, heterotypic]

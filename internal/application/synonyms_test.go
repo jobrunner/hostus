@@ -93,6 +93,7 @@ func TestSynonyms_DefaultRelevanceIsAll(t *testing.T) {
 	if len(res.Synonyms) != 10 {
 		t.Fatalf("got %d synonyms, want all 10", len(res.Synonyms))
 	}
+	assertSummaryReconciles(t, res)
 }
 
 // TestSynonyms_PublicationDiffersFromUnfiltered is the endpoint's reason to
@@ -143,10 +144,24 @@ func TestSynonyms_UnfilteredCarriesTheSameJudgements(t *testing.T) {
 }
 
 // TestSynonyms_SummaryCountsWhatWasRemoved is the visibility requirement: a
-// response that carries four rows must still say that ten existed and which
-// rule took each of the other six.
+// response that carries two rows must still say that ten existed and which
+// rule took each of the other eight.
+//
+// It runs WITH Max on purpose. Without it the reconciliation below cannot
+// observe truncation accounting at all: folding Truncated into Excluded
+// (`Excluded["truncated"] = Truncated`) is the mutant that breaks
+// publishable + Sum(excluded) == Total on every capped response, and an
+// uncapped request leaves it alive. The invariant this endpoint exists to
+// guarantee has to be pinned on the path that can violate it.
 func TestSynonyms_SummaryCountsWhatWasRemoved(t *testing.T) {
-	res := runSynonyms(t, application.SynonymsRequest{ConceptID: "c-1", Relevance: "publication", PublicationRank: "species"})
+	res := runSynonyms(t, application.SynonymsRequest{ConceptID: "c-1", Relevance: "publication", PublicationRank: "species", Max: 2})
+
+	if res.Truncated != 2 {
+		t.Fatalf("Truncated = %d, want 2 — this test is worthless unless the response is actually capped", res.Truncated)
+	}
+	if len(res.Synonyms) != 2 {
+		t.Fatalf("got %d synonyms, want 2", len(res.Synonyms))
+	}
 
 	if res.Summary.Total != 10 {
 		t.Errorf("Summary.Total = %d, want 10 (every synonym, not just the returned ones)", res.Summary.Total)
@@ -166,13 +181,36 @@ func TestSynonyms_SummaryCountsWhatWasRemoved(t *testing.T) {
 	if len(res.Summary.UnclassifiedStatuses) != 1 || res.Summary.UnclassifiedStatuses[0] != ", sensu auct." {
 		t.Errorf("UnclassifiedStatuses = %v, want [\", sensu auct.\"]", res.Summary.UnclassifiedStatuses)
 	}
-	// The counters must reconcile: nothing may vanish unaccounted for.
+	// The counters must reconcile: nothing may vanish unaccounted for, and
+	// nothing may be counted twice. Truncation is deliberately NOT an
+	// exclusion — a capped synonym was not judged irrelevant — so folding it
+	// into Excluded would both mis-state the reason and break this sum.
+	assertSummaryReconciles(t, res)
+}
+
+// assertSummaryReconciles checks the two arithmetic invariants the exclusion
+// summary owes its readers on EVERY response:
+//
+//	publishable + Sum(excluded) == total        (nothing vanishes, nothing double-counted)
+//	returned + truncated        == publishable  (under relevance=publication)
+//
+// plus the rule that truncation never appears as an exclusion reason.
+func assertSummaryReconciles(t *testing.T, res application.SynonymsResult) {
+	t.Helper()
+	if _, ok := res.Summary.Excluded[domain.SynonymExclusion("truncated")]; ok {
+		t.Errorf("Excluded carries a %q key: truncation is not an exclusion reason and must not be counted as one (%v)", "truncated", res.Summary.Excluded)
+	}
 	sum := res.Summary.Publishable
 	for _, n := range res.Summary.Excluded {
 		sum += n
 	}
 	if sum != res.Summary.Total {
-		t.Errorf("publishable + excluded = %d, want Total = %d", sum, res.Summary.Total)
+		t.Errorf("publishable + excluded = %d, want Total = %d (excluded = %v)", sum, res.Summary.Total, res.Summary.Excluded)
+	}
+	if res.Relevance == application.RelevancePublication {
+		if got := len(res.Synonyms) + res.Truncated; got != res.Summary.Publishable {
+			t.Errorf("returned + truncated = %d, want Publishable = %d", got, res.Summary.Publishable)
+		}
 	}
 }
 
@@ -195,6 +233,7 @@ func TestSynonyms_MaxTruncatesAfterRanking(t *testing.T) {
 	if res.Summary.Total != 10 || res.Summary.Publishable != 4 {
 		t.Errorf("truncation changed the summary: %+v — it must describe the concept, not the page", res.Summary)
 	}
+	assertSummaryReconciles(t, res)
 }
 
 func TestSynonyms_MaxAboveTheListLengthTruncatesNothing(t *testing.T) {

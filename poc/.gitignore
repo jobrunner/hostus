@@ -4,3 +4,11 @@
 *.tsv
 *.csv
 /measure/out/
+
+# P8b CDM crawl cache (bulk, resumable, never committed)
+*/.cache/
+# ...but the drawn sample IS the reproducibility contract and stays in git
+!/p08b_cdm_sample/sample.tsv
+
+# Python bytecode from the probe helpers
+__pycache__/

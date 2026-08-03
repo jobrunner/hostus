@@ -549,7 +549,56 @@ func copyConceptScopedTables(ctx context.Context, src, bundle *DB, idsJSON strin
 		return err
 	}
 
-	return nil
+	// sec_reference SCOPED to the reference spaces the copied concepts
+	// actually name — deliberately NOT copied in full the way xref_source and
+	// trait_vocabulary above are.
+	//
+	// The difference is what the rows contain. xref_source and
+	// trait_vocabulary hold provenance ABOUT a source (id, version, license,
+	// source url); sec_reference.title holds harvested CONTENT — the citation
+	// strings lifted out of the source itself. Copying all of them unscoped
+	// would ship 18 citations from a redistribution=unknown source into an
+	// area-scoped bundle whose gate never fired, because CDM concepts carry
+	// no distribution rows and so fall out of scopeConceptIDs entirely: no
+	// refusal, and nothing recorded in bundle_meta.restricted_sources either.
+	// Scoping closes that, and it closes it structurally — a bundle can only
+	// carry a citation for a concept it also carries.
+	//
+	// Note this applies to a WHOLE-DATABASE export too, not just an
+	// area-scoped one: a sec_reference row that no concept names is dropped
+	// there as well. That is a deliberate consequence of scoping structurally
+	// rather than by export mode — an orphan citation is by definition
+	// unreachable from any concept in the bundle, so nothing can miss it.
+	// Unreachable in practice today, since the CDM ingest only ever writes a
+	// sec_reference it is about to attach to a concept.
+	//
+	// The analogous unscoped copy of xref_source/trait_vocabulary is left
+	// as-is: it is the same SHAPE of leak but only of source metadata, those
+	// tables predate this task, and narrowing them is a change to SP3/SP4
+	// behavior that belongs with its own measurement rather than smuggled in
+	// here.
+	if err := copyRows(ctx, src, bundle,
+		`SELECT id, title FROM sec_reference
+		 WHERE id IN (
+			SELECT DISTINCT sec_reference FROM taxon_concept
+			WHERE id IN (SELECT value FROM json_each(?))
+			  AND sec_reference IS NOT NULL AND sec_reference <> ''
+		 )`, []any{idsJSON},
+		`INSERT INTO sec_reference (id, title) VALUES (?,?)`); err != nil {
+		return err
+	}
+
+	// concept_relation is scoped by BOTH ends, not one: the column is a
+	// foreign key on either side, and the bundle connection enforces foreign
+	// keys, so copying an edge whose partner concept is out of scope would
+	// fail the insert. An area-scoped bundle therefore carries only the
+	// relations wholly inside its scope — which is also the honest answer,
+	// since half an edge asserts nothing.
+	return copyRows(ctx, src, bundle,
+		`SELECT from_concept, to_concept, relation, source FROM concept_relation
+		 WHERE from_concept IN (SELECT value FROM json_each(?))
+		   AND to_concept IN (SELECT value FROM json_each(?))`, []any{idsJSON, idsJSON},
+		`INSERT INTO concept_relation (from_concept, to_concept, relation, source) VALUES (?,?,?,?)`)
 }
 
 // copyDistribution copies distribution rows for the concepts named by

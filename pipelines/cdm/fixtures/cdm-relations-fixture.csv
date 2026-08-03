@@ -1,0 +1,15 @@
+from_uuid|to_uuid|relation_type|relation_symbol|is_concept_relation|relationship_uuid
+6a24cc06-c5fc-4b29-aaea-ee21be1130a6|568cacd9-c027-43f2-958c-af7ea6e0baef|Includes|⊃|true|06adde48-db49-4920-9f99-5eae5c631da7
+b7a352aa-1f73-41f3-a4e3-b24fc1c2cd5f|872088a4-95f4-472c-ae79-a29028bb3fbf|Congruent to|≜|true|0782fd57-11e5-43ae-8a65-f383ff9eff61
+a8dae2f7-9dd8-4d51-8c62-6fe6254e41dc|ef74d1fe-08cc-43ab-b362-2854a515fc0b|Overlaps|⊕|true|098a82cc-0f2d-4f79-a88f-89a7c27e15d5
+3a4d27c5-9db4-4e5f-8ee2-ce97e95c82eb|f28d9644-90af-451c-a056-ba900bcb81df|Included in or Includes or Overlaps|⊂⊃⊕|true|0ab86bd2-d82c-46ec-8d71-fcc5ce2d7554
+2a9439bf-0cd9-4d49-a140-7ee0e695de06|b50fb70f-d829-4ef6-b454-11fa9a864836|is pro parte synonym for|p.p. for|true|2266eb24-da40-4ba7-ab5c-a9301c966bee
+0cf5a6fe-b1df-4f4f-85a8-31fef4be2a68|872088a4-95f4-472c-ae79-a29028bb3fbf|Congruent to|≜|true|2d14039b-f3a5-4a80-914f-22ff29e8714a
+122053a6-abb7-4d4c-9f87-b7b8f6d1afef|872088a4-95f4-472c-ae79-a29028bb3fbf|is misapplied name for|misapplied for|false|3a04771f-7862-409c-97e9-2f5ff302d7e6
+122053a6-abb7-4d4c-9f87-b7b8f6d1afef|872088a4-95f4-472c-ae79-a29028bb3fbf|Congruent to|≜|true|3c373575-96ae-47b8-b63b-b3fbdb9b2413
+7a63f215-0a41-4b7e-9394-bda4521d6ad1|872088a4-95f4-472c-ae79-a29028bb3fbf|Congruent to|≜|true|7f0a3c0c-fcd0-48eb-b6f8-802745c647aa
+90ee17be-d455-4564-949d-9c53e27a6a6f|872088a4-95f4-472c-ae79-a29028bb3fbf|Congruent to|≜|true|887d7558-9917-4e0e-9e81-f65f1726e730
+3d256539-d7f7-4dd1-ad7f-cd6e4c141f24|872088a4-95f4-472c-ae79-a29028bb3fbf|Congruent to|≜|true|e6fca178-836e-4fc6-b77a-0c91468ef7e9
+140ae1fe-cbae-41e2-9017-a4fb8fd46171|872088a4-95f4-472c-ae79-a29028bb3fbf|Congruent to|≜|true|ecc91e7e-5838-44ea-9dd3-280276f8ed0c
+b0d35335-63e6-41ab-bdb0-d01851134e9c|872088a4-95f4-472c-ae79-a29028bb3fbf|Congruent to|≜|true|fc35bfb1-e354-431b-8ea0-bc973a4fca94
+61c2bc4f-a23d-4160-8f14-625b4484fc2f|872088a4-95f4-472c-ae79-a29028bb3fbf|Congruent to|≜|true|fe89d0ca-ea19-479b-b87a-c369d88aff8d

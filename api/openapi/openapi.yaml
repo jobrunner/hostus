@@ -7,13 +7,16 @@
 # This is the baseline the `openapi-diff.yml` CI workflow diffs future
 # changes against (breaking-change detection via oasdiff).
 #
+# SP5 adds `POST /v1/translate` (concept translation between sec. reference
+# spaces, UC6) on top of the below.
+#
 # SP1 adds the local SQLite/FTS5-backed `/v1/concept/{id}`, `/v1/xref` and
 # `/v1/match` endpoints on top of the SP0 health/metrics skeleton. SP2 adds
 # the area-/rank-filtered, priority-ranked `GET /v1/suggest` autosuggest
 # endpoint. SP3 adds `GET /v1/concept/{id}/traits` (EIVE/Tichý/Midolo
 # ecological indicator values, grouped per vocabulary, per-value scale).
 # Their shapes below mirror internal/adapters/http's DTOs exactly — no
-# aspirational fields (translate is still a later SP).
+# aspirational fields.
 openapi: 3.0.3
 info:
   title: hostus API
@@ -24,7 +27,7 @@ info:
     (aktuell: WCVP/POWO; COL XR, Euro+Med, FloraVeg.EU folgen). GBIF ist
     höchstens eine von mehreren Ingest-/Enrichment-Quellen, kein
     Laufzeit-Provider.
-  version: 0.3.0
+  version: 0.5.0
   license:
     name: MIT
 servers:
@@ -307,6 +310,75 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /v1/translate:
+    post:
+      operationId: postTranslate
+      summary: Konzept zwischen sec.-Referenzräumen übersetzen (UC6)
+      description: >-
+        Übersetzt ein Konzept aus seinem `sec.`-Referenzraum in einen
+        anderen: "dieses Konzept sec. Rothmaler — was ist es sec.
+        Wisskirchen & Haeupler 1998, und wie genau hängen die beiden
+        zusammen?". Zwei Konzepte mit gleichem Namen und verschiedenem
+        `sec.` sind absichtlich getrennte Zeilen; dieser Endpunkt liefert
+        die typisierte Relation zwischen ihnen.
+
+
+        Drei Eigenschaften, auf die sich Clients verlassen dürfen:
+        (1) `is_equality` ist das EINZIGE Feld, das als "dasselbe Taxon"
+        gelesen werden darf, und es ist genau bei `relation: congruent`
+        `true`; `overlaps` und das bewusst unbestimmte
+        `includes_or_included_in_or_overlaps` (⊂⊃⊕) sind nie eine
+        Gleichsetzung. (2) Ist keine Relation erfasst, ist die Antwort ein
+        200 mit `result: no_relation_recorded` und leerem `candidates` —
+        nie ein ersatzweiser Namenstreffer. (3) Es wird GENAU EINE
+        Relationskante verfolgt; `max_hops` != 1 wird mit 400 abgelehnt.
+
+
+        Lizenzhinweis: die Konzeptrelationen stammen aus der CDM-Ernte
+        (BGBM/EDIT), für die keine Lizenz auffindbar ist
+        (`redistribution: unknown`). Dieser Endpunkt darf auf dieser
+        Datenbasis ohne schriftliche Freigabe nicht öffentlich betrieben
+        werden.
+      tags:
+        - taxa
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TranslateRequest'
+      responses:
+        '200':
+          description: >-
+            Übersetzungsergebnis. `result` ist `translated` oder
+            `no_relation_recorded`; im zweiten Fall ist `candidates` ein
+            leeres Array (nicht weggelassen).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslateResponse'
+        '400':
+          description: >-
+            Nicht parsbarer Body, keins oder beides von
+            `concept_id`/`verbatim`, fehlendes `target_space`, oder
+            `max_hops` != 1.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Unbekannte `concept_id` oder unbekannter `target_space`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: '`verbatim` lässt sich nicht auf genau ein Konzept auflösen (UNRESOLVABLE).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 tags:
   - name: health
     description: Liveness- und Readiness-Probes für Orchestratoren.
@@ -456,6 +528,221 @@ components:
           items:
             $ref: '#/components/schemas/Distribution'
 
+    TranslateRequest:
+      type: object
+      required: [target_space]
+      description: >-
+        Genau eines von `concept_id` und `verbatim` muss gesetzt sein.
+      properties:
+        concept_id:
+          type: string
+          description: 'hostus-Konzept-Id, z. B. `cdm:concept:<uuid>`.'
+        verbatim:
+          type: string
+          description: >-
+            Name, der zuerst über dieselbe Auflösung wie `POST /v1/match`
+            aufgelöst wird. Ein Fuzzy-Treffer setzt `requires_review` auf
+            der gesamten Antwort.
+        target_space:
+          type: string
+          description: Id des Ziel-`sec.`-Referenzraums.
+        max_hops:
+          type: integer
+          description: >-
+            Muss 1 sein (Default). Jeder andere Wert liefert 400 — eine
+            transitive Kette über das gemessene Relationsvokabular ist
+            nicht allgemein gültig.
+        include_name_candidates:
+          type: boolean
+          description: >-
+            Schaltet den ausdrücklich NICHT-relationalen Block
+            namensgleicher Konzepte frei (Default false).
+    SecReference:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+          description: Zitation, sofern eine `sec_reference`-Zeile existiert.
+    TranslateSource:
+      type: object
+      required: [concept_id, canonical, rank, sec]
+      properties:
+        concept_id:
+          type: string
+        canonical:
+          type: string
+        authorship:
+          type: string
+        rank:
+          type: string
+        sec:
+          $ref: '#/components/schemas/SecReference'
+    TranslateEntry:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [concept_id, verbatim]
+        verbatim:
+          type: string
+        match_type:
+          type: string
+        confidence:
+          type: number
+          format: double
+        note:
+          type: string
+    RelationStatement:
+      type: object
+      required: [from, relation, to]
+      description: >-
+        Die gespeicherte Aussage, wortwörtlich. hostus speichert eine
+        Relation in der Richtung, in der die Quelle sie nennt, und legt
+        keine gespiegelte Zeile an.
+      properties:
+        from:
+          type: string
+        relation:
+          type: string
+        to:
+          type: string
+    TranslateCandidate:
+      type: object
+      required: [concept_id, canonical, rank, status, sec, stored_relation, relation_from_source, has_inverse, direction, statement, is_equality, hops]
+      properties:
+        concept_id:
+          type: string
+        canonical:
+          type: string
+        authorship:
+          type: string
+        rank:
+          type: string
+        status:
+          type: string
+        sec:
+          $ref: '#/components/schemas/SecReference'
+        stored_relation:
+          type: string
+          description: >-
+            Die Relation der GESPEICHERTEN Zeile. Ihre Richtung hängt von
+            `direction` ab und ist NICHT quellenseitig zu lesen — deshalb
+            heißt das Feld nicht `relation`: CDM emittiert ausschließlich
+            die `Includes`-Richtung, eingehende Kanten sind häufig, und ein
+            Client, der den kurzen Namen quellenseitig läse, bekäme die
+            Aussage verkehrt herum. `includes_or_included_in_or_overlaps`
+            (⊂⊃⊕) wird NIE auf `overlaps` eingeebnet.
+          enum:
+            - congruent
+            - not_congruent
+            - includes
+            - included_in
+            - overlaps
+            - includes_or_included_in_or_overlaps
+            - pro_parte
+        relation_from_source:
+          type: string
+          nullable: true
+          description: >-
+            Die RICHTUNGSSICHERE Lesart (Quelle → Kandidat); bei einer
+            eingehenden `includes`-Kante also `included_in`. Immer
+            vorhanden; ausdrücklich `null`, wenn keine sinnvolle Umkehrung
+            existiert (eingehende `pro_parte`-Kante) — hostus erfindet
+            keine, und ein fehlender Schlüssel läse sich wie "unbekannt".
+          enum:
+            - congruent
+            - not_congruent
+            - includes
+            - included_in
+            - overlaps
+            - includes_or_included_in_or_overlaps
+            - pro_parte
+            - null
+        has_inverse:
+          type: boolean
+          description: >-
+            Ob `relation_from_source` einen Wert trägt — prüfbar ohne
+            Null-Behandlung. Immer vorhanden.
+        direction:
+          type: string
+          enum: [source_to_target, target_to_source]
+        statement:
+          $ref: '#/components/schemas/RelationStatement'
+        is_equality:
+          type: boolean
+          description: >-
+            Das EINZIGE Feld, das als "dasselbe Taxon" gelesen werden darf.
+            Genau bei `congruent` true. Immer vorhanden, auch wenn false.
+        hops:
+          type: integer
+        source:
+          type: string
+        note:
+          type: string
+          description: >-
+            Deutschsprachige Erläuterung, warum dieses Ergebnis keine
+            Gleichsetzung ist bzw. warum keine Umkehrrichtung existiert.
+    TranslateNameCandidate:
+      type: object
+      required: [concept_id, canonical, sec, requires_review]
+      description: >-
+        Ein namensgleiches Konzept des Zielraums. KEINE Übersetzung: es
+        trägt bewusst kein Relationsfeld, weil keine Quelle eine Beziehung
+        behauptet.
+      properties:
+        concept_id:
+          type: string
+        canonical:
+          type: string
+        authorship:
+          type: string
+        sec:
+          $ref: '#/components/schemas/SecReference'
+        requires_review:
+          type: boolean
+    TranslateResponse:
+      type: object
+      required: [source, target_space, entry, max_hops, result, candidates, requires_review, backbone_versions]
+      properties:
+        source:
+          $ref: '#/components/schemas/TranslateSource'
+        target_space:
+          $ref: '#/components/schemas/SecReference'
+        entry:
+          $ref: '#/components/schemas/TranslateEntry'
+        max_hops:
+          type: integer
+          description: Immer 1 — die Ein-Hop-Grenze wird ausgesprochen, nicht angenommen.
+        result:
+          type: string
+          enum: [translated, no_relation_recorded]
+        candidates:
+          type: array
+          description: >-
+            Bei `no_relation_recorded` ein LEERES Array, nie weggelassen —
+            die leere Antwort ist die Antwort.
+          items:
+            $ref: '#/components/schemas/TranslateCandidate'
+        unrelated_name_candidates:
+          type: array
+          description: >-
+            Nur bei `include_name_candidates: true` UND ohne gefundene
+            Relation. Eigener Schlüssel, damit ein Client, der
+            `candidates` iteriert, nie einen Namensraten sieht.
+          items:
+            $ref: '#/components/schemas/TranslateNameCandidate'
+        requires_review:
+          type: boolean
+        note:
+          type: string
+        backbone_versions:
+          type: object
+          additionalProperties:
+            type: string
     ErrorResponse:
       type: object
       required: [error]

@@ -7,6 +7,165 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (SP5, Task 4 — `POST /v1/translate`)
+- **`POST /v1/translate`**: Übersetzung eines Konzepts zwischen
+  `sec.`-Referenzräumen (UC6). Einstieg über `concept_id` **oder**
+  `verbatim` (dieselbe Auflösung wie `POST /v1/match`, inklusive der Regel,
+  dass ein Fuzzy-Treffer **immer** `requires_review: true` setzt) plus
+  `target_space`. Die Antwort ist die **abgeleitete** `sec_inference`-
+  Struktur (Architektur-Spec §4.3) — keine persistierte Tabelle.
+- **Nur `congruent` ist eine Gleichsetzung.** `domain.Relation.IsEquality`
+  hält diese Regel an genau einer Stelle; jeder Kandidat trägt
+  `is_equality` explizit (auch `false` — ein fehlendes Feld läse sich wie
+  „unbekannt") plus eine deutschsprachige Begründung. `overlaps` und das
+  bewusst unbestimmte ⊂⊃⊕ (`includes_or_included_in_or_overlaps`) bleiben
+  als das sichtbar, was sie sind, und werden nicht eingeebnet.
+- **Ehrliche Richtung**: hostus speichert Relationen nur in der
+  Quellrichtung, deshalb liefert jeder Kandidat die gespeicherte Aussage
+  (`statement`), deren Relation (`stored_relation`), die Richtung
+  (`direction`) und die richtungssichere quellenseitige Lesart
+  (`relation_from_source` + `has_inverse`). Ein Feld namens `relation` gibt
+  es **bewusst nicht**: CDM emittiert ausschließlich die
+  `Includes`-Richtung, eingehende Kanten sind also häufig, und ein Client
+  mit `if c.relation == "includes"` läse eine eingehende Kante genau
+  verkehrt herum. `relation_from_source` ist immer vorhanden und
+  ausdrücklich `null` (nicht weggelassen), wenn keine sinnvolle Umkehrung
+  existiert (eingehende `pro_parte`-Kante) — hostus erfindet keine.
+- **Genau ein Hop**, ohne Konfigurationsmöglichkeit: eine transitive Kette
+  ist über dieses Vokabular nicht allgemein gültig (`overlaps ∘ overlaps`
+  sagt nichts, `⊂⊃⊕ ∘ irgendwas` ist undefiniert). `max_hops` steht auf
+  jeder Antwort; `max_hops != 1` wird mit `400 INVALID_QUERY` **benannt**
+  abgelehnt statt still zu einer Ein-Hop-Antwort zu degradieren.
+- **Keine Relation ist eine Antwort, kein Fehler**: `200` mit
+  `result: "no_relation_recorded"` und leerem (nie weggelassenem)
+  `candidates`. Ein Namenstreffer wird **nie** ersatzweise als Übersetzung
+  ausgeliefert. Optional (`include_name_candidates: true`) erscheinen
+  namensgleiche Konzepte unter dem eigenen Schlüssel
+  `unrelated_name_candidates`, ohne Relationsfeld und mit
+  `requires_review: true`.
+- Fehlerabbildung: unbekannte `concept_id` **oder** unbekannter
+  `target_space` → `404 NOT_FOUND` (ein Tippfehler im Zielraum darf nicht
+  wie „keine Relation erfasst" aussehen); nicht auflösbares `verbatim` →
+  `422 UNRESOLVABLE`.
+- Neue Repository-Methoden `SecReferenceByID` und `ConceptRelationsInSec`
+  (Ein-Hop-Kanten in **beiden** gespeicherten Richtungen, Selbstkanten
+  ausgeschlossen, deterministisch sortiert; liefert das Quellkonzept mit,
+  damit „Id unbekannt" und „keine Relationen" von einer Abfrage entschieden
+  werden).
+- Doku: `docs/how-to/sec-translate-uc6.md` (deutsch — Lizenzlage der
+  CDM-Daten, Ein-Hop-Grenze, „keine Antwort heißt keine erfasste Relation")
+  und `docs/reference/http-api.md`; OpenAPI-Baseline um `/v1/translate`
+  erweitert.
+
+### Added (SP5, Task 3 — `sec.` als erstklassige Konzeptdimension)
+- `domain.SecReference` und `domain.Relation` mit strikter `ParseRelation`:
+  Das Relationsvokabular ist jetzt **gemessen statt angenommen**. Die fünf
+  Werte aus SP1 (`congruent|includes|included_in|overlaps|disjoint`) waren
+  eine Annahme; die Vollernte über 26.346 Relationen korrigierte sie in
+  beide Richtungen — `disjoint` kommt **nie** vor und ist entfallen, dafür
+  kamen `pro_parte`, `misapplied`, das genuin **unsichere** ⊂⊃⊕
+  (`includes_or_included_in_or_overlaps`, wird **nicht** auf `overlaps`
+  eingeebnet) und `not_congruent` (genau 1 Zeile von 26.346) hinzu. Ein
+  unbekannter Wert bricht laut ab und nennt den Wert — die
+  `ParseRank`-Lektion, diesmal ohne lenienten Zwilling, weil eine Relation
+  eine wissenschaftliche Aussage ist und kein beschreibendes Metadatum.
+- `internal/adapters/cdm`: `ReadConcepts`/`ReadRelations` für die beiden
+  kanonischen CDM-CSVs (Pipe-CSV mit RFC-4180-Quoting, gesammelte Fehler mit
+  Zeilennummern, keine Panics). `is_concept_relation` ist ein **Tri-State**
+  (`true`/`false`/leer = unbekannt), leerer `status` bleibt leer.
+- `application.IngestCDM`: strikt zweiphasiger Ingest der CDM-Konzepte als
+  **zweiter Backbone** (`cdm:concept:<uuid>`, `sec_reference` gefüllt) —
+  bewusst eigene Zeilen neben den WCVP-Konzepten desselben Namens.
+  Misapplied-Name-Zeilen (`conceptRelationship: false`) sind **keine**
+  Konzeptrelationen und werden verworfen, gezählt und bemustert;
+  Relationen werden **nur in der Quellrichtung** gespeichert (Inversion ist
+  über `domain.Relation.Inverse` eine Abfragezeit-Frage), nicht auflösbare
+  Enden werden gezählt und bemustert, brechen den Ingest aber nie ab.
+- Schema: neue Tabelle `sec_reference`, Index auf
+  `taxon_concept(sec_reference)`, erweitertes `relation`-Vokabular und ein
+  auf `(from_concept, to_concept, relation, source)` verbreiterter
+  Primärschlüssel von `concept_relation` — vorher überschrieben sich zwei
+  verschiedene Relationstypen desselben Paares still. Altbestände werden
+  beim `Open` per `PRAGMA table_info`-geprüfter Migration umgebaut.
+- Manifest: `concept_sources:` mit `redistribution: unknown` (CDM hat
+  **keine** auffindbare Lizenz), schema-validiert wie jede andere Quelle;
+  `hostus ingest` gibt Konzeptquellen samt aller Verlustzähler aus.
+- Offline-Bundle: `sec_reference` (auf die Referenzräume der kopierten
+  Konzepte gescopet, weil `title` geernteter Inhalt ist) und
+  `concept_relation` (beidseitig gescopet) werden mitkopiert; das
+  Redistributionsgatter verweigert einen Bundle-Export mit CDM-Daten per
+  Default und protokolliert die Quelle unter `--force-include-restricted`.
+
+### Fixed (SP5, Task 3 — Review)
+- CDM-Ingest schreibt `parent_id` in einem **zweiten Unterlauf** (wie der
+  WCVP-Pfad). Vorher brach der Ingest ab, sobald ein Kind vor seinem Elter
+  in der Datei stand — gemessen am echten Artefakt betrifft das 312 der 697
+  Zeilen mit `parent_uuid`. Die Fixture kann das nicht zeigen, daher ein
+  SQLite-Test mit umgekehrter Reihenfolge.
+- Der Umbau des `concept_relation`-Primärschlüssels läuft jetzt in **einer
+  Transaktion**, prüft die Bedingung darin erneut, räumt eine
+  Scratch-Tabelle vorher weg und verifiziert das Ergebnis per
+  `PRAGMA foreign_key_check`. Beide Abbruchfenster der vorigen Fassung
+  (unöffenbare Datenbank bzw. stiller Datenverlust) sind zusätzlich
+  rückwärts reparierbar: eine liegengebliebene Scratch-Tabelle wird beim
+  `Open` zurückgeführt.
+- `internal/adapters/cdm`: Zeilennummern kommen aus `csv.Reader.FieldPos`
+  bzw. `csv.ParseError` statt aus einem Satzzähler (der bei mehrzeiligen
+  gequoteten Feldern driftet). Beschädigte Sätze brechen den Durchlauf
+  **nicht** mehr ab — ein `csv.ParseError` verbraucht Eingabe, also wird
+  jede spätere Zeile weiter gelesen; begrenzt (und dann ein **harter**
+  Fehler) ist nur noch der Lesevorgang, der **gar keine Eingabe
+  verbraucht** (klebriger I/O-Fehler). Vorher hätten 20 beschädigte Zeilen
+  den Rest der Datei still verworfen und trotzdem Erfolg gemeldet.
+- Die Wiederherstellung einer abgebrochenen `concept_relation`-Migration
+  läuft jetzt **innerhalb** des `foreign_keys=OFF`-Fensters und prüft
+  danach `PRAGMA foreign_key_check`. Vorher machte eine Scratch-Zeile mit
+  nicht auflösbarem Ende die Datenbank dauerhaft unöffenbar — mit einem
+  opaken Treiberfehler statt der benannten Meldung.
+- Beide Migrationstransaktionen nutzen `BEGIN IMMEDIATE` (sie lesen und
+  schreiben; unter WAL scheitert die Aufwertung eines einfachen `BEGIN`
+  sonst mit `SQLITE_BUSY_SNAPSHOT`, das `busy_timeout` nicht wiederholt),
+  und ein fehlgeschlagenes `PRAGMA foreign_keys = ON` verdeckt den
+  Migrationsfehler nicht mehr (`errors.Join`).
+- `internal/app/integration_test.go` an die neue `app.Ingest`-Signatur
+  angepasst; `make test-integration` kompiliert und läuft wieder.
+
+### Added (SP5, Vorarbeit)
+- Pipeline `pipelines/cdm/` (`build.sh`, `crawl.py`, `convert.py`,
+  `common.py`, README): resumierbare Ernte der 51.466 CDM-Konzepte aus
+  `rl_standardliste` in 18 `sec.`-Referenzräumen plus des Konzept­
+  relationsgraphen, ausgegeben als zwei kanonische, pipe-getrennte CSVs
+  (`cdm-concepts-canonical.csv`, `cdm-relations-canonical.csv`). Trägt
+  bewusst das **rohe** CDM-Vokabular in `rank` und `relation_type` (22 Ränge,
+  7 Relationstypen gemessen — einer mehr als Task 1s Stichprobe sah); das
+  Mapping gehört nach Task 3, wo ein unbekannter Wert laut abbricht
+  (`ParseRank`-Lektion). Auflösung der Relationen über eine globale
+  Kanten-Map ohne P8s Namensrestriktion, mit dem verbindlichen Falsifikator
+  aus `docs/research/cdm-sample.md`: Abbruch ohne CSV, sobald eine
+  Relations-UUID einen dritten Halter bekommt, plus Meldung der
+  verbleibenden Ein-Halter-UUIDs. Crawl-Etikette (ein ehrlicher User-Agent,
+  ≤ 1 req/s, harter Stopp statt Browser-UA bei 401/403, Backoff, Plattencache)
+  ist verbindlich implementiert. `status` trägt ausschließlich das rohe
+  `TaxonNodeDto.taxonStatus` und bleibt leer, wo der Baumlauf das Konzept
+  nicht erreicht hat; nichts wird synthetisiert. Beide CSVs sind
+  RFC-4180-gequotet (`csv`-Reader mit `Comma='|'` nötig, kein `split('|')`).
+  Exit-Codes trennen Falsifikator (`3`) von jedem anderen Konvertierungs­
+  fehler (`4`). Lizenzlage unverändert:
+  **keine Lizenzangabe auffindbar → `redistribution: unknown`, nur lokale
+  Auswertung**; committet ist neben den Skripten nur eine
+  De-minimis-Testfixture von 32 Zeilen, damit die Task-3-Tests offline laufen
+- Messsonde `poc/p08b_cdm_sample/` (`probe.sh` + `cdm_sample.py`, reproduzierbar
+  über Seed `20260802` und die committete `sample.tsv`) und der Bericht
+  `docs/research/cdm-sample.md`: die Zwei-Hop-Methode aus PoC P8 an einer
+  geschichteten Stichprobe von 500 CDM-Konzepten gemessen. Kernbefunde:
+  Relationsdichte ≈ 55 % datensatzweit (95-%-Cluster-Bootstrap 48–63 %),
+  Relations-UUIDs sind sehr gut gestützt echte Kantenidentitäten (gemessen
+  75,9 % Auflösung unter P8s Namensrestriktion, 79,1 % ohne sie; ≈ 100 % bei
+  Vollcrawl projiziert, gestützt auf 202/202 anomaliefreie Kanten und mit
+  einem Falsifikator für Task 2), drei Relationstypen außerhalb des
+  angenommenen SP1-Vokabulars, `sec.`→Klassifikation nur über eine
+  handgepflegte Crosswalk-Tabelle, Vollcrawl-Kosten 14–30 h bei 1 req/s
+
 hostus wird vom zustandslosen GBIF-Autosuggest-Proxy zum lokalen
 Multi-Backbone-Namens- und Merkmalsservice umgebaut (siehe
 `docs/superpowers/specs/2026-07-31-hostus-2.0-architecture.md`). Dieser

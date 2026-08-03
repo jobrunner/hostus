@@ -268,3 +268,61 @@ func TestPrintXrefReports_CleanSourcePrintsNoSampleLines(t *testing.T) {
 		t.Errorf("report %q, want no sample lines when nothing was unmatched or conflicting", got)
 	}
 }
+
+func TestPrintConceptSourceReports_LossCountersVisible(t *testing.T) {
+	var buf bytes.Buffer
+	printConceptSourceReports(&buf, []application.CDMIngestReport{{
+		Backbone: "cdm", Concepts: 18, ConceptsWritten: 18, SecReferences: 10,
+		Relations: 14, RelationsWritten: 13,
+		PerRelationType:   map[string]int{"congruent": 9, "includes": 1},
+		NonConcept:        1,
+		NonConceptSample:  []string{"3a04771f"},
+		UnresolvedEnds:    2,
+		UnresolvedSample:  []string{"aaa->ghost"},
+		UnresolvedParents: 1,
+		ReaderErrors:      0,
+		UnknownFlag:       3,
+		OtherRanks:        4,
+		OtherRankSample:   []application.RankVerbatimCount{{Verbatim: "Species Aggregate", Count: 4}},
+		Redistribution:    "unknown",
+	}})
+	out := buf.String()
+	for _, want := range []string{
+		"cdm: concepts=18 written=18 sec_spaces=10 relations=14 written=13",
+		"congruent: 9",
+		"misapplied/non-concept=1",
+		"unresolved ends=2",
+		"unresolved parents=1",
+		"unknown concept-relation flag=3",
+		"Species Aggregate 4",
+		"non-concept sample: 3a04771f",
+		"unresolved sample: aaa->ghost",
+		"redistribution=unknown",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestPrintConceptSourceReports_NoSourcesPrintsNothing(t *testing.T) {
+	var buf bytes.Buffer
+	printConceptSourceReports(&buf, nil)
+	if buf.Len() != 0 {
+		t.Errorf("want no output, got %q", buf.String())
+	}
+}
+
+func TestPrintConceptSourceReports_CleanSourcePrintsNoSampleLines(t *testing.T) {
+	var buf bytes.Buffer
+	printConceptSourceReports(&buf, []application.CDMIngestReport{{
+		Backbone: "cdm", Concepts: 1, ConceptsWritten: 1, SecReferences: 1,
+		Redistribution: "allowed",
+	}})
+	out := buf.String()
+	for _, unwanted := range []string{"sample:", "ranks:", "hinweis:"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("clean source must not print %q:\n%s", unwanted, out)
+		}
+	}
+}

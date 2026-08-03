@@ -82,7 +82,9 @@ CREATE INDEX IF NOT EXISTS idx_name_basionym_id ON name(basionym_id);
 -- vernacular.concept_id (PK is (concept_id, lang, name)),
 -- trait_value.concept_id (PK is (concept_id, vocab, vocab_version, dim)),
 -- and concept_relation.from_concept (PK is
--- (from_concept, to_concept, source)). Every other FK child column gets
+-- (from_concept, to_concept, relation, source) since SP5 widened it — see
+-- the note on that table below; from_concept is still the LEADING column,
+-- so the conclusion is unchanged). Every other FK child column gets
 -- an explicit index below, next to the table it lives on.
 
 -- Taxonomy.
@@ -223,13 +225,54 @@ CREATE TABLE IF NOT EXISTS trait_vocabulary (
   PRIMARY KEY (vocab, version)
 );
 
--- Concept relations (UC6). Created here but unused until SP3/SP5.
+-- sec. reference spaces (SP5). One row per bibliographic reference frame a
+-- concept's circumscription is stated in — "Wisskirchen & Haeupler 1998",
+-- "HEGI: Illustrierte Flora von Mitteleuropa", "TUTIN et al.: Flora
+-- Europaea", ... The CDM rl_standardliste harvest carries 18 of them.
+--
+-- taxon_concept.sec_reference stores the id of one of these rows, but is
+-- deliberately NOT declared a foreign key onto it: the column predates this
+-- table (SP1) and every backbone ingest before SP5 wrote the empty string
+-- there rather than NULL, which an FK would now reject. The lookup is a
+-- plain join instead.
+CREATE TABLE IF NOT EXISTS sec_reference (
+  id     TEXT PRIMARY KEY,   -- CDM citation uuid
+  title  TEXT NOT NULL       -- the citation as the source spells it
+);
+
+CREATE INDEX IF NOT EXISTS idx_taxon_concept_sec_reference ON taxon_concept(sec_reference);
+
+-- Concept relations (UC6, populated by SP5's CDM ingest).
+--
+-- The `relation` vocabulary below is MEASURED, not assumed. Until SP5 this
+-- column's comment read `congruent|includes|included_in|overlaps|disjoint`
+-- — five values SP1 assumed. A full crawl of the CDM rl_standardliste
+-- (26.346 relations, pipelines/cdm/cdm.summary.txt) corrected that
+-- assumption in both directions: `disjoint` NEVER occurs and has been
+-- dropped, `included_in` never occurs either but is retained as the
+-- documented inverse of `includes` (the source only ever states the
+-- `Includes` direction, and hostus stores the stated direction verbatim
+-- rather than materialising a mirror row), and three values the assumed
+-- five did not have DO occur — `pro_parte`, `misapplied` and the genuinely
+-- uncertain `includes_or_included_in_or_overlaps` (CDM's ⊂⊃⊕), which is
+-- never collapsed onto `overlaps`. `not_congruent` occurs exactly once in
+-- 26.346 rows. See internal/domain.Relation / ParseRelation, which is the
+-- single place this vocabulary is parsed and which fails loudly rather than
+-- coercing an unmapped value.
+--
+-- `relation` is part of the PRIMARY KEY. It was not in SP1's, which meant
+-- two DIFFERENT relation types asserted between the same concept pair by
+-- the same source would silently overwrite one another under
+-- INSERT OR REPLACE. CDM does emit two edges per pair (see the misapplied +
+-- congruent pair on Pinus abies -> Abies alba in the fixture), so this is a
+-- real case, not a hypothetical one. Legacy databases are migrated by
+-- migrateConceptRelationPK in db.go.
 CREATE TABLE IF NOT EXISTS concept_relation (
   from_concept  TEXT NOT NULL REFERENCES taxon_concept(id),
   to_concept    TEXT NOT NULL REFERENCES taxon_concept(id),
-  relation      TEXT NOT NULL,      -- congruent|includes|included_in|overlaps|disjoint
-  source        TEXT,               -- e.g. wisskirchen-1998
-  PRIMARY KEY (from_concept, to_concept, source)
+  relation      TEXT NOT NULL,      -- see the vocabulary note above (domain.Relation)
+  source        TEXT,               -- the backbone/source id asserting it, e.g. "cdm"
+  PRIMARY KEY (from_concept, to_concept, relation, source)
 );
 
 -- from_concept is the PK's leading column (skipped, see comment above);

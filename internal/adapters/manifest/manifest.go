@@ -76,11 +76,36 @@ type XrefSource struct {
 	Redistribution string `yaml:"redistribution" json:"redistribution"`
 }
 
+// ConceptSource is one pinned taxon-CONCEPT source entry (SP5): a source
+// that contributes concepts scoped by a sec. reference space plus the typed
+// relations between them (today: the CDM rl_standardliste harvest). It is
+// deliberately not a Backbone entry even though its concepts land in
+// taxon_concept under their own backbone_version row: it is pinned by TWO
+// canonical CSVs rather than one directory, and conflating the two shapes
+// would mean one of them carries a meaningless field.
+//
+// Concepts/Relations are resolved to absolute paths relative to the manifest
+// file by Parse, exactly like Backbone.Path.
+type ConceptSource struct {
+	ID        string `yaml:"id" json:"id"`
+	Version   string `yaml:"version" json:"version"`
+	License   string `yaml:"license,omitempty" json:"license,omitempty"`
+	SourceURL string `yaml:"source" json:"source"`
+	Concepts  string `yaml:"concepts" json:"concepts"`
+	Relations string `yaml:"relations" json:"relations"`
+	Note      string `yaml:"note,omitempty" json:"note,omitempty"`
+	// Redistribution is required (schema-enforced): allowed|restricted|unknown.
+	// CDM is "unknown" — no license is findable anywhere on the portal, the
+	// API or the payloads (pipelines/cdm/README.md).
+	Redistribution string `yaml:"redistribution" json:"redistribution"`
+}
+
 // Dataset is the parsed, validated contents of a dataset.yaml manifest.
 type Dataset struct {
 	Backbones         []Backbone        `yaml:"backbones" json:"backbones"`
 	TraitVocabularies []TraitVocabulary `yaml:"trait_vocabularies,omitempty" json:"trait_vocabularies,omitempty"`
 	XrefSources       []XrefSource      `yaml:"xref_sources,omitempty" json:"xref_sources,omitempty"`
+	ConceptSources    []ConceptSource   `yaml:"concept_sources,omitempty" json:"concept_sources,omitempty"`
 
 	// Raw holds the exact bytes read from disk, and ManifestSHA their
 	// SHA-256 hex digest — so an ingest can record manifest_sha and bind
@@ -136,26 +161,38 @@ func Parse(path string) (*Dataset, error) {
 		return nil, fmt.Errorf("manifest: decoding %s: %w", path, err)
 	}
 
-	baseDir := filepath.Dir(path)
-	for i, b := range ds.Backbones {
-		if b.Path != "" && !filepath.IsAbs(b.Path) {
-			ds.Backbones[i].Path = filepath.Join(baseDir, b.Path)
-		}
-	}
-	for i, tv := range ds.TraitVocabularies {
-		if tv.Path != "" && !filepath.IsAbs(tv.Path) {
-			ds.TraitVocabularies[i].Path = filepath.Join(baseDir, tv.Path)
-		}
-	}
-	for i, xs := range ds.XrefSources {
-		if xs.Path != "" && !filepath.IsAbs(xs.Path) {
-			ds.XrefSources[i].Path = filepath.Join(baseDir, xs.Path)
-		}
-	}
+	resolvePaths(&ds, filepath.Dir(path))
 
 	sum := sha256.Sum256(raw)
 	ds.Raw = raw
 	ds.ManifestSHA = hex.EncodeToString(sum[:])
 
 	return &ds, nil
+}
+
+// resolvePaths rewrites every relative artifact path in ds to an absolute
+// one, resolved against baseDir (the manifest file's own directory), so
+// callers never have to guess what a relative path was relative to. Split out
+// of Parse because Parse's cognitive complexity is dominated by validation,
+// not by this bookkeeping.
+func resolvePaths(ds *Dataset, baseDir string) {
+	resolve := func(p string) string {
+		if p == "" || filepath.IsAbs(p) {
+			return p
+		}
+		return filepath.Join(baseDir, p)
+	}
+	for i := range ds.Backbones {
+		ds.Backbones[i].Path = resolve(ds.Backbones[i].Path)
+	}
+	for i := range ds.TraitVocabularies {
+		ds.TraitVocabularies[i].Path = resolve(ds.TraitVocabularies[i].Path)
+	}
+	for i := range ds.XrefSources {
+		ds.XrefSources[i].Path = resolve(ds.XrefSources[i].Path)
+	}
+	for i := range ds.ConceptSources {
+		ds.ConceptSources[i].Concepts = resolve(ds.ConceptSources[i].Concepts)
+		ds.ConceptSources[i].Relations = resolve(ds.ConceptSources[i].Relations)
+	}
 }

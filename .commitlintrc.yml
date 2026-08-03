@@ -11,6 +11,16 @@ rules:
     - 2
     - always
     - [build, chore, ci, docs, feat, fix, perf, refactor, revert, style, test]
+  # Off: config-conventional forbids a subject starting sentence-/start-/pascal-/
+  # upper-case, but this project's subjects legitimately begin with HTTP verbs,
+  # proper nouns and acronyms — `GET /v1/concept/{id}/traits`, `POST /v1/translate`,
+  # `CDM concepts and typed concept relations`, `Wikidata xref bulk harvest`,
+  # `GermanSL, EuroSL, FloraVeg`, `WAL + busy_timeout`, `FTS5 prefix suggest`.
+  # Lower-casing those would read worse (`get /v1/concept`) or be plainly wrong
+  # (`cDM concepts`). The rule kept CI red on every PR of the SP0-SP6 stack.
+  # release-please derives the version from the type and the header structure,
+  # never from subject capitalisation, so this changes nothing about versioning.
+  subject-case: [0]
   # Warning, not error: Dependabot's auto-generated commit bodies routinely exceed
   # 100 chars per line (release-note/compat lines it writes), which would otherwise
   # fail the required commitlint check on every safe dependency PR. Body line length

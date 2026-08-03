@@ -1,0 +1,80 @@
+################################################################
+# 1. EIVE (Euro+Med-aligned) — TaxonConcept rows for the tested genera
+#    Source: eive_sm08.xlsx, sheet mainTable, column TaxonConcept
+#    Each row is an INDEPENDENT trait concept (own EIVEres-M/N/R/L/T values).
+################################################################
+
+-- Festuca ovina group --
+  EIVE TaxonConcept: Festuca filiformis
+  EIVE TaxonConcept: Festuca lemanii
+  EIVE TaxonConcept: Festuca ovina
+  EIVE TaxonConcept: Festuca ovina aggr.
+  EIVE TaxonConcept: Festuca ovina subsp. guestfalica
+  EIVE TaxonConcept: Festuca ovina subsp. molinieri
+  EIVE TaxonConcept: Festuca ovina subsp. ophioliticola
+  EIVE TaxonConcept: Festuca ovina subsp. ovina
+
+-- Thymus praecox group --
+  EIVE TaxonConcept: Thymus praecox
+  EIVE TaxonConcept: Thymus praecox subsp. jankae
+  EIVE TaxonConcept: Thymus praecox subsp. ligusticus
+  EIVE TaxonConcept: Thymus praecox subsp. polytrichus
+  EIVE TaxonConcept: Thymus praecox subsp. praecox
+  EIVE TaxonConcept: Thymus praecox subsp. widderi
+
+################################################################
+# 2. EUNIS-ESy / FloraVeg (Section 1: Species aggregation)
+#    Source: esy_2021-06-01.txt
+#    Format: accepted concept name, followed by indented lines listing
+#    every name TREATED AS THE SAME CONCEPT (synonyms/segregates folded
+#    into that one accepted concept for the vegetation-plot database).
+################################################################
+
+-- Festuca ovina block (accepted concept + everything folded under it) --
+Festuca ovina                                             -  0
+     Festuca ovina subsp. guestfalica                        0
+     Festuca ovina subsp. hirtula                            0
+     Festuca ovina subsp. molinieri                          0
+     Festuca ovina subsp. ovina                              0
+     Festuca ovina subsp. ovina var. ovina                   0
+     Festuca ovina subsp. sudetica                           0
+     Festuca ovina var. duriuscula                           0
+     Festuca ovina (dood)                                    0
+     Festuca ovina aggr.                                     0
+     Festuca lemanii                                         0
+     Festuca lemanii auct.                                   0
+     Festuca indigesta subsp. alleizettei                    0
+     Festuca guestfalica * guestfalica                       0
+     Festuca guestfalica * hirtula                           0
+
+-- Festuca filiformis block --
+Festuca filiformis                                        -  0
+     Festuca ovina var. capillata                            0
+     Festuca ovina var. tenuifolia                           0
+
+-- Thymus praecox block --
+Thymus praecox                                            -  0
+     Thymus jankae                                           0
+     Thymus jankae var. serbicus                             0
+     Thymus jankae var. subacicularis                        0
+     Thymus praecox subsp. caucasicus var. caucasicus        0
+     Thymus praecox subsp. jankae                            0
+     Thymus praecox subsp. ligusticus                        0
+     Thymus praecox subsp. polytrichus                       0
+     Thymus praecox subsp. praecox                           0
+     Thymus praecox subsp. zygiformis                        0
+     Thymus praecox gr.                                      0
+     Thymus praecox subsp. caucasicus                        0
+     Thymus praecox subsp. caucasicus var. grossheimi        0
+     Thymus praecox subsp. jankae var. jankae                0
+     Thymus praecox subsp. widderi                           0
+
+################################################################
+# 3. Divergence check: does ESy fold a name that EIVE lists as an
+#    INDEPENDENT trait row into a DIFFERENT accepted concept?
+################################################################
+
+'Festuca lemanii' appears in EIVE as its own TaxonConcept row (see 1).
+In ESy Section 1 it appears here:
+6694:     Festuca lemanii                                         0
+6695:     Festuca lemanii auct.                                   0

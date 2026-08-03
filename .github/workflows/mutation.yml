@@ -64,6 +64,17 @@ jobs:
           run_pkg ./internal/app
           run_pkg ./internal/adapters/mcp
           run_pkg ./cmd/hostus
+          # The three packages that carry the actual domain logic. They were
+          # missing until SP6 Task 4, which meant `make mutation`'s
+          # `Not covered = 0` gate never ran on any of the code it was added
+          # for: the hoisted conditions in internal/domain/synonym.go
+          # (ClassifyNomStatus/judgeSynonym) sit in ./internal/domain, and
+          # `make verify` does not call `mutation` at all. Measured runtime
+          # locally: domain 30 s, application 62 s, sqlite 154 s — about four
+          # minutes added, well inside this job's 60-minute timeout.
+          run_pkg ./internal/domain
+          run_pkg ./internal/application
+          run_pkg ./internal/adapters/sqlite
           exit "$fail"
 
       - name: Summary

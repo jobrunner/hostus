@@ -163,7 +163,7 @@ var nomStatusRules = []NomStatusRule{
 	{Fragment: "latin descr", Judgement: JudgementDisqualifying, Names: 1344,
 		Note: "no Latin description; merges the measured spellings without a/latin/Latin"},
 	{Fragment: "type", Judgement: JudgementDisqualifying, Names: 1099,
-		Note: "type-citation defect; every one of the 1.099 cells containing 'type' states a defect (verified by grouping all distinct values)"},
+		Note: "type-citation defect; 1.098 of the 1.099 cells containing 'type' state a defect. The one exception is ', type variety.' (1 name: Helichrysum bracteatum var. chrysanthum) — a taxonomic remark, not a defect, and today excluded with the rest. Withholding one name is the safe direction; a guard is the clean fix once somebody decides how 'type variety' belongs in a publication list"},
 	{Fragment: "nom. rej", Judgement: JudgementDisqualifying, Names: 894,
 		Note: "rejected; merges nom. rej. (831) and nom. rejic. (10) — the '. prop.' proposals are masked by a guard"},
 	{Fragment: "contrary to art", Judgement: JudgementDisqualifying, Names: 432,
@@ -204,9 +204,16 @@ var nomStatusRules = []NomStatusRule{
 }
 
 // NomStatusRules returns the complete rule table — the uncertainty marker,
-// then the guards, then the containment rules — as a copy, so callers (and
-// the docs generator) can render the token/count/note table without reaching
-// into package state.
+// then the guards, then the containment rules — as a copy, so a caller can
+// read the token/judgement/count table without reaching into package state.
+//
+// Its one caller today is the drift test in nomstatus_doc_test.go, which
+// checks this table row-for-row against the rendered table in
+// docs/reference/http-api.md. That is the whole reason the accessor is
+// exported: the reference doc states 36 tokens with their counts as a
+// client-facing contract, and a table maintained by hand in two places
+// drifts. Rendering the doc FROM here would be the other option; pinning it
+// keeps the doc translated (German) and still non-drifting.
 func NomStatusRules() []NomStatusRule {
 	out := make([]NomStatusRule, len(nomStatusTable))
 	copy(out, nomStatusTable)

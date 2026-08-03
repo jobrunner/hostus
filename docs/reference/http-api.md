@@ -532,6 +532,89 @@ Näherungen protokolliert.
   Synonym wurde nicht als irrelevant beurteilt, es hat nur nicht mehr
   hineingepasst.
 
+#### Doppelt ausgeschlossene Synonyme zählen nur einmal
+
+Ein Synonym wird mit **genau einem** Grund gezählt, dem zuerst greifenden:
+`nom_status` vor `unclassified_nom_status` vor `rank`. Wer beide Kriterien
+erfüllt — eine Varietät mit `", nom. nud."` bei `rank=species` — erscheint
+unter `nom_status`, nicht unter `rank`. `excluded.rank` ist deshalb **nicht**
+die Zahl der rangbedingt unpublizierbaren Synonyme, sondern die Zahl derer,
+die *nur* am Rang gescheitert sind. Im Beispiel oben steht `rank: 16`,
+obwohl das Concept 17 infraspezifische Synonyme hat: eines davon
+(*Corynephorus canescens* var. *andinus*, `", nom. nud."`) ist bereits unter
+`nom_status` verbucht. Korpusweit betrifft das 14.202 Zeilen. `total` minus
+`publishable` bleibt in jedem Fall die Summe über `excluded`.
+
+#### Die vollständige `nom_status`-Regeltabelle
+
+Gematcht wird per **Token-Containment über die normalisierte Zelle**
+(kleingeschrieben, Whitespace zusammengezogen, führendes `", "` entfernt),
+niemals per Gleichheit: Das Vokabular hat 1.304 distinkte Werte, von denen
+1.225 weniger als zehn Treffer haben. Die Spalte „Namen" ist die gemessene
+Containment-Trefferzahl im Index (1.448.984 Namen).
+
+Reihenfolge der Auswertung: **Unsicherheitsmarker** → **Guards** (ihr
+Treffer wird aus der Zelle maskiert, damit ein breiteres Token nicht auf
+Text feuert, den ein engeres schon beansprucht hat) → **Regeln**. Die
+Präzedenz entscheidet dann in dieser Reihenfolge: Unsicherheit gewinnt über
+alles, danach ein beliebiger disqualifizierender Treffer, danach ein Guard,
+danach ein akzeptierender Treffer, sonst `unclassified`.
+
+⚠️ markiert die Werte, deren Behandlung eine **botanische** und keine
+technische Entscheidung ist; sie werden zurückgehalten statt geraten.
+
+| Token | Urteil | Namen | Bedeutung |
+| --- | --- | ---: | --- |
+| `?` | unclassified ⚠️ | 13 | Fragezeichen: die Quelle selbst ist unsicher; deckt `, not validly publ.?` (8), `, an nom. valid.?` (4), `, nom. superfl. ?` (1) |
+| `sensu auct.` | unclassified ⚠️ | 1.117 | Fehlanwendung, kein nomenklatorischer Mangel |
+| `tentatively listed as a synonym` | unclassified ⚠️ | 290 | taxonomische Unsicherheit, keine Publikationsfrage |
+| `fossil name` | unclassified ⚠️ | 274 | sagt nichts über die nomenklatorische Gültigkeit |
+| `isonym` | unclassified ⚠️ | 13 | Doppelveröffentlichung desselben Namens |
+| `nom. cons. prop.` | unclassified | 33 | Konservierung **beantragt**, nicht entschieden |
+| `nom. utique rej. prop.` | unclassified | 14 | vollständige Verwerfung beantragt, nicht entschieden |
+| `nom. rej. prop.` | unclassified | 48 | Verwerfung beantragt, nicht entschieden |
+| `illeg` | disqualifying | 49.705 | illegitim; deckt `nom. illeg. homonym. post.` (36.424), `nom. illeg. superfl.` (10.768), `nom. illeg.` (2.405) |
+| `not validly publ` | disqualifying | 18.623 | nicht gültig veröffentlicht (inkl. Basionym-/Gattungs-/Artvarianten) |
+| `superfl` | disqualifying | 12.502 | überflüssig veröffentlicht — das Token des UC5-Beispiels |
+| `nom. nud.` | disqualifying | 9.222 | nomen nudum — ohne Beschreibung veröffentlicht |
+| `pro syn` | disqualifying | 6.224 | als Synonym veröffentlicht, also nicht gültig |
+| `orth. var.` | disqualifying | 2.196 | orthografische Variante — ein Schreibfehler |
+| `opus utique` | disqualifying | 1.640 | in einem unterdrückten Werk erschienen (`oppr.` 1.528 / `rej.` 111) |
+| `basionym` | disqualifying | 1.438 | fehlerhafter oder fehlender Basionym-Bezug (alle 1.438 Zellen sind Mangelaussagen) |
+| `latin descr` | disqualifying | 1.344 | keine lateinische Beschreibung; führt die Schreibvarianten zusammen |
+| `type` | disqualifying | 1.099 | Typus-Zitatmangel; 1.098 der 1.099 Zellen sind Mangelaussagen (siehe Hinweis unten) |
+| `nom. rej` | disqualifying | 894 | verworfen; `nom. rej.` (831) + `nom. rejic.` (10), Anträge per Guard maskiert |
+| `contrary to art` | disqualifying | 432 | entgegen einem benannten ICN/ICBN-Artikel veröffentlicht |
+| `nom. provis` | disqualifying | 363 | provisorischer Name — nicht gültig veröffentlicht |
+| `nom. subnud` | disqualifying | 238 | unzureichend beschrieben |
+| `comb. not` | disqualifying | 201 | Kombination nicht (gültig) vorgenommen |
+| `sphalm` | disqualifying | 199 | sphalmate — ein Druckfehler, kein Name |
+| `nom. utique rej` | disqualifying | 151 | vollständig verworfen; Anträge per Guard maskiert |
+| `not effectively publ` | disqualifying | 66 | nicht wirksam veröffentlicht; führt `publ.`/`published` zusammen |
+| `describing the collection` | disqualifying | 61 | beschreibt die Aufsammlung, nicht das Taxon |
+| `later homonym` | disqualifying | 60 | späteres Homonym; illegitim nach Art. 53 |
+| `combination not` | disqualifying | 37 | ausgeschriebene Variante von `comb. not made.` |
+| `without diagnostic descr` | disqualifying | 17 | keine diagnostische Beschreibung |
+| `sine descr. lat.` | disqualifying | 15 | lateinische Schreibung von „ohne lateinische Beschreibung" |
+| `nom. cons.` | acceptable | 1.237 | konservierter Name — ausdrücklich legitim (Anträge per Guard maskiert) |
+| `nom. altern.` | acceptable | 103 | Alternativname, gültig veröffentlicht |
+| `nom. alt.` | acceptable | 36 | Kurzschreibung von `nom. altern.` |
+| `legitimate homonym` | acceptable | 12 | ausdrücklich legitim — der Grund, warum blankes `homonym` keine Regel ist |
+| `orth. cons.` | acceptable | 11 | konservierte Schreibweise; deckt auch `nom. & orth. cons.` (7) |
+
+Die Tabelle ist gegen `domain.NomStatusRules()` festgenagelt
+(`internal/domain/nomstatus_doc_test.go`): Token, Urteil und gemessene
+Trefferzahl müssen zeilenweise übereinstimmen, sonst schlägt `make test`
+fehl. Eine neue Regel ohne Doku-Zeile ist damit kein stillschweigendes
+Auseinanderlaufen mehr.
+
+!!! note "Bekannter Einzelfall in `type`"
+    Von den 1.099 Zellen mit `type` ist genau **eine** keine Mangelaussage:
+    `", type variety."` (1 Name) ist eine taxonomische Anmerkung. Dieser eine
+    Name wird derzeit mit ausgeschlossen. Zurückhalten ist die sichere
+    Richtung; die saubere Auflösung wäre ein Guard, sobald entschieden ist,
+    wie `type variety` in einer Publikationsliste zu behandeln ist.
+
 #### `typification`: dreiwertig, aber `heterotypic` kommt nicht vor
 
 `typification` ist `homotypic`, `unknown` oder `heterotypic`. Auf dem

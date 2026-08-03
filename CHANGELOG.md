@@ -48,11 +48,63 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   dokumentiert. Das Ausschluss-Summary muss die Differenz erklären.
 - **SP6-Verdikt in `docs/research/reality-check.md`**, gemessen mit dem
   echten Domänencode über alle 964.762 Synonymzeilen: Der Filter ändert
-  bei **103.674 von 236.030** Konzepten die Antwort, **69,2 %** landen im
-  UC5-Zielkorridor von ein bis drei Namen (häufigster Fall ist aber **1**,
-  nicht 2–3), **20,2 %** behalten mehr als drei, und **24.918 Konzepte
+  bei **103.674 von 236.030** Konzepten die Antwort und **24.918 Konzepte
   (10,6 %)** bleiben ohne ein einziges publikationsfähiges Synonym.
   Verdikt: **hält mit Auflagen**.
+- **Der Zielkorridor ist mit Kontrollgruppe gemessen — und taugt nicht als
+  Beleg für den Filter.** Ungefiltert liegen bereits **70,92 %** der
+  Konzepte bei ein bis drei Synonymen, gefiltert **69,20 %**: Auf UC5s
+  eigener Zielgröße ist der Filter **netto negativ**. Er zieht 20.854
+  Konzepte aus `> 3` heraus (68.642 → 47.788) und erzeugt dabei 24.918
+  Nullen; der Modalwert bleibt **1** (40,40 % → 41,38 %). Sein Nutzen ist
+  die Entfernung nomenklatorisch untauglicher Namen (89.836 Zeilen mit
+  belegtem Defekt), nicht das Treffen des Korridors. Die frühere Fassung
+  führte die 69,2 % ohne Vergleichsgröße als Beleg *für* den Filter — eine
+  Zahl ohne Kontrollgruppe ist kein Argument.
+- **Die Urteilsverteilung über alle 964.762 Synonymzeilen** steht jetzt in
+  Anleitung und Reality-Check: `absent` 872.270 / `disqualifying` 89.836 /
+  `unclassified` 2.309 / **`acceptable` 347**. Für ganze **347 Zeilen** im
+  Korpus behauptet die Quelle, der Name sei nomenklatorisch in Ordnung —
+  jede publikationsfähige Liste besteht zu über 99,9 % aus Namen, über die
+  niemand etwas gesagt hat.
+- **Die vollständige 36-Zeilen-`nom_status`-Regeltabelle** steht jetzt in
+  `docs/reference/http-api.md` — bisher versprach die Anleitung sie dort
+  zweimal, ohne dass es sie gab. Sie ist gegen `domain.NomStatusRules()`
+  festgenagelt (`internal/domain/nomstatus_doc_test.go`, Token/Urteil/
+  Trefferzahl zeilenweise), womit auch die bis dahin unbelegte Begründung
+  des exportierten Accessors („für den Doku-Generator", den es nicht gibt)
+  eingelöst ist.
+- **Doppelt ausgeschlossene Synonyme** sind jetzt im clientseitigen Vertrag
+  erklärt, nicht nur im Reality-Check: Präzedenz bucht sie unter
+  `nom_status`, weshalb `excluded.rank` die Zahl der *nur* rangbedingt
+  zurückgehaltenen Synonyme ist — im Beispiel `rank: 16` bei 17
+  infraspezifischen Synonymen, korpusweit 14.202 Zeilen.
+- **`docs/explanation/known-gaps.md`** (neu, in der Navigation): fünf
+  bewusst nicht behobene Befunde mit Auswirkung und nächstem Schritt —
+  kein Drift-Signal für das `nom_status`-Vokabular, fehlender
+  Mutanten-Mindestboden im Gate, die überholte 108,9-MB-Bundle-Angabe, der
+  vierfach kopierte `TaxonRow`-Mapper und 316 Zeilen handgepflegtes
+  OpenAPI ohne Drift-Prüfung. Sie standen bisher nur im SDD-Ledger, das
+  das nächste Teilprojekt nicht liest.
+
+### Fixed (SP6, Task 4 — Review-Nachlauf)
+- **Das neue `Not covered`-Gate lief in der CI auf keinem einzigen
+  SP6-Paket.** `.github/workflows/mutation.yml` fuhr `config`, `httperr`,
+  `adapters/telemetry`, `adapters/http`, `app`, `adapters/mcp` und
+  `cmd/hostus` — die gesamte SP6-Logik liegt aber in `internal/domain`,
+  `internal/application` und `internal/adapters/sqlite`, und `make verify`
+  ruft `mutation` gar nicht auf. Das Gate war also manuell nachgewiesen und
+  nirgends verdrahtet: Ein Rückfall bei den hochgezogenen Bedingungen in
+  `internal/domain/synonym.go` wäre unbemerkt geblieben. Die drei Pakete
+  laufen jetzt mit (gemessene Laufzeit lokal: 30 s / 62 s / 154 s, rund
+  vier Minuten zusätzlich bei 60 Minuten Job-Timeout).
+- **`internal/domain/synonym.go`, Regel `type`:** Die Notiz behauptete,
+  alle 1.099 Zellen mit `type` seien Mangelaussagen. `", type variety."`
+  (1 Name, *Helichrysum bracteatum* var. *chrysanthum*) ist eine
+  taxonomische Anmerkung. Notiz auf 1.098 von 1.099 korrigiert, der
+  Einzelfall in Code und Referenz benannt; der Name wird weiterhin
+  zurückgehalten (die sichere Richtung), die saubere Auflösung wäre ein
+  Guard.
 
 ### Changed (SP6, Task 4 — Mutations-Gate)
 - **`make mutation` erzwingt jetzt `Not covered: 0`.** Ein überlebender

@@ -87,10 +87,18 @@ Die 20 zurückgehaltenen Synonyme verteilen sich so:
 - **16× `rank`** — die VARIETY- und FORM-Synonyme, die auf Artniveau nicht
   publiziert werden.
 
+Warum `rank: 16` und nicht 17, obwohl das Concept 17 infraspezifische
+Synonyme hat: Ein Synonym wird mit **genau einem** Grund gezählt, dem zuerst
+greifenden, und `nom_status` geht vor `rank`. Die Varietät *Corynephorus
+canescens* var. *andinus* (`", nom. nud."`) steht deshalb oben unter
+`nom_status`. `excluded.rank` ist also die Zahl der Synonyme, die *nur* am
+Rang gescheitert sind.
+
 Der Zellwert lautet `", nom. illeg. superfl."` und **nicht** das in der
 UC5-Quelle angenommene `", nom. superfl."`. Genau deshalb matcht hostus per
-Token-Containment und nie per Gleichheit; die vollständige Regeltabelle
-steht in der [HTTP-Referenz](../reference/http-api.md).
+Token-Containment und nie per Gleichheit; die vollständigen 36 Regeln stehen
+mit Urteil und gemessener Trefferzahl in der
+[HTTP-Referenz](../reference/http-api.md).
 
 ## 3. Ohne `rank` filtern
 
@@ -202,6 +210,20 @@ Synonyme auf dieser Abwesenheit ruhen. Im Beispiel oben sind das **alle
 sechs**. Ein `absent`-Name ist trotzdem publikationsfähig — 93 % des
 Korpus zurückzuhalten würde den Endpunkt sinnlos machen —, aber die Zahl
 steht in jeder Antwort, damit niemand sie mit einer Prüfung verwechselt.
+
+Wie klein der geprüfte Anteil wirklich ist, zeigt die Verteilung über alle
+964.762 Synonymzeilen des Index:
+
+| Urteil | Zeilen |
+| --- | ---: |
+| `absent` (nichts eingetragen) | 872.270 |
+| `disqualifying` | 89.836 |
+| `unclassified` (zurückgehalten) | 2.309 |
+| **`acceptable`** (ausdrücklich als sauber bezeichnet) | **347** |
+
+**347.** Im gesamten Korpus behauptet die Quelle für 347 Synonymzeilen, dass
+der Name nomenklatorisch in Ordnung ist. Jede publikationsfähige Liste
+besteht damit zu über 99,9 % aus Namen, über die niemand etwas gesagt hat.
 
 Praktisch: **ein publikationsfähiges Synonym ohne `nom_status` ist ein
 ungeprüftes, kein geprüftes.** Für eine Veröffentlichung bleibt die

@@ -2633,33 +2633,47 @@ erwartbare Folge davon, dass `nom_status` auf 6,85 % der Namen belegt ist:
 Der Filter ist scharf, wo die Quelle etwas eingetragen hat, und untätig,
 wo sie geschwiegen hat.
 
-### Landet die Liste wirklich bei ein bis drei? — Nein, aber nah dran
+### Landet die Liste wirklich bei ein bis drei? — Ja, aber auch ohne Filter
 
-UC5 nennt „zwei bis drei relevante Synonyme" als Ziel. Gemessen:
+UC5 nennt „zwei bis drei relevante Synonyme" als Ziel. Gemessen — und zwar
+**mit Kontrollgruppe**: dieselben 236.030 Konzepte, einmal ungefiltert (die
+Listenlänge, die ein Aufrufer ohne `relevance=publication` sieht) und einmal
+gefiltert:
 
-| publikationsfähige Synonyme | Konzepte | Anteil |
-| ---: | ---: | ---: |
-| 0 | 24.918 | 10,6 % |
-| 1 | 97.674 | 41,4 % |
-| 2 | 42.791 | 18,1 % |
-| 3 | 22.859 | 9,7 % |
-| 4 | 13.212 | 5,6 % |
-| 5 | 8.624 | 3,7 % |
-| 6–10 | 17.267 | 7,3 % |
-| 11–25 | 7.466 | 3,2 % |
-| 26–100 | 1.191 | 0,5 % |
-| > 100 | 28 | 0,01 % |
+| Listenlänge | ungefiltert | Anteil | gefiltert (`publication`, `rank=species`) | Anteil |
+| ---: | ---: | ---: | ---: | ---: |
+| 0 | 0 | 0 % | 24.918 | 10,56 % |
+| 1 | 95.366 | 40,40 % | 97.674 | 41,38 % |
+| 2 | 45.707 | 19,36 % | 42.791 | 18,13 % |
+| 3 | 26.315 | 11,15 % | 22.859 | 9,68 % |
+| 4 | 16.055 | 6,80 % | 13.212 | 5,60 % |
+| 5 | 11.104 | 4,70 % | 8.624 | 3,65 % |
+| 6–10 | 23.993 | 10,17 % | 17.267 | 7,32 % |
+| 11–25 | 13.552 | 5,74 % | 7.466 | 3,16 % |
+| 26–100 | 3.708 | 1,57 % | 1.191 | 0,50 % |
+| > 100 | 230 | 0,10 % | 28 | 0,01 % |
+| **1 bis 3 (Zielkorridor)** | **167.388** | **70,92 %** | **163.324** | **69,20 %** |
+| **> 3** | **68.642** | **29,08 %** | **47.788** | **20,25 %** |
 
-**1 bis 3: 163.324 Konzepte = 69,2 %.** Die ehrliche Antwort auf die Frage
-lautet also: *überwiegend ja, aber nicht verlässlich.*
+**Auf UC5s eigener Zielgröße ist der Filter netto negativ.** Ungefiltert
+liegen bereits **70,92 %** im Korridor, gefiltert **69,20 %** — 1,72
+Prozentpunkte *schlechter*. Der Mechanismus ist in der Tabelle direkt
+ablesbar: Der Filter zieht **20.854 Konzepte** aus `> 3` heraus (68.642 →
+47.788), aber er schiebt sie nicht überwiegend in den Korridor, sondern
+erzeugt dabei **24.918 Nullen**, die es ungefiltert nicht gab. Auch der
+Modalwert bleibt unverändert **1** — vorher 40,40 %, nachher 41,38 %.
 
-Drei Einschränkungen, die die 69,2 % relativieren:
+Die ehrliche Antwort auf die Frage lautet also: *Ja, überwiegend — aber das
+war schon vorher so, und der Filter ist nicht der Grund dafür.* Die
+Korridorquote ist als Beleg **für** den Filter untauglich; sein Nutzen liegt
+woanders (siehe „Was hält" unten).
 
-- **Der häufigste Fall ist 1, nicht 2–3.** 97.674 Konzepte (41,4 %) haben
-  genau ein publikationsfähiges Synonym. Das ist kein Filtererfolg, sondern
-  meistens schlicht die Datenlage — solche Konzepte hatten oft von vornherein
-  nur ein Synonym.
-- **Für 20,2 % (47.788 Konzepte) liefert der Filter weiterhin mehr als drei
+Drei weitere Einschränkungen:
+
+- **Der häufigste Fall ist 1, nicht 2–3** — und zwar in beiden Spalten. Das
+  ist kein Filtererfolg, sondern die Datenlage: solche Konzepte hatten
+  meist von vornherein nur ein Synonym.
+- **Für 20,25 % (47.788 Konzepte) liefert der Filter weiterhin mehr als drei
   Namen**, in 8.685 Fällen sogar mehr als zehn. Für diese Konzepte löst UC5
   das Filterproblem *nicht*; der Aufrufer muss `max` setzen und bekommt dann
   eine sortierte, aber selbst gewählte Auswahl.
@@ -2668,6 +2682,49 @@ Drei Einschränkungen, die die 69,2 % relativieren:
   Publikationsfähigkeit faktisch die `name_id`. „Die drei besten" heißt für
   diese Konzepte „drei mit der kleinsten Id" — deterministisch, aber
   fachlich nicht begründet.
+
+Erzeugt wurde die Tabelle mit demselben Harness wie oben, um eine zweite
+Zählung je Konzept erweitert (`len(batch)` als Kontrollgruppe neben
+`sum.Publishable`), Ausgabe verbatim:
+
+```
+concepts: 236030
+len      unfiltered   filtered
+0                 0      24918
+1             95366      97674
+2             45707      42791
+3             26315      22859
+4             16055      13212
+5             11104       8624
+6-10          23993      17267
+11-25         13552       7466
+26-100         3708       1191
+>100            230         28
+corridor 1..3: unfiltered 167388 (70.92 %)  filtered 163324 (69.20 %)
+>3:            unfiltered 68642 (29.08 %)  filtered 47788 (20.25 %)  delta 20854
+modal 1:       unfiltered 95366 (40.40 %)  filtered 97674 (41.38 %)
+```
+
+### Nur 347 Synonymzeilen sind positiv als sauber bezeichnet
+
+Dieselbe Schleife, `domain.ClassifyNomStatus` über alle 964.762
+Synonymzeilen gezählt:
+
+| Urteil | Zeilen | Anteil |
+| --- | ---: | ---: |
+| `absent` (nichts eingetragen) | 872.270 | 90,41 % |
+| `disqualifying` | 89.836 | 9,31 % |
+| `unclassified` | 2.309 | 0,24 % |
+| **`acceptable`** (positiv als nomenklatorisch sauber bezeichnet) | **347** | **0,036 %** |
+
+Das ist die schärfste Form der Aussage aus Abschnitt (d) der
+[UC5-Anleitung](../how-to/synonyms-uc5.md): **Im gesamten Korpus behauptet
+die Quelle für 347 Synonymzeilen, dass der Name nomenklatorisch in Ordnung
+ist.** Alles andere, was hostus publikationsfähig nennt, ist entweder ein
+`absent` — die Quelle hat nichts eingetragen — oder es wurde
+zurückgehalten. Praktisch heißt das: eine publikationsfähige Liste besteht
+zu über 99,9 % aus *ungeprüften*, nicht aus *geprüften* Namen. `summary.absent`
+beziffert das pro Antwort; die 347 setzen die Größenordnung dazu.
 
 ### 24.918 Konzepte ohne ein einziges publikationsfähiges Synonym
 
@@ -2728,11 +2785,21 @@ Sollte UC5 das so wollen, ist das eine Zeile in `nomStatusGuards`
 
 **Was hält.** Der Filter ist real, messbar und begründet: Er ändert bei
 103.674 von 236.030 Konzepten die Antwort, entfernt 326.550 Synonymzeilen
-und sagt für jede einzelne, welche Regel das war. Bei 69,2 % der Konzepte
-landet die Liste im UC5-Zielkorridor von ein bis drei Namen. Das
-Ausschluss-Summary beschreibt immer das Konzept, nie die Seite — eine
-gefilterte Liste ist damit von einer kaputten Abfrage unterscheidbar, was
-der eigentliche Prüfstein war.
+und sagt für jede einzelne, welche Regel das war. Das Ausschluss-Summary
+beschreibt immer das Konzept, nie die Seite — eine gefilterte Liste ist
+damit von einer kaputten Abfrage unterscheidbar, was der eigentliche
+Prüfstein war.
+
+**Was ausdrücklich NICHT als Beleg taugt: der Zielkorridor.** Ohne Filter
+liegen bereits **70,92 %** der Konzepte bei ein bis drei Synonymen,
+gefiltert sind es **69,20 %** — der Filter verbessert diese Kennzahl nicht,
+er verschlechtert sie leicht. Er verschiebt 20.854 Konzepte aus `> 3`
+heraus und erzeugt dabei 24.918 Nullen. **Sein Nutzen ist die Entfernung
+nomenklatorisch untauglicher Namen (89.836 Zeilen mit belegtem Defekt),
+nicht das Treffen des Zielkorridors.** Eine frühere Fassung dieses
+Abschnitts führte die 69,2 % ohne Kontrollgruppe als Beleg *für* den Filter
+— das war auf dieser Dimension ein Beleg dagegen, und eine Zahl ohne ihre
+Vergleichsgröße ist kein Argument.
 
 **Die Auflagen**, alle in
 [docs/how-to/synonyms-uc5.md](../how-to/synonyms-uc5.md) dokumentiert:
@@ -2745,15 +2812,18 @@ der eigentliche Prüfstein war.
 2. **Das Typisierungskriterium ist ein Zwei-Wege-Split.** `heterotypic`
    kommt auf 0 Zeilen vor, `unknown` auf 692.941. UC5-Regel 3 wirkt real
    als „basionym-belegt vor unbelegt".
-3. **`nom_status` ist auf 6,85 % der Namen belegt.** Ein fehlender Status
-   ist kein Unbedenklichkeitsnachweis; `summary.absent` beziffert das pro
-   Antwort, die nomenklatorische Prüfung bleibt beim Autor.
+3. **`nom_status` ist auf 6,85 % der Namen belegt** — und nur **347** der
+   964.762 Synonymzeilen sind positiv als sauber bezeichnet. Ein fehlender
+   Status ist kein Unbedenklichkeitsnachweis; `summary.absent` beziffert das
+   pro Antwort, die nomenklatorische Prüfung bleibt beim Autor.
 4. **Zwei benannte Ranglücken**: SUBSPECIES (45.526 Synonymnamen) wird
    spec-treu nicht ausgeschlossen, und 190 Nothotaxon-Zeilen passieren
    `rank=species`.
-5. **Für 20,2 % der Konzepte löst der Filter das Problem nicht** — mehr als
+5. **Für 20,25 % der Konzepte löst der Filter das Problem nicht** — mehr als
    drei Namen bleiben übrig, die Auswahl macht dann `max` und damit die
-   `name_id`.
+   `name_id`. Und für die Zielgröße „ein bis drei" ist der Filter netto
+   negativ (70,92 % ungefiltert gegen 69,20 % gefiltert): Wer ihn mit dieser
+   Kennzahl begründet, begründet ihn falsch.
 
 **Was nicht hält, wenn die Auflagen wegfallen.** Ohne den
 „Was-dieser-Filter-nicht-kann"-Abschnitt in der Anleitung wäre das Verdikt

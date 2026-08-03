@@ -5,12 +5,30 @@ extends:
   - '@commitlint/config-conventional'
 rules:
   # Repo commits occasionally carry a scope + parenthetical; allow headroom.
-  header-max-length: [2, always, 120]
+  #
+  # 140 rather than 120 for exactly one historical commit: SP0's `fix(sp0): sweep
+  # v1 GBIF-proxy vestiges, ...` is 130 chars because it lists five unrelated
+  # changes in one subject. It is the second-to-last commit on the bottom branch
+  # of a ten-deep stack, so rewording it would rewrite ~125 descendant hashes and
+  # force-push ten branches to fix one line — out of all proportion. This is a
+  # concession to history, not a new target: keep subjects near 72 chars, and
+  # split a commit that needs more rather than spending the headroom.
+  header-max-length: [2, always, 140]
   # Allow the types the repo actually uses (config-conventional set + our usage).
   type-enum:
     - 2
     - always
     - [build, chore, ci, docs, feat, fix, perf, refactor, revert, style, test]
+  # Off: config-conventional forbids a subject starting sentence-/start-/pascal-/
+  # upper-case, but this project's subjects legitimately begin with HTTP verbs,
+  # proper nouns and acronyms — `GET /v1/concept/{id}/traits`, `POST /v1/translate`,
+  # `CDM concepts and typed concept relations`, `Wikidata xref bulk harvest`,
+  # `GermanSL, EuroSL, FloraVeg`, `WAL + busy_timeout`, `FTS5 prefix suggest`.
+  # Lower-casing those would read worse (`get /v1/concept`) or be plainly wrong
+  # (`cDM concepts`). The rule kept CI red on every PR of the SP0-SP6 stack.
+  # release-please derives the version from the type and the header structure,
+  # never from subject capitalisation, so this changes nothing about versioning.
+  subject-case: [0]
   # Warning, not error: Dependabot's auto-generated commit bodies routinely exceed
   # 100 chars per line (release-note/compat lines it writes), which would otherwise
   # fail the required commitlint check on every safe dependency PR. Body line length

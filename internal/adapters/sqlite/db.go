@@ -59,7 +59,42 @@ func Open(path string) (*DB, error) {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("sqlite: applying schema: %w", err)
 	}
+	if err := migrateXrefSourceColumn(context.Background(), sqlDB); err != nil {
+		_ = sqlDB.Close()
+		return nil, err
+	}
 	return &DB{sql: sqlDB}, nil
+}
+
+// migrateXrefSourceColumn adds xref.source to a database created before that
+// column existed (SP1–SP3). schema.sql alone cannot do this: its CREATE TABLE
+// is IF NOT EXISTS, so an already-existing xref table is left exactly as it
+// was, and SQLite has no "ADD COLUMN IF NOT EXISTS". The column is nullable
+// with no default, which is the one ALTER TABLE form SQLite can apply
+// in-place to a table carrying a REFERENCES clause — so an existing index
+// keeps every xref row it had, with source NULL (correctly meaning "not
+// attributable to any ingested xref source"; see schema.sql). Running against
+// a fresh database is a no-op, since schema.sql already created the column.
+func migrateXrefSourceColumn(ctx context.Context, sqlDB *sql.DB) error {
+	rows, err := sqlDB.QueryContext(ctx, `SELECT 1 FROM pragma_table_info('xref') WHERE name = 'source'`)
+	if err != nil {
+		return fmt.Errorf("sqlite: checking for xref.source column: %w", err)
+	}
+	present := rows.Next()
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("sqlite: checking for xref.source column: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("sqlite: checking for xref.source column: %w", err)
+	}
+	if present {
+		return nil
+	}
+	if _, err := sqlDB.ExecContext(ctx, `ALTER TABLE xref ADD COLUMN source TEXT REFERENCES xref_source(id)`); err != nil {
+		return fmt.Errorf("sqlite: adding xref.source column: %w", err)
+	}
+	return nil
 }
 
 // Close releases the underlying database handle.
@@ -210,11 +245,16 @@ func (t *ingestTx) LinkName(conceptID, nameID, role string, homotypic *bool) err
 	return nil
 }
 
-func (t *ingestTx) AddXref(conceptID string, x domain.Xref) error {
+// AddXref writes one xref row for conceptID, attributed to the xref_source
+// named by source. source is "" (stored as SQL NULL via nullableFK, since it
+// is a nullable FK onto xref_source) for xrefs the backbone ingest derives
+// from a taxon row — see schema.sql's note on why those are deliberately
+// unattributed.
+func (t *ingestTx) AddXref(conceptID string, x domain.Xref, source string) error {
 	_, err := t.tx.ExecContext(t.ctx, `
-		INSERT OR REPLACE INTO xref (concept_id, authority, ext_id)
-		VALUES (?, ?, ?)`,
-		conceptID, x.Authority, x.ExtID,
+		INSERT OR REPLACE INTO xref (concept_id, authority, ext_id, source)
+		VALUES (?, ?, ?, ?)`,
+		conceptID, x.Authority, x.ExtID, nullableFK(source),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: adding xref %s:%s for concept %q: %w", x.Authority, x.ExtID, conceptID, err)
@@ -358,6 +398,22 @@ func (t *ingestTx) UpsertTraitVocabulary(meta domain.TraitVocabMeta) error {
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: upserting trait vocabulary %s/%s: %w", meta.Vocab, meta.Version, err)
+	}
+	return nil
+}
+
+// UpsertXrefSource records one xref-source provenance row, the xref
+// counterpart of UpsertTraitVocabulary. ingested_at is stamped with the
+// current time here for the same reason it is there: provenance/timing
+// metadata is orthogonal to the domain-level fields callers construct.
+func (t *ingestTx) UpsertXrefSource(meta domain.XrefSourceMeta) error {
+	_, err := t.tx.ExecContext(t.ctx, `
+		INSERT OR REPLACE INTO xref_source (id, version, license, source_url, ingested_at, manifest_sha, redistribution)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		meta.ID, meta.Version, meta.License, meta.SourceURL, time.Now().UTC().Format(time.RFC3339), meta.ManifestSHA, string(meta.Redistribution),
+	)
+	if err != nil {
+		return fmt.Errorf("sqlite: upserting xref source %s/%s: %w", meta.ID, meta.Version, err)
 	}
 	return nil
 }

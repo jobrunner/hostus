@@ -64,12 +64,12 @@ func seedFestucaOvinaAggregate(t *testing.T, a *app.App) string {
 }
 
 type integrationConceptResponse struct {
-	ConceptID string            `json:"concept_id"`
-	Display   string            `json:"display"`
-	Canonical string            `json:"canonical"`
-	Rank      string            `json:"rank"`
-	Status    string            `json:"status"`
-	Xrefs     map[string]string `json:"xrefs"`
+	ConceptID string              `json:"concept_id"`
+	Display   string              `json:"display"`
+	Canonical string              `json:"canonical"`
+	Rank      string              `json:"rank"`
+	Status    string              `json:"status"`
+	Xrefs     map[string][]string `json:"xrefs"`
 	Synonyms  []struct {
 		Canonical  string `json:"canonical"`
 		Authorship string `json:"authorship"`
@@ -119,7 +119,7 @@ func TestIntegration_EndToEndIngestServeQuery(t *testing.T) {
 	manifestPath := "testdata/dataset.yaml"
 
 	ctx := context.Background()
-	report, _, err := app.Ingest(ctx, manifestPath, dbPath)
+	report, _, _, err := app.Ingest(ctx, manifestPath, dbPath)
 	if err != nil {
 		t.Fatalf("app.Ingest: unexpected error: %v", err)
 	}
@@ -148,6 +148,8 @@ func TestIntegration_EndToEndIngestServeQuery(t *testing.T) {
 	assertHealthReady(t, client, ts.URL)
 	assertConceptByID(t, client, ts.URL)
 	assertConceptByXref(t, client, ts.URL)
+	assertConceptXrefsMultipleAuthorities(t, client, ts.URL)
+	assertXrefResolvesInat(t, client, ts.URL)
 	assertMatchBatch(t, client, ts.URL, aggConceptID)
 	assertSuggest(t, client, ts.URL)
 	assertMetricsExposed(t, client, ts.URL)
@@ -197,8 +199,8 @@ func assertConceptByID(t *testing.T, client *http.Client, baseURL string) {
 	if concept.Canonical != "Corynephorus canescens" {
 		t.Errorf("canonical = %q, want %q", concept.Canonical, "Corynephorus canescens")
 	}
-	if concept.Xrefs["powo"] != "396681-1" {
-		t.Errorf("xrefs[powo] = %q, want %q", concept.Xrefs["powo"], "396681-1")
+	if got := concept.Xrefs["powo"]; len(got) != 1 || got[0] != "396681-1" {
+		t.Errorf("xrefs[powo] = %v, want [396681-1]", got)
 	}
 	if !hasSynonymPrefix(t, concept.Synonyms, "Weingaertneria") {
 		t.Errorf("synonyms = %+v, want an entry starting with %q", concept.Synonyms, "Weingaertneria")
@@ -233,6 +235,85 @@ func assertConceptByXref(t *testing.T, client *http.Client, baseURL string) {
 	_ = resp.Body.Close()
 	if xrefConcept.ConceptID != corynephorusConceptID {
 		t.Errorf("xref concept_id = %q, want %q", xrefConcept.ConceptID, corynephorusConceptID)
+	}
+}
+
+// assertConceptXrefsMultipleAuthorities is SP4's end-to-end proof that
+// application.IngestXrefs (T2) really runs as part of the real hostus
+// ingest CLI path (app.Ingest -> ingestXrefSource), not just at the unit
+// level: the manifest (testdata/dataset.yaml) pins a "wikidata" xref_source
+// at internal/adapters/xref/testdata/wikidata-sample.csv, whose join_id
+// 396681-1 IS the fixture's powo id for Corynephorus canescens (see that
+// fixture's README.md). GET /v1/concept/{corynephorusConceptID} must
+// therefore come back over real HTTP with every authority that real row
+// carries, not just the WCVP-native powo xref assertConceptByID already
+// checked.
+func assertConceptXrefsMultipleAuthorities(t *testing.T, client *http.Client, baseURL string) {
+	t.Helper()
+	resp, err := client.Get(baseURL + "/v1/concept/" + corynephorusConceptID)
+	if err != nil {
+		t.Fatalf("GET /v1/concept: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /v1/concept: status = %d, want 200", resp.StatusCode)
+	}
+	var concept integrationConceptResponse
+	if err := json.NewDecoder(resp.Body).Decode(&concept); err != nil {
+		t.Fatalf("decoding /v1/concept response: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	// The fixture's join_id 396681-1 row carries wikidata, gbif, colxr,
+	// floraveg, wfo and inat in addition to the WCVP-native powo xref
+	// already asserted by assertConceptByID — that's "multiple authorities"
+	// on the SAME concept, exactly what SP4's coverage measurement is about.
+	want := map[string]string{
+		"wikidata": "Q159953",
+		"gbif":     "5290194",
+		"colxr":    "YQW8",
+		"floraveg": "Corynephorus canescens",
+		"wfo":      "wfo-0000860632",
+		"inat":     "160927",
+	}
+	for authority, id := range want {
+		got := concept.Xrefs[authority]
+		found := false
+		for _, v := range got {
+			if v == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("xrefs[%q] = %v, want it to contain %q", authority, got, id)
+		}
+	}
+	if len(concept.Xrefs) < len(want)+1 { // +1 for the pre-existing powo xref
+		t.Errorf("xrefs = %+v, want at least %d authorities (powo + %v)", concept.Xrefs, len(want)+1, want)
+	}
+}
+
+// assertXrefResolvesInat drives GET /v1/xref?authority=inat&id=160927 (the
+// same fixture row assertConceptXrefsMultipleAuthorities checked from the
+// concept side) and confirms it resolves back to the SAME concept — the
+// reverse-lookup half of SP4's Wikidata-bridge xref ingest, and the concrete
+// UC2 shape (spec: iNaturalist taxon id -> hostus concept).
+func assertXrefResolvesInat(t *testing.T, client *http.Client, baseURL string) {
+	t.Helper()
+	resp, err := client.Get(baseURL + "/v1/xref?authority=inat&id=160927")
+	if err != nil {
+		t.Fatalf("GET /v1/xref: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /v1/xref: status = %d, want 200", resp.StatusCode)
+	}
+	var concept integrationConceptResponse
+	if err := json.NewDecoder(resp.Body).Decode(&concept); err != nil {
+		t.Fatalf("decoding /v1/xref response: %v", err)
+	}
+	_ = resp.Body.Close()
+	if concept.ConceptID != corynephorusConceptID {
+		t.Errorf("xref(inat, 160927) concept_id = %q, want %q", concept.ConceptID, corynephorusConceptID)
 	}
 }
 
@@ -413,7 +494,7 @@ func TestIntegration_OfflineBundleServesSuggestOffline(t *testing.T) {
 	dbPath := filepath.Join(dir, "hostus.sqlite")
 	bundlePath := filepath.Join(dir, "bundle.sqlite")
 
-	if _, _, err := app.Ingest(ctx, "testdata/dataset.yaml", dbPath); err != nil {
+	if _, _, _, err := app.Ingest(ctx, "testdata/dataset.yaml", dbPath); err != nil {
 		t.Fatalf("app.Ingest: unexpected error: %v", err)
 	}
 
@@ -513,7 +594,7 @@ func TestIntegration_TraitsFuzzyClassification(t *testing.T) {
 	dbPath := filepath.Join(dir, "hostus.sqlite")
 
 	ctx := context.Background()
-	backboneReport, traitReports, err := app.Ingest(ctx, "testdata/dataset-traits.yaml", dbPath)
+	backboneReport, traitReports, _, err := app.Ingest(ctx, "testdata/dataset-traits.yaml", dbPath)
 	if err != nil {
 		t.Fatalf("app.Ingest: unexpected error: %v", err)
 	}
@@ -715,7 +796,7 @@ func TestIntegration_OfflineBundleConceptSuggestTraitsOffline(t *testing.T) {
 	dbPath := filepath.Join(dir, "hostus.sqlite")
 	bundlePath := filepath.Join(dir, "bundle.sqlite")
 
-	if _, _, err := app.Ingest(ctx, "testdata/dataset-traits.yaml", dbPath); err != nil {
+	if _, _, _, err := app.Ingest(ctx, "testdata/dataset-traits.yaml", dbPath); err != nil {
 		t.Fatalf("app.Ingest: unexpected error: %v", err)
 	}
 

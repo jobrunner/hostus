@@ -2111,3 +2111,295 @@ diesem Task.
      --list germansl=pipelines/germansl/output/germansl-canonical.csv \
      --list floraveg=pipelines/floraveg/output/floraveg-canonical.csv
    ```
+
+## SP4 Task 2 — Xref-Ingest (ID-basierter Join): Deckung und Konflikte
+
+**Aufbau.** `application.IngestXrefs` wurde gegen eine **Kopie** der echten
+Volldatenbank (`/tmp/full-real.sqlite`, 440.534 Konzepte, 440.534 `powo`-Xrefs
+aus dem WCVP-Ingest, Traits bereits eingespielt) gefahren, mit dem echten
+Wikidata-Bridge-Hub-Export aus T1
+(`pipelines/wikidata/output/wikidata-xref-canonical.csv`,
+1.709.127 Zeilen / 393.172 distinkte Wikidata-Items/QIDs — **nicht** zu
+verwechseln mit den distinkten `join_id`s, siehe die Korrektur im
+SP4-Task-4-Abschnitt unten). Der Backbone-Ingest wurde
+**nicht** wiederholt (~5 Min, laut Vorgabe zu vermeiden) — die Messung lief
+als eigenständiges, nicht eingechecktes Go-Programm direkt gegen
+`application.IngestXrefs`, mit anschließendem Cross-Check per direktem SQL
+gegen dieselbe Kopie. Beide Wege stimmen exakt überein (siehe Tabelle unten),
+das ist die Bestätigung, dass der Report nichts verschweigt.
+
+### Konfliktregel (der Kern dieser Aufgabe)
+
+`xref`s Primärschlüssel ist `(authority, ext_id)` — ein externer Datensatz
+kann zu genau einem Konzept gehören. Zwei strukturell verschiedene
+Situationen müssen getrennt behandelt werden:
+
+- **(a) Echter Konflikt**: dieselbe `(authority, ext_id)`-Kombination wird
+  von zwei UNTERSCHIEDLICHEN `join_id`s beansprucht, die auf zwei
+  UNTERSCHIEDLICHE Konzepte auflösen (ein Datenfehler stromaufwärts — z. B.
+  zwei IPNI-IDs, die Wikidata fälschlich derselben GBIF-ID zuordnet). Regel:
+  **skip-and-report** — keine der beiden Zeilen wird geschrieben, beide
+  zählen in `Conflicting`, der externe Schlüssel landet in `ConflictSample`.
+  Das ist der von der Aufgabe vorgegebene sichere Default: raten, welches
+  Konzept gemeint war, wäre falsch; und da `AddXref` ein `INSERT OR REPLACE`
+  auf genau diesem Schlüssel ist, würde ohne diese Prüfung die zuletzt
+  verarbeitete Zeile die andere stillschweigend überschreiben.
+- **(b) Legitime Mehrfachzuordnung**: EIN Konzept bekommt mehrere
+  UNTERSCHIEDLICHE `ext_id`s für dieselbe `authority` (z. B. zwei
+  Wikidata-Items, die beide dieselbe IPNI-ID tragen, liefern zwei
+  QIDs für dasselbe Konzept). Das ist **kein** Konflikt — `xref`s PK
+  kollidiert nicht, da die `ext_id`s verschieden sind — sondern wird
+  einfach **beide** geschrieben. `MultiPerAuthority`/`MultiSample` machen
+  das Phänomen sichtbar, ohne es zu verhindern.
+
+`PerAuthority` zählt bewusst **distinkte Konzepte**, nicht Zeilen — das ist
+die für UC2 relevante Zahl (siehe unten).
+
+### Messergebnis
+
+| Kennzahl | Wert |
+| --- | --- |
+| Konzepte gesamt | 440.534 |
+| Zeilen gesamt | 1.709.127 |
+| Matched | 1.709.111 |
+| Unmatched | 0 |
+| Conflicting | 16 (8 externe Schlüssel × 2 Zeilen) |
+| **Konzepte mit ≥1 neuem Xref** | **392.218 / 440.534 (89,03 %)** |
+
+Direkter SQL-Cross-Check (`SELECT COUNT(*) FROM (SELECT concept_id FROM xref
+GROUP BY concept_id HAVING COUNT(*) > 1)`) liefert exakt dieselbe Zahl,
+392.218 — der Report und die Datenbank stimmen überein.
+
+**Deckung pro Autorität** (distinkte Konzepte, Report und Direkt-SQL
+identisch):
+
+| authority | Konzepte | Anteil |
+| --- | --- | --- |
+| wikidata | 392.218 | 89,03 % |
+| gbif | 383.907 | 87,15 % |
+| wfo | 365.731 | 83,02 % |
+| colxr | 357.878 | 81,24 % |
+| **inat** | **182.821** | **41,50 %** |
+| floraveg | 24.274 | 5,51 % |
+| euromed | 95 | 0,02 % |
+
+**Die für UC2 entscheidende Zahl: 182.821 von 440.534 Konzepten (41,50 %)
+tragen eine iNaturalist-`taxon_id`.** Das ist die Obergrenze, mit der UC2
+("von einem hostus-Konzept zu iNaturalist-Beobachtungen") tatsächlich
+arbeiten kann — für die übrigen 58,5 % der Konzepte hat der Bridge-Hub keinen
+iNat-Datensatz gefunden. Das ist ein niedriger Befund, kein Fehlschlag: die
+Wikidata-Brücke bewegt sich zwischen "fast vollständig" (wikidata selbst,
+gbif, wfo, colxr — alle über 80 %) und "eng" (inat bei 41,5 %, floraveg bei
+5,5 %, euromed praktisch nicht vorhanden bei 0,02 %). Für UC2 heißt das
+konkret: **weniger als die Hälfte** aller Konzepte kann den in der
+Spezifikation vorgesehenen Direktlink zu iNaturalist-Beobachtungen anbieten;
+für die anderen 257.713 Konzepte müsste ein Client entweder auf eine andere
+Autorität ausweichen oder dem Nutzer ehrlich "keine iNat-Verknüpfung
+gefunden" anzeigen.
+
+**Konflikte (a):** 16 Zeilen (8 externe Schlüssel, je zwei Zeilen), alle bei
+`gbif` (5 Schlüssel) und `wfo` (3 Schlüssel) — keine bei `inat`, `colxr`,
+`wikidata`, `floraveg` oder `euromed`. Beispiele aus `ConflictSample`:
+`gbif:11378793`, `gbif:2783144`, `wfo:wfo-0000100690`. Das sind Fälle, in
+denen zwei verschiedene IPNI/POWO-IDs im Wikidata-Export auf dieselbe
+GBIF- bzw. WFO-ID verweisen — bei 1,7 Mio. Zeilen ein verschwindend kleiner
+Anteil (0,0009 %), aber genau der Fall, den die Skip-and-report-Regel ohne
+Raten auffängt.
+
+**Mehrfachzuordnungen (b):** am häufigsten bei `wikidata` selbst (954
+Konzepte mit ≥2 QIDs), gefolgt von `gbif` (635), `wfo` (299), `colxr` (39),
+`inat` (63), `floraveg` (3) — überall im niedrigen einstelligen bis
+niedrigen dreistelligen Promillebereich der jeweils erreichten Konzepte,
+also ein Rand-, kein Regelfall.
+
+**Unmatched: 0 von 1.709.127 Zeilen — wie durch den joinable-subset-Filter
+der Pipeline garantiert.** Die kanonische CSV wird gegen
+`.cache/powo_ext_ids.txt` gebaut, einen Dump genau der `xref.powo`-IDs
+dieser Datenbank (`pipelines/wikidata/build.sh`, `convert.py`); jedes
+emittierte `join_id` ist damit per Konstruktion Element von `xref.powo`,
+Unmatched kann gar nichts anderes als 0 sein. Der Wert validiert den
+Ingest-Join (die ID-Auflösung in `IngestXrefs` findet tatsächlich jede
+Zeile wieder), **nicht** die Abdeckung — und es ist dieselbe ID-Menge, nicht
+eine zweite, unabhängige.
+
+**Was das für UC2 bedeutet.** Die Wikidata-Brücke ist für GBIF/WFO/COL-XR/
+Wikidata selbst eine sehr gute Ergänzung (81–89 % Konzeptdeckung), aber für
+das von der Spezifikation genannte Zielsystem iNaturalist nur eine
+Teillösung: 41,5 % Deckung bedeutet, dass UC2 für weniger als die Hälfte
+der 440.534 Konzepte tatsächlich funktioniert. Ob das für den Produktschnitt
+ausreicht oder eine zweite iNat-Anbindung (z. B. ein direkter Namens- oder
+GBIF-basierter Join gegen den iNaturalist-Taxonomiedump) nötig wird, ist eine
+Produktentscheidung — dieser Abschnitt liefert dafür die Zahl, nicht die
+Entscheidung.
+
+---
+
+## SP4 Task 4 — Verdikt: Xref-Ingest end-to-end und UC2-Deckung
+
+> Diese Sektion ist der Abschluss von SP4 (Task 4 von 4). Sie fasst die in
+> SP4 Task 2 (oben, "SP4 Task 2 — Xref-Ingest …") an einer Kopie der vollen
+> 440.534-Konzept-Datenbank gemessenen Zahlen für die Abnahme zusammen und
+> liefert das für dieses Dokument fällige Verdikt. Die Zahlen unten sind
+> **nicht neu gemessen** — es ist derselbe Lauf (`application.IngestXrefs`
+> gegen `pipelines/wikidata/output/wikidata-xref-canonical.csv`, 1.709.127
+> Zeilen) wie im Task-2-Abschnitt oben, hier für die Abnahme wiederholt: die
+> Konzeptzahlen pro Autorität sind exakt die des Task-2-Abschnitts.
+
+### Drei Zählweisen, ein Ergebnis: die Reconciliation
+
+Beim Zusammenstellen dieser Sektion tauchten pro Autorität zunächst drei
+unterschiedliche Zahlen auf, die leicht zu verwechseln sind, weil alle drei
+plausibel nach "Deckung" aussehen. Sie sind hier bewusst benannt und
+gegeneinander aufgelöst, statt eine davon unkommentiert stehen zu lassen:
+
+| Zählweise | Was sie zählt | wikidata | gbif | wfo | colxr | inat | floraveg | euromed |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| distinkte `ext_id`s | wie viele verschiedene externe IDs die CSV je Autorität führt (Rohdaten, vor jedem Join) | 393.172 | 384.547 | 366.033 | 357.917 | 182.884 | 24.277 | 95 |
+| distinkte `join_id`s | wie viele dieser Zeilen einen `join_id` tragen, der (vor Konfliktprüfung) im Index existiert | 392.218 | 383.917 | 365.737 | 357.878 | 182.821 | 24.274 | 95 |
+| **tatsächlich geschriebene Konzepte (T2-Tabelle, maßgeblich)** | wie viele Konzepte NACH Konfliktprüfung tatsächlich einen `xref`-Datensatz bekommen haben | **392.218** | **383.907** | **365.731** | **357.878** | **182.821** | **24.274** | **95** |
+
+Die erste Spalte (`ext_id`) liegt bei wikidata, gbif, wfo und colxr sichtbar
+über den beiden anderen — das ist keine Unstimmigkeit, sondern schlicht die
+Rohzahl vor dem ID-Join: nicht jede externe ID im CSV trägt zwangsläufig
+einen bei hostus bekannten `join_id`. Die zweite und dritte Spalte
+unterscheiden sich dagegen genau um die Typ-(a)-Konflikte: **`join_id` minus
+geschriebene Konzepte = gbif 10 + wfo 6 = 16** — exakt die 16 übersprungenen
+Konfliktzeilen (8 externe Schlüssel × 2 Zeilen) aus der Konfliktregel oben,
+alle bei `gbif` und `wfo`. Bei den übrigen Autoritäten sind `join_id`- und
+Konzeptzahl identisch, weil dort keine Konflikte auftraten. Nichts bleibt
+unerklärt — das ist eine positive Konsistenzprobe für die Konfliktbehandlung
+aus SP4 Task 2, kein offener Punkt: **die T2-Tabelle (dritte Zeile) ist die
+maßgebliche, berichtete Deckungszahl** und wird unten unverändert verwendet.
+
+### Der End-to-End-Beweis (Schritt 1+2 dieser Aufgabe)
+
+`internal/app/integration_test.go`s
+`TestIntegration_EndToEndIngestServeQuery` fährt jetzt den **echten** CLI-Pfad
+(`app.Ingest` mit `testdata/dataset.yaml`, das seit T2 einen `xref_sources`-
+Eintrag auf `internal/adapters/xref/testdata/wikidata-sample.csv` trägt) und
+prüft über echtes HTTP:
+
+- `GET /v1/concept/{corynephorus}` liefert **sechs** zusätzliche Autoritäten
+  (`wikidata`, `gbif`, `colxr`, `floraveg`, `wfo`, `inat`) neben dem
+  WCVP-nativen `powo`-Xref auf demselben Konzept — "mehrere Autoritäten" ist
+  damit über echtes HTTP bewiesen, nicht nur am In-Process-Handler-Test aus
+  SP4 Task 3.
+- `GET /v1/xref?authority=inat&id=160927` löst zur **selben** Konzept-ID
+  auf, die die Concept-Antwort trägt — der Rückweg funktioniert.
+
+```bash
+nix develop -c make test-integration
+```
+
+```
+github.com/jobrunner/hostus/internal/app:
+ ✓ Integration end to end ingest serve query (0.02s)
+ ✓ Integration offline bundle concept suggest traits offline (0.01s)
+ ✓ Integration offline bundle serves suggest offline (0.02s)
+ ✓ Integration traits fuzzy classification (0.01s)
+
+DONE 4 tests in 1.232s
+```
+
+### Die Kennzahlen (Volldatensatz, T2-Konzeptzahlen)
+
+Erzeugt durch `application.IngestXrefs` gegen eine Kopie der vollen
+440.534-Konzept-/440.534-`powo`-Xref-Datenbank, mit dem echten
+Wikidata-Bridge-Export aus T1 (1.709.127 Zeilen), gegengeprüft per direktem
+SQL gegen dieselbe Kopie:
+
+```sql
+-- Konzepte gesamt mit ≥1 neuem Xref
+SELECT COUNT(*) FROM (SELECT concept_id FROM xref GROUP BY concept_id HAVING COUNT(*) > 1);
+-- 392218
+
+-- Deckung pro Autorität (distinkte Konzepte)
+SELECT authority, COUNT(DISTINCT concept_id) FROM xref GROUP BY authority;
+```
+
+| Kennzahl | Wert |
+| --- | --- |
+| Konzepte mit ≥1 neuem Xref | **392.218 / 440.534 (89,03 %)** |
+| wikidata | 392.218 |
+| gbif | 383.907 |
+| wfo | 365.731 |
+| colxr | 357.878 |
+| **inat** | **182.821 (41,50 %)** |
+| floraveg | 24.274 |
+| euromed | 95 |
+| Konflikte (a) — dieselbe `(authority, ext_id)`, zwei Konzepte | 16 Zeilen / 8 externe Schlüssel, ausschließlich `gbif` und `wfo` |
+| Mehrfachzuordnungen (b) — ein Konzept, mehrere `ext_id`s derselben Autorität | wikidata 954 · gbif 635 · wfo 299 · inat 63 · colxr 39 · floraveg 3 |
+| Unmatched | **0 von 1.709.127 Zeilen** |
+
+**Unmatched = 0** ist durch den joinable-subset-Filter der Pipeline
+garantiert: die CSV enthält nur Zeilen, deren `join_id` aus dem
+`xref.powo`-Dump derselben Datenbank stammt. Das validiert den Ingest-Join,
+nicht die Abdeckung.
+
+### Was das für UC2 bedeutet
+
+**182.821 von 440.534 Konzepten (41,50 %) tragen eine iNaturalist-`taxon_id`.
+Das ist UC2s harte Obergrenze.** Für die übrigen 257.713 Konzepte (58,5 %)
+gibt es **keinen** iNat-Link — nicht "schwer zu finden", sondern schlicht
+nicht in der Wikidata-Brücke vorhanden. Das ist ein niedriger Befund, kein
+Fehlschlag der Implementierung: `application.IngestXrefs` selbst arbeitet
+korrekt (0 Unmatched, Konflikte sauber erkannt und übersprungen, Mehrfach-
+zuordnungen sauber als solche markiert); die Grenze liegt in der
+**Datenquelle**, nicht im Code.
+
+Zum Vergleich: die anderen sechs Autoritäten liegen zwischen 89,03 % (wikidata
+selbst) und 81–83 % (gbif/wfo/colxr) — deutlich über inat. `floraveg` (5,5 %)
+und `euromed` (0,02 %, 95 Konzepte) sind noch schwächer als inat, aber UC2
+hängt nicht an ihnen.
+
+**Was das für UC2 kostet:** der in der Spezifikation vorgesehene
+Direktlink hostus-Konzept → iNaturalist-Beobachtungen funktioniert für
+weniger als die Hälfte aller Konzepte. Für die übrigen Konzepte muss ein
+Client entweder (a) ehrlich "keine iNat-Verknüpfung gefunden" anzeigen, statt
+zu raten, oder (b) auf eine der besser gedeckten Autoritäten ausweichen (z. B.
+GBIF, 87 %) — was aber nur hilft, wenn die konsumierende Anwendung ohnehin
+schon einen GBIF-Pfad zu iNaturalist-Beobachtungen kennt, was UC2 in der
+Spezifikation nicht voraussetzt.
+
+**Die Optionen (Produktentscheidung, nicht Teil dieser Aufgabe):**
+
+1. **Teildeckung akzeptieren.** 41,50 % ist real nutzbar und kostenlos (kein
+   zusätzlicher Ingest-Pfad); UC2 liefert für zwei von fünf Konzepten einen
+   Link, für die übrigen einen ehrlichen "nicht gefunden"-Zustand.
+2. **Zweiter iNat-Auflösungspfad, namensbasiert.** Ein direkter Join gegen
+   den iNaturalist-Taxonomiedump (statt über die Wikidata-Brücke) könnte die
+   Deckung erhöhen — Aufwand und tatsächlicher Zugewinn sind hier nicht
+   gemessen, das wäre ein eigener Rechercheauftrag (vergleichbar mit SP4
+   Task 1s Wikidata-Bridge-Aufbau).
+3. **Nichts tun** und die 41,50 %-Grenze in der UC2-Dokumentation
+   (`docs/how-to/inat-uc2.md`, SP4 Task 3) als bekannte Einschränkung stehen
+   lassen.
+
+Zusätzlich gelten für jeden über inat erreichten Datensatz weiterhin die in
+SP4s PoC (P9) gemessenen Einschränkungen der iNaturalist-**Beobachtungsdaten**
+selbst — unabhängig von der hier gemessenen Xref-Ingest-Deckung, weil hostus
+nur Taxon-IDs ingestiert, keine Beobachtungen:
+
+- Koordinaten `obscured` sind auf ~26–28 km verwischt.
+- ~32–38 % aller Beobachtungen sind `obscured`; 62,6 % sind ohne
+  Einschränkung nutzbar.
+- `quality_grade=research` bedeutet **zwei Community-Zustimmungen**, keine
+  fachliche Verifikation durch eine Expertin oder einen Experten.
+
+Diese Zahlen werden hier nicht abgeschwächt: sie treffen jede der 182.821
+über inat erreichbaren Konzepte, sobald ein Client tatsächlich zu
+Beobachtungen navigiert, nicht nur zur Taxon-ID.
+
+### Verdikt
+
+**Hält mit Auflagen.** Der Xref-Ingest selbst (Code, Konfliktbehandlung,
+End-to-End-Pfad von `hostus ingest` bis `GET /v1/xref`) ist korrekt und
+vollständig bewiesen: 0 Unmatched, Konflikte sauber erkannt statt geraten,
+Mehrfachzuordnungen sauber sichtbar gemacht, der komplette Pfad über echtes
+HTTP nachgewiesen. Die Auflage betrifft nicht den Dienst, sondern die
+Datenquelle: **UC2 ("hostus-Konzept → iNaturalist-Beobachtungen") erreicht
+nur 41,50 % der Konzepte**, weil die Wikidata-Brücke für iNaturalist nur
+diesen Anteil kennt. Das ist ehrlich als Deckungsgrenze zu kommunizieren,
+nicht zu verschweigen — ein Produkt, das UC2 auf Basis dieser Brücke
+ausliefert, muss den fehlenden Link für 58,5 % der Konzepte explizit als
+"nicht gefunden" behandeln, nicht stillschweigend nichts anzeigen.

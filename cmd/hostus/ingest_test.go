@@ -223,3 +223,48 @@ func TestPrintTraitReports_ExactOnlyVocabularyPrintsNoNormalisationLines(t *test
 		t.Errorf("report %q, want no normalisation lines when nothing was normalised", got)
 	}
 }
+
+func TestPrintXrefReports_CoverageConflictsAndSamplesVisible(t *testing.T) {
+	reports := []application.XrefIngestReport{{
+		Source: "wikidata", Rows: 5, Matched: 3, Unmatched: 1, Conflicting: 1,
+		PerAuthority:      map[string]int{"inat": 2, "gbif": 3},
+		MultiPerAuthority: map[string]int{"wikidata": 1},
+		UnmatchedSample:   []string{"powo:999999-9"},
+		ConflictSample:    []string{"inat:900002"},
+		Redistribution:    "allowed",
+	}}
+
+	var buf bytes.Buffer
+	printXrefReports(&buf, reports)
+	got := buf.String()
+
+	for _, want := range []string{
+		"wikidata: rows=5 matched=3 unmatched=1 conflicting=1",
+		"gbif: concepts=3",
+		"inat: concepts=2",
+		"wikidata: 1 concept(s) hold more than one id (not a conflict)",
+		"unmatched sample: powo:999999-9",
+		"conflict sample: inat:900002",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("report %q, want it to contain %q", got, want)
+		}
+	}
+}
+
+func TestPrintXrefReports_NoSourcesPrintsNothing(t *testing.T) {
+	var buf bytes.Buffer
+	printXrefReports(&buf, nil)
+	if got := buf.String(); got != "" {
+		t.Errorf("report = %q, want empty when no xref sources were ingested", got)
+	}
+}
+
+func TestPrintXrefReports_CleanSourcePrintsNoSampleLines(t *testing.T) {
+	var buf bytes.Buffer
+	printXrefReports(&buf, []application.XrefIngestReport{{Source: "wikidata", Rows: 1, Matched: 1, PerAuthority: map[string]int{"inat": 1}}})
+	got := buf.String()
+	if strings.Contains(got, "unmatched sample") || strings.Contains(got, "conflict sample") {
+		t.Errorf("report %q, want no sample lines when nothing was unmatched or conflicting", got)
+	}
+}

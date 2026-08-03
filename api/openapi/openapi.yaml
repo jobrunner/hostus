@@ -124,7 +124,10 @@ paths:
         - name: authority
           in: query
           required: true
-          description: Name der externen Autorität, z. B. `powo`.
+          description: >-
+            Name der externen Autorität, z. B. `powo`, `inat`, `gbif`,
+            `wikidata`, `wfo`, `colxr`, `floraveg` oder `euromed` (SP4
+            Wikidata-Bridge-Enrichment).
           schema:
             type: string
         - name: id
@@ -417,9 +420,18 @@ components:
           $ref: '#/components/schemas/BackboneRef'
         xrefs:
           type: object
-          description: 'Autorität → externe ID, z. B. `{"powo": "396681-1"}`.'
+          description: >-
+            Autorität → ALLE externen IDs dieser Autorität für dieses
+            Concept, z. B. `{"powo": ["44903-1"], "inat": ["486076",
+            "556571"]}`. Ein Concept kann legitim mehrere IDs derselben
+            Autorität tragen (SP4-Messung am vollen Index: 954 Wikidata-,
+            635 GBIF-, 299 WFO-, 63 iNat-, 39 ColXR-, 3 FloraVeg-Concepts mit
+            >1 ID) — jede Liste ist deterministisch nach externer ID
+            sortiert, nie von der Ingest-/Query-Reihenfolge abhängig.
           additionalProperties:
-            type: string
+            type: array
+            items:
+              type: string
         classification:
           type: array
           description: >-

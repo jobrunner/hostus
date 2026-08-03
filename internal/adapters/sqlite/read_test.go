@@ -204,6 +204,51 @@ func TestConceptByXref_UnknownAuthorityReturnsErrNotFound(t *testing.T) {
 	}
 }
 
+func TestConceptIDsByXref_ResolvesOnlyKnownExtIDsForAuthority(t *testing.T) {
+	db := openSeededDB(t)
+
+	got, err := db.ConceptIDsByXref(context.Background(), "powo", []string{"396681-1", "226649-1", "nope"})
+	if err != nil {
+		t.Fatalf("ConceptIDsByXref: unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len(ConceptIDsByXref) = %d, want 2 (the unknown id must be absent, not zero-valued)", len(got))
+	}
+	if got["396681-1"] != corynephorusID {
+		t.Errorf(`got["396681-1"] = %q, want %q`, got["396681-1"], corynephorusID)
+	}
+	if got["226649-1"] != jacobaeaID {
+		t.Errorf(`got["226649-1"] = %q, want %q`, got["226649-1"], jacobaeaID)
+	}
+	if _, ok := got["nope"]; ok {
+		t.Errorf(`got["nope"] present, want it absent from the result map`)
+	}
+}
+
+func TestConceptIDsByXref_WrongAuthorityDoesNotMatchOnExtIDAlone(t *testing.T) {
+	db := openSeededDB(t)
+
+	got, err := db.ConceptIDsByXref(context.Background(), "wikidata", []string{"396681-1"})
+	if err != nil {
+		t.Fatalf("ConceptIDsByXref: unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("ConceptIDsByXref(wikidata, [396681-1]) = %v, want empty (that ext_id was never recorded under wikidata)", got)
+	}
+}
+
+func TestConceptIDsByXref_EmptyExtIDsReturnsEmptyNotError(t *testing.T) {
+	db := openSeededDB(t)
+
+	got, err := db.ConceptIDsByXref(context.Background(), "powo", nil)
+	if err != nil {
+		t.Fatalf("ConceptIDsByXref: unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("ConceptIDsByXref(powo, nil) = %v, want empty", got)
+	}
+}
+
 func TestMatchExact_AcceptedNameReturnsAcceptedCandidate(t *testing.T) {
 	db := openSeededDB(t)
 

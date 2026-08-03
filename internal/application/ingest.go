@@ -380,7 +380,11 @@ func (st *ingestState) upsertAcceptedConcept(row TaxonRow, name domain.Name, ran
 		return domain.Concept{}, fmt.Errorf("application: backbone %q: %w", b.ID, err)
 	}
 	if row.POWOID != "" {
-		if err := st.tx.AddXref(cID, domain.Xref{Authority: "powo", ExtID: row.POWOID}); err != nil {
+		// Source "" (SQL NULL): a powo id read straight off a backbone taxon
+		// row is not attributable to any ingested xref source — the
+		// backbone's own redistribution value already gates it (see
+		// schema.sql's note on xref.source).
+		if err := st.tx.AddXref(cID, domain.Xref{Authority: "powo", ExtID: row.POWOID}, ""); err != nil {
 			return domain.Concept{}, fmt.Errorf("application: backbone %q: %w", b.ID, err)
 		}
 	}

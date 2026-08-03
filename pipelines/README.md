@@ -1,12 +1,14 @@
 # Pipelines (xlsx/sqlite/REST → canonical CSV)
 
-Two families of pipelines live here: three **trait** pipelines (EIVE /
-Tichý / Midolo, documented first below) and four **name-list** pipelines
+Three families of pipelines live here: three **trait** pipelines (EIVE /
+Tichý / Midolo, documented first below), four **name-list** pipelines
 (GermanSL / EuroSL / FloraVeg / Euro+Med, documented in their own section
 further down) that acquire additional backbone/checklist sources for local
-evaluation. Both families follow the same shape: pinned source → download-
-or-reuse-cache → convert → canonical CSV in `output/` (gitignored) →
-printed summary.
+evaluation, and one **xref bridge-hub** pipeline (`wikidata`, documented
+last) that harvests cross-references to other taxonomic authorities via
+Wikidata. All three families follow the same shape: pinned source →
+download-or-reuse-cache → convert → canonical CSV in `output/`
+(gitignored) → printed summary.
 
 ## Trait pipelines
 
@@ -324,3 +326,247 @@ links (`/taxon` returns flat records with no `IsChildTaxonOf`-equivalent
 field) — a full ColDP-style export would carry all of these; this REST
 harvest is a name-and-status list only, matching exactly the canonical
 contract's scope and no further.
+
+## Wikidata xref bridge-hub pipeline
+
+`pipelines/wikidata/` harvests cross-references from Wikidata for hostus
+2.0 SP4: our concept index already carries exactly one outbound join key,
+`xref.powo` (the bare IPNI id from WCVP's `dynamicproperties.powoid`, e.g.
+`396681-1`). Wikidata items carry that same id under **both** P961 (IPNI,
+already bare) and P5037 (POWO, stored as a
+`urn:lsid:ipni.org:names:...`-prefixed LSID) — and, on the same item,
+identifiers for several other authorities. So Wikidata is used as a
+**bridge hub**: join a concept to a Wikidata item by IPNI/POWO id, then
+read every other authority off that item. See `poc/P07-findings.md` for
+the PoC that verified these property numbers against live entity data.
+
+### Property → `xref.authority` mapping
+
+| Wikidata property | Label | maps to `authority` | Notes |
+|---|---|---|---|
+| P961 | IPNI plant ID | *(join key, not emitted as its own row)* | Already bare, e.g. `396681-1`. |
+| P5037 | POWO ID | *(join key, not emitted as its own row)* | Stored as an LSID, `urn:lsid:ipni.org:names:396681-1` — the `urn:lsid:ipni.org:names:` prefix is stripped before use. |
+| P846 | GBIF-species-ID (legacy) | `gbif` | Superseded by P14607; still queried and used as a fallback. |
+| P14607 | GBIF taxon ID (new) | `gbif` | Preferred over P846 when both are present (PoC P7: a Wikidata migration from P846 → P14607 is in progress; querying only the new property would silently miss data still under the old one). |
+| P10585 | Catalogue of Life ID | `colxr` | |
+| P12380 | Euro+Med PlantBase taxon ID | `euromed` | |
+| P12100 | FloraVeg.EU taxon ID | `floraveg` | **A NAME STRING, not an opaque id** (e.g. `"Corynephorus canescens"`) — see caveat below. |
+| P7715 | World Flora Online ID | `wfo` | Not in the original spec's property list at all; discovered via PoC P7's `wbsearchentities` search. |
+| P3151 | iNaturalist taxon ID | `inat` | UC2's ceiling metric — see task report for the measured fill rate. |
+| *(the QID itself)* | — | `wikidata` | Always emitted for every item, so a consumer can resolve back to the source item. |
+
+**P12100/FloraVeg.EU is a name, not an identifier.** Every other row in
+this CSV carries an opaque id that is meaningless outside its issuing
+authority's own database key space. P12100's value is the taxon's
+*scientific name string* as FloraVeg.EU spells it — useful for a
+best-effort cross-check or display, but **not safe to treat as a joinable
+id** the way `gbif`/`colxr`/`wfo`/`inat` are. A consumer joining on
+`authority=floraveg` must know it is joining on a name, with all the
+usual name-matching caveats (synonymy, orthographic variants), not an id
+lookup.
+
+### Canonical CSV contract (xref)
+
+Pipe-delimited, one row per (Wikidata item × authority):
+
+```
+join_authority|join_id|authority|ext_id|wikidata_qid
+```
+
+- `join_authority` is always `powo` — the key hostus's `xref` table
+  already carries.
+- `join_id` is the bare IPNI id: taken directly from P961, or from P5037
+  with the LSID prefix stripped, so the ingest side never has to
+  re-derive either. **When both P961 and stripped-P5037 are present and
+  disagree**, `common.resolve_join_id` emits **whichever one is actually
+  present in `xref.powo`** (checked when a joinable-id set is supplied —
+  see the joinable-subset section below); P961 is used as a fallback only
+  when both sides match, neither does, or no joinable-id set is supplied
+  at all. Every disagreement is counted and printed by `convert.py`,
+  never silently dropped; see the task report's "fix round 1" section for
+  why this rule exists — an earlier version of this pipeline picked P961
+  unconditionally, which emitted a **non-matching, dead `join_id`** for
+  4.07% of the joinable population whenever P961 itself didn't happen to
+  be the side that matched.
+- `authority` — see the mapping table above.
+- `ext_id` — the id (or, for `floraveg`, the name) in that authority's own
+  key space.
+- `wikidata_qid` — the source Wikidata item, repeated on every row (so a
+  row is self-contained without a join back to a `wikidata`-authority row
+  in the same file).
+
+### Query + paging strategy
+
+WDQS enforces a 60s query timeout. Scoping to taxa (`wdt:P31 wd:Q16521`)
+that also carry P961 or P5037, live-measured while building this
+pipeline: a single query combining that P31 type-join with several
+`OPTIONAL` property lookups reliably times out (504/502/truncated JSON)
+above a few hundred rows per page — the P31=Q16521 join alone already
+costs ~30–45s regardless of page size, because Blazegraph must
+materialize the intersection of two large sets before applying
+`LIMIT`/`OFFSET`.
+
+So the harvest is **two-phase** (`pipelines/wikidata/crawl.py`):
+
+1. **Seed scan** — page P961 and P5037 *independently*, with no join and
+   no `OPTIONAL`s at all: `SELECT ?item ?v WHERE { ?item wdt:P961 ?v }
+   LIMIT 20000 OFFSET N`. This single-predicate shape consistently
+   completes in 3–25s per page even at `N` in the hundreds of thousands,
+   because WDQS can stream one predicate's index range without a join.
+   The union of both scans is the seed set — every item we could
+   possibly join.
+2. **VALUES-batch enrichment** — re-visit the seed set in batches of 500
+   QIDs via `VALUES ?item { wd:Q1 wd:Q2 ... }` with `OPTIONAL` for each of
+   the other 7 properties. This is cheap (1–3s per batch) because each
+   `OPTIONAL` is now a point-lookup against a small, explicit item list
+   rather than a join against the whole graph.
+
+**The live P31=Q16521 type filter is deliberately dropped from phase 1**
+for cost reasons, on the strength of a direct measurement: a COUNT of
+`?item wdt:P961 ?v ; wdt:P31 wd:Q16521` returned 907654, against a plain
+`?item wdt:P961 ?v` COUNT of 908799 — i.e. 99.87% of P961-holders are
+already typed as Wikidata's generic `taxon` class. The ~0.13% that are
+IPNI/POWO-bearing but not typed as a taxon (a handful of disambiguation
+edge cases) are accepted as noise rather than paying a ~30–45s join tax on
+every page of a multi-hour crawl. This is a pipeline engineering
+trade-off, not a hostus correctness requirement — hostus itself never
+queries WDQS; it only reads the canonical CSV.
+
+Both phases checkpoint to `.cache/` after every page/batch
+(`crawl.py`'s docstring has the full resumability design), retry with
+exponential backoff on 429/5xx/timeout/truncated-JSON (honoring
+`Retry-After` on 429), and run strictly sequentially (no concurrency) —
+politeness over a harvest expected to take well over an hour against the
+public endpoint.
+
+### Running
+
+```bash
+nix develop -c bash pipelines/wikidata/build.sh
+```
+
+If the shell running it is itself interrupted or time-limited, just
+re-run the same command — progress is checkpointed under
+`pipelines/wikidata/.cache/` and resumes rather than restarting.
+
+### Licence
+
+Wikidata is **CC0** → `redistribution: allowed` (no attribution
+obligation, unlike the CC-BY-4.0 trait pipelines above).
+
+### Enrichment is restricted to the joinable subset
+
+Phase 2 (enrichment) does not necessarily cover the whole seed union.
+`build.sh` looks for `.cache/powo_ext_ids.txt` (one bare IPNI id per
+line — the distinct `ext_id`s from the real concept DB's `xref` table
+where `authority='powo'`); if present, only seed items whose P961 or
+stripped-P5037 value is in that set are enriched at all. This is a
+deliberate scope decision, not a shortcut: **a Wikidata item whose
+IPNI/POWO id doesn't match one of our concepts can never be joined by
+hostus's ingest, so spending crawl time enriching it buys nothing.** In
+the run that produced the numbers below, this cut the population needing
+enrichment from **928,129** (the full P961 ∪ stripped-P5037 seed union)
+to **393,172** joinable items — roughly 42%, and it also means the
+canonical CSV in `output/` only ever contains rows for items our current
+index can actually use. If `.cache/powo_ext_ids.txt` is absent, the full
+seed union is enriched instead (the pipeline's general-purpose mode).
+
+### Observed summary (live run against the real WDQS, 2026-08-02)
+
+**Join coverage — the headline:** of the 928,129 distinct Wikidata items
+carrying P961 or P5037, **393,172 Wikidata items have an IPNI/POWO id
+matching one of hostus's 440,534 `xref.powo` concepts, resolving to 392,218
+distinct concepts = 89.03% of the index** (measured directly against `xref`
+in the real concept DB, not estimated). The two numbers are different units
+and must not be conflated: 393,172 counts QIDs, 392,218 counts concepts —
+several Wikidata items can carry the same IPNI/POWO id. See the
+reconciliation table in `docs/research/reality-check.md` (SP4 T4) for how the
+two are derived from each other.
+
+```
+seed_union_total=928129
+joinable_ids_total=440534
+total_items=393172 rows=1709127
+populated=wikidata:393172,gbif:384584,colxr:357922,euromed:95,floraveg:24278,wfo:366186,inat:182890
+fill_rate_pct=wikidata:100.0,gbif:97.8,colxr:91.0,euromed:0.0,floraveg:6.2,wfo:93.1,inat:46.5
+raw_property_counts=P961:369219,P5037:381020,P846:384480,P14607:114,P10585:357922,P12380:95,P12100:24278,P7715:366186,P3151:182890
+p961_p5037_disagreements=16243 of items_with_both=357067 (4.549% of items carrying both P961 and P5037)
+```
+
+**Per-authority fill rate, population-level (393,172 joinable items) —
+this is the first real evidence of how sparse each property actually is:**
+
+| authority | property | populated | fill rate |
+|---|---|---|---|
+| wikidata | (the item itself) | 393,172 | 100.0% |
+| gbif | P846/P14607 (legacy preferred-fallback) | 384,584 | 97.8% |
+| wfo | P7715 | 366,186 | 93.1% |
+| colxr | P10585 | 357,922 | 91.0% |
+| inat | P3151 | 182,890 | **46.5%** |
+| floraveg | P12100 (**name, not id**) | 24,278 | 6.2% |
+| euromed | P12380 | 95 | 0.02% |
+
+**PoC P7 generalises completely at population scale.** P7 saw P14607
+("new" GBIF id) and P12380 (Euro+Med) empty on both reference taxa and
+flagged that as inconclusive with n=2. At n=393,172 the picture is
+unambiguous: **P14607 is populated on 114 items (0.03%)** and **P12380 on
+95 items (0.02%)**. Querying P846 is not a fallback for the rare case
+P14607 is missing — for practical purposes today, **P846 is the only
+GBIF id Wikidata actually carries**, and the same holds for Euro+Med:
+Wikidata is not a usable path to Euro+Med ids, full stop. This is a
+finding about the source, not about this pipeline.
+
+**Sampling bias, made explicit — inat is the case in point, but it is not
+the whole picture.** Because enrichment processes the seed union in
+ascending-QID order (older, more prominently-curated items first — see
+the paging strategy above), a partial run's fill rate is a biased
+estimate of the true population rate, not a random sample — but the bias
+is not uniformly "the sample overstates the population" for every
+property. At 173,500 items enriched (QID-ordered, unrestricted) vs. the
+final 393,172-item joinable population:
+
+| authority | sample (n=173,500) | population (n=393,172) | direction |
+|---|---|---|---|
+| inat | 53.3% | **46.5%** | fell 6.8pp, as the QID-order-bias hypothesis predicts |
+| gbif | 99.1% | 97.8% | fell 1.3pp, same direction |
+| wfo | 97.4% | 93.1% | fell 4.3pp, same direction |
+| floraveg | 7.0% | 6.2% | fell 0.8pp, same direction |
+| **colxr** | 90.4% | **91.0%** | **rose 0.6pp — the opposite direction** |
+| **P14607 (gbif-new only)** | 0.002% | **0.03%** | **rose — opposite direction, but n is tiny (3 → 114) so the percentage move is not statistically meaningful** |
+
+Four of six properties moved the way the QID-order bias predicts. **colxr
+and P14607 moved the other way, and this pipeline does not have a
+confirmed explanation for either.** A plausible but *unverified*
+hypothesis for colxr is that Catalogue of Life coverage does not
+correlate with Wikidata item age/prominence the same way GBIF/WFO/iNat
+coverage does (COL is itself an aggregation of many regional checklists
+added to Wikidata on their own schedule, not necessarily front-loaded onto
+old/prominent items) — but this has not been tested against the data and
+should be treated as speculation, not a finding. **Report population-level
+fill rates, not partial-crawl samples, as the answer** regardless of
+direction — the point stands even where the bias didn't run the expected
+way: a partial-crawl sample is not a substitute for the full population
+count, in either direction.
+
+**P961 vs stripped-P5037 disagreement:** 16,243 items (4.5% of the
+357,067 items carrying both properties) have a P961 value that does not
+equal the LSID-stripped P5037 value on the same item. Sampled cases (see
+`.superpowers/sdd/2026-08-02-sp4-xref/task-1-report.md`) show this is
+usually a genuine data-quality issue in Wikidata (one property pointing
+at a different IPNI record than the other, e.g. a homonym or a
+subsequently-corrected identifier) rather than a formatting artifact. Per
+the tie-break rule above, whichever side actually matches our concept
+table is used for the CSV's `join_id` column (P961 only as a last-resort
+fallback); both raw values are still queried and any item where *either*
+raw value matches our concept table is treated as joinable, so a
+disagreement never silently drops a genuinely reachable concept **and,
+since fix round 1, never emits a dead join_id for one either** — see the
+task report.
+
+Wall-clock: seed phase (908,799 + 892,600 rows via single-predicate
+`LIMIT 20000` pages) plus the joinable-restricted enrichment phase
+(~530 `VALUES`-batches of 500 items, ~2.5-3.5s/batch) together ran to
+completion across several bounded foreground invocations of
+`build.sh <seconds>`, resuming from `.cache/` checkpoints each time (the
+public WDQS endpoint does not stay up for one uninterrupted multi-hour
+process). See the task report for the full timing breakdown.

@@ -11,6 +11,7 @@ import (
 	"github.com/jobrunner/hostus/internal/adapters/sqlite"
 	"github.com/jobrunner/hostus/internal/adapters/wcvp"
 	"github.com/jobrunner/hostus/internal/application"
+	"github.com/jobrunner/hostus/internal/domain"
 
 	httpx "github.com/jobrunner/hostus/internal/adapters/http"
 )
@@ -94,6 +95,47 @@ func decodeJSON[T any](t *testing.T, body *bytes.Buffer) T {
 	return v
 }
 
+// assertXrefSlice checks xrefs[authority] equals want exactly (order
+// included — conceptXrefs orders rows by (authority, ext_id), so the wire
+// slice is always in that sorted order, never ingest/query order).
+func assertXrefSlice(t *testing.T, xrefs map[string][]string, authority string, want []string) {
+	t.Helper()
+	got := xrefs[authority]
+	if len(got) != len(want) {
+		t.Fatalf("xrefs[%s] = %v, want %v", authority, got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("xrefs[%s] = %v, want %v", authority, got, want)
+			return
+		}
+	}
+}
+
+// addXref writes one (authority, ext_id) cross-reference for
+// corynephorusConceptID directly via the repository's IngestTx, the same
+// write path application.IngestXrefs uses — a minimal way for a test to
+// seed xrefs beyond what the WCVP fixture's own POWO id carries, without
+// going through a full XrefRowSource/Wikidata-bridge round trip. Every
+// caller in this file targets that one concept, so it is not parameterized
+// on concept id.
+func addXref(t *testing.T, db *sqlite.DB, authority, extID string) {
+	t.Helper()
+	tx, err := db.BeginTraitIngest(context.Background())
+	if err != nil {
+		t.Fatalf("BeginTraitIngest: %v", err)
+	}
+	if err := tx.AddXref(corynephorusConceptID, domain.Xref{Authority: authority, ExtID: extID}, ""); err != nil {
+		t.Fatalf("AddXref(%s, %s:%s): %v", corynephorusConceptID, authority, extID, err)
+	}
+	if err := tx.Finalize(); err != nil {
+		t.Fatalf("Finalize: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+}
+
 func assertJSONContentType(t *testing.T, rr *httptest.ResponseRecorder) {
 	t.Helper()
 	if got := rr.Header().Get("Content-Type"); got != "application/json" {
@@ -119,7 +161,7 @@ type conceptResponse struct {
 		ID      string `json:"id"`
 		Version string `json:"version"`
 	} `json:"backbone"`
-	Xrefs          map[string]string `json:"xrefs"`
+	Xrefs          map[string][]string `json:"xrefs"`
 	Classification []struct {
 		ConceptID string `json:"concept_id"`
 		Canonical string `json:"canonical"`
@@ -192,9 +234,7 @@ func TestHandleConcept_KnownID_ReturnsConcept(t *testing.T) {
 	if got.Backbone.ID != "wcvp" || got.Backbone.Version != "2026-06-15" {
 		t.Errorf("backbone = %+v, want {wcvp 2026-06-15}", got.Backbone)
 	}
-	if got.Xrefs["powo"] != "396681-1" {
-		t.Errorf("xrefs[powo] = %q, want %q", got.Xrefs["powo"], "396681-1")
-	}
+	assertXrefSlice(t, got.Xrefs, "powo", []string{"396681-1"})
 	if !hasSynonym(got.Synonyms, "Weingaertneria") {
 		t.Errorf("synonyms = %+v, want an entry starting with %q", got.Synonyms, "Weingaertneria")
 	}
@@ -375,6 +415,90 @@ func TestHandleXref_UnknownID_Returns404NotFound(t *testing.T) {
 	got := decodeJSON[errorEnvelope](t, rr.Body)
 	if got.Error.Code != "NOT_FOUND" {
 		t.Errorf("error.code = %q, want %q", got.Error.Code, "NOT_FOUND")
+	}
+}
+
+// TestHandleConcept_MultipleXrefsSameAuthority_RendersSlice proves the
+// documented fix for the Task 2 defect: a concept legitimately carrying
+// TWO distinct ext_ids for the same authority (measured on the real index:
+// e.g. powo join id 44903-1 has iNat ids 486076 AND 556571 — see
+// task-3-brief.md) must render xrefs.inat as a SORTED slice of BOTH ids,
+// never silently keep only the last one written by a map[string]string.
+func TestHandleConcept_MultipleXrefsSameAuthority_RendersSlice(t *testing.T) {
+	repo := seededRepo(t)
+	addXref(t, repo, "inat", "556571")
+	addXref(t, repo, "inat", "486076")
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/concept/"+corynephorusConceptID, nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	got := decodeJSON[conceptResponse](t, rr.Body)
+	// conceptXrefs orders by (authority, ext_id) — "486076" < "556571"
+	// lexically — so the slice must come back in that order regardless of
+	// the write order above.
+	assertXrefSlice(t, got.Xrefs, "inat", []string{"486076", "556571"})
+	// The pre-existing single-valued powo xref must still render as a
+	// one-element slice, unchanged in substance by the shape change.
+	assertXrefSlice(t, got.Xrefs, "powo", []string{"396681-1"})
+}
+
+// TestHandleXref_ResolvesEveryEnrichedAuthority proves GET /v1/xref now
+// resolves every authority SP4's Wikidata-bridge ingest can populate, not
+// just the pre-existing powo join key — one subtest per authority listed
+// in task-3-brief.md/T2's measured coverage.
+func TestHandleXref_ResolvesEveryEnrichedAuthority(t *testing.T) {
+	authorities := []string{"wikidata", "gbif", "wfo", "colxr", "inat", "floraveg", "euromed"}
+	for _, authority := range authorities {
+		t.Run(authority, func(t *testing.T) {
+			repo := seededRepo(t)
+			extID := "test-" + authority + "-id"
+			addXref(t, repo, authority, extID)
+			r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+			rr := httptest.NewRecorder()
+			r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/xref?authority="+authority+"&id="+extID, nil))
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+			}
+			assertJSONContentType(t, rr)
+
+			got := decodeJSON[conceptResponse](t, rr.Body)
+			if got.ConceptID != corynephorusConceptID {
+				t.Errorf("concept_id = %q, want %q", got.ConceptID, corynephorusConceptID)
+			}
+			assertXrefSlice(t, got.Xrefs, authority, []string{extID})
+		})
+	}
+}
+
+// TestHandleConcept_UC2Shape_InatXrefReachesAcceptedConcept proves UC2's
+// concrete requirement (spec §UC2): the response must carry the ACCEPTED
+// concept's inat id (never a synonym's — hostus concepts are already
+// accepted-keyed, synonyms group under them, so there is no separate
+// synonym-keyed inat id to confuse this with), reachable at xrefs.inat[0],
+// giving a client everything it needs to link to iNaturalist observations.
+func TestHandleConcept_UC2Shape_InatXrefReachesAcceptedConcept(t *testing.T) {
+	repo := seededRepo(t)
+	addXref(t, repo, "inat", "486076")
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/concept/"+corynephorusConceptID, nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	got := decodeJSON[conceptResponse](t, rr.Body)
+	if got.Status != "ACCEPTED" {
+		t.Fatalf("status = %q, want ACCEPTED (UC2 requires the accepted concept's inat id)", got.Status)
+	}
+	inatIDs := got.Xrefs["inat"]
+	if len(inatIDs) != 1 || inatIDs[0] != "486076" {
+		t.Errorf("xrefs[inat] = %v, want [486076]", inatIDs)
 	}
 }
 

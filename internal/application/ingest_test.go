@@ -702,6 +702,9 @@ func (f *fakeCapturingRepo) Classification(context.Context, string) ([]domain.Cl
 func (f *fakeCapturingRepo) ConceptByXref(context.Context, string, string) (*domain.Concept, error) {
 	panic("not needed by Ingest")
 }
+func (f *fakeCapturingRepo) ConceptIDsByXref(context.Context, string, []string) (map[string]string, error) {
+	panic("not needed by Ingest")
+}
 func (f *fakeCapturingRepo) MatchExact(context.Context, string) ([]output.MatchCandidate, error) {
 	panic("not needed by Ingest")
 }
@@ -743,10 +746,11 @@ func (t *fakeCapturingTx) UpsertName(n domain.Name) error {
 }
 func (t *fakeCapturingTx) UpsertConcept(domain.Concept) error                { return nil }
 func (t *fakeCapturingTx) LinkName(string, string, string, *bool) error      { return nil }
-func (t *fakeCapturingTx) AddXref(string, domain.Xref) error                 { return nil }
+func (t *fakeCapturingTx) AddXref(string, domain.Xref, string) error         { return nil }
 func (t *fakeCapturingTx) AddDistribution(string, domain.Distribution) error { return nil }
 func (t *fakeCapturingTx) AddTraitValue(string, domain.TraitValue) error     { return nil }
 func (t *fakeCapturingTx) UpsertTraitVocabulary(domain.TraitVocabMeta) error { return nil }
+func (t *fakeCapturingTx) UpsertXrefSource(domain.XrefSourceMeta) error      { return nil }
 func (t *fakeCapturingTx) Finalize() error                                   { return nil }
 func (t *fakeCapturingTx) Commit() error                                     { return nil }
 func (t *fakeCapturingTx) Rollback() error                                   { return nil }

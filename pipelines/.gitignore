@@ -1,3 +1,4 @@
 */.cache/
 */output/
 *.summary.txt
+*/__pycache__/

@@ -19,7 +19,7 @@ import (
 func TestIngest_ReportsTraitVocabularies(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
 
-	backboneReport, traitReports, err := app.Ingest(context.Background(), "testdata/dataset.yaml", dbPath)
+	backboneReport, traitReports, _, err := app.Ingest(context.Background(), "testdata/dataset.yaml", dbPath)
 	if err != nil {
 		t.Fatalf("app.Ingest: unexpected error: %v", err)
 	}
@@ -51,17 +51,66 @@ func TestIngest_ReportsTraitVocabularies(t *testing.T) {
 	}
 }
 
+// TestIngest_ReportsXrefSources mirrors TestIngest_ReportsTraitVocabularies
+// for the xref-ingest leg of the same manifest (testdata/dataset.yaml now
+// also pins the wikidata xref-source fixture) — same REAL on-disk SQLite
+// file, same two-phase-transaction concern (application.IngestXrefs must
+// never read the repository while its ingest transaction is open).
+func TestIngest_ReportsXrefSources(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
+
+	_, _, xrefReports, err := app.Ingest(context.Background(), "testdata/dataset.yaml", dbPath)
+	if err != nil {
+		t.Fatalf("app.Ingest: unexpected error: %v", err)
+	}
+	if len(xrefReports) != 1 {
+		t.Fatalf("len(xrefReports) = %d, want 1 (the manifest pins one xref source)", len(xrefReports))
+	}
+
+	xr := xrefReports[0]
+	if xr.Source != "wikidata" {
+		t.Errorf("xrefReports[0].Source = %q, want %q", xr.Source, "wikidata")
+	}
+	if xr.Redistribution != string(domain.RedistributionAllowed) {
+		t.Errorf("xrefReports[0].Redistribution = %q, want %q", xr.Redistribution, domain.RedistributionAllowed)
+	}
+	if xr.Rows == 0 {
+		t.Error("xrefReports[0].Rows = 0, want the fixture's rows")
+	}
+	if xr.Matched == 0 {
+		t.Error("xrefReports[0].Matched = 0, want the powo-resolvable fixture rows to have been written")
+	}
+	if got := xr.Matched + xr.Unmatched + xr.Conflicting; got != xr.Rows {
+		t.Errorf("Matched+Unmatched+Conflicting = %d, want %d (= Rows)", got, xr.Rows)
+	}
+	if xr.PerAuthority["inat"] == 0 {
+		t.Error(`xrefReports[0].PerAuthority["inat"] = 0, want the fixture's inat rows to have resolved`)
+	}
+}
+
+func TestIngest_XrefSourceReadErrorPropagates(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
+
+	_, _, xrefReports, err := app.Ingest(context.Background(), "testdata/dataset-bad-xref-path.yaml", dbPath)
+	if err == nil {
+		t.Fatal("app.Ingest: expected an error for an unreadable xref CSV path, got nil")
+	}
+	if len(xrefReports) != 0 {
+		t.Errorf("xrefReports = %v, want empty (the failing source must not appear in the report)", xrefReports)
+	}
+}
+
 func TestIngest_ManifestParseErrorPropagates(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
 
-	if _, _, err := app.Ingest(context.Background(), "testdata/does-not-exist.yaml", dbPath); err == nil {
+	if _, _, _, err := app.Ingest(context.Background(), "testdata/does-not-exist.yaml", dbPath); err == nil {
 		t.Fatal("app.Ingest: expected an error for a missing manifest, got nil")
 	}
 }
 
 func TestIngest_OpenDatabaseErrorPropagates(t *testing.T) {
 	// A directory is not a usable SQLite file path.
-	if _, _, err := app.Ingest(context.Background(), "testdata/dataset.yaml", t.TempDir()); err == nil {
+	if _, _, _, err := app.Ingest(context.Background(), "testdata/dataset.yaml", t.TempDir()); err == nil {
 		t.Fatal("app.Ingest: expected an error for an unopenable database path, got nil")
 	}
 }
@@ -69,7 +118,7 @@ func TestIngest_OpenDatabaseErrorPropagates(t *testing.T) {
 func TestIngest_BackboneIngestErrorPropagates(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
 
-	_, traitReports, err := app.Ingest(context.Background(), "testdata/dataset-bad-backbone-path.yaml", dbPath)
+	_, traitReports, _, err := app.Ingest(context.Background(), "testdata/dataset-bad-backbone-path.yaml", dbPath)
 	if err == nil {
 		t.Fatal("app.Ingest: expected an error for an unreadable backbone path, got nil")
 	}
@@ -81,7 +130,7 @@ func TestIngest_BackboneIngestErrorPropagates(t *testing.T) {
 func TestIngest_TraitVocabularyReadErrorPropagates(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
 
-	if _, _, err := app.Ingest(context.Background(), "testdata/dataset-bad-trait-path.yaml", dbPath); err == nil {
+	if _, _, _, err := app.Ingest(context.Background(), "testdata/dataset-bad-trait-path.yaml", dbPath); err == nil {
 		t.Fatal("app.Ingest: expected an error for an unreadable trait CSV path, got nil")
 	}
 }
@@ -89,7 +138,7 @@ func TestIngest_TraitVocabularyReadErrorPropagates(t *testing.T) {
 func TestIngest_UnknownTraitVocabularyIDErrors(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
 
-	if _, _, err := app.Ingest(context.Background(), "testdata/dataset-unknown-trait-vocab.yaml", dbPath); err == nil {
+	if _, _, _, err := app.Ingest(context.Background(), "testdata/dataset-unknown-trait-vocab.yaml", dbPath); err == nil {
 		t.Fatal("app.Ingest: expected an error for a manifest pinning an unknown trait vocabulary id, got nil")
 	}
 }

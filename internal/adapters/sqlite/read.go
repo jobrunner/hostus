@@ -277,6 +277,47 @@ func (db *DB) ConceptByXref(ctx context.Context, authority, extID string) (*doma
 	return concept, nil
 }
 
+// ConceptIDsByXref batch-resolves extIDs against the xref table for a single
+// authority, returning only the ones that matched (map[extID]conceptID) — an
+// extID absent from the returned map simply has no xref row for authority,
+// exactly like MatchExact returning zero candidates.
+//
+// It binds extIDs as ONE parameter via `IN (SELECT value FROM json_each(?))`
+// rather than a "?,?,?..." placeholder list, the same pattern
+// MatchFuzzyCandidates and internal/adapters/sqlite/bundle.go established
+// (see marshalIDs' doc comment there): the xref ingest resolves against the
+// full 440k+-row backbone in one call, well past SQLite's
+// SQLITE_MAX_VARIABLE_NUMBER for a placeholder list.
+func (db *DB) ConceptIDsByXref(ctx context.Context, authority string, extIDs []string) (map[string]string, error) {
+	out := make(map[string]string, len(extIDs))
+	if len(extIDs) == 0 {
+		return out, nil
+	}
+	idsJSON, err := json.Marshal(extIDs)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: encoding ext_id list for authority %q: %w", authority, err)
+	}
+	rows, err := db.sql.QueryContext(ctx, `
+		SELECT ext_id, concept_id FROM xref
+		WHERE authority = ? AND ext_id IN (SELECT value FROM json_each(?))`, authority, string(idsJSON))
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: querying xref for authority %q: %w", authority, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var extID, conceptID string
+		if err := rows.Scan(&extID, &conceptID); err != nil {
+			return nil, fmt.Errorf("sqlite: scanning xref row for authority %q: %w", authority, err)
+		}
+		out[extID] = conceptID
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: iterating xref rows for authority %q: %w", authority, err)
+	}
+	return out, nil
+}
+
 // MatchExact returns every name (accepted or synonym) whose canonical form
 // equals canon, together with the concept it belongs to and the role it
 // plays there. The match happens on the stored name.canonical_fold column

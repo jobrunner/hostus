@@ -1,9 +1,10 @@
 # HTTP-API
 
 !!! note "Stand"
-    Dies beschreibt den SP3-Stand: die lokale SQLite/FTS5-Rückgrat-Basis ist
+    Dies beschreibt den SP4-Stand: die lokale SQLite/FTS5-Rückgrat-Basis ist
     implementiert (`hostus ingest` befüllt die Datenbank aus WCVP/POWO-
-    DwC-A-Manifesten; `hostus serve` bedient `/v1/concept/{id}`, `/v1/xref`,
+    DwC-A-Manifesten sowie, seit SP4, per Wikidata-Brücke angereicherten
+    Cross-References; `hostus serve` bedient `/v1/concept/{id}`, `/v1/xref`,
     `/v1/match`, `/v1/suggest` und `/v1/concept/{id}/traits` daraus).
     Weitere `/v1/*`-Endpunkte (`concept/{id}/synonyms`, `translate`) sowie
     `/openapi` folgen in späteren SPs. Die maßgebliche OpenAPI-Spezifikation
@@ -62,7 +63,7 @@ GET /v1/concept/wcvp:concept:405825
   "rank": "SPECIES",
   "status": "ACCEPTED",
   "backbone": { "id": "wcvp", "version": "2026-06-15" },
-  "xrefs": { "powo": "396681-1" },
+  "xrefs": { "powo": ["396681-1"], "inat": ["160927"] },
   "classification": [
     { "concept_id": "wcvp:concept:451295", "canonical": "Corynephorus", "rank": "GENUS" }
   ],
@@ -119,12 +120,31 @@ zutreffend", nicht "unbekannt", dasselbe Muster wie bei `homotypic` und
 `hostus ingest` befüllt und ausgeliefert; das Feld ist leer, wenn der
 Backbone für dieses Concept keine Distribution liefert.
 
+`xrefs` bildet jede Autorität auf ein **Array** ihrer externen IDs ab, nie
+auf eine einzelne ID: SP4s Wikidata-Brücken-Ingest maß, dass ein Concept
+legitim mehrere IDs derselben Autorität tragen kann (z. B. zwei
+verschiedene Wikidata-Items, die über POWO/IPNI auf dasselbe Concept
+auflösen, aber je eine eigene `inat`-Taxon-ID mitbringen — am vollen Index
+gemessen: 954 Concepts mit >1 Wikidata-ID, 635 GBIF, 299 WFO, 63 iNat, 39
+ColXR, 3 FloraVeg). Jedes Array ist deterministisch nach externer ID
+sortiert — nie von der Ingest- oder Query-Reihenfolge abhängig. Die
+bekannten Autoritäten sind `powo`, `wikidata`, `gbif`, `wfo`, `colxr`,
+`inat`, `floraveg` und `euromed`; ein Concept ohne Cross-Reference zu einer
+Autorität hat schlicht keinen Schlüssel dafür (nie ein leeres Array). Zum
+`inat`-Schlüssel und seiner Reichweite siehe
+[Von hostus zu iNaturalist (UC2)](../how-to/inat-uc2.md) — insbesondere die
+dort gemessene 41,50-%-Obergrenze: nur gut zwei Fünftel aller Concepts
+tragen überhaupt eine iNat-Verknüpfung.
+
 Unbekannte IDs liefern `404 NOT_FOUND` im [Fehlerformat](#fehlerformat).
 
 ### `GET /v1/xref?authority={authority}&id={id}`
 
-Löst eine externe Cross-Reference (z. B. eine POWO-ID) auf und liefert
-dieselbe Concept-Repräsentation wie `GET /v1/concept/{id}`.
+Löst eine externe Cross-Reference (z. B. eine POWO-ID oder eine
+iNaturalist-Taxon-ID) auf und liefert dieselbe Concept-Repräsentation wie
+`GET /v1/concept/{id}`. Alle in `xrefs` aufgeführten Autoritäten
+(`powo`, `wikidata`, `gbif`, `wfo`, `colxr`, `inat`, `floraveg`, `euromed`)
+werden reverse aufgelöst — nicht nur die ursprüngliche POWO-Verknüpfung.
 
 **Beispiel-Request**
 

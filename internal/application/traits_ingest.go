@@ -408,8 +408,8 @@ func (t *traitTally) countMatched(taxon string, rule domain.NormalizationRule) {
 // "hostus ingest" and compared across runs, and Go map iteration order is
 // randomized.
 func (t *traitTally) report(r *TraitIngestReport) {
-	r.UnmatchedSample = sortedSample(t.unmatched, unmatchedSampleCap)
-	r.FlaggedSample = sortedSample(t.flagged, unmatchedSampleCap)
+	r.UnmatchedSample = sortedSample(t.unmatched)
+	r.FlaggedSample = sortedSample(t.flagged)
 	if len(t.ruleRows) == 0 {
 		return
 	}
@@ -522,10 +522,12 @@ func resolveTraitName(ctx context.Context, repo output.Repository, canon string)
 	return traitResolution{}, nil
 }
 
-// sortedSample returns a deterministic (sorted), bounded (at most cap)
-// sample of set's keys, so TraitIngestReport.UnmatchedSample never varies
-// across runs and never grows unbounded for a large lossy vocabulary.
-func sortedSample(set map[string]bool, cap int) []string {
+// sortedSample returns a deterministic (sorted), bounded (at most
+// unmatchedSampleCap) sample of set's keys, so a report's sample field
+// never varies across runs and never grows unbounded for a large lossy
+// vocabulary/xref source. Every caller in this package shares the same cap
+// (there is exactly one sample-size policy), so it is not a parameter.
+func sortedSample(set map[string]bool) []string {
 	if len(set) == 0 {
 		return nil
 	}
@@ -534,13 +536,14 @@ func sortedSample(set map[string]bool, cap int) []string {
 		all = append(all, k)
 	}
 	sort.Strings(all)
-	// len(all) >= cap is a genuinely equivalent mutant at
-	// CONDITIONALS_BOUNDARY: at len(all) == cap exactly, all[:cap] IS all,
-	// so both branches produce the identical slice and no test can observe
-	// the difference (same provable-equivalence class as the two documented
-	// boundaries in suggest.go).
-	if len(all) > cap {
-		all = all[:cap]
+	// len(all) >= unmatchedSampleCap is a genuinely equivalent mutant at
+	// CONDITIONALS_BOUNDARY: at len(all) == unmatchedSampleCap exactly,
+	// all[:unmatchedSampleCap] IS all, so both branches produce the
+	// identical slice and no test can observe the difference (same
+	// provable-equivalence class as the two documented boundaries in
+	// suggest.go).
+	if len(all) > unmatchedSampleCap {
+		all = all[:unmatchedSampleCap]
 	}
 	return all
 }

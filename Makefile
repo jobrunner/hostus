@@ -73,7 +73,7 @@ bench: ## Benchmarks ausführen
 
 mutation: ## Mutation-Testing (gremlins) — package-scoped, green-required (PKG=./internal/... überschreibbar)
 	@command -v gremlins >/dev/null 2>&1 || $(GO) install github.com/go-gremlins/gremlins/cmd/gremlins@v0.5.1
-	gremlins unleash --dry-run=false $(if $(PKG),$(PKG),./...)
+	gremlins unleash --dry-run=false $(if $(MUTATION_WORKERS),--workers $(MUTATION_WORKERS),) $(if $(PKG),$(PKG),./...)
 
 # Fuzzt alle Fuzz*-Targets im Modul (FUZZTIME je Target überschreibbar, default
 # 30s). Targets werden zur Laufzeit per `go test -list` entdeckt — keine

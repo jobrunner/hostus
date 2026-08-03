@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jobrunner/hostus/internal/adapters/sqlite"
+	"github.com/jobrunner/hostus/internal/application"
 	"github.com/jobrunner/hostus/internal/domain"
 	"github.com/jobrunner/hostus/internal/ports/output"
 )
@@ -340,8 +342,15 @@ func exportAUTBundle(t *testing.T) (out string, report sqlite.BundleReport, bund
 // 405825, Festuca ovina 415853, Jacobaea vulgaris 3082777 — see
 // internal/adapters/wcvp/testdata/wcvp-sample/wcvp_distribution.csv), 13
 // names linked to them (accepted + every synonym/illegitimate/invalid row
-// under those 3 taxonids), and 16 distinct WGSRPD level-3 area codes across
-// their combined distribution. Exact numbers (not just "> 0") are pinned
+// under those 3 taxonids), and — per the Task 4 size reduction
+// (copyDistribution's doc comment) — exactly 1 distinct WGSRPD level-3
+// area code across their combined distribution: "AUT" itself, not their
+// full global range (which the pre-reduction fixture measured at 16
+// distinct codes). See TestExportBundle_EmptyArea_IncludesEverything for
+// the matching unscoped-side proof: an unscoped export of the SAME
+// concept (wcvp:concept:405825) keeps all 9 of its distribution rows,
+// which is what makes this scoped-side drop a deliberate scoping decision
+// rather than silent data loss. Exact numbers (not just "> 0") are pinned
 // deliberately: an off-by-one in copyRows' row-counting loop would
 // otherwise go unnoticed.
 func TestExportBundle_AreaFilter_ReportReflectsWhatWasCopied(t *testing.T) {
@@ -355,8 +364,36 @@ func TestExportBundle_AreaFilter_ReportReflectsWhatWasCopied(t *testing.T) {
 	if report.Names != 13 {
 		t.Errorf("report.Names = %d, want %d", report.Names, 13)
 	}
-	if report.Areas != 16 {
-		t.Errorf("report.Areas = %d, want %d", report.Areas, 16)
+	if report.Areas != 1 {
+		t.Errorf("report.Areas = %d, want %d (only the requested area, not the concepts' full global range)", report.Areas, 1)
+	}
+}
+
+// TestExportBundle_AreaScoped_DistributionExcludesOutOfScopeAreas is the
+// Task 4 size-reduction test: an area-scoped bundle's distribution table
+// must contain ONLY rows for the requested area(s), not a concept's full
+// global range. The fixture's Corynephorus canescens (405825) has
+// distribution rows in areas other than AUT (its combined-with-siblings
+// global range spans 16 codes, per the report test above) — after an
+// AUT-scoped export, none of those other codes may appear for it.
+func TestExportBundle_AreaScoped_DistributionExcludesOutOfScopeAreas(t *testing.T) {
+	ctx := context.Background()
+	_, _, bundle := exportAUTBundle(t)
+
+	concept, synonyms, xrefs, dists, err := bundle.Concept(ctx, "wcvp:concept:405825")
+	if err != nil {
+		t.Fatalf("bundle.Concept: unexpected error: %v", err)
+	}
+	_ = concept
+	_ = synonyms
+	_ = xrefs
+	if len(dists) == 0 {
+		t.Fatal("distribution = empty, want at least the AUT row")
+	}
+	for _, d := range dists {
+		if d.AreaCode != "AUT" {
+			t.Errorf("distribution row = %+v, want only area_code=AUT (out-of-scope areas must be dropped from a scoped bundle)", d)
+		}
 	}
 }
 
@@ -448,7 +485,19 @@ func TestExportBundle_AreaFilter_BundleMetaRecordsProvenance(t *testing.T) {
 // whole-DB export convention: an empty Area copies every concept in src,
 // including ones with no distribution row at all (the GENUS-rank
 // Corynephorus, which the AUT-scoped test above proves is excluded from an
-// area-filtered bundle).
+// area-filtered bundle) — AND, per Task 4's copyDistribution doc comment,
+// every distribution row of an in-scope concept, not just the ones in a
+// requested area (there is no requested area here to begin with). This is
+// the deliberate "unscoped still means everything" half of the size
+// reduction pair: TestExportBundle_AreaFilter_ReportReflectsWhatWasCopied
+// proves an AUT-scoped export of the SAME fixture concept
+// (wcvp:concept:405825) drops down to just its AUT row; this test proves
+// an unscoped export of that same concept keeps all 9 of its distribution
+// rows (internal/adapters/wcvp/testdata/wcvp-sample/wcvp_distribution.csv
+// has exactly 9 rows for taxonid 405825) — without this assertion, the
+// reduction could have silently become "always scope to something" and no
+// test would catch it, since report.Concepts>0 alone says nothing about
+// distribution row survival.
 func TestExportBundle_EmptyArea_IncludesEverything(t *testing.T) {
 	ctx := context.Background()
 	src := ingestWCVPFixture(t)
@@ -475,6 +524,17 @@ func TestExportBundle_EmptyArea_IncludesEverything(t *testing.T) {
 	// the report reflects what was actually copied.
 	if report.Concepts == 0 {
 		t.Fatal("report.Concepts = 0 for a whole-DB export, want > 0")
+	}
+
+	concept405825, synonyms405825, xrefs405825, dists, err := bundle.Concept(ctx, "wcvp:concept:405825")
+	if err != nil {
+		t.Fatalf("bundle.Concept(405825): unexpected error: %v", err)
+	}
+	_ = concept405825
+	_ = synonyms405825
+	_ = xrefs405825
+	if len(dists) != 9 {
+		t.Errorf("bundle.Concept(405825) distribution = %d rows, want 9 (a whole-DB export must copy a concept's FULL distribution, not just an in-scope subset — there is no scope here)", len(dists))
 	}
 
 	meta := readBundleMeta(t, out)
@@ -509,6 +569,17 @@ func TestExportBundle_CarriesTraitValuesAndVocabularyMetadata(t *testing.T) {
 		NicheWidth: &niche, NSystems: &nsys,
 	}); err != nil {
 		t.Fatalf("AddTraitValue: unexpected error: %v", err)
+	}
+	// A second value that reached this concept only through the flagged
+	// aggregate-to-nominate-species rule. An offline bundle is the copy a
+	// field user actually queries, so the "this was normalised, not matched
+	// exactly" signal has to survive the export — dropping it here would
+	// re-hide precisely what Hardening Task 5 made visible.
+	if err := tx.AddTraitValue(conceptID, domain.TraitValue{
+		Vocab: domain.VocabEIVE, VocabVersion: "1.0", Dim: domain.DimN, Value: 4.0,
+		Resolution: string(domain.RuleAggregateToNominate),
+	}); err != nil {
+		t.Fatalf("AddTraitValue(normalised): unexpected error: %v", err)
 	}
 	if err := tx.UpsertTraitVocabulary(domain.TraitVocabMeta{
 		Vocab: domain.VocabEIVE, Version: "1.0", Taxonomy: "euromed-aligned", License: "CC-BY-4.0",
@@ -546,8 +617,28 @@ func assertBundleTraits(t *testing.T, bundle *sqlite.DB, conceptID string) {
 	if len(sets) != 1 || sets[0].Vocab != domain.VocabEIVE || sets[0].Taxonomy != "euromed-aligned" {
 		t.Fatalf("bundle.Traits(%q) = %+v, want one eive set with Taxonomy=euromed-aligned", conceptID, sets)
 	}
-	if len(sets[0].Values) != 1 || sets[0].Values[0].NicheWidth == nil || *sets[0].Values[0].NicheWidth != 2.5 {
-		t.Fatalf("bundle.Traits(%q) values = %+v, want one M value with NicheWidth=2.5", conceptID, sets[0].Values)
+	if len(sets[0].Values) != 2 {
+		t.Fatalf("bundle.Traits(%q) values = %+v, want the M and N values", conceptID, sets[0].Values)
+	}
+	// M matched exactly (empty Resolution), N only through the flagged
+	// aggregate fallback — both must survive the export unchanged.
+	wantResolution := map[domain.TraitDim]string{
+		domain.DimM: "",
+		domain.DimN: string(domain.RuleAggregateToNominate),
+	}
+	for _, v := range sets[0].Values {
+		want, known := wantResolution[v.Dim]
+		if !known {
+			t.Errorf("unexpected dim %q in bundle traits", v.Dim)
+			continue
+		}
+		if v.Resolution != want {
+			t.Errorf("bundle %s value: Resolution = %q, want %q — the normalisation signal must survive the export",
+				v.Dim, v.Resolution, want)
+		}
+		if v.Dim == domain.DimM && (v.NicheWidth == nil || *v.NicheWidth != 2.5) {
+			t.Errorf("bundle M value = %+v, want NicheWidth=2.5", v)
+		}
 	}
 }
 
@@ -728,5 +819,230 @@ func TestExportBundle_AreaWithNoMatchingConcepts_ProducesEmptyBundle(t *testing.
 	}
 	if meta.ManifestSHA != "" {
 		t.Errorf("bundle_meta.source_manifest_sha = %q, want empty (no backbone_version rows were in scope)", meta.ManifestSHA)
+	}
+}
+
+// sliceRowSource is a minimal application.RowSource backed by an in-memory
+// slice, for tests that need a specific TaxonRow (e.g. an exotic rank) or
+// DistributionRow set the shared WCVP fixture doesn't happen to carry.
+type sliceRowSource struct {
+	taxa  []application.TaxonRow
+	dists []application.DistributionRow
+}
+
+func (s sliceRowSource) Taxa() []application.TaxonRow                 { return s.taxa }
+func (s sliceRowSource) Distributions() []application.DistributionRow { return s.dists }
+
+// ingestMultiAreaFixture ingests two accepted, unrelated concepts into a
+// fresh in-memory repo — one with a WGSRPD-L3 distribution row in "AUT"
+// only, the other in "SWI" only — so multi-area scoping tests can prove
+// "--area AUT,SWI" selects the UNION of both, not just one, without
+// depending on the shared WCVP fixture (whose 3 concepts all happen to
+// share an AUT row — see TestExportBundle_AreaFilter_ReportReflectsWhatWasCopied
+// — making it useless for proving a union across two DISJOINT areas).
+func ingestMultiAreaFixture(t *testing.T) *sqlite.DB {
+	t.Helper()
+	db, err := sqlite.Open(":memory:")
+	if err != nil {
+		t.Fatalf("sqlite.Open(:memory:): unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "wcvp-multiarea", Version: "v1", Redistribution: "allowed"}}, ManifestSHA: "x"}
+	taxa := []application.TaxonRow{
+		{TaxonID: "aut1", AcceptedTaxonID: "aut1", Accepted: true, Canonical: "Autonia austriaca", Rank: "SPECIES", Status: "Accepted"},
+		{TaxonID: "swi1", AcceptedTaxonID: "swi1", Accepted: true, Canonical: "Swissia helvetica", Rank: "SPECIES", Status: "Accepted"},
+	}
+	dists := []application.DistributionRow{
+		{TaxonID: "aut1", AreaCode: "AUT"},
+		{TaxonID: "swi1", AreaCode: "SWI"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) {
+		return sliceRowSource{taxa: taxa, dists: dists}, nil
+	}
+	if _, err := application.Ingest(context.Background(), ds, readerFor, db); err != nil {
+		t.Fatalf("application.Ingest: unexpected error: %v", err)
+	}
+	return db
+}
+
+// TestExportBundle_MultiArea_SelectsUnionOfAreas is the Task 4 RED/GREEN
+// core for multi-area scoping: "--area AUT,SWI" must select BOTH
+// ingestMultiAreaFixture concepts (one is only in AUT, the other only in
+// SWI) — the union, not an intersection or just the first value — while a
+// single value keeps selecting only its own concept, proving the existing
+// single-area form is unaffected.
+func TestExportBundle_MultiArea_SelectsUnionOfAreas(t *testing.T) {
+	ctx := context.Background()
+	src := ingestMultiAreaFixture(t)
+
+	autOut := filepath.Join(t.TempDir(), "bundle-aut-only.sqlite")
+	autReport, err := sqlite.ExportBundle(ctx, src, autOut, sqlite.BundleOpts{Area: "AUT", SnapshotVersion: "v1"})
+	if err != nil {
+		t.Fatalf("ExportBundle(AUT): unexpected error: %v", err)
+	}
+	if autReport.Concepts != 1 {
+		t.Errorf("ExportBundle(AUT).Concepts = %d, want %d (single value must keep working as before)", autReport.Concepts, 1)
+	}
+
+	swiOut := filepath.Join(t.TempDir(), "bundle-swi-only.sqlite")
+	swiReport, err := sqlite.ExportBundle(ctx, src, swiOut, sqlite.BundleOpts{Area: "SWI", SnapshotVersion: "v1"})
+	if err != nil {
+		t.Fatalf("ExportBundle(SWI): unexpected error: %v", err)
+	}
+	if swiReport.Concepts != 1 {
+		t.Errorf("ExportBundle(SWI).Concepts = %d, want %d", swiReport.Concepts, 1)
+	}
+
+	unionOut := filepath.Join(t.TempDir(), "bundle-aut-swi.sqlite")
+	unionReport, err := sqlite.ExportBundle(ctx, src, unionOut, sqlite.BundleOpts{Area: "AUT,SWI", SnapshotVersion: "v1"})
+	if err != nil {
+		t.Fatalf("ExportBundle(AUT,SWI): unexpected error: %v", err)
+	}
+	if unionReport.Concepts != 2 {
+		t.Fatalf("ExportBundle(AUT,SWI).Concepts = %d, want %d (the union of both single-area exports)", unionReport.Concepts, 2)
+	}
+
+	bundle, err := sqlite.Open(unionOut)
+	if err != nil {
+		t.Fatalf("sqlite.Open(union bundle): unexpected error: %v", err)
+	}
+	defer func() { _ = bundle.Close() }()
+	if _, err := bundle.Suggest(ctx, "auton", output.SuggestOpts{Limit: 10}); err != nil {
+		t.Errorf("bundle.Suggest(AUT concept) on union bundle: unexpected error: %v", err)
+	}
+	if _, _, _, _, err := bundle.Concept(ctx, "wcvp-multiarea:concept:swi1"); err != nil {
+		t.Errorf("bundle.Concept(swi1) on union bundle: unexpected error: %v", err)
+	}
+
+	meta := readBundleMeta(t, unionOut)
+	if meta.Area != "AUT,SWI" {
+		t.Errorf("bundle_meta.area = %q, want the raw requested value %q", meta.Area, "AUT,SWI")
+	}
+}
+
+// TestExportBundle_ScopeIndependentExport_LargeConceptSetSucceeds is the
+// Task 4 RED/GREEN core for the "too many SQL variables" defect
+// (docs/research/reality-check.md M5.1): the old code bound one SQL
+// placeholder per concept id, so a scope large enough to exceed SQLite's
+// SQLITE_MAX_VARIABLE_NUMBER failed outright. This ingests enough synthetic
+// concepts to exceed a conservative placeholder budget (well under the
+// 440,098 concepts the real WCVP database has — see
+// docs/research/reality-check.md M5.1's measured failure and this task's
+// report for that full-scale proof) while staying fast as a unit test, and
+// asserts an UNSCOPED (Area empty) export of all of them still succeeds.
+func TestExportBundle_ScopeIndependentExport_LargeConceptSetSucceeds(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.Open(":memory:")
+	if err != nil {
+		t.Fatalf("sqlite.Open(:memory:): unexpected error: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	const n = 5000 // exceeds SQLite's historical default SQLITE_MAX_VARIABLE_NUMBER of 999
+	taxa := make([]application.TaxonRow, 0, n)
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("t%d", i)
+		taxa = append(taxa, application.TaxonRow{
+			TaxonID: id, AcceptedTaxonID: id, Accepted: true,
+			Canonical: fmt.Sprintf("Generusx speciesus%d", i), Rank: "SPECIES", Status: "Accepted",
+		})
+	}
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "wcvp-large", Version: "v1", Redistribution: "allowed"}}, ManifestSHA: "x"}
+	readerFor := func(application.Backbone) (application.RowSource, error) {
+		return sliceRowSource{taxa: taxa}, nil
+	}
+	if _, err := application.Ingest(ctx, ds, readerFor, db); err != nil {
+		t.Fatalf("application.Ingest: unexpected error: %v", err)
+	}
+
+	out := filepath.Join(t.TempDir(), "bundle-large-unscoped.sqlite")
+	report, err := sqlite.ExportBundle(ctx, db, out, sqlite.BundleOpts{SnapshotVersion: "v1"})
+	if err != nil {
+		t.Fatalf("ExportBundle (unscoped, %d concepts): unexpected error: %v", n, err)
+	}
+	if report.Concepts != n {
+		t.Errorf("report.Concepts = %d, want %d", report.Concepts, n)
+	}
+}
+
+// ingestOtherRankFixture ingests one "proles" concept (WCVP's real exotic
+// rank — see docs/research/reality-check.md's M1.0) into a fresh in-memory
+// repo, so ExportBundle's rank_verbatim carry-through can be tested without
+// depending on the shared WCVP fixture containing an exotic rank itself.
+func ingestOtherRankFixture(t *testing.T) *sqlite.DB {
+	t.Helper()
+	db, err := sqlite.Open(":memory:")
+	if err != nil {
+		t.Fatalf("sqlite.Open(:memory:): unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "wcvp-other", Version: "v1", Redistribution: "allowed"}}, ManifestSHA: "x"}
+	taxa := []application.TaxonRow{
+		{TaxonID: "2", AcceptedTaxonID: "2", Accepted: true, Canonical: "Paeonia corallina proles ovatifolia", Authorship: "Rouy & Foucaud", Rank: "proles", Status: "Synonym"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) {
+		return sliceRowSource{taxa: taxa}, nil
+	}
+	if _, err := application.Ingest(context.Background(), ds, readerFor, db); err != nil {
+		t.Fatalf("application.Ingest: unexpected error: %v", err)
+	}
+	return db
+}
+
+// TestExportBundle_CarriesRankVerbatimThrough proves Hardening Task 1's
+// fix-round-1 requirement that rank_verbatim survives a bundle export, not
+// just a live ingest: a "proles" concept's name.rank_verbatim/
+// taxon_concept.rank_verbatim must both read back as "proles" from the
+// exported bundle file, and repo.Concept against the reopened bundle must
+// surface it via domain.Concept.RankVerbatim.
+func TestExportBundle_CarriesRankVerbatimThrough(t *testing.T) {
+	ctx := context.Background()
+	src := ingestOtherRankFixture(t)
+
+	out := filepath.Join(t.TempDir(), "bundle-other-rank.sqlite")
+	if _, err := sqlite.ExportBundle(ctx, src, out, sqlite.BundleOpts{SnapshotVersion: "v1"}); err != nil {
+		t.Fatalf("ExportBundle: unexpected error: %v", err)
+	}
+
+	raw, err := sql.Open("sqlite", out)
+	if err != nil {
+		t.Fatalf("sql.Open(%q): unexpected error: %v", out, err)
+	}
+	defer func() { _ = raw.Close() }()
+
+	var nameVerbatim, conceptVerbatim string
+	if err := raw.QueryRow(`SELECT rank_verbatim FROM name WHERE id = ?`, "wcvp-other:name:2").Scan(&nameVerbatim); err != nil {
+		t.Fatalf("reading name.rank_verbatim: unexpected error: %v", err)
+	}
+	if nameVerbatim != "proles" {
+		t.Errorf("bundle name.rank_verbatim = %q, want %q", nameVerbatim, "proles")
+	}
+	if err := raw.QueryRow(`SELECT rank_verbatim FROM taxon_concept WHERE id = ?`, "wcvp-other:concept:2").Scan(&conceptVerbatim); err != nil {
+		t.Fatalf("reading taxon_concept.rank_verbatim: unexpected error: %v", err)
+	}
+	if conceptVerbatim != "proles" {
+		t.Errorf("bundle taxon_concept.rank_verbatim = %q, want %q", conceptVerbatim, "proles")
+	}
+
+	bundle, err := sqlite.Open(out)
+	if err != nil {
+		t.Fatalf("sqlite.Open(%q): unexpected error: %v", out, err)
+	}
+	defer func() { _ = bundle.Close() }()
+
+	concept, synonyms, xrefs, dists, err := bundle.Concept(ctx, "wcvp-other:concept:2")
+	if err != nil {
+		t.Fatalf("bundle.Concept: unexpected error: %v", err)
+	}
+	_ = synonyms
+	_ = xrefs
+	_ = dists
+	if concept.Rank != domain.RankOther {
+		t.Errorf("bundle concept.Rank = %q, want %q", concept.Rank, domain.RankOther)
+	}
+	if concept.RankVerbatim != "proles" {
+		t.Errorf("bundle concept.RankVerbatim = %q, want %q", concept.RankVerbatim, "proles")
 	}
 }

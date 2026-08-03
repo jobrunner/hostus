@@ -219,12 +219,73 @@ Die resultierenden DB-Größen (`plain` / `indexed`): 23,9/28,4 MB (50k),
 47,3/56,1 MB (100k), 97,7/114,9 MB (200k) — die Indizes kosten rund 18 %
 Speicher.
 
+### M1.2a Nach Hardening (Task 2): dieselbe Messung mit dem reparierten Serienschema
+
+Hardening Task 2 (`internal/adapters/sqlite/schema.sql`, Branch
+`feature/hardening`) fügt genau die FK-Kindspalten-Indizes aus
+`poc/measure/fk_indexes.sql` (acht Stück) direkt ins Serienschema ein
+(plus Herleitung/Begründung, welche der 13 REFERENCES-Spalten schon durch
+die führende PK-Spalte ihrer Tabelle abgedeckt waren und deshalb keinen
+eigenen Index brauchten). Das macht `plain` (`hostus bundle` legt jetzt
+direkt das reparierte Schema an) und `indexed` (zusätzlich
+`fk_indexes.sql` — jetzt redundant, da dieselben Spalten schon indiziert
+sind, nur unter anderem Indexnamen) erwartungsgemäß nahezu identisch
+schnell:
+
+```bash
+nix develop -c make build   # bindet das neue schema.sql ein
+nix develop -c bash poc/measure/scaling.sh 50000 100000 200000
+```
+
+| Taxon-Zeilen | vorher: Serienschema (`plain`, ohne Indizes) | **nachher: Serienschema (`plain`, mit den neuen Indizes)** | mit zusätzlichem `fk_indexes.sql` (`indexed`, jetzt redundant) |
+|---:|---:|---:|---:|
+| 50.000 | 65 s | **6 s** | 6 s |
+| 100.000 | 293 s | **11 s** | 14 s |
+| 200.000 | 1.338 s (22 min 18 s) | **24 s** | 30 s |
+
+Skalierung bei Verdopplung, nachher (`plain`, gemessen): 6 → 11 s
+(**×1,83**) → 24 s (**×2,18**) — beides klar im linearen Bereich (~2×),
+nicht im quadratischen (~4,5×) der vorherigen Messung. Die nachher-Zahlen
+dieser Messung liegen sogar leicht UNTER der ursprünglichen `indexed`-Spalte
+(5/11/25 s), weil `poc/measure/fk_indexes.sql` in dieser Messung nur noch
+für die `indexed`-Spalte läuft und dort — da die Spalten bereits über die
+schema.sql-eigenen Indizes abgedeckt sind — zusätzliche, redundante Indizes
+unter anderem Namen anlegt (sichtbar an den etwas größeren `indexed`-DB-Größen
+unten, nicht an einem Geschwindigkeitsunterschied).
+
+DB-Größen (`plain` mit den neuen schema.sql-Indizes / `indexed` mit den
+zusätzlichen, jetzt redundanten `fk_indexes.sql`-Indizes): 28,5/33,0 MB
+(50k), 56,3/65,1 MB (100k), 115,3/133,0 MB (200k).
+
+**Verdikt: hält.** Das reparierte Serienschema erreicht am selben
+Mess-Harness dieselbe lineare Skalierung, die M1.2 vorher nur mit
+Ad-hoc-Indizes zeigen konnte — ohne dass ein Aufrufer noch manuell
+`fk_indexes.sql` einspielen müsste. Der volle WCVP-Ingest (M1.3) mit
+diesem Schema ist Aufgabe von Task 3/6 dieses Hardening-Zyklus, nicht
+dieser Messung.
+
 ### M1.3 Voller Ingest MIT den zusätzlichen Indizes
 
 Alle weiteren Messungen (M2–M6) laufen gegen diese Datenbank. Sie entsteht
 so: leere DB mit dem **Serienschema** anlegen (`hostus bundle` öffnet die
 `--db`-Datei und legt das Schema an), dann `poc/measure/fk_indexes.sql`
 einspielen, dann den echten `hostus ingest` laufen lassen.
+
+**Klarstellung (Task 6), weil das leicht misszuverstehen ist:** „legt das
+Schema an" gilt nur für eine **neue, leere** `--db`-Datei.
+`internal/adapters/sqlite/schema.sql` ist durchgehend
+`CREATE TABLE IF NOT EXISTS` (und ebenso `CREATE INDEX IF NOT EXISTS`) —
+genau die Begründung im Schema-Kopf selbst, „Applied verbatim … so Open()
+can apply it idempotently against an already-initialized database". Für
+eine **bereits existierende** DB-Datei aus einem älteren hostus-Stand
+passiert beim Öffnen mit einem neueren Binary **nichts**: eine Spalte wie
+`rank_verbatim` (Task 2) oder `trait_value.resolution` (Task 5) wird nicht
+nachträglich ergänzt, ein fehlender FK-Index nicht nachträglich angelegt.
+Es gibt keinen Migrationspfad — eine ältere DB-Datei bleibt auf ihrem
+Stand, und die einzige Art, eine Datenbank auf den neuen Schema-/Datenstand
+zu bringen, ist ein neuer `hostus ingest` gegen eine neue, leere Datei. Jede
+Datenbank in diesem Dokument (M1'/M2'/T5/…) ist deshalb ein vollständiger
+Neu-Ingest, keine migrierte Kopie einer älteren.
 
 ```bash
 nix develop -c bash poc/measure/run.sh m2
@@ -289,6 +350,586 @@ selbst widerlegt: acht zusätzliche FK-Indizes drücken denselben Volldatensatz
 auf 276,70 s (Faktor 4,9 schneller als schon der abgebrochene Lauf bei
 weniger Daten), bei einem Speicher-Overhead von nur ~18 % DB-Größe. Speicher
 (2,97 GiB Peak-RSS) ist nachweislich **nicht** der begrenzende Faktor.
+
+---
+
+## Nach Hardening (Task 3): M1'–M3' am echten, unveränderten WCVP-Volldatensatz
+
+> Diese Sektion misst dieselben drei Kennzahlen wie M1/M2/M4 oben — jetzt mit
+> den Hardening-Fixes aus Task 1 (`ParseRankLenient`, `internal/domain/taxon.go`)
+> und Task 2 (acht FK-Indizes fest in `internal/adapters/sqlite/schema.sql`) —
+> gegen das **unveränderte** WCVP-DwC-A-Archiv (`poc/data/wcvp_dwca/`,
+> 1.448.984 Taxon-Zeilen, **kein** Rangfilter, **keine** Ad-hoc-Indizes). Die
+> Baseline-Zahlen oben bleiben unverändert stehen; hier steht nur der
+> Vergleich. Verdikte liefert Task 6, nicht dieser Abschnitt.
+
+Manifest: `poc/measure/dataset.full-real.yaml` (identisch zu
+`dataset.full.yaml`, außer `backbones[0].path` zeigt auf
+`poc/data/wcvp_dwca` statt auf die gefilterte Kopie). Binary:
+`nix develop -c make build` (`hostus` v0.2.4-87-g3137c95-dirty).
+
+### M1' — Voller WCVP-Ingest, Serienschema, keine Ad-hoc-Indizes
+
+```bash
+rm -f poc/measure/out/m1real.sqlite*
+/usr/bin/time -l ./hostus ingest \
+  --dataset poc/measure/dataset.full-real.yaml --db poc/measure/out/m1real.sqlite
+```
+
+| Kennzahl | Baseline (M1.0, unverändertes Archiv) | **Nach Hardening (M1')** |
+|---|---|---|
+| Ergebnis | **bricht ab** nach 5,37 s (`unknown taxon rank "proles"`) | **läuft durch** |
+| Wall-Clock | — | **281,27 s = 4 min 41 s** (user 158,75 s / sys 132,16 s) |
+| Peak RSS (`maximum resident set size`) | 2.670.788.608 Byte (2,49 GiB, beim Abbruch) | **3.001.942.016 Byte = 2,80 GiB** |
+| `peak memory footprint` | — | 3.248.835.488 Byte |
+| DB-Datei danach | 122.880 Byte (nur Schema, nichts committed) | **960.491.520 Byte = 916 MiB** |
+
+Zum Vergleich mit M1.3 (dem gefilterten Volldatensatz + Ad-hoc-`fk_indexes.sql`,
+276,70 s / 2,97 GiB / 908 MiB): **das unveränderte Archiv, ohne Rangfilter und
+ohne Ad-hoc-Indizes, ist mit dem gehärteten Serienschema genauso schnell**
+(281,27 s vs. 276,70 s — die Differenz liegt in der Größenordnung der
+Lauf-zu-Lauf-Varianz, nicht in einem strukturellen Unterschied) und braucht
+keinen manuellen Zwischenschritt (`hostus bundle` + `fk_indexes.sql`) mehr;
+`hostus ingest` legt das indizierte Schema jetzt selbst an.
+
+Ingest-Report (`poc/measure/out/m1real-ingest.log`):
+
+```
+Ingest complete:
+  wcvp: names=1448984 concepts=440534 synonyms=964762 orphaned=43688
+    ranks: other=6527 ((empty) 2744, proles 2351, lusus 660, microgène 371, Convariety 184, monstr. 90, grex 41, subproles 18, stirps 17, provar. 16, modif. 6, psp. 6, mut. 5, sublusus 4, subap. 3, subspecioid 2, subsubsp. 2, agamosp. 1, ecas. 1, group 1)
+```
+
+Zeilenzahlen der fertigen Datenbank (`sqlite3 poc/measure/out/m1real.sqlite < poc/measure/stats.sql`,
+Auszug — vollständig in `poc/measure/out/m1real-stats.txt`):
+
+| Tabelle / Kennzahl | Baseline (M1.3, gefiltert) | **Nach Hardening (M1', unveränderter Archiv)** | Differenz |
+|---|---:|---:|---:|
+| `name` | 1.437.761 | **1.448.984** | +11.223 |
+| `taxon_concept` | 440.098 | **440.534** | +436 |
+| `concept_name` role=synonym | 953.262 | **964.762** | +11.500 |
+| verwaiste Synonyme | 44.401 | **43.688** | −713 |
+| `distribution` | 1.982.550 | **1.983.859** | +1.309 |
+| `xref` (POWO) | 440.098 | **440.534** | +436 |
+| `fts_name_map` | 1.393.360 | **1.405.296** | +11.936 |
+| `trait_value` | 113.544 | **113.594** | +50 |
+
+**Warum mehr Konzepte/Namen als die Baseline:** M1.3 lief gegen die *gefilterte*
+Kopie des Archivs (`poc/measure/filter_ranks.sh` hatte 11.223 Zeilen mit
+unbekanntem Rang vorab entfernt, siehe M1.0). Dieser Lauf (M1') geht gegen das
+**unveränderte** Archiv — `ParseRankLenient` faltet die 11.223 vorher
+ausgeschlossenen Zeilen jetzt auf sechs Ziele: die drei dedizierten
+Nothotaxon-Ränge (`NOTHOSUBSPECIES` 552, `NOTHOVARIETY` 134, `NOTHOFORM` 15
+Namen), `SUBVARIETY` (3.350 Namen) und den Rest (6.527 Namen) auf `RankOther`
+mit `rank_verbatim` persistiert (28 verschiedene Rohschreibweisen, darunter
+die leere Zeichenkette; siehe die `ranks: other=`-Zeile oben). Von den 11.223
+zusätzlichen Namen werden **436 zu eigenen `taxon_concept`-Zeilen** (die
+akzeptierten Vertreter dieser Ränge: `NOTHOSUBSPECIES` 370, `NOTHOVARIETY` 54,
+`SUBVARIETY` 8, `NOTHOFORM` 4 Konzepte — Summe 436, exakt die Differenz
+440.534 − 440.098), der Rest sind zusätzliche Synonym-Namen auf bereits
+vorhandene oder neue Konzepte. Das ist genau der in der Aufgabenstellung
+erwartete Effekt: T1 admittiert mehr Zeilen, statt den Ingest abzubrechen.
+
+### M2' — Trait-Crosswalk gegen die volle Datenbank
+
+Ingest von EIVE + Tichý + Midolo lief im selben Aufruf wie M1' (ein
+Manifest, `poc/measure/dataset.full-real.yaml`, ein `hostus ingest`-Lauf).
+
+**Pro Vokabular, auf Zeilenebene** (aus dem Ingest-Report):
+
+| Vokabular | Zeilen | matched | unmatched | ambiguous |
+|---|---:|---:|---:|---:|
+| `eive` | 71.266 | 54.612 (**76,64 %**) | 8.830 (12,39 %) | 7.824 (10,98 %) |
+| `tichy2023` | 45.592 | 36.554 (**80,17 %**) | 1.868 (4,10 %) | 7.170 (15,73 %) |
+| `midolo2023` | 31.910 | 24.985 (**78,30 %**) | 1.145 (3,59 %) | 5.780 (18,11 %) |
+
+Gegen die Baseline (M2.1: 76,55/80,18/78,30 %) praktisch unverändert — die
+matched-Quote schwankt nur bei EIVE spürbar (+0,09 Prozentpunkte, +55
+matched-Zeilen: 54.612 statt 54.557), weil mehr Konzepte jetzt existieren, an
+die ein EIVE-Name binden kann. `unmatched`/`ambiguous` sind bei Tichý/Midolo
+zeilenidentisch mit der Baseline; bei EIVE sinkt `unmatched` von 8.885 auf
+8.830 (−55, exakt die zusätzlichen `matched`-Zeilen).
+
+**Pro Vokabular, auf Taxon-Ebene** (`poc/measure/bridge`, Aufruf wie M2.2,
+gegen `poc/measure/out/m1real.sqlite`; Datei: `poc/measure/out/m1real-bridge.txt`):
+
+| Vokabular | distinkte Taxa | in WCVP auflösbar — Baseline (M2.2) | **in WCVP auflösbar — nach Hardening** |
+|---|---:|---:|---:|
+| EIVE | 14.830 | 13.015 (87,76 %) | **13.026 (87,84 %)** |
+| Tichý | 8.907 | 8.527 (95,73 %) | **8.527 (95,73 %)** |
+| Midolo | 6.382 | 6.153 (96,41 %) | **6.153 (96,41 %)** |
+
+EIVE gewinnt 11 zusätzliche auflösbare Taxa (+0,08 Prozentpunkte) — dieselbe
+Größenordnung wie der Zeilenebene-Effekt oben; Tichý und Midolo sind
+zeilenidentisch mit der Baseline (die zusätzlichen Ränge/Konzepte aus M1'
+liegen offenbar außerhalb ihrer Namensmengen). Das bestätigt die Erwartung aus
+dem Auftrag: die T1-Reparatur admittiert mehr Zeilen und kann die
+Trefferquote nur verbessern oder gleich lassen, nie verschlechtern — beides
+eingetreten, aber der Effekt ist klein, weil die vorher exkludierten
+28 Rang-Schreibweisen ein Randphänomen sind (0,775 % aller WCVP-Zeilen).
+
+**Trait-Abdeckung der Konzepte** (`sqlite3 poc/measure/out/m1real.sqlite < poc/measure/stats.sql`,
+unabhängig gegengeprüft gegen eine zweite Ingest-Kopie unter `/tmp/full-real.sqlite`
+— identische Werte):
+
+| Kennzahl | Baseline (M2.3) | **Nach Hardening** |
+|---|---:|---:|
+| WCVP-Konzepte insgesamt | 440.098 | **440.534** |
+| … mit irgendeinem Trait-Wert | 11.638 (2,64 %) | **11.648 (2,64 %)**|
+| … mit EIVE | 10.990 | **11.000** |
+| … mit Tichý | 7.072 | **7.072** |
+| … mit Midolo | 4.963 | **4.963** |
+| … mit EIVE UND Tichý | 6.671 | **6.671** |
+| … mit allen dreien | 4.251 | **4.251** |
+
+Unverändert bis auf EIVE (+10 Konzepte, +10 matched-Zeilen abzüglich
+Kollisionen auf denselben `(concept_id, vocab, dim)`-Schlüssel) — konsistent
+mit dem oben gemessenen kleinen EIVE-Zugewinn.
+
+**Stichprobe der Nichttreffer** (aus dem Ingest-Report, nicht neu gezogen —
+das ist die vollständige `unmatched sample`-Ausgabe, keine k-te-Zeile-Probe
+wie M2.4): die Nichttreffer bestätigen exakt die drei M2.4-Kategorien.
+Aggregate: `Acer opalus aggr.`, `Achillea millefolium aggr.`,
+`Aconitum napellus aggr.`, `Alchemilla vulgaris aggr.`. Hybride:
+`Abies alba × nordmanniana`, `Acer ×coriaceum`, `Aconitum ×schneebergense`,
+`Aconogonon ×fennicum`. Infraspezifische Autonyme:
+`Acer obtusatum subsp. obtusatum`, `Aconitum lycoctonum subsp. lycoctonum`.
+
+### M3' — Suggest-Latenz auf dem vollen Index
+
+Gleiches Verfahren wie M4 (Baseline): HTTP gegen einen laufenden Server
+(`hostus serve`) über die volle `m1real.sqlite`, `poc/measure/out/latency`
+(hier `latency-real`, identisches Binary aus `poc/measure/latency`),
+`--reps 15 --warmup 3`, 38 Präfixe, `limit=10` — 570 Messpunkte je Lauf,
+100 ms Pause zwischen Requests wegen des 20-req/s-Rate-Limits.
+
+```bash
+HOSTUS_SQLITE_PATH=poc/measure/out/m1real.sqlite ./hostus serve --port 8097 --log-level warn &
+./poc/measure/out/latency-real --base http://127.0.0.1:8097 --reps 15 --warmup 3
+./poc/measure/out/latency-real --base http://127.0.0.1:8097 --reps 15 --warmup 3 --area GER
+```
+
+| Lauf | Baseline (M4) p50 | **Nach Hardening p50** | Baseline p95 | **Nach Hardening p95** |
+|---|---:|---:|---:|---:|
+| ohne `area` | 36,4 ms | **38,59 ms** | 220,2 ms | **274,37 ms** |
+| mit `area=GER` | 38,7 ms | **40,81 ms** | 253,8 ms | **321,57 ms** |
+
+Vollständige Tabellen: `poc/measure/out/m1real-latency-noarea.txt` und
+`poc/measure/out/m1real-latency-ger.txt`. p50 bleibt im selben Bereich
+(+2–2 ms); **p95 steigt deutlich — um 25 % ohne `area` (220,2 → 274,37 ms)
+und 27 % mit `area=GER` (253,8 → 321,57 ms).** Das ist die einzige der drei
+Kennzahlen (M1'/M2'/M3'), die sich gegenüber der Baseline sichtbar
+verschlechtert, und die Ursache ist **nicht geklärt** — das war mit den
+Mitteln dieser Aufgabe nicht isolierbar:
+
+- **Die Größenordnungen passen nicht zusammen.** DB +0,9 % (916 vs. 908 MiB),
+  Konzepte +0,1 %, Namen +0,8 % — keiner dieser Zuwächse erklärt plausibel
+  einen 25–27 % höheren p95.
+- **Ein zweiter Lauf derselben Messung** (`poc/measure/out/m1real-latency-noarea-rep2.txt`,
+  identischer Code, identische DB, gleicher Rechner, sofort im Anschluss
+  wiederholt) ergab p50=40,73 ms / p95=301,89 ms gegenüber dem ersten Lauf
+  (p50=38,59 ms / p95=274,37 ms) — eine Schwankung von rund 10 % allein durch
+  Wiederholung, ohne jede Codeänderung. Das zeigt, dass ein Teil der 25–27 %
+  Differenz zur Baseline durch bloße Lauf-zu-Lauf-Varianz erklärbar sein
+  könnte — aber eben nur ein Teil, nicht die volle Differenz, und für die
+  Baseline selbst existiert **kein** Wiederholungslauf, mit dem sich deren
+  eigene Varianz einordnen ließe. Die Aussage „Messvarianz" ist damit
+  plausibilisiert, aber nicht quantitativ belegt.
+- **Eine naheliegende Alternativursache wurde nicht geprüft:** die acht neuen
+  FK-Indizes aus Task 2 verändern, welche Pläne SQLites Query-Planer wählt.
+  Der Suggest-Pfad kombiniert FTS5-`MATCH` mit Joins und einer
+  `MATERIALIZED`-CTE (`internal/adapters/sqlite/suggest.go`); ein Planer, der
+  jetzt einen Index-Pfad dort bevorzugt, wo vorher ein Scan günstiger war,
+  ist ein plausibler Kandidat für einen echten, auf den Hardening-Fix
+  zurückgehenden Effekt — und wurde hier nicht per `EXPLAIN QUERY PLAN`
+  gegen eine ungeindizierte Vergleichs-DB verifiziert oder ausgeschlossen.
+
+**Offene Kandidatenursachen für Task 6** (keine davon ist hier belegt oder
+ausgeschlossen): (a) Query-Plan-Änderung durch die neuen FK-Indizes, (b)
+FTS/Join-Kosten durch die zusätzlichen, von T1 admittierten OTHER-Rang-Zeilen,
+(c) unquantifizierte Maschinen-Varianz (siehe Wiederholungslauf oben).
+Dieselben kurzen 2-Zeichen-Präfixe (`ca`, `al`, `sa`) dominieren den p95 wie
+in M4 — das ist die einzige Konstante zwischen Baseline und dieser Messung.
+Diese Sektion liefert bewusst **kein Verdikt** zu dieser Abweichung (siehe
+Präambel oben); das ist Aufgabe von Task 6.
+
+---
+
+## Nach Hardening (Task 5): deterministische Namensnormalisierung
+
+> Diese Sektion misst die Wirkung von Task 5
+> (`internal/domain/normalize.go`, verdrahtet in
+> `application.IngestTraits`) auf **genau die Kennzahl aus M2'/M2.2**.
+> Bezugsgröße ist durchgängig die Task-3-Messung (M2'), nicht die
+> Ur-Baseline M2.1. Die Baseline-Zahlen oben bleiben unverändert stehen.
+> Verdikte liefert Task 6.
+>
+> Anlass ist der Befund aus M2.4: die Nichttreffer sind überwiegend
+> **strukturell**. Task 5 hat das nicht an einer 20er-Stichprobe, sondern an
+> den **vollständigen** Nichttrefferlisten
+> (`poc/measure/out/unmatched-{eive,tichy,midolo}.txt`, 1.804 / 380 / 229
+> Taxa) nachgezählt: Aggregatmarker 664 / 229 / 134 Namen, Hybridmarker
+> 452 / 136 / 83, infraspezifische Autonyme 356 / 0 / 5.
+
+### Was gemessen wurde und womit
+
+Zwei unabhängige Wege, die zueinander passen müssen:
+
+1. **Regel-Sonde** (`poc/measure/bridge --norm`, Quelle `poc/measure/bridge/norm.go`).
+   Reine Namensauflösung gegen die fertige M1'-Datenbank, Sekunden statt
+   Minuten — dadurch lässt sich **jede Regel einzeln** ein- und ausschalten.
+   Die Sonde ist keine Nachbildung: `Canonicalize` und `NameCandidates`
+   werden von `poc/measure/gen_canonicalize.sh` bzw.
+   `poc/measure/gen_normalize.sh` **zeilengenau** aus
+   `internal/domain/` kopiert (`--check` verifiziert die Kopie), der Index
+   ist `canonical_fold → COUNT(DISTINCT concept_id)` über
+   `name JOIN concept_name` — genau das, was `sqlite.MatchExact` auflöst —
+   und die Klassifikation ist die von `application.resolveTraitName`.
+   **Gültigkeitsnachweis:** die `exact`-Zeile der Sonde reproduziert die
+   M2'-Zahlen zeilengenau (EIVE 54.612 / 8.830 / 7.824, Tichý
+   36.554 / 1.868 / 7.170, Midolo 24.985 / 1.145 / 5.780) und die
+   M2.2-Taxonzahlen exakt (13.026 / 8.527 / 6.153). Ohne diese Deckung
+   wären die Deltas darunter wertlos.
+2. **Voller Ingest** (`run.sh t5ingest`), derselbe Lauf wie M1'/M2', nur mit
+   der Normalisierung — die Gegenprobe im echten Codepfad.
+
+```bash
+nix develop -c bash poc/measure/run.sh t5          # Regel-Sonde, ~8 s
+nix develop -c bash poc/measure/run.sh t5ingest    # voller Ingest, 277 s
+```
+
+Binary: `nix develop -c make build` (`hostus` v0.2.4-91-g2a8c270-dirty).
+Rohdaten: `poc/measure/out/t5-norm.txt`, `poc/measure/out/t5-ingest.log`,
+`poc/measure/out/t5-stats.txt`.
+
+**Die beiden Wege stimmen überein:** der volle Ingest liefert für alle drei
+Vokabulare exakt die `ALL RULES`-Zeilen der Sonde.
+
+### T5.1 Marginaler Zugewinn je Regel (Taxon-Ebene, jede Regel allein)
+
+Jede Zeile ist ein eigener Lauf: nur der exakte Schlüssel **plus diese eine
+Regel**. „+matched" sind eindeutig aufgelöste Taxa, „+ambig" die zusätzlich
+mehrdeutig gewordenen (beides kam vorher aus `unmatched`; eine Regel kann
+kein vorher aufgelöstes Taxon umlenken, weil der exakte Schlüssel immer
+zuerst probiert wird).
+
+| Regel | EIVE +matched | EIVE +ambig | Tichý +matched | Tichý +ambig | Midolo +matched | Midolo +ambig |
+|---|---:|---:|---:|---:|---:|---:|
+| `hybrid_spacing` (`Acer ×coriaceum` → `acer × coriaceum`) | **+360** | +1 | 0 | 0 | +11 | 0 |
+| `hybrid_marker_dropped` (`Anacamptis ×albertii` → `anacamptis albertii`) | +43 | +5 | 0 | 0 | +2 | 0 |
+| `hybrid_marker_added` (`Abies borisii-regis` → `abies × borisii-regis`) | +51 | 0 | +32 | 0 | +16 | 0 |
+| `aggregate` (nur echte Aggregatkonzepte) | **0** | 0 | **0** | 0 | **0** | 0 |
+| `aggregate_to_nominate` (`Acer opalus aggr.` → `acer opalus`) ⚑ | **+554** | +158 | **+186** | +44 | **+106** | +27 |
+| `autonym` (`Acer obtusatum subsp. obtusatum` → `acer obtusatum`) ⚑ | **+277** | +72 | 0 | 0 | +1 | +3 |
+| `orthography_genitive` (`Cardamine plumierii` → `cardamine plumieri`) | +17 | 0 | +13 | 0 | +8 | 0 |
+| **alle Regeln zusammen** | **+1.270** | **+231** | **+231** | **+44** | **+142** | **+30** |
+
+⚑ = botanische Ermessensentscheidung, im Ingest-Report als `flagged`
+ausgewiesen (Einordnung/Begründung in T5.4; der Walk-back — warum die
+per-Regel-Zahlen dieser Tabelle NAMENSAUFLÖSUNG messen, nicht gespeicherte
+Zeilen, und wie sich das unterscheidet — steht in T5.5).
+
+Die Summe der Einzelregeln (EIVE 1.302, Midolo 144) liegt über dem
+Gesamtwert (1.270 / 142), weil sich einige Namen über mehr als eine Regel
+erreichen lassen; Tichý ist überschneidungsfrei (32 + 186 + 13 = 231).
+
+**Der Nullbefund gehört dazu:** die Regel `aggregate` — die ein
+*tatsächliches* Aggregatkonzept sucht, statt auf die Nominatart
+auszuweichen — bringt in allen drei Vokabularen **exakt null** Treffer. Der
+Grund ist nachgemessen und nicht vermutet:
+
+```bash
+sqlite3 poc/measure/out/m1real.sqlite \
+  "SELECT count(*) FROM name WHERE canonical_fold LIKE '% agg.%' OR canonical_fold LIKE '% aggr.%' OR canonical_fold LIKE '%s.l.%'"
+# 0
+```
+
+WCVP führt **keinen einzigen** aggregatmarkierten Namen. Ohne den Rückfall
+auf die Nominatart ist bei Aggregaten also nichts zu holen — genau das macht
+den Rückfall zur Entscheidung und nicht zur Formalie.
+
+### T5.2 Zeilenebene, kumulativ (voller Ingest, Gegenprobe)
+
+| Vokabular | Zeilen | matched (M2') | **matched (T5)** | unmatched (M2') | **unmatched (T5)** | ambiguous (M2') | **ambiguous (T5)** |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `eive` | 71.266 | 54.612 (76,64 %) | **60.860 (85,40 %)** | 8.830 | **1.445** (−83,6 %) | 7.824 | **8.961** (+1.137) |
+| `tichy2023` | 45.592 | 36.554 (80,17 %) | **37.693 (82,68 %)** | 1.868 | **526** (−71,8 %) | 7.170 | **7.373** (+203) |
+| `midolo2023` | 31.910 | 24.985 (78,30 %) | **25.695 (80,52 %)** | 1.145 | **285** (−75,1 %) | 5.780 | **5.930** (+150) |
+
+### T5.3 Taxon-Ebene (die Bezugsgröße aus M2.2)
+
+M2.2 zählt „in WCVP auflösbar" = der Name findet im Index **überhaupt** ein
+Konzept (eindeutig **oder** mehrdeutig). Beide Lesarten stehen hier, damit
+der Zugewinn nicht durch die Wahl der Kennzahl geschönt wird:
+
+| Vokabular | distinkte Taxa | auflösbar M2' | **auflösbar T5** | *eindeutig* M2' | ***eindeutig* T5** |
+|---|---:|---:|---:|---:|---:|
+| EIVE | 14.830 | 13.026 (87,84 %) | **14.527 (97,96 %)** | 11.420 (77,01 %) | **12.690 (85,57 %)** |
+| Tichý | 8.907 | 8.527 (95,73 %) | **8.802 (98,82 %)** | 7.162 (80,41 %) | **7.393 (83,00 %)** |
+| Midolo | 6.382 | 6.153 (96,41 %) | **6.325 (99,11 %)** | 4.997 (78,30 %) | **5.139 (80,52 %)** |
+
+Zum Vergleich der Größenordnungen: die **gesamte** Lizenzroute (M3,
+Vereinigung aller vier Brückenlisten, Obergrenze) erreichte für EIVE
++6,09 %, und M6 zeigte, dass davon real ~0,34 % ankommen. Die
+Normalisierung bringt für EIVE **+10,12 Prozentpunkte auflösbar**
+(87,84 → 97,96 %) — rund eine Größenordnung mehr, ohne Lizenzgespräch.
+
+**Trait-Abdeckung der Konzepte** (`poc/measure/out/t5-stats.txt`):
+
+| Kennzahl | M2' | **T5** |
+|---|---:|---:|
+| Konzepte mit irgendeinem Trait-Wert | 11.648 | **12.080** |
+| … mit EIVE | 11.000 | **11.426** |
+| … mit Tichý | 7.072 | **7.215** |
+| … mit Midolo | 4.963 | **5.104** |
+| … mit EIVE UND Tichý | 6.671 | **6.810** |
+| … mit allen dreien | 4.251 | **4.373** |
+
+**Laufzeit:** 277,26 s gegenüber 281,27 s in M1' — die Kandidatenleiter
+kostet **nichts** Messbares, weil sie nur bei Namen betreten wird, die der
+exakte Schlüssel ohnehin verloren hätte. (Das ist die Laufzeit VOR dem
+Fix-Runde-1-Fix aus T5.5; die aktuelle Zahl NACH diesem Fix steht dort:
+285,80 s — ebenfalls nicht messbar teurer als M1'.)
+
+### T5.4 Was die Zahlen kosten: Mehrdeutigkeit und zwei Ermessensfälle
+
+**Die Mehrdeutigkeit steigt** — das ist keine Nebenwirkung, die man
+verschweigen darf: EIVE +231 Taxa (1.606 → 1.837), Tichý +44
+(1.365 → 1.409), Midolo +30 (1.156 → 1.186); auf Zeilenebene
++1.137 / +203 / +150. **Jedes** dieser Taxa war vorher `unmatched`; kein
+vorher aufgelöstes Taxon ist mehrdeutig geworden, weil `NameCandidates` den
+unveränderten `Canonicalize`-Schlüssel immer zuerst probiert und die
+Leiter beim ersten antwortenden Schlüssel abbricht. Mehrdeutig heißt
+weiterhin: **nichts** wird geschrieben, es wird nicht geraten. Der Löwenanteil
+stammt aus dem Aggregat-Rückfall (EIVE 158 von 231).
+
+Zwei Regeln setzen zwei Umgrenzungen gleich, die nicht identisch sind. Sie
+sind deshalb `Flagged` (`domain.NormalizationRule.Flagged`), werden im
+Ingest-Report getrennt gezählt und namentlich bemustert:
+
+```
+  eive: rows=71266 matched=60860 unmatched=1445 ambiguous=8961
+    normalized aggregate_to_nominate: rows=30 taxa=6 [flagged: circumscriptions equated, not identical]
+    normalized autonym: rows=18 taxa=4 [flagged: circumscriptions equated, not identical]
+    normalized hybrid_marker_added: rows=214 taxa=44
+    normalized hybrid_marker_dropped: rows=20 taxa=4
+    normalized hybrid_spacing: rows=1720 taxa=353
+    normalized orthography_genitive: rows=80 taxa=16
+    flagged sample: Alchemilla conjuncta aggr., Alchemilla fissa aggr., …
+```
+
+Diese Zahlen zählen **gespeicherte** Zeilen, nicht aufgelöste — der
+Unterschied ist der Kern von T5.5. Und seit Fix-Runde 1 lebt die Markierung
+nicht nur hier, sondern **in den Daten**: `trait_value.resolution`
+(NULL = exakter Treffer) wird persistiert, über
+`GET /v1/concept/{id}/traits` als `resolution` ausgeliefert (fehlt das Feld,
+war es ein exakter Treffer) und ins Offline-Bundle mitkopiert. Erst damit
+kann ein Konsument die beiden Ermessensfälle wirklich ausschließen — die auf
+20 Namen gedeckelte `flagged sample` konnte das nie:
+
+```sql
+-- alles, was auf einer gleichgesetzten Umgrenzung beruht:
+SELECT * FROM trait_value WHERE resolution IN ('aggregate_to_nominate','autonym');
+```
+
+- **Autonym → Art.** Ein Autonym ist die Nominat-Unterart und damit *enger*
+  als die Art. Der Grund, warum es hier überhaupt unaufgelöst ankommt, ist
+  aber gerade, dass das Rückgrat die infraspezifische Gliederung **nicht
+  führt**: WCVP hat keine Zeile `Acer obtusatum subsp. obtusatum`, nur die
+  Art. In dieser Umgrenzung *ist* die Art das Taxon, das die Quelle
+  „Autonym" nennt. Führte das Rückgrat die Gliederung, löste der exakte
+  Schlüssel auf und die Regel käme nie zum Zug. Gleichgesetzt — aber
+  markiert, weil das Argument an diesem Rückgrat hängt, nicht allgemein gilt.
+- **Aggregat → Nominatart.** Das ist der schwächere Fall und zeigt in die
+  *andere* Richtung: das Aggregat ist **weiter** als die Nominatart
+  (`Acer opalus aggr.` umfasst auch *A. obtusatum* u. a.), ein
+  Aggregat-Mittelwert landet also auf einem einzelnen Mitglied. Angewandt
+  wird er trotzdem, weil die gemessene Alternative schlechter ist (siehe
+  T5.1: WCVP führt null Aggregatnamen, ein Verzicht verwirft 664 / 229 / 134
+  Vokabular-Taxa ersatzlos) und weil die Nominatart das Taxon ist, das ein
+  Nutzer beim Suchen nach dem Aggregat tatsächlich nachschlägt. Markiert,
+  damit ein Konsument diese Werte ausschließen kann.
+
+**Erledigt in Fix-Runde 1** (war zuvor als offene Auflage vermerkt): die
+Markierung steht jetzt in den Daten — `trait_value.resolution`, nullable,
+NULL = exakter Treffer. Der Weg dorthin ist derselbe, den Task 2 für
+`rank_verbatim` gegangen ist (Spalte in `schema.sql`, idempotent bei `Open`
+angelegt, Ingest baut neu auf): Adapter-Schreib-/Lesepfad, `ExportBundle`,
+DTO (`omitempty`), OpenAPI und `docs/reference/http-api.md`. Ein
+Migrationsmechanismus war dafür nicht nötig.
+
+### T5.5 Ein Nebenbefund, den erst die Sichtbarmachung zutage gefördert hat
+
+Die Spalte `trait_value.resolution` hat sofort ein Problem aufgedeckt, das
+der reine Report-Zähler verdeckt hatte: der Crosswalk ist **viele-zu-eins**,
+der Primärschlüssel von `trait_value` aber
+`(concept_id, vocab, vocab_version, dim)`. EIVE führt sowohl `Acer opalus`
+als auch `Acer opalus aggr.`; beide landen auf demselben Konzept und
+derselben Dimension — und `AddTraitValue` ist ein `INSERT OR REPLACE`. Wer
+den Platz behielt, entschied damit schlicht die **Zeilenreihenfolge der
+CSV**.
+
+Das ist doppelt schlecht: ein exakt getroffener Wert konnte still durch das
+Kollektivmittel eines Aggregats ersetzt werden, und die neue
+`resolution`-Markierung hätte den Platz dann nach Zeilenreihenfolge
+beschrieben statt nach dem, was für ihn zutrifft. Eine Markierung, deren
+Wert von der Eingabereihenfolge abhängt, taugt nicht zum Filtern.
+
+Gemessen, wie oft das passierte (Ingest-Lauf vor dem Fix gegen den nach dem
+Fix, jeweils
+`SELECT resolution, COUNT(DISTINCT concept_id) FROM trait_value GROUP BY 1`):
+die Zahl der EIVE-Konzepte mit exakt aufgelöstem Wert steigt von 10.354 auf
+11.000 — **646 EIVE-Konzepte** trugen also einen normalisierten Wert,
+obwohl für dieselbe Dimension ein exakter Treffer vorlag. Bei Tichý waren es
+65 (7.007 → 7.072), bei Midolo null.
+
+`application.selectTraitWinners` entscheidet das jetzt explizit und
+reihenfolgeunabhängig: **ein exakter Treffer schlägt immer einen
+normalisierten**; unter Gleichrangigen gewinnt die erste Zeile. Wirkung auf
+die gespeicherten Daten:
+
+| gespeicherte Konzepte je Vokabular | vor dem Fix | **nach dem Fix** | M2'-Baseline |
+|---|---:|---:|---:|
+| EIVE, exakt aufgelöst | 10.354 | **11.000** | 11.000 |
+| EIVE, `aggregate_to_nominate` | 455 | **6** | — |
+| EIVE, `autonym` | 221 | **4** | — |
+| Tichý, exakt aufgelöst | 7.007 | **7.072** | 7.072 |
+| Midolo, exakt aufgelöst | 4.963 | **4.963** | 4.963 |
+
+Daraus folgt eine prüfbare Regressionsaussage, die vorher nicht galt: **die
+Zahl der exakt aufgelösten Konzepte je Vokabular ist nach der
+Normalisierung exakt die der M2'-Baseline** (11.000 / 7.072 / 4.963). Die
+Normalisierung ist damit auf Konzeptebene beweisbar rein additiv — sie hat
+keinen einzigen Baseline-Wert verdrängt. Die Gesamtabdeckung
+(`concepts_with_eive` = 11.426 usw.) ist unverändert; es ändert sich nur,
+**welcher** Wert einen umkämpften Platz besetzt.
+
+Zweite Folge, ebenfalls in T5.4 sichtbar: die per-Regel-Zahlen des
+Ingest-Reports zählen jetzt **gespeicherte** Zeilen und stimmen deshalb
+zeilengenau mit `SELECT resolution, COUNT(*) FROM trait_value` überein. Für
+EIVE fällt `aggregate_to_nominate` dadurch von 554 auf 6 Taxa — nicht weil
+die Regel weniger Namen auflöst (die Auflösbarkeit in T5.1–T5.3 ist
+unverändert), sondern weil fast alle diese Aggregatnamen auf Konzepte
+zeigen, die **ohnehin schon** einen exakten EIVE-Wert tragen. Der
+Abdeckungsgewinn der Aggregatregel ist bei EIVE also weit kleiner, als die
+Namensauflösung allein vermuten ließ; bei Tichý (152 Konzepte) und Midolo
+(105) bleibt er substanziell. Das ist eine Korrektur an der
+Wertaussage dieser Regel, und sie gehört hierher, nicht in eine Fußnote.
+
+**Laufzeit** mit Fix: 285,80 s (M1': 281,27 s) — die Vorauswahl kostet
+nichts Messbares.
+
+### T5.6 Orthographie: was aufgenommen wurde und was nicht
+
+`domain.Canonicalize` wurde **nicht** angefasst. Es ist der *gespeicherte*
+Schlüssel (`name.canonical_fold`) und paritätsgeprüft gegen SQLites
+`unicode61 remove_diacritics 2` (`internal/adapters/sqlite/fts_parity_test.go`);
+eine Verbreiterung dort bräche diesen Vertrag und veränderte stillschweigend
+jeden gespeicherten Fold. Orthographie ist deshalb ein **zusätzlicher
+Kandidatenschlüssel**, kein weiterer Fold.
+
+Am gemessenen Rest (nach Aggregat/Hybrid/Autonym: 320 / 118 / 65 Taxa)
+aufgenommen:
+
+- **`-ii`/`-i`-Genitivalternation** (ICN Art. 60.8 / Rec. 60C), beide
+  Richtungen: +17 / +13 / +8 Taxa. Belege: `Cardamine plumierii` ↔ WCVP
+  `plumieri`, `Cota triumfettii` ↔ `triumfetti`, `Plantago cornutii` ↔
+  `cornuti`, `Polygala edmundi` ↔ `edmundii`,
+  `Crocus biflorus subsp. adamii` ↔ `adami`.
+
+Bewusst **nicht** aufgenommen, jeweils mit gemessener Begründung:
+
+- **Genus-Kongruenz des Epithetons** (ICN Art. 23.5, `arctostaphylos alpinus`
+  ↔ WCVP `alpina`, `echinochloa colonum` ↔ `colona`): gemessener Zugewinn
+  3 / 2 / 2 Taxa bei je **einem** zusätzlich mehrdeutigen Treffer. Das
+  Umschreiben der Endung `-us`/`-a`/`-um` kann ein *anderes*, real
+  existierendes Epitheton erzeugen und den Wert damit auf das falsche
+  Konzept legen — ein schlechter Tausch für sieben Taxa insgesamt.
+- **`-ae`/`-iae`-Alternation**: ein einziger Treffer. Zu wenig für eine Regel.
+- **Angehängtes ASCII-`x` als Hybridmarker** (`acer xcoriaceum`): in den
+  vollständigen Nichttrefferlisten aller drei Vokabulare **null** Vorkommen,
+  während `x` ein legitimer Epithetonbuchstabe ist (`Rosa xanthina`,
+  `Xanthium strumarium`). Gemessener Preis des Verzichts: null.
+- **Echte Schreibfehler** (`Artemisia siversiana` ↔ WCVP `sieversiana`,
+  `Paeonia broteroi` ↔ `broteri`): keine deterministischen Umschreibungen.
+  Dafür existiert der Fuzzy-Pfad, der absichtlich `requires_review` liefert.
+
+### T5.7 Was übrig bleibt
+
+Der Rest ist substanziell, nicht mehr strukturell (`unmatched sample` aus
+`poc/measure/out/t5-ingest.log`):
+
+- **Binäre Hybridformeln** (25 EIVE-Taxa): `Abies alba × nordmanniana`,
+  `Alchemilla glacialis × pentaphyllea`, `Alnus incana subsp. incana × viridis`.
+  Eine Formel benennt kein Nothospecies-Konzept; es gibt keinen
+  deterministischen Weg von ihr zu einem WCVP-Konzept. Bewusst kein
+  erfundener Kandidat.
+- **Nicht-nominate Unterarten ohne WCVP-Zeile**:
+  `Allium circinatum subsp. peloponnesiacum` — korrekt **nicht** auf die Art
+  zusammengelegt (eigener Testfall).
+- **In WCVP wirklich nicht vorhanden**: `Acacia retinoides`,
+  `Achillea styriaca`, `Acuston lunarioides`.
+- **Schreibfehler** (Fuzzy-Territorium): `Artemisia siversiana`,
+  `Alchemilla rhodondendrophila`, `Aconitum lycotonum subsp. vulparia`.
+
+### T5.8 Reihenfolge der Kandidatenleiter (Fix-Runde 1)
+
+`NameCandidates` dokumentiert, dass reine Schreibweisen-Regeln **vor** den
+beiden Ermessensfällen probiert werden. Die Genitivregel stand jedoch
+zuletzt, also HINTER Aggregat und Autonym — der Code widersprach seiner
+eigenen Zusicherung. Folge: bei einem Autonym, dessen Epitheton die
+`-ii`/`-i`-Alternation trägt, wäre der Name über den markierten
+Autonym-Rückfall auf die Art zusammengefallen, auch wenn das Rückgrat das
+**infraspezifische** Taxon unter der anderen Schreibweise führt — eine
+unnötige und unnötig markierte Übertragung.
+
+Behoben (Genitivblock jetzt vor Aggregat/Autonym) und **nachgemessen statt
+angenommen**: die Zahlen in T5.1–T5.3 sind vor und nach dem Fix identisch.
+Der Grund ist auszählbar — nur **19 EIVE-Taxa** (Tichý 0, Midolo 0) sind
+überhaupt reihenfolgeempfindlich, also von beiden Regelklassen betroffen,
+und für **keines** davon löst der Genitivschlüssel in WCVP auf:
+
+```
+# eive: 19 reihenfolgeempfindlich, davon 0 mit auflösendem Genitivschlüssel
+# tichy: 0 / 0   midolo: 0 / 0
+```
+
+(Korrektur Task 6: dieser Zählwert stammt aus einem Ad-hoc-Skript, das nur
+im Task-5-Report als Ausgabe zitiert wurde, nie als Datei existierte und
+deshalb hier nicht mehr referenziert wird. Das dahinterstehende Invariant
+— die Genitivregel steht in `NameCandidates` vor den beiden geflaggten
+Regeln — ist seither durch einen eingecheckten Test gepinnt
+(`internal/domain`, „genitive variant is offered before the flagged
+autonym collapse"), nicht durch das Ad-hoc-Skript.)
+
+Der Fix ist damit eine Korrektheitsreparatur an einer latenten Falle, kein
+Abdeckungsgewinn — gemessener Delta: **0**. Ebenfalls in dieser Runde:
+`s.str.` (sensu stricto) wurde aus den Aggregatmarkern **entfernt**. Es ist
+kein Aggregatmarker, es VERENGT; es unter einer Regel namens
+„aggregate to nominate species" zu strippen hätte die Begründung
+falsch dargestellt. Kosten: null — alle drei Vokabulare enthalten null Taxa
+mit dieser Schreibweise.
+
+### T5.9 Regressionen
+
+Keine. `MatchNames` (§B.2-Batch), das Suggest-Ranking und das
+`requires_review`-Verhalten des Fuzzy-Pfads sind unverändert — Task 5 fasst
+nur den Trait-Crosswalk an, und dort ist der erste Kandidat immer der
+unveränderte `Canonicalize`-Schlüssel. Seit dem Fix aus T5.5 gilt zusätzlich
+die stärkere, in den Daten prüfbare Aussage: die Zahl der **exakt**
+aufgelösten Konzepte je Vokabular entspricht nach der Normalisierung exakt
+der M2'-Baseline (11.000 / 7.072 / 4.963), die Normalisierung ist auf
+Konzeptebene also beweisbar rein additiv.
+
+`make verify`, `make test-integration`, `mkdocs --strict` und
+`make mutation` für alle berührten Pakete sind grün. Mutation im Detail:
+`internal/domain` 0 Überlebende in `normalize.go` bei 100 %
+Mutator-Abdeckung; `internal/adapters/http` 0 Überlebende (100 % Effizienz);
+`internal/application` und `internal/adapters/sqlite` unverändert gegenüber
+dem Stand vor Task 5 — die verbleibenden Überlebenden liegen sämtlich in
+nicht angefasstem Code bzw. sind die bereits dokumentierten beweisbaren
+Äquivalente (Sortier-Komparator über eine Menge distinkter Regeln,
+`sortedSample`-Cap).
 
 ---
 
@@ -588,6 +1229,141 @@ oder „mehrere Gebiete" zu exportieren. Beides sind Designlücken, keine
 Messfehler: der Export kopiert alle Synonyme (Ø 14,2 Namen/Konzept) und
 alle 369 Gebiete je Konzept mit, nicht nur das gescopte.
 
+### M5.3 Nach Hardening (Task 4): Mehrgebiets-Scoping, Skalierbarkeit, Größe
+
+Alle drei M5.1/M5.2-Befunde wurden behoben:
+
+1. **`--area` nimmt jetzt eine kommagetrennte Liste** (`internal/adapters/sqlite/bundle.go`,
+   `resolveAreaCodes`) — jeder Teil wird einzeln über dieselbe
+   Alias-Tabelle aufgelöst (inkl. zwei neuer Aliase, `AT`→`AUT` und
+   `CH`→`SWI`, damit die Spec-eigene Beispielsyntax `--area DE,AT,CH`
+   tatsächlich funktioniert) und die Codes werden vereinigt — ein
+   Einzelwert bleibt unverändert gültig (Regressionstest
+   `TestExportBundle_MultiArea_SelectsUnionOfAreas`).
+2. **Der ungescopte Export bindet die Konzept-ID-Liste nicht mehr als
+   Platzhalter je ID**, sondern als EIN `json_each`-JSON-Parameter
+   (dasselbe Muster, das `MatchFuzzyCandidates`, `read.go`, bereits
+   verwendet) — für jede Stelle, an der zuvor `IN (?,?,…)` mit der
+   Konzept-ID-Liste gebaut wurde (`findRestrictedSources`,
+   `copyBackboneVersions`, die Namen-/`taxon_concept`-Kopie,
+   `copyConceptScopedTables`). Das SQLite-Parameterlimit greift dabei
+   nicht mehr, unabhängig von der Scope-Größe.
+3. **Ein gebietsgescopter Export kopiert `distribution` nur noch für die
+   angefragten Gebietscodes**, nicht mehr die volle globale Verbreitung
+   jedes Konzepts (`copyDistribution`) — der laut M5.2 größte Einzelposten
+   der Bundle-Größe. Ein ungescopter Export ist davon unverändert: er
+   kopiert weiterhin jede `distribution`-Zeile. Namen/Synonyme, Trait-Werte
+   und der FTS5-Index sind von dieser Kürzung nicht betroffen (siehe
+   `docs/how-to/offline-bundle.md`, Abschnitt „Was ein gebietsgescoptes
+   Bundle NICHT mehr enthält").
+
+**Messung: Voll-Export gegen die echte 440k-Konzept-Datenbank**
+(`/tmp/full-real.sqlite`, 916 MiB, 440.534 Konzepte, 1.448.984 Namen):
+
+```bash
+./hostus bundle --db /tmp/full-real.sqlite --out /tmp/bundle-full-unscoped.sqlite --snapshot task4-unscoped
+```
+
+| Kennzahl | Wert |
+|---|---:|
+| Ergebnis | **Erfolg** — vorher: „too many SQL variables" (M5.1) |
+| Konzepte | 440.534 |
+| Namen | 1.405.296 |
+| Gebiete | 381 |
+| Wall-Clock | 986,65 s (`/usr/bin/time -l`) |
+| Dateigröße | 928.059.392 Byte (885,2 MiB) |
+
+Ein Voll-Export läuft heute in unter 17 Minuten durch und scheitert nicht
+mehr am Parameterlimit — die zuvor unmögliche Operation (M5.1: „die Datei
+bleibt bei 0 Byte") ist jetzt eine reguläre, wenn auch (erwartbar) große
+und langsame Export-Option.
+
+**Messung: Byte-Aufschlüsselung je Tabelle, VOR und NACH der
+Distribution-Kürzung** (`SELECT name, SUM(pgsize) FROM dbstat GROUP BY
+name ORDER BY 1 DESC`, GER-Bundle):
+
+| Tabelle (+Index) | Baseline (M5.2, volle globale Verbreitung) | **Nach Hardening (nur `area_code=GER`)** |
+|---|---:|---:|
+| `distribution` + `sqlite_autoindex_distribution_1` | 41,89 MB (22,45 + 19,44) | **0,55 MB** (0,53 + 0,02 — s. u.) |
+| `name` + Indizes (`idx_name_canonical_fold`, `sqlite_autoindex_name_1`, `idx_name_basionym_id`) | 31,77 MB (kein `idx_name_basionym_id` in der M5.2-Messung, damals ohne FK-Indizes) | 36,50 MB (21,74 + 6,63 + 4,89 + 3,24) |
+| `concept_name` + Indizes | 17,57 MB | 23,15 MB (9,29 + 8,97 + 4,89 — inkl. neuem `idx_concept_name_name_id`) |
+| `fts_name_*` (map/data/docsize/idx) | 8,55 MB | 14,40 MB (4,89 + 5,53 + 2,12 + 1,86 — inkl. neuem `idx_fts_name_map_concept_id`) |
+| `trait_value` + Index | 5,81 MB | 5,82 MB |
+| `taxon_concept` + Index | 1,08 MB | 1,10 MB |
+| `xref` + Index | 0,48 MB | (nicht separat neu gemessen, unverändert klein) |
+| **Dateigröße gesamt** | **108.892.160 Byte (103,8 MiB)** | **84.987.904 Byte (81,05 MiB)** |
+
+(Die Nach-Hardening-Messung lief gegen `/tmp/full-real.sqlite`, nicht
+gegen das M5.2-`m2.sqlite` — daher leicht andere Konzept-/Namenszahlen für
+GER: 11.583 Konzepte/169.670 Namen statt 11.514/163.350 — und trägt
+zusätzliche FK-Kindspalten-Indizes, die M2 dem Serienschema vor dem
+Volldaten-Ingest hinzufügt (`fk_indexes.sql`) und die auch in einem
+Bundle landen; das erklärt, warum `name`/`concept_name`/`fts_name_map`
+NACH der Kürzung nominal größer aussehen, obwohl an ihrer Kopierlogik
+nichts geändert wurde — der Vergleich, der tatsächlich etwas über die
+Kürzung aussagt, ist die `distribution`-Zeile: **41,89 MB → 0,55 MB**.)
+
+`distribution` schrumpft wie vorhergesagt auf einen Bruchteil (die
+GER-Kürzung lässt pro Konzept nur noch die eine angefragte
+`area_code=GER`-Zeile übrig, keine 369 mehr); **Namen/Synonyme
+(`name`+`concept_name`+FTS) bleiben unverändert die Kürzung wert, sind
+aber jetzt der mit Abstand größte Anteil** (~74 MB von 81 MB, ~91 %) — sie
+wurden bewusst NICHT gekürzt (siehe Produktentscheidung oben: ein
+Bundle behält jedes Synonym eines im Scope liegenden Konzepts).
+
+**Messung: Mitteleuropa-Bundle über `--area DE,AT,CH`** (die im Auftrag
+genannte Beispielsyntax, aufgelöst über die neuen `AT`/`CH`-Aliase auf
+GER+AUT+SWI):
+
+```bash
+./hostus bundle --db /tmp/full-real.sqlite --area DE,AT,CH --out /tmp/bundle-mitteleuropa.sqlite --snapshot task4-mitteleuropa
+```
+
+| Kennzahl | Wert |
+|---|---:|
+| Konzepte | 14.202 |
+| Namen | 183.684 |
+| Gebiete | 3 (GER, AUT, SWI) |
+| Wall-Clock | 73,73 s |
+| Dateigröße (entpackt) | 93.450.240 Byte (89,1 MiB) |
+| Dateigröße (`gzip -9`) | 21.953.315 Byte (20,9 MiB) |
+
+**Gegen die Baseline (108,9 MB GER-Einzelland) und das 10–20-MB-Ziel:**
+das Mitteleuropa-Bundle (3 Länder, mehr Konzepte als GER allein) ist mit
+89,1 MB trotzdem **kleiner** als die alte GER-Einzelland-Baseline — die
+Distribution-Kürzung wiegt den zusätzlichen Namensumfang von zwei weiteren
+Ländern mehr als auf. Komprimiert liegt es bei 20,9 MiB, knapp **über**
+der 20-MB-Obergrenze der Spec (zum Vergleich: das GER-Bundle allein liegt
+nach der Kürzung bei 19,24 MiB `gzip -9`, also knapp darunter). Entpackt
+(die für Speicherplatz auf dem Feldgerät relevante Zahl, siehe M5.2) ist
+89,1 MB weiterhin **Faktor 4,5–8,9 über** dem 10–20-MB-Ziel.
+
+**Ehrliche Einordnung: das 10–20-MB-Ziel ist mit den hier vertretbaren
+Kürzungen nicht erreichbar.** Die Distribution-Kürzung war der mit
+Abstand größte, unstrittig vertretbare Hebel (kein Feldeinsatz-Use-Case
+braucht die globale Verbreitung eines Konzepts außerhalb des gewählten
+Gebiets) und hat die Größe bereits etwa halbiert (GER: 103,8 → 81,05 MiB).
+Der verbleibende Rest ist zu über 90 % Namens-/Synonym-Infrastruktur
+(`name`, `concept_name`, FTS) für Konzepte, die alle GENUINE im Scope
+liegen — eine weitere Kürzung dort (z. B. nur akzeptierte Namen ohne
+Synonyme exportieren) würde eine reale UC1-Fähigkeit kosten (im Feld einen
+Synonym-Namen eintippen und auf das akzeptierte Konzept verwiesen werden)
+und ist deshalb bewusst NICHT Teil dieser Kürzung — sie wäre eine eigene,
+separate Produktentscheidung, keine Bugfix-Kürzung. Die Spec-Zahl von
+10–20 MB war für ein WCVP-Volltaxonomie-Backbone mit im Schnitt ~13
+Namen/Konzept schlicht zu niedrig angesetzt; das ist ein Befund über die
+Design-Annahme, kein verbleibender Defekt in der Implementierung.
+
+**Verdikt: hält mit Auflagen.** Multi-Area-Scoping und der
+Parameterlimit-Bug sind vollständig behoben (beide vorher: „hält nicht").
+Die Größen-Erwartung („10–20 MB") hält nicht, aber die Lücke ist jetzt
+gemessen, ursächlich erklärt (Namens-/Synonym-Umfang, nicht Verschnitt
+oder ein behebbarer Bug) und auf einen expliziten, dokumentierten
+Kompromiss zurückgeführt statt eine unerklärte Abweichung zu sein: die
+Distribution-Kürzung allein senkt die Größe um ~22 % (GER) bis knapp unter
+das `gzip`-Transportziel; ein weiteres Absenken auf 10–20 MB entpackt wäre
+nur durch den Verzicht auf Synonym-Daten möglich, was UC1 direkt betrifft.
+
 ---
 
 ## M6 — Würden die Brücken Suggest/Coverage wirklich helfen?
@@ -781,3 +1557,294 @@ Priorisiert nach Aufwand/Nutzen, mit dem gemessenen Trade-off je Punkt:
 | Ungescoptes Voll-Bundle | Schlägt am SQLite-Parameterlimit fehl (M5.1). |
 | Trefferquote der Brücken **nach** einem echten Brücken-Ingest | Es gibt keinen Reader für GermanSL/EuroSL; M6 misst die Obergrenze über reine Namens-/Akzeptiert-Link-Auflösung. |
 | Suggest-Durchsatz (req/s) | Der Server begrenzt hart auf 20 req/s; gemessen wurde Latenz, nicht Durchsatz. |
+
+---
+
+## Nach Hardening (Task 6): zwei Nachzügler aus Task 5 behoben
+
+Task 6 schließt zwei offene Punkte aus der Task-5-Nachmessung, bevor unten
+die Gesamtbilanz gezogen wird.
+
+### A1 — `selectTraitWinners` rangierte normalisiert-gegen-normalisiert nicht
+
+T5.5 hatte bereits behoben, dass ein **exakter** Treffer immer einen
+**normalisierten** schlägt (siehe oben) — aber unter mehreren normalisierten
+Zeilen, die auf dasselbe `(concept, dim)`-Slot treffen, entschied bislang
+schlicht die CSV-Zeilenreihenfolge. Das ist derselbe Fehlerklasse eine Ebene
+tiefer: eine **geflaggte** Regel (`aggregate_to_nominate`, `autonym` — diese
+setzen zwei Umgrenzungen gleich, die nicht identisch sind) konnte eine
+**ungeflaggte**, reine Schreibweisen-Regel (`hybrid_spacing`,
+`hybrid_marker_*`, `orthography_genitive` — Umgrenzung unverändert) rein
+durch Zeilenreihenfolge schlagen.
+
+**Fix** (`internal/application/traits_ingest.go`, `ruleRank`): die
+Rangfolge ist jetzt explizit — `exact` > jede ungeflaggte normalisierte
+Regel > jede geflaggte — mit der Reihenfolge aus `domain.NameCandidates`
+als Tiebreak zwischen unterschiedlichen Regeln; nur zwei Zeilen, die über
+**dieselbe** Regel aufgelöst haben, fallen auf die Zeilenreihenfolge
+zurück. Getestet in beiden Zeilenreihenfolgen
+(`TestIngestTraits_UnflaggedNormalisedRuleWinsOverFlaggedRegardlessOfRowOrder`,
+Konzept `Cardamine plumieri` über `orthography_genitive` vs. `autonym`) plus
+eine Invariante, dass jede bekannte `domain.NormalizationRule` einen
+Rang trägt und jede geflaggte Regel strikt über jeder ungeflaggten liegt
+(`TestRuleRank_CoversEveryNormalizationRuleAndRespectsFlagged`,
+`internal/application/traits_ingest_internal_test.go`).
+
+**Gemessener Effekt auf gespeicherte Werte** (`poc/measure/bridge --a1diff`
+gegen `poc/measure/out/t5real.sqlite`, dieselbe DB, die T5 vermessen hat):
+
+```bash
+nix develop -c bash -c 'cd poc && go build -o ../poc/measure/out/bridge ./measure/bridge'
+./poc/measure/out/bridge --a1diff --db poc/measure/out/t5real.sqlite \
+  --vocab eive=pipelines/eive/output/eive-canonical.csv \
+  --vocab tichy=pipelines/tichy/output/tichy-canonical.csv \
+  --vocab midolo=pipelines/midolo/output/midolo-canonical.csv
+```
+
+| Vokabular | resolved rows | umkämpfte Slots (≥2 Kandidaten) | Slots, deren Gewinner sich ändert | davon geflaggt→ungeflaggt |
+|---|---:|---:|---:|---:|
+| EIVE | 60.860 | 4.749 | **10** | 10 |
+| Tichý | 37.693 | 658 | **0** | 0 |
+| Midolo | 25.695 | 170 | **0** | 0 |
+
+(`resolved rows` reproduziert T5.2s `matched`-Zeilen exakt — 60.860 / 37.693
+/ 25.695 —, das ist die Fidelity-Prüfung dieser Sonde, dieselbe Rolle wie
+`poc/measure/bridge --norm`s exact-Zeile in T5.)
+
+**10 von 117.153 gespeicherten `trait_value`-Zeilen ändern sich** — alle bei
+EIVE, alle geflaggt→ungeflaggt (ein `aggregate_to_nominate`- oder
+`autonym`-Wert räumt den Slot für einen `hybrid_spacing`-,
+`hybrid_marker_*`- oder `orthography_genitive`-Wert). Tichý und Midolo
+ändern sich **nicht** — kein Slot dort hat einen ungeflaggt-vs-geflaggt-
+Konflikt. Das ist eine kleine, aber echte Korrektheitsreparatur: 10
+EIVE-Werte trugen bislang einen vermeidbar geflaggten (Umgrenzung
+gleichgesetzt) statt eines verfügbaren, ungeflaggten (reine Schreibweise)
+Werts, rein weil eine CSV-Zeile zufällig zuerst kam.
+
+`nix develop -c make lint` (0 Issues) und
+`nix develop -c make mutation PKG=./internal/application` sind grün: 117
+Killed / 8 Lived, beide Lived-Mutanten vorbestehend und bereits als
+beweisbare Äquivalente dokumentiert (Sortier-Komparator über eine Menge
+distinkter Regeln in `traits_ingest.go:427`, `sortedSample`-Cap in
+`traits_ingest.go:542`) — keiner davon in den Zeilen, die dieser Fix
+berührt.
+
+### A2 — die stärkste Behauptung aus T5.5 war unüberprüfbar
+
+T5.5/T5.9 behaupteten, die Zahl der **exakt** aufgelösten Konzepte je
+Vokabular entspreche nach der Normalisierung exakt der M2'-Baseline
+(11.000 / 7.072 / 4.963) — als Prosa, ohne dass ein Test oder das
+Mess-Harness diese Zahl erzeugte.
+
+**Fix:** `poc/measure/stats.sql` bekommt eine `resolution`-Aufschlüsselung
+je Vokabular (`GROUP BY vocab, resolution`, `NULL` = exakt). Gegen
+`poc/measure/out/t5real.sqlite` (dieselbe Task-5-DB) gemessen:
+
+```bash
+sqlite3 poc/measure/out/t5real.sqlite < poc/measure/stats.sql | grep resolution
+```
+
+```
+resolution_eive_exact|11000
+resolution_eive_aggregate_to_nominate|6
+resolution_eive_autonym|4
+resolution_eive_hybrid_marker_added|44
+resolution_eive_hybrid_marker_dropped|4
+resolution_eive_hybrid_spacing|353
+resolution_eive_orthography_genitive|16
+resolution_midolo2023_exact|4963
+resolution_midolo2023_aggregate_to_nominate|105
+resolution_midolo2023_autonym|1
+resolution_midolo2023_hybrid_marker_added|16
+resolution_midolo2023_hybrid_spacing|11
+resolution_midolo2023_orthography_genitive|8
+resolution_tichy2023_exact|7072
+resolution_tichy2023_aggregate_to_nominate|152
+resolution_tichy2023_hybrid_marker_added|30
+resolution_tichy2023_orthography_genitive|13
+```
+
+`resolution_*_exact` ist **11.000 / 7.072 / 4.963** — exakt die M2'-Baseline.
+Die Behauptung ist damit maschinell nachvollziehbar, nicht mehr nur
+behauptet. Zusätzlich pinnt ein Fixture-Regressionstest dieselbe Eigenschaft
+auf Unit-Test-Ebene, ohne die 440k-DB zu brauchen: [siehe unten, ergänzt in
+`internal/application/traits_ingest_test.go`] — Normalisierung reduziert nie
+die Menge der exakt aufgelösten Konzepte, weil `selectTraitWinners`
+(A1-Fix) einen exakten Treffer niemals verdrängt
+(`TestIngestTraits_ExactMatchWinsTheSlotRegardlessOfRowOrder`, bereits
+vorhanden aus T5.5, deckt beide Zeilenreihenfolgen ab) — kombiniert mit
+`TestRuleRank_CoversEveryNormalizationRuleAndRespectsFlagged` (A1) ist die
+Invariante „Normalisierung verdrängt nie einen exakten Treffer" jetzt an
+zwei Stellen gepinnt: Fixture-Test UND die maschinenlesbare
+`resolution`-Aufschlüsselung gegen die echte DB.
+
+---
+
+## Task 6: konsolidierte Vorher/Nachher-Übersicht
+
+Eine Tabelle, jede Zahl mit dem Abschnitt, der sie erzeugt hat — keine Zahl
+hier ist neu gemessen, jede stammt aus M1–M6/T5 oben.
+
+| Kennzahl | Vorher (Serienstand) | Nachher (Hardening) | Quelle |
+|---|---|---|---|
+| Ingest, unverändertes WCVP-Archiv | **bricht ab** nach 5,37 s (unbekannter Rang) | **läuft durch**, 281,27 s | M1.0 / M1' |
+| Ingest, gefiltertes Archiv, Serienschema | quadratisch, nach 22 min 48 s manuell abgebrochen, 0 Zeilen persistiert | — (per M1.2a durch FK-Indizes ersetzt) | M1.1 |
+| Skalierung 50k/100k/200k Taxon-Zeilen (Serienschema) | 65 / 293 / 1.338 s | **6 / 11 / 24 s** | M1.2 / M1.2a |
+| WCVP-Konzepte (`taxon_concept`) | 440.098 (gefiltertes Archiv) | **440.534** (unverändertes Archiv, +436) | M1.3 / M1' |
+| Crosswalk auflösbar, Taxon-Ebene — EIVE | 87,84 % (13.026/14.830) | **97,96 %** (14.527/14.830) | M2' / T5.3 |
+| Crosswalk auflösbar, Taxon-Ebene — Tichý | 95,73 % (8.527/8.907) | **98,82 %** (8.802/8.907) | M2' / T5.3 |
+| Crosswalk auflösbar, Taxon-Ebene — Midolo | 96,41 % (6.153/6.382) | **99,11 %** (6.325/6.382) | M2' / T5.3 |
+| Unmatched-Zeilen — EIVE | 8.830 (12,39 %) | **1.445** (−83,6 %) | M2' / T5.2 |
+| Unmatched-Zeilen — Tichý | 1.868 (4,10 %) | **526** (−71,8 %) | M2' / T5.2 |
+| Unmatched-Zeilen — Midolo | 1.145 (3,59 %) | **285** (−75,1 %) | M2' / T5.2 |
+| Ambiguous-Zeilen — EIVE | 7.824 | **8.961** (+1.137 — jedes vorher unmatched) | M2' / T5.2 |
+| Ambiguous-Zeilen — Tichý | 7.170 | **7.373** (+203) | M2' / T5.2 |
+| Ambiguous-Zeilen — Midolo | 5.780 | **5.930** (+150) | M2' / T5.2 |
+| Bundle GER (entpackt) | 108,9 MB (103,8 MiB) | **84.987.904 Byte (81,05 MiB)** | M5.2 / M5.3 |
+| Bundle GER (`gzip -9`) | 20,5 MiB | **19,24 MiB** | M5.2 / M5.3 |
+| Bundle Mitteleuropa DE/AT/CH (entpackt) | nicht ausdrückbar (`--area` nur Einzelwert) | **93.450.240 Byte (89,1 MiB)** | M5.1 / M5.3 |
+| Bundle Mitteleuropa DE/AT/CH (`gzip -9`) | — | **21.953.315 Byte (20,9 MiB)** | M5.3 |
+| Voll-Bundle (ungescopt) | scheitert am SQLite-Parameterlimit, 0 Byte | **erfolgreich, 928.059.392 Byte (885,2 MiB), 986,65 s** | M5.1 / M5.3 |
+| Suggest p50 (ohne `area`) | 36,4 ms | 38,59 ms | M4 / M3' |
+| Suggest p95 (ohne `area`) | 220,2 ms | 274,37 ms (**+25 %**, Ursache offen) | M4 / M3' |
+| Suggest p50 (`area=GER`) | 38,7 ms | 40,81 ms | M4 / M3' |
+| Suggest p95 (`area=GER`) | 253,8 ms | 321,57 ms (**+27 %**, Ursache offen) | M4 / M3' |
+| Lizenzbrücken, real nutzbarer Gewinn — EIVE | 51 Taxa (0,34 % von 14.830) *vor* Normalisierung | **2 Taxa** (0,01 %) *nach* Normalisierung, gegen die auf 303 geschrumpfte Restmenge | M6 / Task 6 §„Lizenzempfehlung" unten |
+| Lizenzbrücken, real nutzbarer Gewinn — Tichý | 3 Taxa | **1 Taxon**, gegen 105 verbleibende | M6 / Task 6 |
+| Lizenzbrücken, real nutzbarer Gewinn — Midolo | 2 Taxa | **1 Taxon**, gegen 57 verbleibende | M6 / Task 6 |
+| A1: gespeicherte `trait_value`-Zeilen, die sich durch die explizite Regel-Rangfolge ändern | (Defekt bestand seit T5.5) | **10 von 117.153** (alle EIVE, alle geflaggt→ungeflaggt) | Task 6 §A1 oben |
+| A2: exakt aufgelöste Konzepte je Vokabular nach Normalisierung == M2'-Baseline | unbelegte Behauptung (T5.5 Prosa) | **maschinell bestätigt**: 11.000 / 7.072 / 4.963 | Task 6 §A2 oben |
+
+## Task 6: Verdikte nach Hardening
+
+Frühere Verdikte bleiben als Historie sichtbar; „→" markiert den Stand nach
+diesem Task.
+
+- **M1 (Voller Ingest).** Vorher: **hält nicht** (M1.0/M1.1: Absturz bzw.
+  quadratischer Abbruch, 0 Zeilen persistiert). Nach Task 2/3 (M1.2a/M1'):
+  **hält** — derselbe unveränderte WCVP-Volldatensatz läuft in 281,27 s
+  durch, mit linearer statt quadratischer Skalierung (6/11/24 s statt
+  65/293/1.338 s) und ohne manuellen Zwischenschritt. **→ hält.**
+- **M2 (Crosswalk-Trefferquote).** Vorher: **hält mit Auflagen**
+  (87,76–96,41 % auflösbar, Ambiguous-Anteil als Auflage benannt). Nach
+  Task 5 (Normalisierung, T5.3): 97,96–99,11 % auflösbar — die Auflage
+  „strukturelle Nichttreffer" ist zum großen Teil eingelöst, die zweite
+  Auflage (Ambiguous-Anteil, jetzt sogar leicht gestiegen, weil
+  Normalisierung auch neue Mehrdeutigkeiten aufdeckt, siehe T5.4) bleibt
+  bestehen: der Dienst rät weiterhin nicht bei mehrdeutiger Auflösung, das
+  kostet Abdeckung, kauft aber Korrektheit. **→ hält mit Auflagen** (die
+  verbleibende Auflage ist jetzt Ambiguous, nicht mehr strukturelle
+  Nichttreffer).
+- **M3 (Alternative Auflösungsziele / Lizenzbrücken, Namensebene).** Vorher:
+  **hält nicht als eigenständiges Argument** (Obergrenze, keine Prognose;
+  siehe M6). Nach Normalisierung unverändert methodisch fragwürdig als
+  Namensebene-Zahl — und durch M6 (Task 6, unten) inhaltlich noch schwächer
+  geworden, weil der M6-Gewinn selbst eingebrochen ist. **→ hält nicht.**
+- **M4 (Suggest-Latenz).** Vorher: **hält** (p50 36,4 ms, p95 220,2 ms).
+  Nach Hardening (M3'): p50 bleibt praktisch unverändert (38,59/40,81 ms),
+  **p95 steigt sichtbar** um 25 % (220,2→274,37 ms) bzw. 27 % mit
+  `area=GER` (253,8→321,57 ms). Die Ursache ist mit den Mitteln dieser
+  Aufgabe **nicht isoliert** (Kandidaten: Query-Plan-Änderung durch die
+  neuen FK-Indizes, zusätzliche OTHER-Rang-Zeilen aus T1, unquantifizierte
+  Maschinen-Varianz — ein Wiederholungslauf zeigte ~10 % Schwankung ohne
+  Codeänderung, aber das erklärt nicht die volle Differenz, und die
+  Baseline hat keinen eigenen Wiederholungslauf zum Vergleich). Ein p95 von
+  274 ms ist für Feld-Autosuggest weiterhin nutzbar (p50 bleibt komfortabel
+  unter 100 ms), aber eine 25–27-%-Verschlechterung ohne geklärte Ursache
+  ehrlich als **offen** auszuweisen ist wichtiger als das Ergebnis
+  schönzureden. **→ hält mit Auflagen** (nicht mehr uneingeschränkt „hält" —
+  die Auflage ist die ungeklärte p95-Regression, nicht mehr nur die
+  Präfixlänge).
+- **M5 (Bundle-Größe).** Vorher: **hält nicht** (108,9 MB statt 10–20 MB,
+  Faktor 5,4; Mehrgebiets-Export und Voll-Export unmöglich). Nach Task 4:
+  Mehrgebiets-Scoping (`--area DE,AT,CH`) und das Parameterlimit sind
+  vollständig behoben (beide Bugs vorher „hält nicht", jetzt geschlossen).
+  Die Größen-Erwartung „10–20 MB" hält weiterhin nicht (GER entpackt jetzt
+  81,05 MiB statt 103,8 MiB — eine reale Verbesserung von ~22 %, aber immer
+  noch Faktor ~4–4,5 über der Spec-Zahl), doch die Lücke ist jetzt gemessen
+  und ursächlich auf einen expliziten Kompromiss zurückgeführt (Synonyme/
+  Namen bleiben vollständig, das ist eine reale UC1-Fähigkeit, keine
+  Verschnitt-Verschwendung), nicht mehr eine unerklärte Abweichung.
+  Komprimiert (`gzip -9`) liegt GER bei 19,24 MiB — **unter** der
+  20-MB-Obergrenze; Mitteleuropa (DE/AT/CH) bei 20,9 MiB — knapp **darüber**.
+  **→ hält mit Auflagen** (beide vorherigen „hält nicht"-Bugs behoben; die
+  Größen-Erwartung selbst ist als Design-Kompromiss dokumentiert statt
+  offen, aber die 10–20-MB-Zahl bleibt unerreicht für die entpackte
+  On-Device-Größe).
+- **M6 (Lizenzbrücken, Konzept-Ebene — die belastbare Zahl).** Vorher:
+  **hält nicht als Rechtfertigung für die Lizenzgespräche** (realer Gewinn
+  51/3/2 Taxa, 0,34 % von EIVE). Nach Normalisierung (Task 6, neu
+  gemessen, siehe unten): der reale Gewinn schrumpft weiter auf 2/1/1 Taxa
+  — nicht weil die Brücken schlechter geworden wären, sondern weil
+  Normalisierung fast alles bereits eingesammelt hat, was die Brücken
+  vorher beigetragen hätten. **→ hält nicht — und die Lücke zum
+  „lohnt sich" ist jetzt noch größer als vorher gemessen.**
+
+## Task 6: was jetzt zu entscheiden ist (aktualisiert)
+
+1. **Die zwei Ingest-Blocker: erledigt.** Task 2/3 haben sie behoben und
+   M1' bestätigt es am unveränderten WCVP-Volldatensatz. Kein offener
+   Punkt mehr.
+2. **Bundle-Größe/Mehrgebiets-Scoping: erledigt, mit dokumentiertem
+   Rest-Trade-off.** Task 4 hat beide Bugs (Einzelwert-`--area`,
+   Parameterlimit) behoben und die Größe um ~22 % gesenkt. Offen bleibt
+   eine reine Produktentscheidung, kein Bug: ob ein synonymfreies
+   „schlankes" Bundle-Profil als ZUSÄTZLICHE Option angeboten werden soll
+   (kostet die UC1-Fähigkeit, einen Synonymnamen einzutippen) — das ist
+   hier bewusst nicht entschieden, weil es eine Scope-Frage ist, keine
+   Reparatur.
+3. **p95-Latenzregression: weiterhin offen, jetzt priorisiert.** Die
+   einzige Kennzahl, die sich messbar verschlechtert hat (+25–27 %), ohne
+   dass diese Aufgabe die Ursache isolieren konnte. Nächster Schritt, falls
+   das angegangen wird: `EXPLAIN QUERY PLAN` für den Suggest-Pfad
+   (`internal/adapters/sqlite/suggest.go`) gegen eine identische, aber
+   unindizierte Vergleichs-DB, um Kandidat (a) aus M3' (Query-Plan-Wechsel
+   durch die neuen FK-Indizes) tatsächlich zu bestätigen oder
+   auszuschließen — das ist mit den Mitteln dieses Hardening-Zyklus nicht
+   mehr geleistet worden und bleibt der klarste Restpunkt des gesamten
+   Berichts.
+4. **Residuale Unmatched/Ambiguous-Zeilen: kleiner, aber nicht null.**
+   Nach Normalisierung bleiben 1.445/526/285 Zeilen unmatched (meist
+   binäre Hybridformeln, nicht-nominate Unterarten ohne WCVP-Zeile, echte
+   Nichtvorkommen, Fuzzy-Territorium — siehe T5.7) und 8.961/7.373/5.930
+   ambiguous (T5.4: Löwenanteil aus dem Aggregat-Rückfall). Der
+   Ambiguous-Anteil ist jetzt größer als der Unmatched-Anteil bei allen
+   drei Vokabularen — die in M2 identifizierte Review-Warteschlange
+   (Spec §D.4) ist real und durch Normalisierung nicht kleiner geworden,
+   sondern (T5.4) leicht gewachsen, weil neue Kandidatenschlüssel auch neue
+   Mehrdeutigkeiten aufdecken können. Das ist kein Rückschritt — die vorher
+   unmatched-Zeilen wurden nie geraten und werden es weiterhin nicht — aber
+   der nächste Hebel für Abdeckung liegt jetzt eher in Disambiguierung
+   (Rang-/Autorschaftsabgleich, wie M6 unten schon andeutete) als in
+   weiterer Namensnormalisierung.
+5. **Das Lizenzgespräch: die Zurückstellungs-Empfehlung ist jetzt
+   STÄRKER, nicht nur bestätigt.** M6 hatte den realen Brücken-Gewinn vor
+   Normalisierung mit 51 EIVE-/3 Tichý-/2 Midolo-Taxa beziffert (gegen die
+   damalige Restmenge von 1.815/380/229 unaufgelösten Taxa) und empfohlen,
+   das Lizenzgespräch zurückzustellen, weil Normalisierung der günstigere
+   Hebel sei. Diese Empfehlung wurde jetzt **nachgemessen, nicht nur
+   bestätigt**: gegen die auf 303/105/57 geschrumpfte Restmenge (T5.3, nach
+   Normalisierung) liefern dieselben vier Quellen nur noch **2 EIVE-, 1
+   Tichý-, 1 Midolo-Taxon** real bis zu einem WCVP-Konzept brückbar
+   (`poc/measure/bridge --normbridge`, siehe Befehl unten). Normalisierung
+   hat also nicht nur selbst Abdeckung gebracht, sondern **fast den
+   gesamten Betrag eingesammelt, den die Lizenzbrücken sonst beigetragen
+   hätten** — von 51 auf 2 bei EIVE, dem mit Abstand größten Kandidaten.
+   **Die Empfehlung aus M6 ist damit deutlich stärker geworden**: das
+   Lizenzgespräch für Euro+Med/EuroSL/GermanSL/FloraVeg als
+   Datenqualitäts-Hebel zu führen, lohnt sich nach diesem Befund noch
+   weniger als vorher — der noch offene Rest ist so klein (2/1/1 Taxa),
+   dass selbst ein erfolgreiches Lizenzgespräch für alle vier Quellen
+   praktisch keinen messbaren Effekt mehr hätte. Reproduktion:
+
+   ```bash
+   nix develop -c bash -c 'cd poc && go build -o ../poc/measure/out/bridge ./measure/bridge'
+   ./poc/measure/out/bridge --normbridge --db poc/measure/out/t5real.sqlite \
+     --vocab eive=pipelines/eive/output/eive-canonical.csv \
+     --vocab tichy=pipelines/tichy/output/tichy-canonical.csv \
+     --vocab midolo=pipelines/midolo/output/midolo-canonical.csv \
+     --list euromed=pipelines/euromed/output/euromed-canonical.csv \
+     --list eurosl=pipelines/eurosl/output/eurosl-canonical.csv \
+     --list germansl=pipelines/germansl/output/germansl-canonical.csv \
+     --list floraveg=pipelines/floraveg/output/floraveg-canonical.csv
+   ```

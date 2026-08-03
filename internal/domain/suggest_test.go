@@ -124,8 +124,14 @@ func TestRankOrder(t *testing.T) {
 		{domain.RankGenus, 1},
 		{domain.RankSpecies, 2},
 		{domain.RankSubspecies, 3},
-		{domain.RankVariety, 4},
-		{domain.RankForm, 5},
+		{domain.RankNothosubspecies, 4},
+		{domain.RankVariety, 5},
+		{domain.RankSubvariety, 6},
+		{domain.RankNothovariety, 7},
+		{domain.RankForm, 8},
+		{domain.RankSubform, 9},
+		{domain.RankNothoform, 10},
+		{domain.RankOther, 11},
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.rank), func(t *testing.T) {
@@ -135,11 +141,17 @@ func TestRankOrder(t *testing.T) {
 		})
 	}
 
-	// Ensure the ordering is monotonically increasing family < genus <
-	// species < subspecies < variety < form, matching §B.1 step 4.
+	// Ensure the ordering is monotonically increasing on the brief's
+	// pinned sequence: family < genus < species < subspecies < variety <
+	// subvariety < form < subform < other (§B.1 step 4, extended for the
+	// full WCVP rank vocabulary). The nothotaxon ranks are deliberately
+	// left out of this specific chain (see rankOrder's doc comment for
+	// where they're interleaved) since the brief doesn't pin their
+	// relative order.
 	ranks := []domain.Rank{
 		domain.RankFamily, domain.RankGenus, domain.RankSpecies,
-		domain.RankSubspecies, domain.RankVariety, domain.RankForm,
+		domain.RankSubspecies, domain.RankVariety, domain.RankSubvariety,
+		domain.RankForm, domain.RankSubform, domain.RankOther,
 	}
 	for i := 1; i < len(ranks); i++ {
 		if domain.RankOrder(ranks[i-1]) >= domain.RankOrder(ranks[i]) {

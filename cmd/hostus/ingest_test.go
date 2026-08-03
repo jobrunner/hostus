@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jobrunner/hostus/internal/application"
 )
 
 // TestIngestCommand_FixtureManifest_PrintsReport drives "hostus ingest
@@ -50,6 +52,45 @@ func TestIngestCommand_FixtureManifest_PrintsReport(t *testing.T) {
 	}
 	if !strings.Contains(got, "Abies alba") {
 		t.Errorf("report %q, want the unmatched sample to name the specific lost taxa", got)
+	}
+}
+
+// TestPrintIngestReport_OtherRanksNotice proves Hardening Task 1's "visible,
+// not silent" requirement at the CLI layer: a backbone report carrying
+// OtherRanks must print a "ranks: other=N (...)" line naming the exotic
+// spellings (WCVP's "proles", the empty string rendered as "(empty)" so it
+// stays readable rather than printing nothing) — and a backbone with
+// OtherRanks == 0 must print no such line at all.
+func TestPrintIngestReport_OtherRanksNotice(t *testing.T) {
+	report := application.IngestReport{
+		Backbones: []application.BackboneReport{
+			{
+				ID:         "wcvp",
+				Names:      3,
+				OtherRanks: 3,
+				OtherRankSample: []application.RankVerbatimCount{
+					{Verbatim: "proles", Count: 2},
+					{Verbatim: "", Count: 1},
+				},
+			},
+			{ID: "clean", Names: 1},
+		},
+	}
+
+	var out bytes.Buffer
+	printIngestReport(&out, report)
+
+	got := out.String()
+	if !strings.Contains(got, "ranks: other=3 (proles 2, (empty) 1)") {
+		t.Errorf("report %q, want a \"ranks: other=3 (proles 2, (empty) 1)\" line", got)
+	}
+	cleanIdx := strings.Index(got, "clean:")
+	if cleanIdx == -1 {
+		t.Fatalf("report %q, want it to mention backbone %q", got, "clean")
+	}
+	cleanSection := got[cleanIdx:]
+	if strings.Contains(cleanSection, "ranks: other") {
+		t.Errorf("report %q, want no \"ranks: other\" line for a backbone with OtherRanks == 0", cleanSection)
 	}
 }
 
@@ -132,5 +173,53 @@ func TestIngestCommand_RegisteredOnRoot(t *testing.T) {
 	}
 	if cmd.Use != ingestCmdName {
 		t.Fatalf("got command %q, want %q", cmd.Use, ingestCmdName)
+	}
+}
+
+// TestPrintTraitReports_NormalisationVisibleAndFlagged is Hardening Task 5's
+// "visible, not silent" requirement at the CLI layer: a normalised match
+// must be attributed to its rule, and the two rules that equate two
+// circumscriptions (aggregate-to-nominate-species, autonym-to-species) must
+// additionally be marked as flagged and name their taxa — otherwise a
+// judgement call would be indistinguishable from an exact hit in the only
+// output an operator ever sees.
+func TestPrintTraitReports_NormalisationVisibleAndFlagged(t *testing.T) {
+	reports := []application.TraitIngestReport{{
+		Vocab: "eive", Rows: 3, Matched: 3,
+		Normalized: []application.RuleCount{
+			{Rule: "aggregate_to_nominate", Rows: 2, Taxa: 1, Flagged: true},
+			{Rule: "hybrid_spacing", Rows: 1, Taxa: 1},
+		},
+		FlaggedSample: []string{"Acer opalus aggr."},
+	}}
+
+	var buf bytes.Buffer
+	printTraitReports(&buf, reports)
+	got := buf.String()
+
+	for _, want := range []string{
+		"normalized aggregate_to_nominate: rows=2 taxa=1",
+		"flagged",
+		"normalized hybrid_spacing: rows=1 taxa=1",
+		"flagged sample: Acer opalus aggr.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("report %q, want it to contain %q", got, want)
+		}
+	}
+	// The unflagged rule's line must NOT carry the flag marker.
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(line, "hybrid_spacing") && strings.Contains(line, "flagged") {
+			t.Errorf("line %q marks an unflagged rule as flagged", line)
+		}
+	}
+}
+
+func TestPrintTraitReports_ExactOnlyVocabularyPrintsNoNormalisationLines(t *testing.T) {
+	var buf bytes.Buffer
+	printTraitReports(&buf, []application.TraitIngestReport{{Vocab: "eive", Rows: 1, Matched: 1}})
+	got := buf.String()
+	if strings.Contains(got, "normalized") || strings.Contains(got, "flagged") {
+		t.Errorf("report %q, want no normalisation lines when nothing was normalised", got)
 	}
 }

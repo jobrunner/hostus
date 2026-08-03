@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,9 +15,12 @@ import (
 // BundleOpts configures ExportBundle.
 type BundleOpts struct {
 	// Area restricts the bundle to concepts whose distribution intersects
-	// this WGSRPD level-3 area code (or one of areaCodes' convenience
-	// aliases, e.g. "DE" — the same resolution Suggest's Area option uses).
-	// Empty means no filter: every concept in src is copied.
+	// one of a comma-separated list of WGSRPD level-3 area codes (or one
+	// of areaCodes' convenience aliases, e.g. "DE" — the same resolution
+	// Suggest's Area option uses), e.g. "DE,AT,CH" for a Mitteleuropa
+	// bundle. A single value (no comma) keeps working exactly as before.
+	// Empty means no filter: every concept in src is copied. See
+	// resolveAreaCodes for the exact comma/alias resolution.
 	Area string
 	// SnapshotVersion identifies which offline snapshot this bundle was
 	// cut from (e.g. "v1"). Recorded verbatim into bundle_meta.
@@ -79,6 +83,25 @@ func restrictedSourceIDs(rs []restrictedSource) string {
 	return strings.Join(ids, ",")
 }
 
+// marshalIDs JSON-encodes ids for binding as ONE parameter via
+// `IN (SELECT value FROM json_each(?))`, rather than building a
+// "?,?,?..." placeholder list whose length scales with len(ids): the
+// query text stays a fixed literal regardless of how many ids there are,
+// which is what makes ExportBundle scope-independent (see
+// findRestrictedSources', copyBackboneVersions', copySelfReferencingRows'
+// and copyConceptScopedTables' doc comments) — an un-scoped export binds
+// all 440k+ concept ids through this exact path instead of hitting
+// SQLite's SQLITE_MAX_VARIABLE_NUMBER (see docs/research/reality-check.md
+// M5.1). MatchFuzzyCandidates (read.go) established this same pattern for
+// its own id list first.
+func marshalIDs(ids []string) (string, error) {
+	b, err := json.Marshal(ids)
+	if err != nil {
+		return "", fmt.Errorf("sqlite: bundle: encoding id list: %w", err)
+	}
+	return string(b), nil
+}
+
 // findRestrictedSources reports every backbone or trait-vocabulary source
 // that contributes data to conceptIDs' scope (a taxon_concept belonging to
 // it, or a trait_value row on one of conceptIDs) and whose redistribution
@@ -89,8 +112,10 @@ func findRestrictedSources(ctx context.Context, src *DB, conceptIDs []string) ([
 	if len(conceptIDs) == 0 {
 		return nil, nil
 	}
-	placeholders := placeholdersFor(len(conceptIDs))
-	args := idArgs(conceptIDs)
+	idsJSON, err := marshalIDs(conceptIDs)
+	if err != nil {
+		return nil, err
+	}
 
 	var out []restrictedSource
 
@@ -98,7 +123,7 @@ func findRestrictedSources(ctx context.Context, src *DB, conceptIDs []string) ([
 		SELECT DISTINCT bv.id, bv.redistribution
 		FROM backbone_version bv
 		JOIN taxon_concept tc ON tc.backbone_id = bv.id
-		WHERE tc.id IN (`+placeholders+`)`, args)
+		WHERE tc.id IN (SELECT value FROM json_each(?))`, []any{idsJSON})
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: bundle: checking backbone redistribution: %w", err)
 	}
@@ -108,7 +133,7 @@ func findRestrictedSources(ctx context.Context, src *DB, conceptIDs []string) ([
 		SELECT DISTINCT tv.vocab, tv.redistribution
 		FROM trait_vocabulary tv
 		JOIN trait_value v ON v.vocab = tv.vocab AND v.vocab_version = tv.version
-		WHERE v.concept_id IN (`+placeholders+`)`, args)
+		WHERE v.concept_id IN (SELECT value FROM json_each(?))`, []any{idsJSON})
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: bundle: checking trait vocabulary redistribution: %w", err)
 	}
@@ -247,7 +272,7 @@ func queryNonAllowedSources(ctx context.Context, src *DB, query string, args []a
 // are recorded into bundle_meta.restricted_sources (restrictedSourceIDs),
 // so a bundle can never silently carry unclearable data.
 func ExportBundle(ctx context.Context, src *DB, out string, opts BundleOpts) (BundleReport, error) {
-	conceptIDs, err := scopeConceptIDs(ctx, src, opts.Area)
+	conceptIDs, areaScope, err := scopeConceptIDs(ctx, src, opts.Area)
 	if err != nil {
 		return BundleReport{}, err
 	}
@@ -266,7 +291,7 @@ func ExportBundle(ctx context.Context, src *DB, out string, opts BundleOpts) (Bu
 	}
 	defer func() { _ = bundle.Close() }()
 
-	report, err := populateBundle(ctx, src, bundle, conceptIDs, opts, restrictedSourceIDs(restricted))
+	report, err := populateBundle(ctx, src, bundle, conceptIDs, areaScope, opts, restrictedSourceIDs(restricted))
 	if err != nil {
 		return BundleReport{}, err
 	}
@@ -274,24 +299,56 @@ func ExportBundle(ctx context.Context, src *DB, out string, opts BundleOpts) (Bu
 	return report, nil
 }
 
+// resolveAreaCodes turns a BundleOpts.Area value into the deduplicated set
+// of WGSRPD level-3 codes ExportBundle scopes to: area is split on commas
+// (so "DE,AT,CH" resolves each part independently, e.g. via areaCodes'
+// alias table — "DE" alone expands to wgsrpdGermanyL3 — and unions the
+// results), blank parts are skipped, and an all-blank/empty area returns
+// nil, the existing "no filter" convention. A single value with no comma
+// (the pre-multi-area form) behaves exactly as before: it is just a
+// one-element split. Sorted so the result (and its json_each encoding) is
+// deterministic regardless of the order --area listed its parts in.
+func resolveAreaCodes(area string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, part := range strings.Split(area, ",") {
+		for _, code := range areaCodes(part) {
+			if !seen[code] {
+				seen[code] = true
+				out = append(out, code)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // scopeConceptIDs resolves BundleOpts.Area into the set of taxon_concept
-// ids ExportBundle copies: every concept id when area is blank, or every
+// ids ExportBundle copies (every concept id when area is blank, or every
 // concept id with at least one distribution row in one of area's resolved
-// WGSRPD level-3 codes (via the same areaCodes alias table Suggest uses)
-// otherwise.
-func scopeConceptIDs(ctx context.Context, src *DB, area string) ([]string, error) {
+// WGSRPD level-3 codes otherwise) AND the resolved code set itself, which
+// populateBundle/copyDistribution also needs to scope the distribution
+// table (see copyDistribution's doc comment) — computing it here, once,
+// keeps scopeByAreaQuery and copyDistribution's filter provably in sync:
+// both use exactly the same resolveAreaCodes(area) result.
+func scopeConceptIDs(ctx context.Context, src *DB, area string) ([]string, []string, error) {
+	codes := resolveAreaCodes(area)
+
 	var (
 		rows *sql.Rows
 		err  error
 	)
-	if strings.TrimSpace(area) == "" {
+	if len(codes) == 0 {
 		rows, err = src.sql.QueryContext(ctx, `SELECT id FROM taxon_concept ORDER BY id`)
 	} else {
-		codes := areaCodes(area)
-		rows, err = src.sql.QueryContext(ctx, scopeByAreaQuery(len(codes)), idArgs(codes)...)
+		codesJSON, jerr := marshalIDs(codes)
+		if jerr != nil {
+			return nil, nil, jerr
+		}
+		rows, err = src.sql.QueryContext(ctx, scopeByAreaQuery, codesJSON)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("sqlite: bundle: resolving concept scope for area %q: %w", area, err)
+		return nil, nil, fmt.Errorf("sqlite: bundle: resolving concept scope for area %q: %w", area, err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -299,32 +356,34 @@ func scopeConceptIDs(ctx context.Context, src *DB, area string) ([]string, error
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("sqlite: bundle: scanning concept scope row: %w", err)
+			return nil, nil, fmt.Errorf("sqlite: bundle: scanning concept scope row: %w", err)
 		}
 		ids = append(ids, id)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("sqlite: bundle: iterating concept scope rows: %w", err)
+		return nil, nil, fmt.Errorf("sqlite: bundle: iterating concept scope rows: %w", err)
 	}
-	return ids, nil
+	return ids, codes, nil
 }
 
-// scopeByAreaQuery builds the query scopeConceptIDs runs to find every
-// concept with a distribution row in one of n area codes. It is its own
-// function (taking only an int, not the raw area string) purely so the
-// query text it concatenates never has a string-typed parameter in scope —
-// n distinct "?" placeholders, never interpolated area text.
-func scopeByAreaQuery(n int) string {
-	return `
-		SELECT DISTINCT tc.id
-		FROM taxon_concept tc
-		JOIN distribution d ON d.concept_id = tc.id
-		WHERE d.area_scheme = 'wgsrpd_l3' AND d.area_code IN (` + placeholdersFor(n) + `)
-		ORDER BY tc.id`
-}
+// scopeByAreaQuery finds every concept with a distribution row in one of
+// the (any number of) area codes bound via json_each — see
+// resolveAreaCodes for how BundleOpts.Area's comma-separated value becomes
+// that code list, and marshalIDs' doc comment for why the query text is a
+// fixed literal regardless of how many codes there are.
+const scopeByAreaQuery = `
+	SELECT DISTINCT tc.id
+	FROM taxon_concept tc
+	JOIN distribution d ON d.concept_id = tc.id
+	WHERE d.area_scheme = 'wgsrpd_l3' AND d.area_code IN (SELECT value FROM json_each(?))
+	ORDER BY tc.id`
 
 // placeholdersFor returns n comma-joined "?" placeholders for a SQL IN
-// clause.
+// clause. Still used by traits.go (a small, caller-bounded vocab list);
+// bundle.go's own concept/area-code id lists moved to marshalIDs'
+// json_each pattern precisely because they are NOT caller-bounded (an
+// un-scoped export's conceptIDs can be 440k+ — see marshalIDs' doc
+// comment).
 func placeholdersFor(n int) string {
 	ph := make([]string, n)
 	for i := range ph {
@@ -333,24 +392,17 @@ func placeholdersFor(n int) string {
 	return strings.Join(ph, ",")
 }
 
-// idArgs adapts a []string of ids into the []any driver.Value args
-// database/sql's *Context methods take.
-func idArgs(ids []string) []any {
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		args[i] = id
-	}
-	return args
-}
-
 // populateBundle copies every row scoped by conceptIDs from src into
 // bundle, rebuilds the FTS index, and writes bundle_meta (including
 // restrictedSources — see ExportBundle's doc comment — which was already
 // computed and, if non-empty, cleared for override BEFORE any copying
 // started), in FK-safe order: backbone_version, then name (both
 // referenced by taxon_concept), then taxon_concept itself, then the
-// concept_id-keyed tables.
-func populateBundle(ctx context.Context, src, bundle *DB, conceptIDs []string, opts BundleOpts, restrictedSources string) (BundleReport, error) {
+// concept_id-keyed tables. areaScope is scopeConceptIDs' resolved code set
+// (nil for a whole-DB export) — copyConceptScopedTables uses it to scope
+// the distribution copy to just the requested areas (see
+// copyDistribution's doc comment).
+func populateBundle(ctx context.Context, src, bundle *DB, conceptIDs, areaScope []string, opts BundleOpts, restrictedSources string) (BundleReport, error) {
 	var report BundleReport
 	if len(conceptIDs) == 0 {
 		if err := insertBundleMeta(ctx, bundle, opts, "", restrictedSources); err != nil {
@@ -359,10 +411,12 @@ func populateBundle(ctx context.Context, src, bundle *DB, conceptIDs []string, o
 		return report, nil
 	}
 
-	placeholders := placeholdersFor(len(conceptIDs))
-	args := idArgs(conceptIDs)
+	idsJSON, err := marshalIDs(conceptIDs)
+	if err != nil {
+		return report, err
+	}
 
-	backboneIDs, manifestSHA, err := copyBackboneVersions(ctx, src, bundle, len(conceptIDs), args)
+	backboneIDs, manifestSHA, err := copyBackboneVersions(ctx, src, bundle, idsJSON)
 	if err != nil {
 		return report, err
 	}
@@ -376,11 +430,11 @@ func populateBundle(ctx context.Context, src, bundle *DB, conceptIDs []string, o
 		nameBasionymCol = 8
 	)
 	names, err := copySelfReferencingRows(ctx, src, bundle,
-		`SELECT DISTINCT n.id, n.canonical, n.canonical_fold, n.authorship, n.rank, n.ipni_id, n.published_in, n.nom_status, n.basionym_id
+		`SELECT DISTINCT n.id, n.canonical, n.canonical_fold, n.authorship, n.rank, n.ipni_id, n.published_in, n.nom_status, n.basionym_id, n.rank_verbatim
 		 FROM name n
 		 JOIN concept_name cn ON cn.name_id = n.id
-		 WHERE cn.concept_id IN (`+placeholders+`)`, args,
-		`INSERT INTO name (id, canonical, canonical_fold, authorship, rank, ipni_id, published_in, nom_status, basionym_id) VALUES (?,?,?,?,?,?,?,?,?)`,
+		 WHERE cn.concept_id IN (SELECT value FROM json_each(?))`, []any{idsJSON},
+		`INSERT INTO name (id, canonical, canonical_fold, authorship, rank, ipni_id, published_in, nom_status, basionym_id, rank_verbatim) VALUES (?,?,?,?,?,?,?,?,?,?)`,
 		nameIDCol, nameBasionymCol, `UPDATE name SET basionym_id = ? WHERE id = ?`)
 	if err != nil {
 		return report, err
@@ -392,15 +446,15 @@ func populateBundle(ctx context.Context, src, bundle *DB, conceptIDs []string, o
 		conceptParentIDCol = 4
 	)
 	concepts, err := copySelfReferencingRows(ctx, src, bundle,
-		`SELECT id, backbone_id, accepted_name, rank, parent_id, sec_reference, status FROM taxon_concept WHERE id IN (`+placeholders+`)`, args,
-		`INSERT INTO taxon_concept (id, backbone_id, accepted_name, rank, parent_id, sec_reference, status) VALUES (?,?,?,?,?,?,?)`,
+		`SELECT id, backbone_id, accepted_name, rank, parent_id, sec_reference, status, rank_verbatim FROM taxon_concept WHERE id IN (SELECT value FROM json_each(?))`, []any{idsJSON},
+		`INSERT INTO taxon_concept (id, backbone_id, accepted_name, rank, parent_id, sec_reference, status, rank_verbatim) VALUES (?,?,?,?,?,?,?,?)`,
 		conceptIDCol, conceptParentIDCol, `UPDATE taxon_concept SET parent_id = ? WHERE id = ?`)
 	if err != nil {
 		return report, err
 	}
 	report.Concepts = concepts
 
-	if err := copyConceptScopedTables(ctx, src, bundle, placeholders, args); err != nil {
+	if err := copyConceptScopedTables(ctx, src, bundle, idsJSON, areaScope); err != nil {
 		return report, err
 	}
 
@@ -424,39 +478,38 @@ func populateBundle(ctx context.Context, src, bundle *DB, conceptIDs []string, o
 
 // copyConceptScopedTables copies every remaining concept_id-keyed table
 // (concept_name, xref, distribution, vernacular, trait_value) scoped by
-// placeholders/args, plus trait_vocabulary in full (metadata, not
-// concept-scoped — the offline field app needs the Taxonomy/license/source
-// provenance for every trait_value row copied above). Split out of
-// populateBundle purely to keep that function's cyclomatic complexity down;
-// it carries no logic of its own beyond sequencing copyRows calls.
-func copyConceptScopedTables(ctx context.Context, src, bundle *DB, placeholders string, args []any) error {
+// idsJSON, plus trait_vocabulary in full (metadata, not concept-scoped —
+// the offline field app needs the Taxonomy/license/source provenance for
+// every trait_value row copied above). Split out of populateBundle purely
+// to keep that function's cyclomatic complexity down; it carries no logic
+// of its own beyond sequencing copyRows calls (copyDistribution is the one
+// exception — see its own doc comment for the area-scoping it does).
+func copyConceptScopedTables(ctx context.Context, src, bundle *DB, idsJSON string, areaScope []string) error {
 	if err := copyRows(ctx, src, bundle,
-		`SELECT concept_id, name_id, role, homotypic FROM concept_name WHERE concept_id IN (`+placeholders+`)`, args,
+		`SELECT concept_id, name_id, role, homotypic FROM concept_name WHERE concept_id IN (SELECT value FROM json_each(?))`, []any{idsJSON},
 		`INSERT INTO concept_name (concept_id, name_id, role, homotypic) VALUES (?,?,?,?)`); err != nil {
 		return err
 	}
 
 	if err := copyRows(ctx, src, bundle,
-		`SELECT concept_id, authority, ext_id FROM xref WHERE concept_id IN (`+placeholders+`)`, args,
+		`SELECT concept_id, authority, ext_id FROM xref WHERE concept_id IN (SELECT value FROM json_each(?))`, []any{idsJSON},
 		`INSERT INTO xref (concept_id, authority, ext_id) VALUES (?,?,?)`); err != nil {
 		return err
 	}
 
-	if err := copyRows(ctx, src, bundle,
-		`SELECT concept_id, area_scheme, area_code FROM distribution WHERE concept_id IN (`+placeholders+`)`, args,
-		`INSERT INTO distribution (concept_id, area_scheme, area_code) VALUES (?,?,?)`); err != nil {
+	if err := copyDistribution(ctx, src, bundle, idsJSON, areaScope); err != nil {
 		return err
 	}
 
 	if err := copyRows(ctx, src, bundle,
-		`SELECT concept_id, lang, name, preferred FROM vernacular WHERE concept_id IN (`+placeholders+`)`, args,
+		`SELECT concept_id, lang, name, preferred FROM vernacular WHERE concept_id IN (SELECT value FROM json_each(?))`, []any{idsJSON},
 		`INSERT INTO vernacular (concept_id, lang, name, preferred) VALUES (?,?,?,?)`); err != nil {
 		return err
 	}
 
 	if err := copyRows(ctx, src, bundle,
-		`SELECT concept_id, vocab, vocab_version, dim, value, niche_width, n_systems FROM trait_value WHERE concept_id IN (`+placeholders+`)`, args,
-		`INSERT INTO trait_value (concept_id, vocab, vocab_version, dim, value, niche_width, n_systems) VALUES (?,?,?,?,?,?,?)`); err != nil {
+		`SELECT concept_id, vocab, vocab_version, dim, value, niche_width, n_systems, resolution FROM trait_value WHERE concept_id IN (SELECT value FROM json_each(?))`, []any{idsJSON},
+		`INSERT INTO trait_value (concept_id, vocab, vocab_version, dim, value, niche_width, n_systems, resolution) VALUES (?,?,?,?,?,?,?,?)`); err != nil {
 		return err
 	}
 
@@ -469,29 +522,58 @@ func copyConceptScopedTables(ctx context.Context, src, bundle *DB, placeholders 
 	return nil
 }
 
-// backboneVersionScopeQuery builds the query copyBackboneVersions runs to
-// find every backbone_version referenced by n concepts in scope. It is its
-// own function (taking only an int, not a raw string) purely so the query
-// text it concatenates never has a string-typed parameter in scope — n
-// distinct "?" placeholders, never interpolated data.
-func backboneVersionScopeQuery(n int) string {
-	return `
-		SELECT DISTINCT bv.id, bv.version, bv.license, bv.source_url, bv.ingested_at, bv.manifest_sha, bv.redistribution
-		FROM backbone_version bv
-		JOIN taxon_concept tc ON tc.backbone_id = bv.id
-		WHERE tc.id IN (` + placeholdersFor(n) + `)
-		ORDER BY bv.id`
+// copyDistribution copies distribution rows for the concepts named by
+// idsJSON into bundle. This is the measured, deliberate size reduction
+// from docs/research/reality-check.md M5.2: a GER-scoped export used to
+// copy every one of a concept's distribution rows — its FULL global
+// range across all 369 WGSRPD-L3 areas WCVP records, not just "occurs in
+// GER" — accounting for ~39% of that bundle's 108.9 MB (distribution +
+// its unique index, measured via `SELECT name, SUM(pgsize) FROM dbstat`).
+// A field bundle scoped to a region has no documented use case that needs
+// a concept's occurrence in areas OUTSIDE that region, so when areaScope
+// is non-empty (an area-scoped export), only the wgsrpd_l3 rows matching
+// one of areaScope are copied — a bundle's distribution table then answers
+// exactly "does this concept occur in the requested area(s)", not "what is
+// this concept's whole-world range". A whole-DB export (areaScope empty)
+// is unaffected: every distribution row is still copied, because
+// "everything" genuinely means everything there too.
+func copyDistribution(ctx context.Context, src, bundle *DB, idsJSON string, areaScope []string) error {
+	if len(areaScope) == 0 {
+		return copyRows(ctx, src, bundle,
+			`SELECT concept_id, area_scheme, area_code FROM distribution WHERE concept_id IN (SELECT value FROM json_each(?))`, []any{idsJSON},
+			`INSERT INTO distribution (concept_id, area_scheme, area_code) VALUES (?,?,?)`)
+	}
+
+	areaScopeJSON, err := marshalIDs(areaScope)
+	if err != nil {
+		return err
+	}
+	return copyRows(ctx, src, bundle,
+		`SELECT concept_id, area_scheme, area_code FROM distribution
+		 WHERE concept_id IN (SELECT value FROM json_each(?))
+		   AND area_scheme = 'wgsrpd_l3' AND area_code IN (SELECT value FROM json_each(?))`,
+		[]any{idsJSON, areaScopeJSON},
+		`INSERT INTO distribution (concept_id, area_scheme, area_code) VALUES (?,?,?)`)
 }
 
+// backboneVersionScopeQuery finds every backbone_version referenced by the
+// concept ids bound via json_each (see marshalIDs' doc comment for why).
+const backboneVersionScopeQuery = `
+	SELECT DISTINCT bv.id, bv.version, bv.license, bv.source_url, bv.ingested_at, bv.manifest_sha, bv.redistribution
+	FROM backbone_version bv
+	JOIN taxon_concept tc ON tc.backbone_id = bv.id
+	WHERE tc.id IN (SELECT value FROM json_each(?))
+	ORDER BY bv.id`
+
 // copyBackboneVersions copies every backbone_version row referenced by one
-// of the n concepts in scope (bound via args) into bundle, returning the
-// distinct backbone ids copied (so populateBundle knows which backbones to
+// of the concepts named by idsJSON into bundle, returning the distinct
+// backbone ids copied (so populateBundle knows which backbones to
 // rebuildFTS for) and the manifest_sha of the last row copied
 // (bundle_meta.source_manifest_sha — in practice a single ingest run
 // stamps every backbone_version row with the same manifest_sha, so which
 // row "wins" does not matter).
-func copyBackboneVersions(ctx context.Context, src, bundle *DB, n int, args []any) ([]string, string, error) {
-	rows, err := src.sql.QueryContext(ctx, backboneVersionScopeQuery(n), args...)
+func copyBackboneVersions(ctx context.Context, src, bundle *DB, idsJSON string) ([]string, string, error) {
+	rows, err := src.sql.QueryContext(ctx, backboneVersionScopeQuery, idsJSON)
 	if err != nil {
 		return nil, "", fmt.Errorf("sqlite: bundle: querying backbone_version scope: %w", err)
 	}

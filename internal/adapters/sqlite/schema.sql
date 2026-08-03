@@ -32,14 +32,58 @@ CREATE TABLE IF NOT EXISTS name (
   canonical      TEXT NOT NULL,
   canonical_fold TEXT NOT NULL DEFAULT '',
   authorship     TEXT,
-  rank           TEXT NOT NULL,      -- FAMILY|GENUS|SPECIES|SUBSPECIES|VARIETY|FORM
+  rank           TEXT NOT NULL,      -- FAMILY|GENUS|...|SUBFORM|NOTHOSUBSPECIES|NOTHOVARIETY|NOTHOFORM|OTHER (domain.Rank)
   ipni_id        TEXT,
   published_in   TEXT,
   nom_status     TEXT,               -- NULL|nom_nud|nom_superfl|pro_syn|...
-  basionym_id    TEXT REFERENCES name(id)
+  basionym_id    TEXT REFERENCES name(id),
+  -- rank_verbatim carries the original source "taxonrank" spelling
+  -- (e.g. WCVP's "proles") when rank = 'OTHER' — the one case where the
+  -- canonical Rank value alone has thrown that spelling away by
+  -- collapsing it into the catch-all. NULL/empty for every other rank,
+  -- since Rank itself already identifies the canonical spelling exactly
+  -- there. See domain.Name.RankVerbatim / domain.ParseRankLenient.
+  rank_verbatim  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_name_canonical_fold ON name(canonical_fold);
+CREATE INDEX IF NOT EXISTS idx_name_basionym_id ON name(basionym_id);
+
+-- Hardening Task 2 (2026-08-01): FK child-column indexes.
+--
+-- Every REFERENCES column below was, until this task, unindexed except
+-- idx_name_canonical_fold (which isn't even on an FK). With
+-- `INSERT OR REPLACE` (an implicit DELETE+INSERT) and
+-- `PRAGMA foreign_keys=ON`, SQLite must find every row in every
+-- referencing table that points at the deleted parent key before it can
+-- allow the delete — without an index on the child column, that's a full
+-- table scan per insert, and the scanned table grows with every row
+-- ingested: quadratic total cost. Measured on the real WCVP backbone
+-- (docs/research/reality-check.md, "nach Hardening" has the post-fix
+-- numbers): 50k/100k/200k taxa took 65 s / 293 s / 1.338 s without these
+-- indexes (×4.5 per doubling — quadratic) vs. 5 s / 11 s / 25 s with them
+-- (×2.2 per doubling — linear). The full WCVP ingest was manually killed
+-- after 22 min 48 s without a single committed row on the unindexed
+-- schema; with these indexes it completes in 276.70 s.
+--
+-- The honest cost side: an index is extra B-tree pages written on every
+-- insert and extra bytes on disk — the reality-check measurement put
+-- that at ~18% larger DB files (23.9→28.4 MB at 50k rows, 97.7→114.9 MB
+-- at 200k rows). That cost is real but is dwarfed by the FK-scan cost it
+-- removes (a ~50× wall-clock win at 200k rows), so it is not a close
+-- call.
+--
+-- Not every REFERENCES column needs its own index: a column that is
+-- already the LEADING column of that table's PRIMARY KEY already has a
+-- SQLite-maintained B-tree keyed on it, so a second single-column index
+-- would be pure write/space cost with no read benefit. Skipped for that
+-- reason: concept_name.concept_id (PK is (concept_id, name_id)),
+-- distribution.concept_id (PK is (concept_id, area_scheme, area_code)),
+-- vernacular.concept_id (PK is (concept_id, lang, name)),
+-- trait_value.concept_id (PK is (concept_id, vocab, vocab_version, dim)),
+-- and concept_relation.from_concept (PK is
+-- (from_concept, to_concept, source)). Every other FK child column gets
+-- an explicit index below, next to the table it lives on.
 
 -- Taxonomy.
 CREATE TABLE IF NOT EXISTS taxon_concept (
@@ -49,8 +93,17 @@ CREATE TABLE IF NOT EXISTS taxon_concept (
   rank           TEXT NOT NULL,
   parent_id      TEXT REFERENCES taxon_concept(id),
   sec_reference  TEXT,              -- bibliographic sec. identity
-  status         TEXT NOT NULL      -- accepted|...
+  status         TEXT NOT NULL,     -- accepted|...
+  -- rank_verbatim mirrors name.rank_verbatim's rule, for the concept's own
+  -- rank (which is always the same value as its accepted name's rank, but
+  -- copied independently here since Concept and Name are separate rows/
+  -- structs — see domain.Concept.RankVerbatim).
+  rank_verbatim  TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_taxon_concept_backbone_id ON taxon_concept(backbone_id);
+CREATE INDEX IF NOT EXISTS idx_taxon_concept_accepted_name ON taxon_concept(accepted_name);
+CREATE INDEX IF NOT EXISTS idx_taxon_concept_parent_id ON taxon_concept(parent_id);
 
 -- Concept <-> name (accepted + synonyms, typed).
 CREATE TABLE IF NOT EXISTS concept_name (
@@ -61,6 +114,11 @@ CREATE TABLE IF NOT EXISTS concept_name (
   PRIMARY KEY (concept_id, name_id)
 );
 
+-- concept_id is already the PK's leading column (skipped, see comment
+-- above); name_id is not, so the ingest's FK check on name deletes would
+-- scan concept_name in full without this.
+CREATE INDEX IF NOT EXISTS idx_concept_name_name_id ON concept_name(name_id);
+
 -- Cross-references to external authorities.
 CREATE TABLE IF NOT EXISTS xref (
   concept_id   TEXT NOT NULL REFERENCES taxon_concept(id),
@@ -68,6 +126,10 @@ CREATE TABLE IF NOT EXISTS xref (
   ext_id       TEXT NOT NULL,
   PRIMARY KEY (authority, ext_id)
 );
+
+-- concept_id is NOT the PK's leading column here (PK is
+-- (authority, ext_id)), so it needs its own index.
+CREATE INDEX IF NOT EXISTS idx_xref_concept_id ON xref(concept_id);
 
 -- Vernacular names (German per Buttler et al. 2018 or similar).
 CREATE TABLE IF NOT EXISTS vernacular (
@@ -100,6 +162,18 @@ CREATE TABLE IF NOT EXISTS trait_value (
   value         REAL NOT NULL,
   niche_width   REAL,               -- EIVE only; NULL for Tichý/Midolo
   n_systems     INTEGER,            -- EIVE only; NULL for Tichý/Midolo
+  -- resolution records HOW the vocabulary's taxon name was crosswalked onto
+  -- concept_id: NULL for the ordinary case (an exact canonical match), else
+  -- the name of the deterministic normalisation rule that was needed
+  -- (domain.NormalizationRule: hybrid_spacing, aggregate_to_nominate,
+  -- autonym, orthography_genitive, ...). Two of those rules equate two
+  -- circumscriptions that are NOT identical — an aggregate is wider than
+  -- its nominate species, an autonym narrower than its species — so a
+  -- consumer must be able to tell such a value apart from a directly
+  -- matched one. Same "absence is information" rule as niche_width above:
+  -- NULL means "no normalisation was needed", never "unknown".
+  -- See domain.TraitValue.Resolution / domain.NormalizationRule.Flagged.
+  resolution    TEXT,
   PRIMARY KEY (concept_id, vocab, vocab_version, dim)
 );
 
@@ -127,6 +201,10 @@ CREATE TABLE IF NOT EXISTS concept_relation (
   PRIMARY KEY (from_concept, to_concept, source)
 );
 
+-- from_concept is the PK's leading column (skipped, see comment above);
+-- to_concept is not, so it needs its own index.
+CREATE INDEX IF NOT EXISTS idx_concept_relation_to_concept ON concept_relation(to_concept);
+
 -- Full-text/prefix search.
 --
 -- fts_name is a "contentless" FTS5 table (content=''): FTS5 stores only the
@@ -149,6 +227,10 @@ CREATE TABLE IF NOT EXISTS fts_name_map (
   rowid       INTEGER PRIMARY KEY,
   concept_id  TEXT NOT NULL REFERENCES taxon_concept(id)
 );
+
+-- rowid IS the table's own INTEGER PRIMARY KEY, but concept_id is a
+-- separate, unindexed FK column — needs its own index.
+CREATE INDEX IF NOT EXISTS idx_fts_name_map_concept_id ON fts_name_map(concept_id);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS fts_name USING fts5(
   canonical, vernacular_de,

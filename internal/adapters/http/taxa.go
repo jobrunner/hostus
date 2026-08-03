@@ -65,8 +65,16 @@ type conceptDTO struct {
 	// surface the vernacular table yet (no method returns it). Left as an
 	// omitempty field so a future task can populate it without a shape
 	// change.
-	VernacularDE string            `json:"vernacular_de,omitempty"`
-	Rank         string            `json:"rank"`
+	VernacularDE string `json:"vernacular_de,omitempty"`
+	Rank         string `json:"rank"`
+	// RankVerbatim is the original source "taxonrank" spelling (e.g.
+	// WCVP's "proles") when Rank is "OTHER" — the one case where the
+	// canonical Rank value alone would otherwise hide which exotic rank
+	// this concept actually carries. Omitted entirely (never an empty
+	// string) for every canonically-ranked concept, same honesty pattern
+	// as synonymDTO.Homotypic/traits' niche_width: absence means "not
+	// applicable", not "unknown".
+	RankVerbatim string            `json:"rank_verbatim,omitempty"`
 	Status       string            `json:"status"`
 	Backbone     backboneRefDTO    `json:"backbone"`
 	Xrefs        map[string]string `json:"xrefs,omitempty"`
@@ -122,6 +130,7 @@ func conceptToDTO(c *domain.Concept, synonyms []output.SynonymName, xrefs []doma
 		Display:        display,
 		Canonical:      c.AcceptedName.Canonical,
 		Rank:           string(c.Rank),
+		RankVerbatim:   c.RankVerbatim,
 		Status:         string(c.Status),
 		Backbone:       backboneRefDTO{ID: c.BackboneID, Version: c.BackboneVersion},
 		Xrefs:          xrefMap,

@@ -72,8 +72,30 @@ func printIngestReport(w io.Writer, report application.IngestReport) {
 	for _, b := range report.Backbones {
 		_, _ = fmt.Fprintf(w, "  %s: names=%d concepts=%d synonyms=%d orphaned=%d\n",
 			b.ID, b.Names, b.Concepts, b.Synonyms, b.Orphaned)
+		printOtherRanksNotice(w, b)
 		printRedistributionNotice(w, b.ID, b.Redistribution)
 	}
+}
+
+// printOtherRanksNotice prints one "ranks: other=N (...)" line when b
+// carries any taxon rows whose "taxonrank" spelling didn't match a
+// canonical domain.Rank (see application.ParseRankLenient / domain.RankOther).
+// This is what makes an exotic rank spelling (e.g. WCVP's "proles") VISIBLE
+// to whoever runs "hostus ingest" — the ingest itself never aborts on it —
+// mirroring printTraitReports' "unmatched sample" line below.
+func printOtherRanksNotice(w io.Writer, b application.BackboneReport) {
+	if b.OtherRanks == 0 {
+		return
+	}
+	parts := make([]string, len(b.OtherRankSample))
+	for i, rc := range b.OtherRankSample {
+		verbatim := rc.Verbatim
+		if verbatim == "" {
+			verbatim = "(empty)"
+		}
+		parts[i] = fmt.Sprintf("%s %d", verbatim, rc.Count)
+	}
+	_, _ = fmt.Fprintf(w, "    ranks: other=%d (%s)\n", b.OtherRanks, strings.Join(parts, ", "))
 }
 
 // printRedistributionNotice prints one "hinweis:" line for id if
@@ -101,6 +123,16 @@ func printTraitReports(w io.Writer, reports []application.TraitIngestReport) {
 	for _, r := range reports {
 		_, _ = fmt.Fprintf(w, "  %s: rows=%d matched=%d unmatched=%d ambiguous=%d\n",
 			r.Vocab, r.Rows, r.Matched, r.Unmatched, r.Ambiguous)
+		for _, n := range r.Normalized {
+			flag := ""
+			if n.Flagged {
+				flag = " [flagged: circumscriptions equated, not identical]"
+			}
+			_, _ = fmt.Fprintf(w, "    normalized %s: rows=%d taxa=%d%s\n", n.Rule, n.Rows, n.Taxa, flag)
+		}
+		if len(r.FlaggedSample) > 0 {
+			_, _ = fmt.Fprintf(w, "    flagged sample: %s\n", strings.Join(r.FlaggedSample, ", "))
+		}
 		if len(r.UnmatchedSample) > 0 {
 			_, _ = fmt.Fprintf(w, "    unmatched sample: %s\n", strings.Join(r.UnmatchedSample, ", "))
 		}

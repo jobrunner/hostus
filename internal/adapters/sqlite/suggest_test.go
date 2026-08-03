@@ -217,6 +217,8 @@ func TestSuggest_InArea_ResolvesRawWGSRPDCodeAndAliasAndAbsentCode(t *testing.T)
 	}{
 		{"raw L3 code present in distribution (AUT)", "AUT", true},
 		{"DE alias resolves to GER, absent from this concept's distribution", "DE", false},
+		{"AT alias resolves to AUT, present in this concept's distribution", "AT", true},
+		{"CH alias resolves to SWI, absent from this concept's distribution", "CH", false},
 		{"raw L3 code absent from distribution", "ZZZ", false},
 	}
 	for _, tc := range cases {

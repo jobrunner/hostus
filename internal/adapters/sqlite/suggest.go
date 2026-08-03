@@ -17,9 +17,16 @@ const wgsrpdGermanyL3 = "GER"
 // (case-insensitively) is treated as a raw WGSRPD level-3 code and passed
 // through unchanged (upper-cased) — so a caller can always bypass the alias
 // table entirely by supplying an exact L3 code (e.g. "GER") directly. Add
-// further aliases here as UC1's frontend needs them.
+// further aliases here as UC1's frontend needs them. "AT"/"CH" were added
+// alongside Task 4's multi-area bundle scoping (BundleOpts.Area,
+// resolveAreaCodes in bundle.go) so a Mitteleuropa bundle can be requested
+// as "hostus bundle --area DE,AT,CH", mirroring the ISO-3166 alpha-2 style
+// "DE" already used, rather than requiring the raw WGSRPD codes
+// (GER/AUT/SWI) for two of the three countries but not the first.
 var wgsrpdAlias = map[string][]string{
 	"DE": {wgsrpdGermanyL3},
+	"AT": {"AUT"},
+	"CH": {"SWI"},
 }
 
 // areaCodes resolves a Repository.Suggest/output.SuggestOpts.Area value

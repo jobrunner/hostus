@@ -49,9 +49,10 @@ func (db *DB) Traits(ctx context.Context, conceptID string, vocabs []domain.Trai
 			value                    float64
 			nicheWidth               sql.NullFloat64
 			nSystems                 sql.NullInt64
+			resolution               sql.NullString
 			taxonomy                 string
 		)
-		if err := rows.Scan(&vocab, &vocabVersion, &dim, &value, &nicheWidth, &nSystems, &taxonomy); err != nil {
+		if err := rows.Scan(&vocab, &vocabVersion, &dim, &value, &nicheWidth, &nSystems, &resolution, &taxonomy); err != nil {
 			return nil, fmt.Errorf("sqlite: scanning trait value for concept %q: %w", conceptID, err)
 		}
 
@@ -72,6 +73,9 @@ func (db *DB) Traits(ctx context.Context, conceptID string, vocabs []domain.Trai
 			VocabVersion: vocabVersion,
 			Dim:          domain.TraitDim(dim),
 			Value:        value,
+			// A NULL resolution is the ordinary exact match and maps back to
+			// the empty string, exactly as AddTraitValue wrote it.
+			Resolution: resolution.String,
 		}
 		if nicheWidth.Valid {
 			w := nicheWidth.Float64
@@ -100,7 +104,7 @@ func (db *DB) Traits(ctx context.Context, conceptID string, vocabs []domain.Trai
 // caller-visible Values order are deterministic.
 func traitsQuery(conceptID string, vocabs []domain.TraitVocab) (string, []any) {
 	query := `
-		SELECT tv.vocab, tv.vocab_version, tv.dim, tv.value, tv.niche_width, tv.n_systems, COALESCE(vc.taxonomy, '')
+		SELECT tv.vocab, tv.vocab_version, tv.dim, tv.value, tv.niche_width, tv.n_systems, tv.resolution, COALESCE(vc.taxonomy, '')
 		FROM trait_value tv
 		LEFT JOIN trait_vocabulary vc ON vc.vocab = tv.vocab AND vc.version = tv.vocab_version
 		WHERE tv.concept_id = ?`

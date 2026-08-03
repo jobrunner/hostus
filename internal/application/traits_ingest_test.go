@@ -533,16 +533,34 @@ func TestIngestTraits_ResolvesEachDistinctTaxonExactlyOnce(t *testing.T) {
 		t.Fatalf("IngestTraits: unexpected error: %v", err)
 	}
 
-	want := map[string]int{
+	// Since Hardening Task 5 a distinct taxon costs one query per key of
+	// its domain.NameCandidates ladder — but still exactly ONE walk of that
+	// ladder, however many rows carry the name. "Corynephorus canescens"
+	// resolves on its exact key and therefore costs exactly one query;
+	// "Abies alba" resolves on none, so its full ladder is walked, and each
+	// of its keys is queried exactly once.
+	for canon, n := range map[string]int{
 		domain.Canonicalize("Corynephorus canescens"): 1,
 		domain.Canonicalize("Abies alba"):             1,
-	}
-	if len(repo.matchCalls) != len(want) {
-		t.Fatalf("MatchExact called for %v, want exactly the distinct names %v", repo.matchCalls, want)
-	}
-	for canon, n := range want {
+	} {
 		if got := repo.matchCalls[canon]; got != n {
 			t.Errorf("MatchExact(%q) called %d time(s), want %d", canon, got, n)
+		}
+	}
+	for _, cand := range domain.NameCandidates("Abies alba") {
+		if got := repo.matchCalls[cand.Key]; got != 1 {
+			t.Errorf("MatchExact(%q) called %d time(s), want 1 (one ladder walk per distinct taxon)", cand.Key, got)
+		}
+	}
+	// No key beyond the two ladders may have been queried at all: the
+	// matched taxon must stop at its exact key rather than walking on.
+	wantKeys := map[string]bool{domain.Canonicalize("Corynephorus canescens"): true}
+	for _, cand := range domain.NameCandidates("Abies alba") {
+		wantKeys[cand.Key] = true
+	}
+	for got := range repo.matchCalls {
+		if !wantKeys[got] {
+			t.Errorf("MatchExact(%q) was called, want no query beyond the two taxa's ladders", got)
 		}
 	}
 }
@@ -579,4 +597,501 @@ func (r *failingMatchRepo) BeginIngest(ctx context.Context, bv domain.BackboneVe
 func (r *failingMatchRepo) BeginTraitIngest(ctx context.Context) (output.IngestTx, error) {
 	r.beganIngest = true
 	return r.Repository.BeginTraitIngest(ctx)
+}
+
+// --- Hardening Task 5: deterministic name normalisation -------------------
+//
+// Every trait-side taxon name below is a REAL name the full-data crosswalk
+// failed to resolve against the complete WCVP (poc/measure/out/unmatched-*.txt,
+// see docs/research/reality-check.md M2'); every backbone-side canonical is
+// the spelling WCVP actually holds for it.
+
+// seedBackboneNames ingests one accepted concept per canonical name under a
+// throwaway backbone, and returns canonical -> concept id.
+func seedBackboneNames(t *testing.T, repo *sqlite.DB, backboneID string, canonicals ...string) map[string]string {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := repo.BeginIngest(ctx, domain.BackboneVersion{ID: backboneID, Version: "v1"})
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	out := make(map[string]string, len(canonicals))
+	for i, canonical := range canonicals {
+		name := domain.Name{ID: fmt.Sprintf("%s:name:%d", backboneID, i), Canonical: canonical, Rank: domain.RankSpecies}
+		concept := domain.Concept{ID: fmt.Sprintf("%s:concept:%d", backboneID, i), BackboneID: backboneID, AcceptedName: name, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+		if err := tx.UpsertName(name); err != nil {
+			t.Fatalf("UpsertName(%q): unexpected error: %v", canonical, err)
+		}
+		if err := tx.UpsertConcept(concept); err != nil {
+			t.Fatalf("UpsertConcept(%q): unexpected error: %v", canonical, err)
+		}
+		if err := tx.LinkName(concept.ID, name.ID, "accepted", nil); err != nil {
+			t.Fatalf("LinkName(%q): unexpected error: %v", canonical, err)
+		}
+		out[canonical] = concept.ID
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+	return out
+}
+
+// normalisationCase is one (trait name -> backbone name, expected rule) pair.
+type normalisationCase struct {
+	name        string
+	traitTaxon  string
+	backbone    string
+	wantRule    domain.NormalizationRule
+	wantFlagged bool
+}
+
+func TestIngestTraits_NormalisationRulesResolveRealUnmatchedNames(t *testing.T) {
+	cases := []normalisationCase{
+		{
+			name:       "hybrid spacing (EIVE miss Acer ×coriaceum)",
+			traitTaxon: "Acer ×coriaceum", backbone: "Acer × coriaceum",
+			wantRule: domain.RuleHybridSpacing,
+		},
+		{
+			name:       "hybrid spacing, ASCII x (Midolo miss Crocosmia x crocosmiiflora)",
+			traitTaxon: "Crocosmia x crocosmiiflora", backbone: "Crocosmia × crocosmiiflora",
+			wantRule: domain.RuleHybridSpacing,
+		},
+		{
+			name:       "hybrid marker dropped (EIVE miss Anacamptis ×albertii)",
+			traitTaxon: "Anacamptis ×albertii", backbone: "Anacamptis albertii",
+			wantRule: domain.RuleHybridMarkerDropped,
+		},
+		{
+			name:       "hybrid marker added (Tichy/Midolo miss Abies borisii-regis)",
+			traitTaxon: "Abies borisii-regis", backbone: "Abies × borisii-regis",
+			wantRule: domain.RuleHybridMarkerAdded,
+		},
+		{
+			name:       "aggregate to nominate species (EIVE miss Acer opalus aggr.)",
+			traitTaxon: "Acer opalus aggr.", backbone: "Acer opalus",
+			wantRule: domain.RuleAggregateToNominate, wantFlagged: true,
+		},
+		{
+			name:       "stacked aggregate markers (EIVE miss Agrostis capillaris aggr. s. l.)",
+			traitTaxon: "Agrostis capillaris aggr. s. l.", backbone: "Agrostis capillaris",
+			wantRule: domain.RuleAggregateToNominate, wantFlagged: true,
+		},
+		{
+			// "Festuca ovina s. l." is the other real Tichý miss of this
+			// shape; "pallens" is used here because the shared WCVP test
+			// fixture already carries a "Festuca ovina" concept, which would
+			// make the fallback key ambiguous for reasons unrelated to the
+			// rule under test.
+			name:       "sensu lato (Tichy miss Festuca pallens s. l.)",
+			traitTaxon: "Festuca pallens s. l.", backbone: "Festuca pallens",
+			wantRule: domain.RuleAggregateToNominate, wantFlagged: true,
+		},
+		{
+			name:       "autonym (EIVE miss Acer obtusatum subsp. obtusatum)",
+			traitTaxon: "Acer obtusatum subsp. obtusatum", backbone: "Acer obtusatum",
+			wantRule: domain.RuleAutonym, wantFlagged: true,
+		},
+		{
+			name:       "autonym (EIVE miss Aconitum lycoctonum subsp. lycoctonum)",
+			traitTaxon: "Aconitum lycoctonum subsp. lycoctonum", backbone: "Aconitum lycoctonum",
+			wantRule: domain.RuleAutonym, wantFlagged: true,
+		},
+		{
+			name:       "genitive orthography (all three vocabularies miss Cardamine plumierii)",
+			traitTaxon: "Cardamine plumierii", backbone: "Cardamine plumieri",
+			wantRule: domain.RuleOrthographyGenitive,
+		},
+		{
+			name:       "genitive orthography, other direction (EIVE/Tichy miss Polygala edmundi)",
+			traitTaxon: "Polygala edmundi", backbone: "Polygala edmundii",
+			wantRule: domain.RuleOrthographyGenitive,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) { assertNormalisationCase(t, tc) })
+	}
+}
+
+// assertNormalisationCase drives one trait name through a repository seeded
+// with exactly the backbone spelling WCVP holds for it, and checks that it
+// resolves, resolves via the expected rule, is flagged iff the rule is a
+// judgement call, and that the value lands on the backbone concept.
+func assertNormalisationCase(t *testing.T, tc normalisationCase) {
+	t.Helper()
+	repo := seededMatchRepo(t)
+	ids := seedBackboneNames(t, repo, "test-norm", tc.backbone)
+	ctx := context.Background()
+
+	src := fakeTraitRowSource{rows: []application.TraitRow{
+		{Taxon: tc.traitTaxon, Vocab: "eive", VocabVersion: "1.0", Dim: "M", Value: 4.0},
+	}}
+	report, err := application.IngestTraits(ctx, repo, src, eiveMeta)
+	if err != nil {
+		t.Fatalf("IngestTraits: unexpected error: %v", err)
+	}
+	if report.Matched != 1 || report.Unmatched != 0 || report.Ambiguous != 0 {
+		t.Fatalf("Matched/Unmatched/Ambiguous = %d/%d/%d, want 1/0/0 — %q must resolve to %q",
+			report.Matched, report.Unmatched, report.Ambiguous, tc.traitTaxon, tc.backbone)
+	}
+	if len(report.Normalized) != 1 {
+		t.Fatalf("report.Normalized = %+v, want exactly one rule (%q)", report.Normalized, tc.wantRule)
+	}
+	want := application.RuleCount{Rule: tc.wantRule, Rows: 1, Taxa: 1, Flagged: tc.wantFlagged}
+	if report.Normalized[0] != want {
+		t.Errorf("report.Normalized[0] = %+v, want %+v", report.Normalized[0], want)
+	}
+	wantSample := []string(nil)
+	if tc.wantFlagged {
+		wantSample = []string{tc.traitTaxon}
+	}
+	if !equalStrings(report.FlaggedSample, wantSample) {
+		t.Errorf("report.FlaggedSample = %v, want %v", report.FlaggedSample, wantSample)
+	}
+
+	// The value must land on the backbone concept, not nowhere.
+	sets, err := repo.Traits(ctx, ids[tc.backbone], nil)
+	if err != nil {
+		t.Fatalf("Traits: unexpected error: %v", err)
+	}
+	if len(sets) != 1 || len(sets[0].Values) != 1 || sets[0].Values[0].Value != 4.0 {
+		t.Fatalf("Traits(%q) = %+v, want the single M=4.0 value", tc.backbone, sets)
+	}
+	// The rule must survive into the DATA, not just the ingest report: a
+	// consumer reading this value back has to be able to tell that it
+	// reached this concept through a rewrite.
+	if got := sets[0].Values[0].Resolution; got != string(tc.wantRule) {
+		t.Errorf("persisted TraitValue.Resolution = %q, want %q", got, tc.wantRule)
+	}
+}
+
+func TestIngestTraits_AggregateConceptWinsOverNominateSpeciesFallback(t *testing.T) {
+	// The fallback is a last resort: where the backbone DOES carry an
+	// aggregate concept, the aggregate must win, and the result must not be
+	// flagged — no circumscription was equated.
+	repo := seededMatchRepo(t)
+	ids := seedBackboneNames(t, repo, "test-agg", "Festuca ovina aggr.", "Festuca ovina")
+	ctx := context.Background()
+
+	src := fakeTraitRowSource{rows: []application.TraitRow{
+		{Taxon: "Festuca ovina aggr. s. l.", Vocab: "eive", VocabVersion: "1.0", Dim: "M", Value: 4.0},
+	}}
+	report, err := application.IngestTraits(ctx, repo, src, eiveMeta)
+	if err != nil {
+		t.Fatalf("IngestTraits: unexpected error: %v", err)
+	}
+	if report.Matched != 1 {
+		t.Fatalf("report.Matched = %d, want 1", report.Matched)
+	}
+	if len(report.Normalized) != 1 || report.Normalized[0].Rule != domain.RuleAggregate {
+		t.Fatalf("report.Normalized = %+v, want the unflagged %q rule", report.Normalized, domain.RuleAggregate)
+	}
+	if report.Normalized[0].Flagged {
+		t.Error("aggregate-to-aggregate match reported as flagged; nothing was equated")
+	}
+	if len(report.FlaggedSample) != 0 {
+		t.Errorf("report.FlaggedSample = %v, want empty", report.FlaggedSample)
+	}
+	sets, err := repo.Traits(ctx, ids["Festuca ovina"], nil)
+	if err != nil {
+		t.Fatalf("Traits: unexpected error: %v", err)
+	}
+	if len(sets) != 0 {
+		t.Errorf("Traits(Festuca ovina) = %+v, want none — the aggregate's value must not land on the nominate species", sets)
+	}
+}
+
+func TestIngestTraits_NonNominateSubspeciesIsNeverCollapsedOntoItsSpecies(t *testing.T) {
+	// EIVE miss "Allium circinatum subsp. peloponnesiacum": the
+	// infraspecific epithet differs from the species epithet, so this is a
+	// different taxon. It must stay unmatched rather than inherit the
+	// species' concept.
+	repo := seededMatchRepo(t)
+	ids := seedBackboneNames(t, repo, "test-nonauto", "Allium circinatum")
+	ctx := context.Background()
+
+	src := fakeTraitRowSource{rows: []application.TraitRow{
+		{Taxon: "Allium circinatum subsp. peloponnesiacum", Vocab: "eive", VocabVersion: "1.0", Dim: "M", Value: 4.0},
+	}}
+	report, err := application.IngestTraits(ctx, repo, src, eiveMeta)
+	if err != nil {
+		t.Fatalf("IngestTraits: unexpected error: %v", err)
+	}
+	if report.Unmatched != 1 || report.Matched != 0 {
+		t.Errorf("Matched/Unmatched = %d/%d, want 0/1", report.Matched, report.Unmatched)
+	}
+	sets, err := repo.Traits(ctx, ids["Allium circinatum"], nil)
+	if err != nil {
+		t.Fatalf("Traits: unexpected error: %v", err)
+	}
+	if len(sets) != 0 {
+		t.Errorf("Traits(Allium circinatum) = %+v, want none", sets)
+	}
+}
+
+func TestIngestTraits_ExactMatchIsNeverRerouted(t *testing.T) {
+	// Regression guard: a name that already resolved must keep resolving to
+	// the SAME concept and must be reported as exact (absent from
+	// Normalized), even when a normalisation rule could produce another key
+	// that also exists in the index.
+	repo := seededMatchRepo(t)
+	ids := seedBackboneNames(t, repo, "test-exact", "Acer opalus", "Acer opalus aggr.")
+	ctx := context.Background()
+
+	src := fakeTraitRowSource{rows: []application.TraitRow{
+		{Taxon: "Acer opalus", Vocab: "eive", VocabVersion: "1.0", Dim: "M", Value: 4.0},
+	}}
+	report, err := application.IngestTraits(ctx, repo, src, eiveMeta)
+	if err != nil {
+		t.Fatalf("IngestTraits: unexpected error: %v", err)
+	}
+	if report.Matched != 1 {
+		t.Fatalf("report.Matched = %d, want 1", report.Matched)
+	}
+	if len(report.Normalized) != 0 {
+		t.Errorf("report.Normalized = %+v, want empty — an exact hit must not be attributed to a normalisation rule", report.Normalized)
+	}
+	sets, err := repo.Traits(ctx, ids["Acer opalus"], nil)
+	if err != nil {
+		t.Fatalf("Traits: unexpected error: %v", err)
+	}
+	if len(sets) != 1 || len(sets[0].Values) != 1 {
+		t.Fatalf("Traits(Acer opalus) = %+v, want the exact hit's value", sets)
+	}
+	// An exact match asserts nothing about normalisation, so it stores
+	// nothing: Resolution stays empty (SQL NULL) rather than "exact".
+	if got := sets[0].Values[0].Resolution; got != "" {
+		t.Errorf("persisted TraitValue.Resolution = %q, want empty for an exact match", got)
+	}
+}
+
+func TestIngestTraits_AmbiguousNormalisedKeyIsNotRescuedByALaterRule(t *testing.T) {
+	// "Acer opalus aggr." strips to "Acer opalus", which here resolves to
+	// TWO distinct concepts. That is a genuine ambiguity about which taxon
+	// the source meant; the walk must stop and report ambiguous rather than
+	// continue until some rule happens to yield a single-concept key.
+	repo := seededMatchRepo(t)
+	ctx := context.Background()
+	seedBackboneNames(t, repo, "test-amb-a", "Acer opalus")
+	seedBackboneNames(t, repo, "test-amb-b", "Acer opalus")
+
+	src := fakeTraitRowSource{rows: []application.TraitRow{
+		{Taxon: "Acer opalus aggr.", Vocab: "eive", VocabVersion: "1.0", Dim: "M", Value: 4.0},
+	}}
+	report, err := application.IngestTraits(ctx, repo, src, eiveMeta)
+	if err != nil {
+		t.Fatalf("IngestTraits: unexpected error: %v", err)
+	}
+	if report.Ambiguous != 1 || report.Matched != 0 || report.Unmatched != 0 {
+		t.Errorf("Matched/Unmatched/Ambiguous = %d/%d/%d, want 0/0/1", report.Matched, report.Unmatched, report.Ambiguous)
+	}
+	if len(report.Normalized) != 0 {
+		t.Errorf("report.Normalized = %+v, want empty — an ambiguous outcome wrote nothing and must not be counted as a rule's gain", report.Normalized)
+	}
+}
+
+func TestIngestTraits_NormalizedCountsAreSortedAndAggregateAcrossRows(t *testing.T) {
+	repo := seededMatchRepo(t)
+	seedBackboneNames(t, repo, "test-multi",
+		"Acer obtusatum",      // autonym target
+		"Acer × coriaceum",    // hybrid spacing target
+		"Alchemilla vulgaris", // aggregate fallback target
+	)
+	ctx := context.Background()
+
+	src := fakeTraitRowSource{rows: []application.TraitRow{
+		{Taxon: "Acer obtusatum subsp. obtusatum", Vocab: "eive", VocabVersion: "1.0", Dim: "M", Value: 1.0},
+		{Taxon: "Acer obtusatum subsp. obtusatum", Vocab: "eive", VocabVersion: "1.0", Dim: "N", Value: 2.0},
+		{Taxon: "Acer ×coriaceum", Vocab: "eive", VocabVersion: "1.0", Dim: "M", Value: 3.0},
+		{Taxon: "Alchemilla vulgaris aggr.", Vocab: "eive", VocabVersion: "1.0", Dim: "M", Value: 4.0},
+	}}
+	report, err := application.IngestTraits(ctx, repo, src, eiveMeta)
+	if err != nil {
+		t.Fatalf("IngestTraits: unexpected error: %v", err)
+	}
+	want := []application.RuleCount{
+		{Rule: domain.RuleAggregateToNominate, Rows: 1, Taxa: 1, Flagged: true},
+		{Rule: domain.RuleAutonym, Rows: 2, Taxa: 1, Flagged: true},
+		{Rule: domain.RuleHybridSpacing, Rows: 1, Taxa: 1},
+	}
+	if len(report.Normalized) != len(want) {
+		t.Fatalf("report.Normalized = %+v, want %+v", report.Normalized, want)
+	}
+	for i := range want {
+		if report.Normalized[i] != want[i] {
+			t.Fatalf("report.Normalized = %+v, want %+v (sorted by rule name)", report.Normalized, want)
+		}
+	}
+	wantFlagged := []string{"Acer obtusatum subsp. obtusatum", "Alchemilla vulgaris aggr."}
+	if !equalStrings(report.FlaggedSample, wantFlagged) {
+		t.Errorf("report.FlaggedSample = %v, want %v", report.FlaggedSample, wantFlagged)
+	}
+}
+
+// TestIngestTraits_ExactMatchWinsTheSlotRegardlessOfRowOrder pins
+// selectTraitWinners: "Acer opalus" (exact) and "Acer opalus aggr." (only
+// resolvable through the flagged aggregate fallback) both land on the SAME
+// concept and dim, so trait_value's primary key can hold only one of them.
+// The exact value must win in BOTH row orders — otherwise an aggregate's
+// collective mean could silently overwrite a directly-matched value, and the
+// stored resolution flag would describe the slot by CSV row order rather than
+// by what is true of it.
+func TestIngestTraits_ExactMatchWinsTheSlotRegardlessOfRowOrder(t *testing.T) {
+	exactRow := application.TraitRow{Taxon: "Acer opalus", Vocab: "eive", VocabVersion: "1.0", Dim: "M", Value: 1.0}
+	aggRow := application.TraitRow{Taxon: "Acer opalus aggr.", Vocab: "eive", VocabVersion: "1.0", Dim: "M", Value: 9.0}
+
+	for _, tc := range []struct {
+		name string
+		rows []application.TraitRow
+	}{
+		{"exact first", []application.TraitRow{exactRow, aggRow}},
+		{"aggregate first", []application.TraitRow{aggRow, exactRow}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { assertExactOwnsTheSlot(t, tc.rows) })
+	}
+}
+
+// assertExactOwnsTheSlot runs one row order of
+// TestIngestTraits_ExactMatchWinsTheSlotRegardlessOfRowOrder and checks that
+// the exactly-matched value is the one stored, uncredited to any rule.
+func assertExactOwnsTheSlot(t *testing.T, rows []application.TraitRow) {
+	t.Helper()
+	repo := seededMatchRepo(t)
+	ids := seedBackboneNames(t, repo, "test-slot", "Acer opalus")
+	ctx := context.Background()
+
+	report, err := application.IngestTraits(ctx, repo, fakeTraitRowSource{rows: rows}, eiveMeta)
+	if err != nil {
+		t.Fatalf("IngestTraits: unexpected error: %v", err)
+	}
+	// Both rows resolved, so both count as matched...
+	if report.Matched != 2 {
+		t.Errorf("report.Matched = %d, want 2 (both rows resolve)", report.Matched)
+	}
+	// ...but only the exact one was stored, so no rule may claim a gain.
+	if len(report.Normalized) != 0 {
+		t.Errorf("report.Normalized = %+v, want empty — the aggregate row stored nothing", report.Normalized)
+	}
+	if len(report.FlaggedSample) != 0 {
+		t.Errorf("report.FlaggedSample = %v, want empty", report.FlaggedSample)
+	}
+
+	sets, err := repo.Traits(ctx, ids["Acer opalus"], nil)
+	if err != nil {
+		t.Fatalf("Traits: unexpected error: %v", err)
+	}
+	if len(sets) != 1 || len(sets[0].Values) != 1 {
+		t.Fatalf("Traits = %+v, want exactly one stored value", sets)
+	}
+	got := sets[0].Values[0]
+	if got.Value != 1.0 {
+		t.Errorf("stored value = %v, want 1.0 (the exact match, never the aggregate's 9.0)", got.Value)
+	}
+	if got.Resolution != "" {
+		t.Errorf("stored Resolution = %q, want empty (the exact match owns the slot)", got.Resolution)
+	}
+}
+
+// TestIngestTraits_TwoNormalisedRowsOnOneSlotCreditExactlyOne guards the
+// other half of selectTraitWinners: when NO exact row competes, the first
+// row in order keeps the slot, and the loser is credited to no rule — so the
+// Normalized counts still agree with what the database actually holds.
+func TestIngestTraits_TwoNormalisedRowsOnOneSlotCreditExactlyOne(t *testing.T) {
+	repo := seededMatchRepo(t)
+	ids := seedBackboneNames(t, repo, "test-slot2", "Acer opalus")
+	ctx := context.Background()
+
+	src := fakeTraitRowSource{rows: []application.TraitRow{
+		{Taxon: "Acer opalus aggr.", Vocab: "eive", VocabVersion: "1.0", Dim: "M", Value: 7.0},
+		{Taxon: "Acer opalus s. l.", Vocab: "eive", VocabVersion: "1.0", Dim: "M", Value: 8.0},
+	}}
+	report, err := application.IngestTraits(ctx, repo, src, eiveMeta)
+	if err != nil {
+		t.Fatalf("IngestTraits: unexpected error: %v", err)
+	}
+	if report.Matched != 2 {
+		t.Errorf("report.Matched = %d, want 2", report.Matched)
+	}
+	want := []application.RuleCount{{Rule: domain.RuleAggregateToNominate, Rows: 1, Taxa: 1, Flagged: true}}
+	if len(report.Normalized) != 1 || report.Normalized[0] != want[0] {
+		t.Errorf("report.Normalized = %+v, want %+v (only the stored row is credited)", report.Normalized, want)
+	}
+
+	sets, err := repo.Traits(ctx, ids["Acer opalus"], nil)
+	if err != nil {
+		t.Fatalf("Traits: unexpected error: %v", err)
+	}
+	if len(sets) != 1 || len(sets[0].Values) != 1 || sets[0].Values[0].Value != 7.0 {
+		t.Errorf("Traits = %+v, want the FIRST row's value (7.0) to own the slot", sets)
+	}
+}
+
+// TestIngestTraits_UnflaggedNormalisedRuleWinsOverFlaggedRegardlessOfRowOrder
+// is Hardening Task 6's A1 fix: selectTraitWinners previously ranked
+// contending NORMALISED rows purely by CSV row order, so a FLAGGED rule
+// (aggregate_to_nominate, autonym — these equate two circumscriptions that
+// are not identical) could beat an UNFLAGGED, pure-spelling rule
+// (hybrid_spacing, hybrid_marker_*, orthography_genitive — circumscription
+// unchanged) purely because it happened to appear first in the source CSV.
+//
+// Both rows here resolve to the SAME backbone concept ("Cardamine
+// plumieri") through two DIFFERENT normalised rules:
+//   - "Cardamine plumierii" -> orthography_genitive (unflagged, pure
+//     spelling: -ii/-i alternation).
+//   - "Cardamine plumieri subsp. plumieri" -> autonym (flagged: equates an
+//     infraspecific autonym to its species).
+//
+// The unflagged row must win the slot in BOTH row orders.
+func TestIngestTraits_UnflaggedNormalisedRuleWinsOverFlaggedRegardlessOfRowOrder(t *testing.T) {
+	genitiveRow := application.TraitRow{Taxon: "Cardamine plumierii", Vocab: "eive", VocabVersion: "1.0", Dim: "M", Value: 1.0}
+	autonymRow := application.TraitRow{Taxon: "Cardamine plumieri subsp. plumieri", Vocab: "eive", VocabVersion: "1.0", Dim: "M", Value: 9.0}
+
+	for _, tc := range []struct {
+		name string
+		rows []application.TraitRow
+	}{
+		{"genitive first", []application.TraitRow{genitiveRow, autonymRow}},
+		{"autonym first", []application.TraitRow{autonymRow, genitiveRow}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { assertUnflaggedOwnsTheSlot(t, tc.rows) })
+	}
+}
+
+// assertUnflaggedOwnsTheSlot runs one row order of
+// TestIngestTraits_UnflaggedNormalisedRuleWinsOverFlaggedRegardlessOfRowOrder.
+func assertUnflaggedOwnsTheSlot(t *testing.T, rows []application.TraitRow) {
+	t.Helper()
+	repo := seededMatchRepo(t)
+	ids := seedBackboneNames(t, repo, "test-slot3", "Cardamine plumieri")
+	ctx := context.Background()
+
+	report, err := application.IngestTraits(ctx, repo, fakeTraitRowSource{rows: rows}, eiveMeta)
+	if err != nil {
+		t.Fatalf("IngestTraits: unexpected error: %v", err)
+	}
+	if report.Matched != 2 {
+		t.Errorf("report.Matched = %d, want 2 (both rows resolve)", report.Matched)
+	}
+	want := []application.RuleCount{{Rule: domain.RuleOrthographyGenitive, Rows: 1, Taxa: 1}}
+	if len(report.Normalized) != 1 || report.Normalized[0] != want[0] {
+		t.Errorf("report.Normalized = %+v, want %+v — the flagged autonym row must not be credited, it stored nothing", report.Normalized, want)
+	}
+	if len(report.FlaggedSample) != 0 {
+		t.Errorf("report.FlaggedSample = %v, want empty — the flagged row lost the slot, so it must not surface as a judgement call actually applied", report.FlaggedSample)
+	}
+
+	sets, err := repo.Traits(ctx, ids["Cardamine plumieri"], nil)
+	if err != nil {
+		t.Fatalf("Traits: unexpected error: %v", err)
+	}
+	if len(sets) != 1 || len(sets[0].Values) != 1 {
+		t.Fatalf("Traits = %+v, want exactly one stored value", sets)
+	}
+	got := sets[0].Values[0]
+	if got.Value != 1.0 {
+		t.Errorf("stored value = %v, want 1.0 (the unflagged genitive match, never the flagged autonym's 9.0)", got.Value)
+	}
+	if got.Resolution != string(domain.RuleOrthographyGenitive) {
+		t.Errorf("stored Resolution = %q, want %q", got.Resolution, domain.RuleOrthographyGenitive)
+	}
 }

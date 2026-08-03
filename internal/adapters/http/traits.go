@@ -31,6 +31,17 @@ type scaleDTO struct {
 // silently-invented 0 — that would fabricate data the ingested vocabulary
 // never asserted.
 //
+// Resolution follows the same rule for the same reason: it is OMITTED for
+// the ordinary case (an exact canonical match between the vocabulary's
+// taxon name and the concept's name), and present only when a deterministic
+// normalisation rule was needed to reach this concept
+// (domain.TraitValue.Resolution). Two of those rules —
+// `aggregate_to_nominate` and `autonym` — equate circumscriptions that are
+// not identical, so a client that renders an aggregate's collective mean as
+// if it were measured on the nominate species would be asserting something
+// the vocabulary never said. Absence of the field is the positive statement
+// "this value matched exactly"; it is never a stand-in for "unknown".
+//
 // Scale is rendered PER VALUE, not once per traitSetDTO: Tichý's own
 // per-dimension ranges genuinely differ (T is 1-12, L is 1-9 —
 // domain.ScaleFor's doc comment), so one scale field shared by an entire
@@ -41,6 +52,7 @@ type traitValueDTO struct {
 	Value      float64  `json:"value"`
 	NicheWidth *float64 `json:"niche_width,omitempty"`
 	NSystems   *int     `json:"n_systems,omitempty"`
+	Resolution string   `json:"resolution,omitempty"`
 	Scale      scaleDTO `json:"scale"`
 }
 
@@ -79,6 +91,7 @@ func traitSetsToDTO(conceptID string, sets []domain.TraitSet) traitsResponseDTO 
 				Value:      v.Value,
 				NicheWidth: v.NicheWidth,
 				NSystems:   v.NSystems,
+				Resolution: v.Resolution,
 				Scale:      scaleDTO{Min: min, Max: max, Normalized: normalized},
 			}
 		}

@@ -398,6 +398,18 @@ components:
         rank:
           type: string
           example: SPECIES
+        rank_verbatim:
+          type: string
+          description: >-
+            Ursprüngliche Quell-Schreibweise des taxonomischen Rangs (z. B.
+            WCVPs `proles`), wenn `rank` = `OTHER` ist — der eine Fall, in
+            dem der kanonische `rank`-Wert allein verbergen würde, welchen
+            exotischen Rang dieses Concept tatsächlich trägt. Fehlt das Feld
+            (nie ein leerer String!) bei jedem kanonisch eingestuften
+            Concept — Abwesenheit bedeutet "nicht zutreffend", nicht
+            "unbekannt" (gleiches Ehrlichkeitsmuster wie `homotypic`/
+            `niche_width`).
+          example: proles
         status:
           type: string
           example: ACCEPTED
@@ -639,6 +651,35 @@ components:
             Anzahl Quellsysteme. Nur bei EIVE gesetzt; bei Tichý/Midolo
             fehlt das Feld ganz (nicht `0`), aus demselben Grund wie
             `niche_width`.
+        resolution:
+          type: string
+          enum:
+            - hybrid_spacing
+            - hybrid_marker_dropped
+            - hybrid_marker_added
+            - aggregate
+            - aggregate_to_nominate
+            - autonym
+            - orthography_genitive
+          description: >-
+            Deterministische Normalisierungsregel, über die der Taxonname des
+            Vokabulars auf dieses Concept aufgelöst wurde. **Fehlt das Feld
+            ganz, war es ein exakter Namenstreffer** — das ist der Normalfall
+            und die positive Aussage "keine Umschreibung nötig", kein
+            "unbekannt" (gleiches Ehrlichkeitsmuster wie `niche_width`/
+            `rank_verbatim`).
+
+            Zwei der Regeln setzen Umgrenzungen gleich, die **nicht**
+            identisch sind, und sind deshalb für Konsumenten entscheidend:
+            `aggregate_to_nominate` (eine Sammelart ist WEITER als ihre
+            Nominatart — der Wert ist ein Kollektivmittel, das das Vokabular
+            nie über diese eine Art ausgesagt hat) und `autonym` (ein Autonym
+            ist ENGER als seine Art; das Rückgrat führt die infraspezifische
+            Gliederung hier gar nicht). Wer diese Näherung nicht akzeptieren
+            kann, filtert auf genau diese beiden Werte. Die übrigen Regeln
+            sind reine Schreibweisen-Korrekturen (Hybridmarker,
+            `-ii`/`-i`-Genitiv) und ändern die Umgrenzung nicht.
+          example: aggregate_to_nominate
         scale:
           $ref: '#/components/schemas/Scale'
           description: >-

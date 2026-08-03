@@ -77,6 +77,12 @@ jobs:
         env:
           GOFLAGS: -p=1
           GOMEMLIMIT: 4GiB
+          # gremlins defaults its worker count to the CPU count, and each worker
+          # holds its own recompilation of the package in memory. One worker is
+          # what finally fits internal/adapters/telemetry (OTel SDK) into a 7 GB
+          # runner; the matrix already restored the wall-clock the serialisation
+          # costs by running the seven packages in parallel.
+          MUTATION_WORKERS: '1'
         run: |
           set -uo pipefail
           pkg='${{ matrix.pkg }}'

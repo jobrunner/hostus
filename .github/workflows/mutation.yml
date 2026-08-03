@@ -46,6 +46,18 @@ jobs:
       # .gremlins.yaml, or gremlins exits non-zero and the job fails. All
       # packages run (so the report shows every one) before the job fails.
       - name: Run mutation testing
+        # GOFLAGS/GOMEMLIMIT cap the Go toolchain's memory. gremlins recompiles the
+        # package once per mutant, and internal/adapters/telemetry pulls the whole
+        # OpenTelemetry SDK (otelmux, otlptrace/otlpmetric): measured locally, the
+        # toolchain peaks at ~6.1 GB RSS on that package. A standard ubuntu-latest
+        # runner has 7 GB, so the job was OOM-killed mid-run — twice, both times
+        # surfacing as "the runner has received a shutdown signal" / exit 143 after
+        # ~2 min against a 60 min timeout, which reads like a flake and is not one.
+        # -p=1 serialises compile actions; GOMEMLIMIT makes the GC work harder
+        # before the kernel decides for us.
+        env:
+          GOFLAGS: -p=1
+          GOMEMLIMIT: 4GiB
         run: |
           set -uo pipefail
           fail=0

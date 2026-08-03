@@ -1,0 +1,6 @@
+backbones:
+  - id: wcvp
+    version: "2026-06-15"
+    license: CC-BY-4.0
+    source: https://sftp.kew.org/pub/data-repositories/WCVP/
+    path: ../../../internal/adapters/wcvp/testdata/wcvp-sample

@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gorilla/mux/otelmux"
 
 	"github.com/jobrunner/hostus/internal/middleware"
+	"github.com/jobrunner/hostus/internal/ports/output"
 )
 
 // Fallback defaults applied when the corresponding Deps field is left at
@@ -61,6 +62,12 @@ type Deps struct {
 	// public taxonomy/trait index with no auth or user data, so a
 	// permissive default doesn't expose anything sensitive).
 	CORSAllowedOrigins []string
+
+	// Repo backs /v1/concept, /v1/xref and /v1/match. A nil Repo means
+	// those routes are not mounted (only health/metrics are), so a
+	// zero-value Deps{} (as used by the existing middleware/health tests)
+	// stays safe to serve.
+	Repo output.Repository
 }
 
 // NewRouter assembles the hostus HTTP surface: the fixed middleware chain
@@ -116,8 +123,14 @@ func NewRouter(deps Deps) *mux.Router {
 	r.Use(middleware.Metrics)
 
 	r.HandleFunc("/health/live", handleHealthLive).Methods(http.MethodGet)
-	r.HandleFunc("/health/ready", handleHealthReady).Methods(http.MethodGet)
+	r.HandleFunc("/health/ready", handleHealthReady(deps.Repo)).Methods(http.MethodGet)
 	r.Handle("/metrics", promhttp.Handler()).Methods(http.MethodGet)
+
+	if deps.Repo != nil {
+		r.HandleFunc("/v1/concept/{id}", handleConcept(deps.Repo)).Methods(http.MethodGet)
+		r.HandleFunc("/v1/xref", handleXref(deps.Repo)).Methods(http.MethodGet)
+		r.HandleFunc("/v1/match", handleMatch(deps.Repo)).Methods(http.MethodPost)
+	}
 
 	return r
 }

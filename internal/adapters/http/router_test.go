@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	httpx "github.com/jobrunner/hostus/internal/adapters/http"
+	"github.com/jobrunner/hostus/internal/adapters/sqlite"
 )
 
 func TestHealthLive(t *testing.T) {
@@ -26,12 +27,49 @@ func TestRequestIDHeaderPresent(t *testing.T) {
 	}
 }
 
-func TestHealthReady(t *testing.T) {
+// TestHealthReady_NoRepo_Returns503 pins the readiness gate's default: a
+// zero-value Deps (no injected repository, e.g. serve started without a
+// configured/openable SQLite database) must report not-ready, not silently
+// claim to be healthy.
+func TestHealthReady_NoRepo_Returns503(t *testing.T) {
 	r := httpx.NewRouter(httpx.Deps{})
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, httptest.NewRequest("GET", "/health/ready", nil))
+	if rr.Code != 503 {
+		t.Fatalf("got %d, want 503 (no repo injected)", rr.Code)
+	}
+}
+
+// TestHealthReady_RepoWithoutBackboneVersions_Returns503 pins the "opened
+// but empty" case: a repo is injected (the database opened successfully)
+// but no backbone has ever been ingested into it, so there is nothing yet
+// worth serving.
+func TestHealthReady_RepoWithoutBackboneVersions_Returns503(t *testing.T) {
+	db, err := sqlite.Open(":memory:")
+	if err != nil {
+		t.Fatalf("sqlite.Open(:memory:): unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	r := httpx.NewRouter(httpx.Deps{Repo: db})
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest("GET", "/health/ready", nil))
+	if rr.Code != 503 {
+		t.Fatalf("got %d, want 503 (no backbone_version rows yet)", rr.Code)
+	}
+}
+
+// TestHealthReady_RepoWithBackboneVersions_Returns200 pins the positive
+// path: once at least one backbone has been ingested, readiness must flip
+// to 200.
+func TestHealthReady_RepoWithBackboneVersions_Returns200(t *testing.T) {
+	repo := seededRepo(t)
+
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest("GET", "/health/ready", nil))
 	if rr.Code != 200 {
-		t.Fatalf("got %d", rr.Code)
+		t.Fatalf("got %d, want 200 (body: %s)", rr.Code, rr.Body.String())
 	}
 }
 

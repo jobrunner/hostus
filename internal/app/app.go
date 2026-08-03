@@ -11,8 +11,10 @@ import (
 	"time"
 
 	httpx "github.com/jobrunner/hostus/internal/adapters/http"
+	"github.com/jobrunner/hostus/internal/adapters/sqlite"
 	"github.com/jobrunner/hostus/internal/adapters/telemetry"
 	"github.com/jobrunner/hostus/internal/config"
+	"github.com/jobrunner/hostus/internal/ports/output"
 )
 
 // serveLogWriter is the second sink for the app logger's fan-out handler,
@@ -56,9 +58,16 @@ type App struct {
 	// Router is the fully assembled HTTP handler (middleware chain, health
 	// probes, metrics endpoint).
 	Router http.Handler
+	// Repo backs the HTTP router's /v1/... routes and readiness probe. Nil
+	// when cfg.SQLite.Path is empty or the database could not be opened —
+	// serve still starts in that case, but /health/ready stays 503 (see
+	// internal/adapters/http.handleHealthReady) until a database with at
+	// least one backbone_version row is injected.
+	Repo output.Repository
 
 	shutdownTelemetry func(context.Context) error
 	server            *http.Server
+	closeRepo         func() error
 }
 
 // New builds an App from cfg: telemetry providers and ring buffers via
@@ -80,9 +89,12 @@ func New(cfg *config.Config) (*App, error) {
 		slog.NewTextHandler(serveLogWriter, nil),
 	))
 
+	repo, closeRepo := openRepo(cfg, logger)
+
 	router := httpx.NewRouter(httpx.Deps{
 		Logger:             logger,
 		CORSAllowedOrigins: cfg.CORS.AllowedOrigins,
+		Repo:               repo,
 	})
 
 	return &App{
@@ -90,8 +102,32 @@ func New(cfg *config.Config) (*App, error) {
 		Logger:            logger,
 		Telemetry:         providers,
 		Router:            router,
+		Repo:              repo,
 		shutdownTelemetry: shutdownTelemetry,
+		closeRepo:         closeRepo,
 	}, nil
+}
+
+// openRepo opens cfg.SQLite.Path as the output.Repository the HTTP router
+// serves reads from. An empty path or an open failure degrades to (nil,
+// nil) rather than failing New outright: `hostus serve` must still start
+// (and report itself live) even before a database has been ingested, with
+// /health/ready gating readiness on the repo's presence instead (see
+// internal/adapters/http.handleHealthReady). Read-write, not read-only:
+// modernc.org/sqlite has no read-only open mode, and Open's schema
+// application is idempotent (IF NOT EXISTS DDL) — serve itself never
+// issues any other write.
+func openRepo(cfg *config.Config, logger *slog.Logger) (output.Repository, func() error) {
+	if cfg.SQLite.Path == "" {
+		return nil, nil
+	}
+	db, err := sqlite.Open(cfg.SQLite.Path)
+	if err != nil {
+		logger.Warn("opening sqlite database; readiness will stay unavailable until this is fixed",
+			"path", cfg.SQLite.Path, "error", err)
+		return nil, nil
+	}
+	return db, db.Close
 }
 
 // Serve starts an HTTP server on Config.Server's host:port and blocks until
@@ -142,6 +178,11 @@ func (a *App) Shutdown(ctx context.Context) error {
 	if a.server != nil {
 		if err := a.server.Shutdown(ctx); err != nil {
 			errs = append(errs, fmt.Errorf("shutting down http server: %w", err))
+		}
+	}
+	if a.closeRepo != nil {
+		if err := a.closeRepo(); err != nil {
+			errs = append(errs, fmt.Errorf("closing sqlite database: %w", err))
 		}
 	}
 	if a.shutdownTelemetry != nil {

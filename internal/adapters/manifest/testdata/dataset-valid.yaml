@@ -1,0 +1,18 @@
+backbones:
+  - id: wcvp
+    version: "2026-06-15"
+    license: CC-BY-4.0
+    source: https://sftp.kew.org/pub/data-repositories/WCVP/
+    path: ../../wcvp/testdata/wcvp-sample
+  - id: colxr
+    version: "2026-06-15"
+    license: CC-BY-4.0
+    source: https://download.checklistbank.org/col/
+    path: ../../wcvp/testdata/wcvp-sample
+trait_vocabularies:
+  - id: eive
+    version: "1.0"
+    taxonomy: euromed-via-eurosl
+  - id: tichy2023
+    version: "1.0"
+    taxonomy: floraveg

@@ -1,12 +1,16 @@
-# hostus OpenAPI baseline (SP0 skeleton).
+# hostus OpenAPI baseline.
 #
-# Hand-written for now — documents only the endpoints that exist today
-# (health probes + metrics). This is the baseline the `openapi-diff.yml`
-# CI workflow diffs future changes against (breaking-change detection via
-# oasdiff). Once the SP1+ taxonomy endpoints (e.g. GET /api/v1/taxa/suggest,
-# GET /openapi) land, this spec becomes CODE-GENERATED from the handler
-# definitions rather than hand-maintained (see CLAUDE.md: "OpenAPI must be
-# code-generated (no manual spec maintenance)").
+# Hand-written for now (see CLAUDE.md: "OpenAPI must be code-generated (no
+# manual spec maintenance)" — that migration is a later SP once a
+# code-generation toolchain is wired up; SP1 keeps this hand-maintained but
+# strictly accurate to the actual handler behaviour in internal/adapters/http).
+# This is the baseline the `openapi-diff.yml` CI workflow diffs future
+# changes against (breaking-change detection via oasdiff).
+#
+# SP1 adds the local SQLite/FTS5-backed `/v1/concept/{id}`, `/v1/xref` and
+# `/v1/match` endpoints on top of the SP0 health/metrics skeleton. Their
+# shapes below mirror internal/adapters/http/taxa.go's DTOs exactly — no
+# aspirational fields (traits, suggest, translate are later SPs).
 openapi: 3.0.3
 info:
   title: hostus API
@@ -14,9 +18,10 @@ info:
     Multi-Backbone-Namens- und Merkmalsdienst für Gefäßpflanzen-Taxonomie.
     Lokaler, schreibgeschützter Namens- und Merkmalsdienst für ein
     Frontend-Autosuggest-Feld, gespeist aus einem eigenen SQLite/FTS5-Index
-    (COL XR, WCVP/POWO, Euro+Med, FloraVeg.EU). GBIF ist höchstens eine von
-    mehreren Ingest-/Enrichment-Quellen, kein Laufzeit-Provider.
-  version: 0.2.4
+    (aktuell: WCVP/POWO; COL XR, Euro+Med, FloraVeg.EU folgen). GBIF ist
+    höchstens eine von mehreren Ingest-/Enrichment-Quellen, kein
+    Laufzeit-Provider.
+  version: 0.3.0
   license:
     name: MIT
 servers:
@@ -42,14 +47,17 @@ paths:
       operationId: getHealthReady
       summary: Readiness-Probe
       description: >-
-        Antwortet 200, sobald der Service bereit ist, Traffic zu bedienen.
-        Im aktuellen Skeleton identisch zu /health/live (keine Abhängigkeiten
-        wie GBIF-Erreichbarkeit oder Cache-Warm-up zu prüfen; folgt in SP1).
+        Antwortet 200, sobald mindestens ein Backbone erfolgreich in die
+        lokale SQLite-Datenbank eingelesen wurde (`hostus ingest`). Antwortet
+        503, solange keine Datenbank konfiguriert ist, sie sich nicht öffnen
+        lässt, oder noch kein Backbone eingelesen wurde.
       tags:
         - health
       responses:
         '200':
-          description: Service ist bereit.
+          description: Service ist bereit, `/v1/*`-Anfragen zu bedienen.
+        '503':
+          description: Noch nicht bereit (keine Datenbank oder leere Datenbank).
 
   /metrics:
     get:
@@ -66,8 +74,313 @@ paths:
               schema:
                 type: string
 
+  /v1/concept/{id}:
+    get:
+      operationId: getConcept
+      summary: Concept per ID auflösen
+      description: >-
+        Löst eine `taxon_concept`-ID zum vollständigen Concept auf: Anzeigename,
+        Rang, Status, Backbone-Herkunft, Cross-References und gruppierte
+        Synonyme.
+      tags:
+        - taxa
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: >-
+            Concept-ID im Format `<backbone-id>:concept:<taxon-id>`, z. B.
+            `wcvp:concept:405825`.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Das aufgelöste Concept.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Concept'
+        '404':
+          description: Unbekannte Concept-ID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/xref:
+    get:
+      operationId: getXref
+      summary: Concept per Cross-Reference auflösen
+      description: >-
+        Löst eine externe Cross-Reference (z. B. eine POWO-ID) zum
+        zugehörigen Concept auf und liefert dieselbe Concept-Repräsentation
+        wie `GET /v1/concept/{id}`.
+      tags:
+        - taxa
+      parameters:
+        - name: authority
+          in: query
+          required: true
+          description: Name der externen Autorität, z. B. `powo`.
+          schema:
+            type: string
+        - name: id
+          in: query
+          required: true
+          description: ID innerhalb der externen Autorität, z. B. `396681-1`.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Das aufgelöste Concept.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Concept'
+        '400':
+          description: "`authority` und/oder `id` fehlen."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Cross-Reference unbekannt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/match:
+    post:
+      operationId: postMatch
+      summary: Verbatim-Namen batch-weise auflösen
+      description: >-
+        Löst eine Liste verbatimer Namen (z. B. aus einem Vegetationsaufnahme-
+        Import) gegen den lokalen Index auf. Jeder Eintrag wird unabhängig
+        klassifiziert (`exact`, `exact_author`, `aggregate_alias` oder
+        `unresolvable`); ein `unresolvable`-Ergebnis ist ein normales
+        Element der 200er-Antwort, kein HTTP-Fehler. Nur ein fehlerhafter
+        Request-Body liefert einen 400-Fehler.
+      tags:
+        - taxa
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MatchRequest'
+      responses:
+        '200':
+          description: Klassifizierungsergebnis pro angefragtem Namen.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MatchResponse'
+        '400':
+          description: Fehlerhafter (nicht parsbarer) Request-Body.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 tags:
   - name: health
     description: Liveness- und Readiness-Probes für Orchestratoren.
   - name: observability
     description: Metriken und Tracing.
+  - name: taxa
+    description: >-
+      Taxonomie-Auflösung gegen den lokalen SQLite/FTS5-Index (Concept-
+      Lookup, Cross-Reference-Auflösung, Batch-Namensabgleich).
+
+components:
+  schemas:
+    BackboneRef:
+      type: object
+      required: [id, version]
+      properties:
+        id:
+          type: string
+          example: wcvp
+        version:
+          type: string
+          example: '2026-06-15'
+
+    Synonym:
+      type: object
+      required: [canonical]
+      properties:
+        canonical:
+          type: string
+          example: Weingaertneria canescens var. pallida
+        authorship:
+          type: string
+          example: Beckh.
+        homotypic:
+          type: boolean
+          description: >-
+            Aktuell nie gesetzt (SP1 ingestiert diese Information noch
+            nicht); für spätere SPs reserviert.
+
+    Distribution:
+      type: object
+      required: [area_scheme, area_code]
+      properties:
+        area_scheme:
+          type: string
+          description: 'Referenzgebiets-Schema, z. B. `wgsrpd_l3`.'
+          example: wgsrpd_l3
+        area_code:
+          type: string
+          example: GER
+
+    Concept:
+      type: object
+      required: [concept_id, display, canonical, rank, status, backbone, synonyms]
+      properties:
+        concept_id:
+          type: string
+          example: 'wcvp:concept:405825'
+        display:
+          type: string
+          description: Kanonischer Name inklusive Autorenzitat (falls vorhanden).
+          example: Corynephorus canescens (L.) P.Beauv.
+        canonical:
+          type: string
+          example: Corynephorus canescens
+        vernacular_de:
+          type: string
+          description: >-
+            Deutscher Trivialname. Aktuell immer leer (SP1 surfaced die
+            Vernakular-Tabelle noch nicht); für spätere SPs reserviert.
+        rank:
+          type: string
+          example: SPECIES
+        status:
+          type: string
+          example: ACCEPTED
+        backbone:
+          $ref: '#/components/schemas/BackboneRef'
+        xrefs:
+          type: object
+          description: 'Autorität → externe ID, z. B. `{"powo": "396681-1"}`.'
+          additionalProperties:
+            type: string
+        classification:
+          type: array
+          description: >-
+            Übergeordnete Klassifikationskette. Aktuell immer leer (SP1
+            ingestiert keine Eltern-Verknüpfungen); für spätere SPs
+            reserviert.
+          items:
+            type: string
+        synonyms:
+          type: array
+          items:
+            $ref: '#/components/schemas/Synonym'
+        distribution:
+          type: array
+          description: >-
+            Referenzgebiets-Zuordnungen (WGSRPD L3 o. ä.), ungeordnet nach
+            Schema/Code. Leer, wenn der Backbone keine Distribution für
+            dieses Concept liefert.
+          items:
+            $ref: '#/components/schemas/Distribution'
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - INVALID_QUERY
+                - RATE_LIMIT_EXCEEDED
+                - UPSTREAM_OVERLOADED
+                - NOT_FOUND
+                - UNRESOLVABLE
+                - GBIF_TIMEOUT
+                - GBIF_UNAVAILABLE
+                - INTERNAL_ERROR
+            message:
+              type: string
+              example: concept not found
+
+    MatchNameRequest:
+      type: object
+      required: [id, verbatim]
+      properties:
+        id:
+          type: string
+          description: Vom Aufrufer vergebene ID, um Ergebnisse zuzuordnen.
+          example: '1'
+        verbatim:
+          type: string
+          example: Senecio jacobaea L.
+
+    MatchRequest:
+      type: object
+      required: [names]
+      properties:
+        names:
+          type: array
+          items:
+            $ref: '#/components/schemas/MatchNameRequest'
+        target_space:
+          type: string
+          description: >-
+            Wird entgegengenommen, aber in SP1 nicht ausgewertet (Sekundär-
+            raum-Übersetzung folgt in SP5 als `POST /v1/translate`).
+        sec_hint:
+          type: string
+          description: Wird entgegengenommen, aber in SP1 nicht ausgewertet.
+
+    MatchResult:
+      type: object
+      required: [id, match_type, confidence]
+      properties:
+        id:
+          type: string
+          description: Spiegelt die `id` aus der Anfrage.
+        match_type:
+          type: string
+          enum: [exact, exact_author, aggregate_alias, unresolvable]
+        confidence:
+          type: number
+          format: double
+          example: 0.99
+        concept_id:
+          type: string
+          description: Nur gesetzt, wenn ein Concept aufgelöst werden konnte.
+        candidates:
+          type: array
+          description: >-
+            Kandidaten-Kanonicalnamen, deren Autor nicht eindeutig
+            klassifiziert werden konnte (nur bei `unresolvable`).
+          items:
+            type: string
+        requires_review:
+          type: boolean
+          description: Gesetzt, wenn das Ergebnis manuelle Prüfung nahelegt.
+        note:
+          type: string
+          description: Menschenlesbare Erläuterung, z. B. für Aggregate.
+          example: 'Aggregat, keine Kleinartauflösung'
+
+    MatchResponse:
+      type: object
+      required: [backbone_versions, results]
+      properties:
+        backbone_versions:
+          type: object
+          description: Backbone-ID → Version, für alle ingestierten Backbones.
+          additionalProperties:
+            type: string
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/MatchResult'

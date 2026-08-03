@@ -1,0 +1,53 @@
+package output
+
+import (
+	"context"
+
+	"github.com/jobrunner/hostus/internal/domain"
+)
+
+// Repository is the driven port through which the application reaches the
+// local taxonomy index. Read methods surface domain.ErrNotFound (wrapped)
+// for missing entities; ingest methods are exposed via BeginIngest/IngestTx
+// so an adapter can batch a whole backbone import into one transaction.
+type Repository interface {
+	// Concept resolves a taxon_concept by id, returning its accepted
+	// concept, its synonym names, its cross-references, and its
+	// distribution. Returns domain.ErrNotFound (wrapped) if id is unknown.
+	Concept(ctx context.Context, id string) (*domain.Concept, []domain.Name, []domain.Xref, []domain.Distribution, error)
+	// ConceptByXref resolves a taxon_concept via a cross-reference to an
+	// external authority (e.g. authority="powo", extID="396681-1").
+	ConceptByXref(ctx context.Context, authority, extID string) (*domain.Concept, error)
+	// MatchExact returns every name (accepted or synonym) whose canonical
+	// form equals canon, leaving classification (exact vs. exact_author,
+	// etc.) to the application layer.
+	MatchExact(ctx context.Context, canon string) ([]MatchCandidate, error)
+	// BackboneVersions lists every ingested backbone artifact.
+	BackboneVersions(ctx context.Context) ([]domain.BackboneVersion, error)
+
+	// BeginIngest starts an ingest transaction for the given backbone
+	// version. Callers must Commit or Rollback the returned IngestTx.
+	BeginIngest(ctx context.Context, bv domain.BackboneVersion) (IngestTx, error)
+}
+
+// MatchCandidate is one row returned by Repository.MatchExact: a concept
+// together with the specific name that matched and the role that name
+// plays for that concept.
+type MatchCandidate struct {
+	Concept     domain.Concept
+	MatchedName domain.Name
+	Role        string // accepted|synonym
+}
+
+// IngestTx batches the writes of a single backbone ingest into one
+// transaction, so a partial/failed import never leaves the index in a
+// half-written state.
+type IngestTx interface {
+	UpsertName(n domain.Name) error
+	UpsertConcept(c domain.Concept) error
+	LinkName(conceptID, nameID, role string, homotypic *bool) error
+	AddXref(conceptID string, x domain.Xref) error
+	AddDistribution(conceptID string, d domain.Distribution) error
+	Commit() error
+	Rollback() error
+}

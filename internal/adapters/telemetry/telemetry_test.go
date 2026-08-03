@@ -399,3 +399,45 @@ func TestSetupWithoutOTLPStillActivatesMemoryExporters(t *testing.T) {
 		t.Fatalf("shutdown returned error: %v", err)
 	}
 }
+
+// TestSetupWithOTLPInstallsExportersAndStillCapturesInMemory covers the
+// `otlpEnabled` branch of Setup, which no test entered before: the two
+// exporter constructions inside it were reported by `make mutation
+// PKG=./internal/adapters/telemetry` as NOT COVERED, i.e. no test executed
+// those error checks at all. The gate in the Makefile's `mutation` target
+// now fails on that, so the branch gets a test.
+//
+// No network is involved. otlptracehttp.New / otlpmetrichttp.New build a
+// client lazily and do not dial, so a deliberately dead endpoint keeps the
+// test hermetic and fast; the point is that Setup takes the branch,
+// installs the batch processor and periodic reader alongside the always-on
+// in-memory exporters, and still returns usable providers.
+func TestSetupWithOTLPInstallsExportersAndStillCapturesInMemory(t *testing.T) {
+	cfg := &config.Config{
+		Telemetry: config.TelemetryConfig{
+			Enabled:     true,
+			Endpoint:    "127.0.0.1:1",
+			SampleRatio: 1.0,
+		},
+	}
+
+	providers, shutdown, err := telemetry.Setup(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Setup with OTLP enabled returned error: %v", err)
+	}
+	if providers.Memory == nil || providers.Log == nil {
+		t.Fatal("in-memory exporters must be installed alongside OTLP, not instead of it")
+	}
+
+	_, span := providers.TracerProvider.Tracer("t").Start(context.Background(), "otlp-op")
+	span.End()
+	if got := providers.Memory.Spans(); len(got) != 1 || got[0].Name != "otlp-op" {
+		t.Fatalf("want 1 span 'otlp-op' captured via the always-on memory exporter, got %+v", got)
+	}
+
+	// The dead endpoint makes the flush fail; that is expected and not what
+	// this test is about — shutdown must merely return rather than hang.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = shutdown(ctx)
+}

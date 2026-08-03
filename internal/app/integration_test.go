@@ -152,7 +152,257 @@ func TestIntegration_EndToEndIngestServeQuery(t *testing.T) {
 	assertXrefResolvesInat(t, client, ts.URL)
 	assertMatchBatch(t, client, ts.URL, aggConceptID)
 	assertSuggest(t, client, ts.URL)
+	assertSynonymsNomStatusFilter(t, client, ts.URL)
+	assertSynonymsRankFilter(t, client, ts.URL)
 	assertMetricsExposed(t, client, ts.URL)
+}
+
+// festucaOvinaConceptID is the WCVP fixture's Festuca ovina L. (415853). It
+// is the one fixture concept whose synonyms carry a populated
+// `nomenclaturalstatus`, which is what makes it the UC5 nom_status case:
+// Avena dura Salisb. is ", nom. illeg. superfl." and Festuca ovina var.
+// vulgaris Schrad. is ", not validly publ." — see
+// internal/adapters/wcvp/testdata/wcvp-sample/wcvp_taxon.csv.
+const festucaOvinaConceptID = "wcvp:concept:415853"
+
+// integrationSynonymsResponse mirrors internal/adapters/http.synonymsResponseDTO
+// (see synonyms.go), trimmed to the fields these assertions read.
+type integrationSynonymsResponse struct {
+	ConceptID       string `json:"concept_id"`
+	Relevance       string `json:"relevance"`
+	PublicationRank string `json:"publication_rank"`
+	Synonyms        []struct {
+		Position           int    `json:"position"`
+		NameID             string `json:"name_id"`
+		Canonical          string `json:"canonical"`
+		Rank               string `json:"rank"`
+		Typification       string `json:"typification"`
+		NomStatus          string `json:"nom_status"`
+		NomStatusJudgement string `json:"nom_status_judgement"`
+		Publishable        bool   `json:"publishable"`
+		Exclusion          string `json:"exclusion"`
+		Reason             string `json:"reason"`
+	} `json:"synonyms"`
+	Summary struct {
+		Total                int            `json:"total"`
+		Publishable          int            `json:"publishable"`
+		Returned             int            `json:"returned"`
+		Absent               int            `json:"absent"`
+		Excluded             map[string]int `json:"excluded"`
+		UnclassifiedStatuses []string       `json:"unclassified_statuses"`
+	} `json:"summary"`
+}
+
+// getSynonyms drives GET /v1/concept/{id}/synonyms over real HTTP and
+// decodes the envelope.
+func getSynonyms(t *testing.T, client *http.Client, baseURL, conceptID, query string) integrationSynonymsResponse {
+	t.Helper()
+	url := baseURL + "/v1/concept/" + conceptID + "/synonyms"
+	if query != "" {
+		url += "?" + query
+	}
+	resp, err := client.Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s: status = %d, want 200", url, resp.StatusCode)
+	}
+	var out integrationSynonymsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decoding %s response: %v", url, err)
+	}
+	return out
+}
+
+// synonymNames returns the canonical names of a response's `synonyms`, in
+// response order.
+func synonymNames(res integrationSynonymsResponse) []string {
+	out := make([]string, 0, len(res.Synonyms))
+	for _, s := range res.Synonyms {
+		out = append(out, s.Canonical)
+	}
+	return out
+}
+
+// containsName reports whether names contains want.
+func containsName(names []string, want string) bool {
+	for _, n := range names {
+		if n == want {
+			return true
+		}
+	}
+	return false
+}
+
+// synonymReason returns the exclusion rule and reason the response gave for
+// one canonical name, and whether that name was present at all.
+func synonymReason(res integrationSynonymsResponse, canonical string) (string, string, bool) {
+	for _, s := range res.Synonyms {
+		if s.Canonical == canonical {
+			return s.Exclusion, s.Reason, true
+		}
+	}
+	return "", "", false
+}
+
+// assertSynonymsNomStatusFilter is SP6's end-to-end proof that UC5's
+// NOMENCLATURAL-STATUS criterion survives the full ingest -> serve -> HTTP
+// round trip, and that the response EXPLAINS the difference it made.
+//
+// Festuca ovina L. carries five synonyms in the fixture. Two of them have a
+// populated nomenclaturalstatus that domain.ClassifyNomStatus judges
+// disqualifying — Avena dura Salisb. (", nom. illeg. superfl.") and Festuca
+// ovina var. vulgaris Schrad. (", not validly publ.") — so
+// relevance=publication must return exactly the other three, BY NAME, and
+// the summary must attribute both removals to the nom_status rule rather
+// than merely coming back shorter. The unfiltered list must still carry all
+// five, each with its verdict: the filter is opt-in (see
+// application.RelevanceAll).
+func assertSynonymsNomStatusFilter(t *testing.T, client *http.Client, baseURL string) {
+	t.Helper()
+
+	wantAll := []string{
+		"Avena dura", "Avena ovina", "Bromus ovinus",
+		"Festuca duriuscula", "Festuca ovina var. vulgaris",
+	}
+	wantPublishable := []string{"Avena ovina", "Bromus ovinus", "Festuca duriuscula"}
+	wantGone := []string{"Avena dura", "Festuca ovina var. vulgaris"}
+
+	all := getSynonyms(t, client, baseURL, festucaOvinaConceptID, "")
+	if all.Relevance != "all" {
+		t.Errorf("unfiltered relevance = %q, want %q", all.Relevance, "all")
+	}
+	assertSynonymSet(t, "unfiltered", all, wantAll, nil)
+
+	pub := getSynonyms(t, client, baseURL, festucaOvinaConceptID, "relevance=publication&rank=species")
+	if pub.Relevance != "publication" {
+		t.Errorf("filtered relevance = %q, want %q", pub.Relevance, "publication")
+	}
+	if pub.PublicationRank != "species" {
+		t.Errorf("publication_rank = %q, want %q", pub.PublicationRank, "species")
+	}
+	// The point of the whole endpoint: SHORTER, and shorter for a stated
+	// reason. A count assertion alone would pass on the wrong three names.
+	assertShorterThan(t, pub, all)
+	assertSynonymSet(t, "filtered", pub, wantPublishable, wantGone)
+
+	// The exclusion summary must EXPLAIN the two missing rows, and it must
+	// describe the concept (five synonyms), not the returned page.
+	if pub.Summary.Total != len(wantAll) {
+		t.Errorf("summary.total = %d, want %d (the concept's synonyms, not the page)", pub.Summary.Total, len(wantAll))
+	}
+	if pub.Summary.Publishable != len(wantPublishable) {
+		t.Errorf("summary.publishable = %d, want %d", pub.Summary.Publishable, len(wantPublishable))
+	}
+	if got := pub.Summary.Excluded["nom_status"]; got != len(wantGone) {
+		t.Errorf("summary.excluded[nom_status] = %d, want %d (Avena dura + Festuca ovina var. vulgaris)", got, len(wantGone))
+	}
+	if len(pub.Summary.UnclassifiedStatuses) != 0 {
+		t.Errorf("summary.unclassified_statuses = %v, want empty (both statuses are classified)", pub.Summary.UnclassifiedStatuses)
+	}
+	if pub.Summary.Absent != len(wantPublishable) {
+		t.Errorf("summary.absent = %d, want %d — every published synonym here rests on an EMPTY nom_status",
+			pub.Summary.Absent, len(wantPublishable))
+	}
+
+	// ... and the list must name the rule per synonym, so a caller can audit
+	// the difference without re-deriving it.
+	assertSynonymExclusion(t, all, "Avena dura", "nom_status", "nom. illeg. superfl.", "disqualifying")
+}
+
+// assertSynonymSet checks a response's `synonyms` by NAME: every entry in
+// wantPresent must be there, no entry in wantAbsent may be, and the list
+// must hold exactly len(wantPresent) rows. Names rather than counts is the
+// whole point — a count assertion passes on the wrong three synonyms.
+func assertSynonymSet(t *testing.T, label string, res integrationSynonymsResponse, wantPresent, wantAbsent []string) {
+	t.Helper()
+	got := synonymNames(res)
+	for _, want := range wantPresent {
+		if !containsName(got, want) {
+			t.Errorf("%s synonyms = %v, want it to contain %q", label, got, want)
+		}
+	}
+	for _, gone := range wantAbsent {
+		if containsName(got, gone) {
+			t.Errorf("%s synonyms = %v, want %q to be excluded", label, got, gone)
+		}
+	}
+	if len(got) != len(wantPresent) {
+		t.Errorf("len(%s synonyms) = %d (%v), want %d", label, len(got), got, len(wantPresent))
+	}
+}
+
+// assertShorterThan pins the relation the endpoint exists for: filtering
+// must actually remove rows.
+func assertShorterThan(t *testing.T, filtered, unfiltered integrationSynonymsResponse) {
+	t.Helper()
+	if len(filtered.Synonyms) >= len(unfiltered.Synonyms) {
+		t.Errorf("filtered list (%d: %v) must be shorter than the unfiltered one (%d: %v)",
+			len(filtered.Synonyms), synonymNames(filtered),
+			len(unfiltered.Synonyms), synonymNames(unfiltered))
+	}
+}
+
+// assertSynonymExclusion checks that one named synonym carries the expected
+// exclusion rule and that its reason mentions every wantInReason fragment.
+func assertSynonymExclusion(t *testing.T, res integrationSynonymsResponse, canonical, wantExclusion string, wantInReason ...string) {
+	t.Helper()
+	exclusion, reason, ok := synonymReason(res, canonical)
+	if !ok {
+		t.Fatalf("synonyms = %v, want an entry for %q", synonymNames(res), canonical)
+	}
+	if exclusion != wantExclusion {
+		t.Errorf("%s: exclusion = %q, want %q", canonical, exclusion, wantExclusion)
+	}
+	for _, fragment := range wantInReason {
+		if !strings.Contains(reason, fragment) {
+			t.Errorf("%s: reason = %q, want it to mention %q", canonical, reason, fragment)
+		}
+	}
+}
+
+// assertSynonymsRankFilter is the RANK half of UC5, on Corynephorus
+// canescens — and it pins the gap the how-to documents rather than papering
+// over it. The fixture's four synonyms are two VARIETY rows, one FORM row
+// and one SUBSPECIES row, none of them with a nomenclatural status.
+// rank=species therefore withholds three, and the SUBSPECIES survives: UC5
+// names VARIETY/SUBVARIETY/FORM/SUBFORM and NOT subspecies
+// (domain.RanksBelowSpecies), so "Corynephorus canescens subsp. maritimus"
+// is published. If that ever changes, this assertion is the one that has to
+// be argued with.
+func assertSynonymsRankFilter(t *testing.T, client *http.Client, baseURL string) {
+	t.Helper()
+
+	// `relevance=all&rank=species` is the same JUDGEMENT as the filtered
+	// call, without the filtering: every synonym comes back, each carrying
+	// the verdict rank=species gave it. That is what makes the two lists
+	// comparable — a bare `relevance=all` passes no rank at all, so nothing
+	// would be judged excluded and the exclusion reasons below would be
+	// empty for a reason that has nothing to do with the data.
+	all := getSynonyms(t, client, baseURL, corynephorusConceptID, "relevance=all&rank=species")
+	pub := getSynonyms(t, client, baseURL, corynephorusConceptID, "relevance=publication&rank=species")
+	assertShorterThan(t, pub, all)
+	// The SUBSPECIES survivor is asserted BY NAME as the only publishable
+	// entry: that is the documented gap, not an accident.
+	assertSynonymSet(t, "filtered",
+		pub,
+		[]string{"Corynephorus canescens subsp. maritimus"},
+		[]string{
+			"Corynephorus canescens var. montana",
+			"Corynephorus canescens f. pallidus",
+			"Weingaertneria canescens var. pallida",
+		})
+
+	if got := pub.Summary.Excluded["rank"]; got != 3 {
+		t.Errorf("summary.excluded[rank] = %d, want 3 (two VARIETY + one FORM)", got)
+	}
+	if got := pub.Summary.Excluded["nom_status"]; got != 0 {
+		t.Errorf("summary.excluded[nom_status] = %d, want 0 — none of these four carries a status", got)
+	}
+
+	assertSynonymExclusion(t, all, "Corynephorus canescens f. pallidus", "rank", "FORM")
 }
 
 // assertHealthReady confirms /health/ready is 200 once app.Ingest has

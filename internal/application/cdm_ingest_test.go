@@ -122,6 +122,10 @@ func (r *fakeCDMRepo) ExistingConceptIDs(_ context.Context, ids []string) (map[s
 	return out, nil
 }
 
+func (r *fakeCDMRepo) SynonymCandidates(context.Context, string) ([]domain.SynonymCandidate, error) {
+	return nil, nil
+}
+
 func (r *fakeCDMRepo) SecReferences(context.Context) ([]domain.SecReference, error) {
 	return nil, nil
 }

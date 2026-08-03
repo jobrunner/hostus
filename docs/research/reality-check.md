@@ -2403,3 +2403,431 @@ diesen Anteil kennt. Das ist ehrlich als Deckungsgrenze zu kommunizieren,
 nicht zu verschweigen — ein Produkt, das UC2 auf Basis dieser Brücke
 ausliefert, muss den fehlenden Link für 58,5 % der Konzepte explizit als
 "nicht gefunden" behandeln, nicht stillschweigend nichts anzeigen.
+
+## SP6 Task 1 — `nom_status`/`published_in`: das tatsächlich gemessene Vokabular
+
+Ausgangsbefund: der WCVP-Reader las `nomenclaturalstatus` und
+`namepublishedin`, `domain.Name` hatte die Felder, der SQLite-Adapter schrieb
+die Spalten — aber der Mapper dazwischen (`internal/application/ingest.go`,
+und schon davor die DTO `application.TaxonRow` selbst) baute den Namen ohne
+beide Werte. Ergebnis im echten Index: `nom_status` bei **0 von 1.448.984**
+Namen gesetzt, `published_in` ebenso.
+
+### Messung
+
+Volle WCVP-DwC-A (`wcvp_taxon.csv`, 508 MB, 1.448.984 Namen / 440.534
+Konzepte / 964.762 Synonyme), Ingest über `hostus ingest` in eine frische
+SQLite-Datei, Laufzeit **5:03 min**. Also der komplette Korpus, keine
+Stichprobe, keine Hochrechnung.
+
+| Kennzahl | Wert |
+| --- | --- |
+| Namen gesamt | 1.448.984 |
+| davon mit nicht-leerem `nom_status` | **99.252 (6,85 %)** |
+| davon mit nicht-leerem `published_in` | **1.448.934 (99,997 %)** — nur 50 Namen ohne |
+| distinkte `nom_status`-Werte | **1.304** |
+| distinkte `published_in`-Werte | 853.152 |
+| `basionym_id` gesetzt (Kontrollwert, unverändert) | 429.172 |
+
+92.492 der 99.252 Namen mit `nom_status` stehen in der Rolle `synonym` —
+das Feld trifft also genau die Menge, die UC5 filtern soll.
+
+### Die drei Befunde, auf die sich Task 2 einstellen muss
+
+**1. Jeder Wert trägt WCVP-eigenes `", "` als Präfix.** 99.111 von 99.252
+Werten (99,86 %) beginnen mit Komma und Leerzeichen — WCVP hängt den Status
+an ein Zitatfragment an und exportiert die Konkatenation. Der Ingest schreibt
+den Wert bewusst verbatim; das Normalisieren ist Aufgabe der Vokabularschicht,
+nicht des Imports.
+
+**2. Das Vokabular ist kein Enum, sondern ein langer Freitextschwanz.** 1.304
+distinkte Werte, davon 12 mit ≥ 1.000 Treffern, 28 mit ≥ 100, 1.225 mit < 10
+(zusammen 1.812 Namen). Die zehn häufigsten decken 90,56 % ab, die Top 20
+95,82 %, die Top 200 erst 98,75 %. Eine vollständige Abbildung aller 1.304
+Werte ist weder nötig noch sinnvoll; ein `default: unbekannt` ist Pflicht.
+
+Die 20 häufigsten Werte (verbatim, mit kumulierter Deckung):
+
+| n | kumuliert | Wert |
+| ---: | ---: | --- |
+| 36.424 | 36,70 % | `, nom. illeg. homonym. post.` |
+| 18.220 | 55,06 % | `, not validly publ.` |
+| 10.768 | 65,91 % | `, nom. illeg. superfl.` |
+| 9.210 | 75,18 % | `, nom. nud.` |
+| 6.218 | 81,45 % | `, pro syn.` |
+| 2.405 | 83,87 % | `, nom. illeg.` |
+| 2.193 | 86,08 % | `, orth. var.` |
+| 1.716 | 87,81 % | `, nom. superfl.` |
+| 1.527 | 89,35 % | `, opus utique oppr.` |
+| 1.202 | 90,56 % | `, nom. cons.` |
+| 1.132 | 91,70 % | `, without a Latin descr.` |
+| 1.115 | 92,82 % | `, sensu auct.` |
+| 831 | 93,66 % | `, nom. rej.` |
+| 471 | 94,14 % | `, without basionym ref.` |
+| 443 | 94,58 % | `, without indication of the type.` |
+| 362 | 94,95 % | `, nom. provis.` |
+| 290 | 95,24 % | `, tentatively listed as a synonym.` |
+| 236 | 95,48 % | `, nom. subnud.` |
+| 199 | 95,68 % | `, sphalm.` |
+| 142 | 95,82 % | `, without type.` |
+
+**3. Der Beispielfall aus dem Entwurfsdokument trägt nicht den Wert, den das
+Entwurfsdokument annimmt.** *Corynephorus incanescens* Bubani
+(`wcvp:name:405842`) hat `nom_status = ", nom. illeg. superfl."`, **nicht**
+`", nom. superfl."`. Ein Gleichheitsvergleich gegen die drei im Entwurf
+genannten Werte (`nom. nud.`, `nom. superfl.`, `pro syn.`) würde genau den
+Fall verfehlen, an dem UC5 erklärt wird — und zusätzlich die 10.768 Namen
+mit `nom. illeg. superfl.` sowie die 36.424 mit `nom. illeg. homonym. post.`
+Der Filter muss also auf Token-Enthaltensein prüfen, nicht auf Gleichheit.
+Token-Trefferzahlen über den Volldatensatz:
+
+| Token | Namen, deren `nom_status` es enthält |
+| --- | ---: |
+| `nom. illeg.` | 49.694 |
+| `not validly publ.` | 18.606 |
+| `nom. nud.` | 9.222 |
+| `pro syn.` | 6.222 |
+| `orth. var.` | 2.196 |
+| `nom. superfl.` | 1.729 |
+| `opus utique` | 1.640 |
+| `nom. cons.` | 1.237 |
+| `sensu auct.` | 1.117 |
+| `nom. rej.` | 884 |
+| `fossil name.` | 272 |
+
+### Weitere Auffälligkeiten, die eine Einordnung brauchen
+
+- **Mehrfachstatus in einer Zelle.** 684 Namen tragen mehr als einen
+  kommaseparierten Status (664 mit zwei, 16 mit drei, 4 mit vier oder fünf),
+  z. B. `, nom. illeg., later homonym`. Ein Filter, der die Zelle als einen
+  einzigen Wert behandelt, verfehlt den zweiten Status.
+- **Kommas kommen auch innerhalb eines Status vor**, etwa
+  `, contrary to Art. 23.6. (ICN, 2012).` — naives Splitten an `,` zerlegt
+  diese Werte falsch. Der ganze Zellwert ist die verlässlichere Einheit.
+- **141 Werte sind gar kein Status, sondern ein Zitatfragment**, z. B.
+  `[Cusc.: 184]`, `[Conv. Or.: 60]`, oder Freitext wie
+  `published as "mutatio nova"` und `as stabilized hybrids derived from
+  C. collina × C. ser. Molles`. Diese Zellen enthalten keine
+  nomenklatorische Aussage; einige mischen beides (`[Cusc.: 183], nom.
+  illeg.`).
+- **Schreibvarianten desselben Sachverhalts** existieren nebeneinander:
+  `without a Latin descr.` (1.132) / `without latin descr.` (33) /
+  `without Latin descr.` (19) / `sine descr. lat.` (15);
+  `not effectively publ.` (29) / `not effectively published.` (23);
+  `nom. altern.` (103) / `nom. alt.` (35); `nom. rej.` (831) /
+  `nom. rejic.` (9). Eine Abbildung muss diese zusammenführen oder bewusst
+  getrennt lassen — raten darf sie nicht.
+- **Nicht klassifizierbar ohne fachliche Entscheidung**, hier ausdrücklich
+  markiert statt stillschweigend einsortiert: `, sensu auct.` (1.115) ist
+  eine Fehlanwendung, kein nomenklatorischer Mangel; `, tentatively listed
+  as a synonym.` (290) ist eine taxonomische Unsicherheit, keine
+  Publikationsfrage; `, fossil name.` (272) und `, isonym` (9) sagen nichts
+  über die Gültigkeit; `, not validly publ.?` (8) trägt ein Fragezeichen
+  mitten im Wert. Ob diese Fälle in UC5 ausgeschlossen werden, ist eine
+  fachliche und keine technische Entscheidung.
+
+### `published_in`
+
+Praktisch flächendeckend belegt (1.448.934 von 1.448.984). Die Form ist eine
+Kurzzitation im IPNI-Stil `Werk Band: Seite (Jahr)`:
+
+- `Sp. Pl.: 73 (1753)`
+- `Phytotaxa 275: 217 (2016)`
+- `F.W.H.von Humboldt, A.J.A.Bonpland & C.S.Kunth, Nov. Gen. Sp. 6: 127 (1823)`
+- `Acta Bot. Acad. Sci. Hung. 17: 121 (1971 publ. 1972)`
+
+Zu beachten: **20.989 Namen tragen den Literalwert `Unknown`** — das ist ein
+belegtes Feld ohne Information, kein NULL. Wer `published_in` als
+Relevanzsignal verwendet, muss `Unknown` wie "nicht vorhanden" behandeln.
+
+## SP6 Task 4 — Verdikt: Synonym-Relevanz gegen den vollen Index
+
+> Abschluss von SP6 (Task 4 von 4). Alle Zahlen unten sind **neu gemessen**,
+> gegen die volle, per SP6 Task 1 nachgezogene WCVP-Datenbank
+> (`wcvp.db`, 993 MB, **1.448.984 Namen / 440.534 Konzepte**), read-only
+> geöffnet. Gemessen wurde nicht eine SQL-Nachbildung der Regeln, sondern
+> **der echte Domänencode**: `domain.RankSynonyms` +
+> `domain.SummarizeSynonyms` mit `ExcludeRanks: domain.RanksBelowSpecies()`
+> — also exakt das, was
+> `GET /v1/concept/{id}/synonyms?relevance=publication&rank=species`
+> ausliefert.
+
+### Reproduktion
+
+Die Rohverteilungen kommen direkt aus SQLite:
+
+```bash
+sqlite3 "file:wcvp.db?mode=ro" \
+  "SELECT n.rank, count(*) FROM concept_name cn JOIN name n ON n.id=cn.name_id
+   WHERE cn.role='synonym' GROUP BY n.rank ORDER BY 2 DESC;"
+# SPECIES|639027   VARIETY|201957   SUBSPECIES|45526   FORM|42681
+# GENUS|25003      OTHER|6409       SUBVARIETY|3328    SUBFORM|641
+# NOTHOSUBSPECIES|130   NOTHOVARIETY|51   NOTHOFORM|9
+
+sqlite3 "file:wcvp.db?mode=ro" \
+  "SELECT homotypic, count(*) FROM concept_name WHERE role='synonym' GROUP BY homotypic;"
+# |692941     (NULL = unbekannt)
+# 1|271821
+#            (0 = heterotypisch: kommt NICHT vor)
+
+sqlite3 "file:wcvp.db?mode=ro" \
+  "SELECT count(*) FROM name WHERE nom_status IS NOT NULL AND nom_status<>'';"
+# 99252   (von 1.448.984 = 6,85 %)
+```
+
+Alle Konzept-bezogenen Zahlen stammen aus einem Wegwerf-Harness (nach der
+Messung wieder gelöscht, damit kein Messwerkzeug als Produktcode
+mitläuft), der die Kandidatenabfrage aus
+`internal/adapters/sqlite/synonyms.go` **einmal über alle Konzepte** fährt
+und je Konzept den Domänencode aufruft:
+
+```go
+const q = `
+    SELECT cn.concept_id, n.id, n.canonical, COALESCE(n.authorship,''), n.rank,
+           COALESCE(n.rank_verbatim,''), COALESCE(n.nom_status,''), cn.homotypic,
+           (an.basionym_id IS NOT NULL AND an.basionym_id = n.id)
+    FROM concept_name cn
+    JOIN name n  ON n.id = cn.name_id
+    JOIN taxon_concept tc ON tc.id = cn.concept_id
+    JOIN name an ON an.id = tc.accepted_name
+    WHERE cn.role = 'synonym'
+    ORDER BY cn.concept_id`
+
+// je Konzept (Batch beim Wechsel von cn.concept_id):
+ranked := domain.RankSynonyms(batch, domain.SynonymOptions{
+    ExcludeRanks: domain.RanksBelowSpecies(),
+})
+sum := domain.SummarizeSynonyms(ranked)
+```
+
+Laufzeit über alle 964.762 Synonymzeilen: **rund 12 s**.
+
+### Wie oft ändert der Filter überhaupt etwas?
+
+| Größe | Wert | Anteil |
+| --- | ---: | ---: |
+| Konzepte mit mindestens einem Synonym | 236.030 | 53,6 % aller 440.534 Konzepte |
+| Synonymzeilen gesamt | 964.762 | |
+| davon publikationsfähig (`rank=species`) | 638.212 | 66,2 % |
+| **Konzepte, bei denen der Filter die Antwort ändert** | **103.674** | **43,9 %** |
+| … darunter über eine `nom_status`-Regel | 50.774 | 21,5 % |
+| … darunter über `rank=species` | 76.866 | 32,6 % |
+
+Zurückgehaltene Zeilen nach Regel:
+
+| Regel | Zeilen |
+| --- | ---: |
+| `rank` | 234.405 |
+| `nom_status` | 89.836 |
+| `unclassified_nom_status` | 2.309 |
+
+Die 234.405 Rangausschlüsse liegen unter der Summe der vier
+ausgeschlossenen Ränge (201.957 + 42.681 + 3.328 + 641 = **248.607**). Die
+Differenz von 14.202 ist kein Fehler, sondern die Regelpräzedenz: diese
+Zeilen waren schon durch `nom_status` ausgeschlossen, und ein Synonym wird
+nur einmal gezählt, mit dem *ersten* greifenden Grund.
+
+Bei mehr als der Hälfte der Konzepte (132.356) ändert der Filter **nichts**
+— sie haben nur artrangige Synonyme ohne eingetragenen Status. Das ist die
+erwartbare Folge davon, dass `nom_status` auf 6,85 % der Namen belegt ist:
+Der Filter ist scharf, wo die Quelle etwas eingetragen hat, und untätig,
+wo sie geschwiegen hat.
+
+### Landet die Liste wirklich bei ein bis drei? — Ja, aber auch ohne Filter
+
+UC5 nennt „zwei bis drei relevante Synonyme" als Ziel. Gemessen — und zwar
+**mit Kontrollgruppe**: dieselben 236.030 Konzepte, einmal ungefiltert (die
+Listenlänge, die ein Aufrufer ohne `relevance=publication` sieht) und einmal
+gefiltert:
+
+| Listenlänge | ungefiltert | Anteil | gefiltert (`publication`, `rank=species`) | Anteil |
+| ---: | ---: | ---: | ---: | ---: |
+| 0 | 0 | 0 % | 24.918 | 10,56 % |
+| 1 | 95.366 | 40,40 % | 97.674 | 41,38 % |
+| 2 | 45.707 | 19,36 % | 42.791 | 18,13 % |
+| 3 | 26.315 | 11,15 % | 22.859 | 9,68 % |
+| 4 | 16.055 | 6,80 % | 13.212 | 5,60 % |
+| 5 | 11.104 | 4,70 % | 8.624 | 3,65 % |
+| 6–10 | 23.993 | 10,17 % | 17.267 | 7,32 % |
+| 11–25 | 13.552 | 5,74 % | 7.466 | 3,16 % |
+| 26–100 | 3.708 | 1,57 % | 1.191 | 0,50 % |
+| > 100 | 230 | 0,10 % | 28 | 0,01 % |
+| **1 bis 3 (Zielkorridor)** | **167.388** | **70,92 %** | **163.324** | **69,20 %** |
+| **> 3** | **68.642** | **29,08 %** | **47.788** | **20,25 %** |
+
+**Auf UC5s eigener Zielgröße ist der Filter netto negativ.** Ungefiltert
+liegen bereits **70,92 %** im Korridor, gefiltert **69,20 %** — 1,72
+Prozentpunkte *schlechter*. Der Mechanismus ist in der Tabelle direkt
+ablesbar: Der Filter zieht **20.854 Konzepte** aus `> 3` heraus (68.642 →
+47.788), aber er schiebt sie nicht überwiegend in den Korridor, sondern
+erzeugt dabei **24.918 Nullen**, die es ungefiltert nicht gab. Auch der
+Modalwert bleibt unverändert **1** — vorher 40,40 %, nachher 41,38 %.
+
+Die ehrliche Antwort auf die Frage lautet also: *Ja, überwiegend — aber das
+war schon vorher so, und der Filter ist nicht der Grund dafür.* Die
+Korridorquote ist als Beleg **für** den Filter untauglich; sein Nutzen liegt
+woanders (siehe „Was hält" unten).
+
+Drei weitere Einschränkungen:
+
+- **Der häufigste Fall ist 1, nicht 2–3** — und zwar in beiden Spalten. Das
+  ist kein Filtererfolg, sondern die Datenlage: solche Konzepte hatten
+  meist von vornherein nur ein Synonym.
+- **Für 20,25 % (47.788 Konzepte) liefert der Filter weiterhin mehr als drei
+  Namen**, in 8.685 Fällen sogar mehr als zehn. Für diese Konzepte löst UC5
+  das Filterproblem *nicht*; der Aufrufer muss `max` setzen und bekommt dann
+  eine sortierte, aber selbst gewählte Auswahl.
+- **Die Sortierung, die „die besten drei" bestimmt, ruht zu 71,8 % auf
+  `unknown`.** Wo `homotypic` NULL ist (692.941 Zeilen), entscheidet nach
+  Publikationsfähigkeit faktisch die `name_id`. „Die drei besten" heißt für
+  diese Konzepte „drei mit der kleinsten Id" — deterministisch, aber
+  fachlich nicht begründet.
+
+Erzeugt wurde die Tabelle mit demselben Harness wie oben, um eine zweite
+Zählung je Konzept erweitert (`len(batch)` als Kontrollgruppe neben
+`sum.Publishable`), Ausgabe verbatim:
+
+```
+concepts: 236030
+len      unfiltered   filtered
+0                 0      24918
+1             95366      97674
+2             45707      42791
+3             26315      22859
+4             16055      13212
+5             11104       8624
+6-10          23993      17267
+11-25         13552       7466
+26-100         3708       1191
+>100            230         28
+corridor 1..3: unfiltered 167388 (70.92 %)  filtered 163324 (69.20 %)
+>3:            unfiltered 68642 (29.08 %)  filtered 47788 (20.25 %)  delta 20854
+modal 1:       unfiltered 95366 (40.40 %)  filtered 97674 (41.38 %)
+```
+
+### Nur 347 Synonymzeilen sind positiv als sauber bezeichnet
+
+Dieselbe Schleife, `domain.ClassifyNomStatus` über alle 964.762
+Synonymzeilen gezählt:
+
+| Urteil | Zeilen | Anteil |
+| --- | ---: | ---: |
+| `absent` (nichts eingetragen) | 872.270 | 90,41 % |
+| `disqualifying` | 89.836 | 9,31 % |
+| `unclassified` | 2.309 | 0,24 % |
+| **`acceptable`** (positiv als nomenklatorisch sauber bezeichnet) | **347** | **0,036 %** |
+
+Das ist die schärfste Form der Aussage aus Abschnitt (d) der
+[UC5-Anleitung](../how-to/synonyms-uc5.md): **Im gesamten Korpus behauptet
+die Quelle für 347 Synonymzeilen, dass der Name nomenklatorisch in Ordnung
+ist.** Alles andere, was hostus publikationsfähig nennt, ist entweder ein
+`absent` — die Quelle hat nichts eingetragen — oder es wurde
+zurückgehalten. Praktisch heißt das: eine publikationsfähige Liste besteht
+zu über 99,9 % aus *ungeprüften*, nicht aus *geprüften* Namen. `summary.absent`
+beziffert das pro Antwort; die 347 setzen die Größenordnung dazu.
+
+### 24.918 Konzepte ohne ein einziges publikationsfähiges Synonym
+
+10,6 % der Konzepte mit Synonymen kommen unter `relevance=publication&rank=species`
+mit einer **leeren Liste** zurück. Aufgeschlüsselt:
+
+| Ursache | Konzepte |
+| --- | ---: |
+| alle Synonyme durch `rank` ausgeschlossen | 16.621 |
+| alle Synonyme durch `nom_status` ausgeschlossen | 6.269 |
+| gemischt (`rank` + Status, inkl. unklassifiziert) | 2.028 |
+
+**Ist das richtig? Ja — und es ist genau der Fall, der die Ausgabe des
+Ausschluss-Summarys unverzichtbar macht.** Ein Konzept, dessen einziges
+Synonym eine *Varietät* ist, hat auf Artniveau tatsächlich nichts zu
+publizieren; ein Konzept, dessen einziges Synonym `, nom. nud.` trägt,
+ebenfalls nicht. Falsch wäre nur, das als *„dieses Konzept hat keine
+Synonyme"* auszuliefern — und genau das tut hostus nicht: `summary.total`
+nennt weiterhin die volle Zahl, `summary.excluded` die Regel. Eine leere
+`synonyms`-Liste mit `"total": 3, "excluded": {"rank": 3}` ist eine
+Aussage, keine Lücke.
+
+Der einzige unbefriedigende Teilbereich sind die 6.269 Konzepte, bei denen
+`nom_status` alles wegnimmt: Da die Spalte nur auf 6,85 % der Namen belegt
+ist, sind das per Konstruktion Konzepte, deren Synonyme **überdurchschnittlich
+gut dokumentiert** sind. Wer viel einträgt, verliert mehr. Das ist keine
+Verzerrung des Filters, aber eine des Datenbestands, und sie geht zulasten
+der sorgfältig gepflegten Einträge.
+
+### Der offene fachliche Punkt, gemessen
+
+Fünf Werte hält hostus als `unclassified` zurück, weil ihre Behandlung eine
+botanische Entscheidung ist. Gemessen über alle distinkten `nom_status`-Werte,
+klassifiziert mit `domain.ClassifyNomStatus`: **1.697 Namen**, davon
+
+| Wert | Namen |
+| --- | ---: |
+| `, sensu auct.` | 1.117 |
+| `, tentatively listed as a synonym.` | 290 |
+| `, fossil name.` | 264 |
+| `, isonym` | 13 |
+| Wert enthält `?` | 13 |
+
+Anmerkung zur Zahl: die reine Containment-Zählung über dieselben fünf
+Tokens ergibt **1.707** Namen. Die Differenz von 10 sind Zellen, in denen
+neben dem Open-Item-Token noch ein *disqualifizierender* Token steht (z. B.
+`, nom. illeg., later homonym of a fossil name.`) — sie werden nach der
+Präzedenzregel als `nom_status` ausgeschlossen, nicht als offener Punkt
+zurückgehalten. Zurückgehalten *wegen des offenen Punktes* sind also
+**1.697**, nicht 1.707.
+
+Die 1.117 `, sensu auct.` sind der Kern: Fehlanwendungen werden in
+Florenwerken üblicherweise als **auct. non** geführt statt weggelassen.
+Sollte UC5 das so wollen, ist das eine Zeile in `nomStatusGuards`
+(`internal/domain/synonym.go`), keine Codeänderung.
+
+### Verdikt: **hält mit Auflagen**
+
+**Was hält.** Der Filter ist real, messbar und begründet: Er ändert bei
+103.674 von 236.030 Konzepten die Antwort, entfernt 326.550 Synonymzeilen
+und sagt für jede einzelne, welche Regel das war. Das Ausschluss-Summary
+beschreibt immer das Konzept, nie die Seite — eine gefilterte Liste ist
+damit von einer kaputten Abfrage unterscheidbar, was der eigentliche
+Prüfstein war.
+
+**Was ausdrücklich NICHT als Beleg taugt: der Zielkorridor.** Ohne Filter
+liegen bereits **70,92 %** der Konzepte bei ein bis drei Synonymen,
+gefiltert sind es **69,20 %** — der Filter verbessert diese Kennzahl nicht,
+er verschlechtert sie leicht. Er verschiebt 20.854 Konzepte aus `> 3`
+heraus und erzeugt dabei 24.918 Nullen. **Sein Nutzen ist die Entfernung
+nomenklatorisch untauglicher Namen (89.836 Zeilen mit belegtem Defekt),
+nicht das Treffen des Zielkorridors.** Eine frühere Fassung dieses
+Abschnitts führte die 69,2 % ohne Kontrollgruppe als Beleg *für* den Filter
+— das war auf dieser Dimension ein Beleg dagegen, und eine Zahl ohne ihre
+Vergleichsgröße ist kein Argument.
+
+**Die Auflagen**, alle in
+[docs/how-to/synonyms-uc5.md](../how-to/synonyms-uc5.md) dokumentiert:
+
+1. **Zwei von fünf UC5-Kriterien sind nicht umgesetzt.** „Im Bezugsraum
+   verwendet" ist mit dem aktuellen Schema *nicht ausdrückbar*
+   (`distribution` hängt am Konzept, ein Synonym ist ein Name); „in
+   Standardwerken verwendet" scheitert an `redistribution: unknown` und an
+   der unfertigen CDM-Ernte. `relevance=publication` filtert **global**.
+2. **Das Typisierungskriterium ist ein Zwei-Wege-Split.** `heterotypic`
+   kommt auf 0 Zeilen vor, `unknown` auf 692.941. UC5-Regel 3 wirkt real
+   als „basionym-belegt vor unbelegt".
+3. **`nom_status` ist auf 6,85 % der Namen belegt** — und nur **347** der
+   964.762 Synonymzeilen sind positiv als sauber bezeichnet. Ein fehlender
+   Status ist kein Unbedenklichkeitsnachweis; `summary.absent` beziffert das
+   pro Antwort, die nomenklatorische Prüfung bleibt beim Autor.
+4. **Zwei benannte Ranglücken**: SUBSPECIES (45.526 Synonymnamen) wird
+   spec-treu nicht ausgeschlossen, und 190 Nothotaxon-Zeilen passieren
+   `rank=species`.
+5. **Für 20,25 % der Konzepte löst der Filter das Problem nicht** — mehr als
+   drei Namen bleiben übrig, die Auswahl macht dann `max` und damit die
+   `name_id`. Und für die Zielgröße „ein bis drei" ist der Filter netto
+   negativ (70,92 % ungefiltert gegen 69,20 % gefiltert): Wer ihn mit dieser
+   Kennzahl begründet, begründet ihn falsch.
+
+**Was nicht hält, wenn die Auflagen wegfallen.** Ohne den
+„Was-dieser-Filter-nicht-kann"-Abschnitt in der Anleitung wäre das Verdikt
+*hält nicht*: Ein Endpunkt, der `relevance=publication` heißt und
+tatsächlich nur zwei von fünf beworbenen Kriterien anwendet, ist ohne diese
+Offenlegung irreführend. Die Dokumentation ist hier nicht Beiwerk, sondern
+Teil der Funktion.

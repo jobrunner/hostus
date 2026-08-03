@@ -6,9 +6,9 @@
     DwC-A-Manifesten, per Wikidata-Brücke angereicherten Cross-References
     sowie, seit SP5, der CDM-Konzeptquelle; `hostus serve` bedient
     `/v1/concept/{id}`, `/v1/xref`, `/v1/match`, `/v1/suggest`,
-    `/v1/concept/{id}/traits` und `/v1/translate` daraus). Weitere
-    `/v1/*`-Endpunkte (`concept/{id}/synonyms`) sowie `/openapi` folgen in
-    späteren SPs. Die maßgebliche OpenAPI-Spezifikation liegt unter
+    `/v1/concept/{id}/traits`, `/v1/concept/{id}/synonyms` und
+    `/v1/translate` daraus). `/openapi` folgt in einem späteren SP. Die
+    maßgebliche OpenAPI-Spezifikation liegt unter
     `api/openapi/openapi.yaml`.
 
     Der Offline-Export (`hostus bundle`) ist kein HTTP-Endpunkt und daher
@@ -378,6 +378,279 @@ Wichtige Punkte für Clients:
 - Ein unbekanntes Concept liefert `404 NOT_FOUND`. Ein **bekanntes**
   Concept ohne ingestierte Merkmalswerte liefert `200 OK` mit leerem
   `traits`-Array — das ist kein Fehlerfall.
+
+## Synonym-Endpunkt
+
+### `GET /v1/concept/{id}/synonyms?relevance={relevance}&rank={rank}&max={max}`
+
+Liefert die Synonyme eines Concepts — auf Wunsch reduziert auf die, die in
+eine Publikation gehören. UC5 formuliert das Problem so: **„Das Problem ist
+Filterung, nicht Beschaffung."** POWO führt für *Corynephorus canescens* 26
+Synonyme; eine Publikation braucht ein bis drei. Im gemessenen Index trägt
+ein Concept im Mittel **4,09** Synonyme, im Maximum **1.127**.
+
+#### Der Standard ist die ungefilterte Liste
+
+`relevance` ist ohne Parameter `all`. Das ist eine bewusste Entscheidung,
+keine Bequemlichkeit: der Publikationsfilter hält bei *Corynephorus
+canescens* 20 von 26 Synonymen zurück, und ein Filter dieser Stärke muss
+angefordert werden.
+
+1. Dieser Endpunkt darf nicht die einzige Tür werden, die Daten
+   stillschweigend verbirgt. Die ungefilterte Liste muss erreichbar sein —
+   und „erreichbar" ist als Standard mehr wert als als Opt-out, das man
+   kennen muss.
+2. `GET /v1/concept/{id}` liefert für dasselbe Concept dieselben Synonyme
+   ungefiltert. Zwei Endpunkte, die auf dieselbe Frage unterschiedlich viele
+   Zeilen liefern, und einer davon schweigend, lesen sich als Fehler in
+   demjenigen, den der Client zufällig als zweiten probiert hat.
+3. Die Publikationsregeln fußen auf einem `nom_status`-Vokabular, das auf
+   6,85 % der Namen gefüllt ist und einen Schwanz von 1.225 Werten mit
+   weniger als je 10 Treffern hat. Dieses — hostus' unsicherstes — Urteil
+   gehört nicht per Default auf den meistbenutzten Pfad.
+
+Beide Modi liefern **dieselbe Begründung pro Synonym** und **dieselbe
+Ausschluss-Bilanz**. `relevance` entscheidet nur, ob die zurückgehaltenen
+Einträge in der Liste auftauchen — nicht, wie gründlich geurteilt wurde.
+
+#### Parameter
+
+- `relevance` (optional): `all` (Standard) oder `publication`. Jeder andere
+  Wert liefert `400 INVALID_QUERY` und **nennt den Wert**.
+- `rank` (optional): die Rangstufe, auf der publiziert wird. `species`
+  schließt **genau die vier von UC5 genannten** untergeordneten Ränge aus:
+  `VARIETY`, `SUBVARIETY`, `FORM`, `SUBFORM`. Die Nothotaxon-Ränge
+  (`NOTHOSUBSPECIES`, `NOTHOVARIETY`, `NOTHOFORM`) sind **nicht** darunter
+  und passieren den Filter, obwohl sie unterhalb der Art stehen — im
+  gemessenen Index betrifft das 190 Synonymzeilen (130/51/9). UC5 nennt sie
+  nicht, und hostus erfindet keine Regel, die der Use Case nicht verlangt
+  hat. Ebenso wenig ausgeschlossen wird `OTHER` (6.409 Zeilen), dessen
+  ursprüngliche Schreibweise deshalb als `rank_verbatim` mitgeliefert wird.
+  Fehlt der Parameter, wird **kein** Rang ausgeschlossen — der Fall
+  einer vollständigen infraspezifischen Behandlung. Ein syntaktisch gültiger, aber nicht unterstützter Rang
+  (`genus`) wird **abgelehnt**, nicht still ignoriert: eine
+  unbeabsichtigt ungefilterte Antwort an einen Aufrufer, der einen Filter
+  angefordert hat, wäre die gefährlichere Variante.
+- `max` (optional): Obergrenze der zurückgegebenen Liste. `0` und ein
+  fehlender Parameter bedeuten beide **keine Kappung** (nicht „null
+  Zeilen"). Gekappt wird **immer nach dem Ranking** — `max=3` liefert die
+  drei besten Synonyme, nie drei beliebige. Werte außerhalb `[0, 2000]`
+  liefern `400`, bevor irgendetwas alloziert wird. Die Obergrenze 2000
+  liegt über dem gemessenen Maximum von 1.127 Synonymen pro Concept, so
+  dass „alle" durch `max` ausdrückbar bleibt.
+
+#### Rangfolge
+
+Die Antwort nennt die Sortierregel im Feld `ordering` selbst, damit „die
+besten drei" nachprüfbar ist. Sie lautet, in dieser Reihenfolge:
+
+1. publikationsfähige zuerst;
+2. `homotypic` vor `unknown` vor `heterotypic`;
+3. das **Basionym** führt seinen Typisierungsblock an (UC5-Regel 4);
+4. `name_id` als letzter Tiebreaker (deterministisch).
+
+Jedes darin genannte Feld wird pro Eintrag mitgeliefert.
+
+#### Beispiel-Request
+
+```
+GET /v1/concept/wcvp:concept:405825/synonyms?relevance=publication&rank=species&max=3
+```
+
+**Beispiel-Response** (gegen den realen WCVP-Index; Eintrag 3,
+*Weingaertneria canescens*, ist der Kürze halber weggelassen — er ist bis
+auf Name und Position identisch mit Eintrag 2):
+
+```json
+{
+  "concept_id": "wcvp:concept:405825",
+  "relevance": "publication",
+  "publication_rank": "species",
+  "ordering": "publishable first, then homotypic before unknown before heterotypic, the basionym first within its typification block, then name_id",
+  "synonyms": [
+    {
+      "position": 1,
+      "name_id": "wcvp:name:476481",
+      "canonical": "Aira canescens",
+      "authorship": "L.",
+      "rank": "SPECIES",
+      "typification": "homotypic",
+      "is_basionym": true,
+      "nom_status_judgement": "absent",
+      "publishable": true,
+      "reason": "homotypic, no nom_status recorded (not the same as verified clean)"
+    },
+    {
+      "position": 2,
+      "name_id": "wcvp:name:397417",
+      "canonical": "Avena canescens",
+      "authorship": "(L.) Weber",
+      "rank": "SPECIES",
+      "typification": "homotypic",
+      "is_basionym": false,
+      "nom_status_judgement": "absent",
+      "publishable": true,
+      "reason": "homotypic, no nom_status recorded (not the same as verified clean)"
+    }
+  ],
+  "summary": {
+    "total": 26,
+    "publishable": 6,
+    "returned": 3,
+    "truncated": 3,
+    "absent": 6,
+    "excluded": { "nom_status": 4, "rank": 16 },
+    "unclassified_statuses": []
+  }
+}
+```
+
+*Corynephorus incanescens* Bubani (`wcvp:name:405842`, `", nom. illeg.
+superfl."`) ist einer der vier `nom_status`-Ausschlüsse; *Aira canescens*
+L. führt als Basionym.
+
+#### Jeder Ausschluss ist sichtbar
+
+`summary` beschreibt **immer das Concept**, nie die ausgelieferte Seite:
+`total`, `publishable`, `absent`, `excluded` und `unclassified_statuses`
+zählen alle 26 Synonyme, auch wenn die Antwort drei enthält. Ein Filter,
+der 20 von 26 Synonymen entfernt, ohne das zu sagen, ist von einer kaputten
+Abfrage nicht zu unterscheiden — dieselbe Disziplin, mit der `hostus
+ingest` `matched/unmatched/ambiguous` ausgibt und `trait_value.resolution`
+Näherungen protokolliert.
+
+- `excluded` zählt je Regel: `nom_status` (ein erfasster nomenklatorischer
+  Mangel), `unclassified_nom_status` (die Quelle hat etwas erfasst, keine
+  Regel deckt es — **zurückgehalten**, nicht publiziert) und `rank`.
+- `unclassified_statuses` listet die betroffenen Rohwerte wörtlich. Aus
+  dieser Liste wächst die Regeltabelle; ein zurückgehaltener Wert bleibt
+  sichtbar statt zu verschwinden.
+- `absent` zählt, wie viele der publikationsfähigen Synonyme auf einem
+  **leeren** `nom_status` beruhen. „Nichts erfasst" ist nicht „als sauber
+  erfasst" — im Beispiel oben ruhen alle sechs auf einer Abwesenheit.
+- `truncated` steht bewusst **außerhalb** von `excluded`: ein gekapptes
+  Synonym wurde nicht als irrelevant beurteilt, es hat nur nicht mehr
+  hineingepasst.
+
+#### Doppelt ausgeschlossene Synonyme zählen nur einmal
+
+Ein Synonym wird mit **genau einem** Grund gezählt, dem zuerst greifenden:
+`nom_status` vor `unclassified_nom_status` vor `rank`. Wer beide Kriterien
+erfüllt — eine Varietät mit `", nom. nud."` bei `rank=species` — erscheint
+unter `nom_status`, nicht unter `rank`. `excluded.rank` ist deshalb **nicht**
+die Zahl der rangbedingt unpublizierbaren Synonyme, sondern die Zahl derer,
+die *nur* am Rang gescheitert sind. Im Beispiel oben steht `rank: 16`,
+obwohl das Concept 17 infraspezifische Synonyme hat: eines davon
+(*Corynephorus canescens* var. *andinus*, `", nom. nud."`) ist bereits unter
+`nom_status` verbucht. Korpusweit betrifft das 14.202 Zeilen. `total` minus
+`publishable` bleibt in jedem Fall die Summe über `excluded`.
+
+#### Die vollständige `nom_status`-Regeltabelle
+
+Gematcht wird per **Token-Containment über die normalisierte Zelle**
+(kleingeschrieben, Whitespace zusammengezogen, führendes `", "` entfernt),
+niemals per Gleichheit: Das Vokabular hat 1.304 distinkte Werte, von denen
+1.225 weniger als zehn Treffer haben. Die Spalte „Namen" ist die gemessene
+Containment-Trefferzahl im Index (1.448.984 Namen).
+
+Reihenfolge der Auswertung: **Unsicherheitsmarker** → **Guards** (ihr
+Treffer wird aus der Zelle maskiert, damit ein breiteres Token nicht auf
+Text feuert, den ein engeres schon beansprucht hat) → **Regeln**. Die
+Präzedenz entscheidet dann in dieser Reihenfolge: Unsicherheit gewinnt über
+alles, danach ein beliebiger disqualifizierender Treffer, danach ein Guard,
+danach ein akzeptierender Treffer, sonst `unclassified`.
+
+⚠️ markiert die Werte, deren Behandlung eine **botanische** und keine
+technische Entscheidung ist; sie werden zurückgehalten statt geraten.
+
+| Token | Urteil | Namen | Bedeutung |
+| --- | --- | ---: | --- |
+| `?` | unclassified ⚠️ | 13 | Fragezeichen: die Quelle selbst ist unsicher; deckt `, not validly publ.?` (8), `, an nom. valid.?` (4), `, nom. superfl. ?` (1) |
+| `sensu auct.` | unclassified ⚠️ | 1.117 | Fehlanwendung, kein nomenklatorischer Mangel |
+| `tentatively listed as a synonym` | unclassified ⚠️ | 290 | taxonomische Unsicherheit, keine Publikationsfrage |
+| `fossil name` | unclassified ⚠️ | 274 | sagt nichts über die nomenklatorische Gültigkeit |
+| `isonym` | unclassified ⚠️ | 13 | Doppelveröffentlichung desselben Namens |
+| `nom. cons. prop.` | unclassified | 33 | Konservierung **beantragt**, nicht entschieden |
+| `nom. utique rej. prop.` | unclassified | 14 | vollständige Verwerfung beantragt, nicht entschieden |
+| `nom. rej. prop.` | unclassified | 48 | Verwerfung beantragt, nicht entschieden |
+| `illeg` | disqualifying | 49.705 | illegitim; deckt `nom. illeg. homonym. post.` (36.424), `nom. illeg. superfl.` (10.768), `nom. illeg.` (2.405) |
+| `not validly publ` | disqualifying | 18.623 | nicht gültig veröffentlicht (inkl. Basionym-/Gattungs-/Artvarianten) |
+| `superfl` | disqualifying | 12.502 | überflüssig veröffentlicht — das Token des UC5-Beispiels |
+| `nom. nud.` | disqualifying | 9.222 | nomen nudum — ohne Beschreibung veröffentlicht |
+| `pro syn` | disqualifying | 6.224 | als Synonym veröffentlicht, also nicht gültig |
+| `orth. var.` | disqualifying | 2.196 | orthografische Variante — ein Schreibfehler |
+| `opus utique` | disqualifying | 1.640 | in einem unterdrückten Werk erschienen (`oppr.` 1.528 / `rej.` 111) |
+| `basionym` | disqualifying | 1.438 | fehlerhafter oder fehlender Basionym-Bezug (alle 1.438 Zellen sind Mangelaussagen) |
+| `latin descr` | disqualifying | 1.344 | keine lateinische Beschreibung; führt die Schreibvarianten zusammen |
+| `type` | disqualifying | 1.099 | Typus-Zitatmangel; 1.098 der 1.099 Zellen sind Mangelaussagen (siehe Hinweis unten) |
+| `nom. rej` | disqualifying | 894 | verworfen; `nom. rej.` (831) + `nom. rejic.` (10), Anträge per Guard maskiert |
+| `contrary to art` | disqualifying | 432 | entgegen einem benannten ICN/ICBN-Artikel veröffentlicht |
+| `nom. provis` | disqualifying | 363 | provisorischer Name — nicht gültig veröffentlicht |
+| `nom. subnud` | disqualifying | 238 | unzureichend beschrieben |
+| `comb. not` | disqualifying | 201 | Kombination nicht (gültig) vorgenommen |
+| `sphalm` | disqualifying | 199 | sphalmate — ein Druckfehler, kein Name |
+| `nom. utique rej` | disqualifying | 151 | vollständig verworfen; Anträge per Guard maskiert |
+| `not effectively publ` | disqualifying | 66 | nicht wirksam veröffentlicht; führt `publ.`/`published` zusammen |
+| `describing the collection` | disqualifying | 61 | beschreibt die Aufsammlung, nicht das Taxon |
+| `later homonym` | disqualifying | 60 | späteres Homonym; illegitim nach Art. 53 |
+| `combination not` | disqualifying | 37 | ausgeschriebene Variante von `comb. not made.` |
+| `without diagnostic descr` | disqualifying | 17 | keine diagnostische Beschreibung |
+| `sine descr. lat.` | disqualifying | 15 | lateinische Schreibung von „ohne lateinische Beschreibung" |
+| `nom. cons.` | acceptable | 1.237 | konservierter Name — ausdrücklich legitim (Anträge per Guard maskiert) |
+| `nom. altern.` | acceptable | 103 | Alternativname, gültig veröffentlicht |
+| `nom. alt.` | acceptable | 36 | Kurzschreibung von `nom. altern.` |
+| `legitimate homonym` | acceptable | 12 | ausdrücklich legitim — der Grund, warum blankes `homonym` keine Regel ist |
+| `orth. cons.` | acceptable | 11 | konservierte Schreibweise; deckt auch `nom. & orth. cons.` (7) |
+
+Die Tabelle ist gegen `domain.NomStatusRules()` festgenagelt
+(`internal/domain/nomstatus_doc_test.go`): Token, Urteil und gemessene
+Trefferzahl müssen zeilenweise übereinstimmen, sonst schlägt `make test`
+fehl. Eine neue Regel ohne Doku-Zeile ist damit kein stillschweigendes
+Auseinanderlaufen mehr.
+
+!!! note "Bekannter Einzelfall in `type`"
+    Von den 1.099 Zellen mit `type` ist genau **eine** keine Mangelaussage:
+    `", type variety."` (1 Name) ist eine taxonomische Anmerkung. Dieser eine
+    Name wird derzeit mit ausgeschlossen. Zurückhalten ist die sichere
+    Richtung; die saubere Auflösung wäre ein Guard, sobald entschieden ist,
+    wie `type variety` in einer Publikationsliste zu behandeln ist.
+
+#### `typification`: dreiwertig, aber `heterotypic` kommt nicht vor
+
+`typification` ist `homotypic`, `unknown` oder `heterotypic`. Auf dem
+aktuellen Index **kann `heterotypic` nicht auftreten**:
+`concept_name.homotypic` ist `1` (271.821 Zeilen) oder `NULL` (1.133.475
+Zeilen) und in **keiner einzigen** Zeile `0`. Ein Synonym ist damit heute
+entweder nachweislich homotypisch oder `unknown`.
+
+Das ist kein Versehen, sondern die Fortsetzung einer früheren Entscheidung:
+SP3 hat sich geweigert, Heterotypie zu raten, wo die Quelle keine
+Basionym-Verknüpfung liefert, und `/v1/concept` lässt das Feld `homotypic`
+lieber ganz weg, als `false` zu behaupten. `unknown` hier auf `heterotypic`
+zusammenzuziehen würde den größten Teil des Korpus aufgrund einer Tatsache
+herabstufen, die niemand festgestellt hat. Der Wert steht im Modell, weil
+die Spalte dreiwertig ist — nicht, weil eine Antwort ihn heute zeigen wird.
+
+#### Weitere Zusicherungen
+
+- **`rank_verbatim`** trägt die ursprüngliche Schreibweise, wenn `rank`
+  `OTHER` ist (`proles`, `lusus`, `microgène`, `Convariety`, `grex`) —
+  dieselbe Begründung wie bei `GET /v1/concept/{id}`: `OTHER` ist der eine
+  Rangwert, der die Quellschreibweise durch das Sammelbecken verloren hat.
+  Bei jedem kanonisch benannten Rang fehlt das Feld, weil `rank` die
+  Schreibweise dort bereits exakt benennt.
+- **Jedes Urteilsfeld ist immer vorhanden**, auch wenn es `false` ist:
+  `is_basionym: false` ist eine Antwort, und ein weggelassenes Feld wäre
+  von „nicht geprüft" nicht zu unterscheiden. Ausgelassen werden nur
+  `nom_status` (die Quelle hat nichts erfasst — `nom_status_judgement`
+  sagt dann ausdrücklich `absent`), `authorship`, `exclusion` (nicht
+  ausgeschlossen) und `publication_rank` (kein Rang ausgeschlossen).
+- Ein unbekanntes Concept liefert `404 NOT_FOUND`. Ein **bekanntes**
+  Concept ohne Synonyme liefert `200 OK` mit leerem `synonyms`-Array und
+  genullter `summary` — das ist kein Fehlerfall.
+- `GET /v1/concept/{id}` bleibt unverändert: dessen `synonyms`-Array ist
+  weiterhin ungefiltert und trägt weder `nom_status` noch `is_basionym`
+  noch ein Publikationsurteil.
 
 ## Übersetzungs-Endpunkt
 

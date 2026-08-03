@@ -28,7 +28,7 @@ permissions:
 
 jobs:
   mutation:
-    # One package per runner. Previously all seven ran sequentially in a single
+    # One package per runner. Previously all packages ran sequentially in a single
     # job and the runner was OOM-killed on internal/adapters/telemetry: gremlins
     # recompiles the package once per mutant, that package pulls the whole
     # OpenTelemetry SDK, and the Go toolchain was measured locally peaking at
@@ -63,6 +63,18 @@ jobs:
           - ./internal/app
           - ./internal/adapters/mcp
           - ./cmd/hostus
+          # The three packages that carry the actual domain logic. They were
+          # missing until SP6 Task 4, which meant `make mutation`'s
+          # `Not covered = 0` gate never ran on any of the code it was added
+          # for: the hoisted conditions in internal/domain/synonym.go
+          # (ClassifyNomStatus/judgeSynonym) sit in ./internal/domain, and
+          # `make verify` does not call `mutation` at all. Measured runtime
+          # locally: domain 30 s, application 62 s, sqlite 154 s — under the
+          # matrix these run in parallel on their own runners instead of
+          # adding four minutes to a sequential loop.
+          - ./internal/domain
+          - ./internal/application
+          - ./internal/adapters/sqlite
     steps:
       - uses: actions/checkout@v7
 
@@ -75,8 +87,9 @@ jobs:
         run: go install github.com/go-gremlins/gremlins/cmd/gremlins@${{ env.GREMLINS_VERSION }}
 
       # Each package must meet its (currently permissive) baseline in
-      # .gremlins.yaml, or gremlins exits non-zero and the job fails. All
-      # packages run (so the report shows every one) before the job fails.
+      # .gremlins.yaml, or gremlins exits non-zero and the job fails.
+      # fail-fast: false keeps the other matrix legs running, so one failing
+      # package still yields a report for every other one.
       - name: Run mutation testing
         # GOFLAGS/GOMEMLIMIT cap the Go toolchain's memory. gremlins recompiles the
         # package once per mutant, and internal/adapters/telemetry pulls the whole
@@ -94,14 +107,14 @@ jobs:
           # holds its own recompilation of the package in memory. One worker is
           # what finally fits internal/adapters/telemetry (OTel SDK) into a 7 GB
           # runner; the matrix already restored the wall-clock the serialisation
-          # costs by running the seven packages in parallel.
+          # costs by running all matrix packages in parallel.
           MUTATION_WORKERS: '1'
         run: |
           set -uo pipefail
           pkg='${{ matrix.pkg }}'
           echo "===== gremlins: $pkg =====" | tee -a mutation.log
           if ! make mutation PKG="$pkg" 2>&1 | tee -a mutation.log; then
-            echo "::error::Mutation gate FAILED for $pkg — score below the .gremlins.yaml baseline. Add tests that kill the LIVED mutants in mutation.log, or (last resort) adjust the baseline in .gremlins.yaml with justification."
+            echo "::error::Mutation gate FAILED for $pkg — score below the .gremlins.yaml baseline, or the mutation gate in the Makefile tripped (uncovered mutants / no results). Add tests that kill the LIVED mutants in mutation.log, or (last resort) adjust the baseline in .gremlins.yaml with justification."
             exit 1
           fi
 

@@ -16,6 +16,32 @@ type Repository interface {
 	// see SynonymName), its cross-references, and its distribution. Returns
 	// domain.ErrNotFound (wrapped) if id is unknown.
 	Concept(ctx context.Context, id string) (*domain.Concept, []SynonymName, []domain.Xref, []domain.Distribution, error)
+	// SynonymCandidates returns conceptID's synonyms in the shape the UC5
+	// relevance model consumes (domain.SynonymCandidate): the name itself
+	// plus the three fields the decision needs and Concept()'s SynonymName
+	// does not carry — the verbatim `nom_status` cell, the tri-state
+	// homotypic flag, and IsBasionym.
+	//
+	// It is a SEPARATE method rather than a widening of Concept(): every
+	// /v1/concept/{id} response would otherwise pay for the extra join, and
+	// SynonymName's wire-visible shape is deliberately frozen.
+	//
+	// IsBasionym is the REPOSITORY's job (domain.SynonymCandidate's doc
+	// comment): it is true when this synonym's name id equals the concept's
+	// ACCEPTED name's basionym_id — i.e. the accepted name is a
+	// recombination of this synonym. 429.172 names carry a basionym_id and
+	// 113.642 synonym rows satisfy that equality in the measured index. An
+	// implementation that left the flag false everywhere would silently turn
+	// UC5 rule 4 (basionym leads its typification block) into a no-op that
+	// nothing in the domain package can detect, so it is pinned by an
+	// adapter test.
+	//
+	// Ordering is by name id, matching conceptSynonyms; ranking is the
+	// application layer's job (domain.RankSynonyms). Returns
+	// domain.ErrNotFound (wrapped) if conceptID is unknown; a known concept
+	// with no synonyms returns an empty, non-error slice — callers must not
+	// conflate the two.
+	SynonymCandidates(ctx context.Context, conceptID string) ([]domain.SynonymCandidate, error)
 	// Classification walks conceptID's taxon_concept.parent_id chain
 	// upward, bounded to a small fixed depth (see the sqlite adapter's
 	// maxClassificationDepth) so a cyclic or corrupt parent_id chain can

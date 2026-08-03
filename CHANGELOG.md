@@ -7,6 +7,250 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (SP6, Task 4 — Offenlegung, End-to-End-Beweis und Verdikt)
+- **Neue Anleitung
+  [„Publikationsfähige Synonyme filtern (UC5)"](docs/how-to/synonyms-uc5.md)**
+  mit dem durchgerechneten *Corynephorus-canescens*-Beispiel und einem
+  ausdrücklichen Abschnitt **„Was dieser Filter nicht kann"**. UC5 nennt
+  fünf Relevanzkriterien; SP6 liefert zwei vollständig, eines teilweise
+  und **zwei überhaupt nicht**. Das steht jetzt in der Anleitung des
+  Endpunkts selbst und nicht in einer Forschungsdatei: Wer
+  `relevance=publication` liest und regionale Filterung annimmt,
+  veröffentlicht die falsche Synonymliste.
+  - **Keine regionale Filterung** („im Bezugsraum verwendet"):
+    `distribution` hängt am *Konzept*, ein Synonym ist ein *Name* — mit
+    dem aktuellen Schema nicht ausdrückbar. Die Anleitung nennt, was es
+    bräuchte (eine Name-×-Gebiet-Relation mit Quelle je Zeile).
+  - **Keine Filterung nach Standardwerken**: ROTHMALER, OBERDORFER, HEGI
+    und SCHMEIL-FITSCHEN sind vier der 18 CDM-Klassifikationen aus SP5,
+    aber `redistribution: unknown` und die Ernte ist unfertig.
+  - **Die Typisierung ist ein Zwei-Wege-Split**: `homotypic = 1` auf
+    271.821 Synonymzeilen, NULL (= *unbekannt*) auf 692.941,
+    `heterotypic` auf **0**.
+  - **Ein fehlender `nom_status` ist kein Unbedenklichkeitsnachweis** —
+    die Spalte ist auf 99.252 von 1.448.984 Namen (6,85 %) belegt.
+  - Zwei benannte Ranglücken: **SUBSPECIES wird spec-treu nicht
+    ausgeschlossen** (45.526 Synonymnamen) und 190 Nothotaxon-Zeilen
+    passieren `rank=species`.
+  - Offener **fachlicher** Punkt, gemessen: fünf Werte halten **1.697
+    Namen** zurück, davon 1.117 mit `, sensu auct.`. Sollen
+    Fehlanwendungen als *auct. non* geführt werden, ist das eine Zeile in
+    `nomStatusGuards`, keine Codeänderung.
+- **End-to-End-Beweis über echtes HTTP** in
+  `internal/app/integration_test.go`: `ingest -> serve -> GET
+  /v1/concept/{id}/synonyms`, gefiltert gegen ungefiltert, mit
+  Namensprüfungen statt bloßer Zählungen. *Festuca ovina* verliert genau
+  *Avena dura* (`", nom. illeg. superfl."`) und *Festuca ovina* var.
+  *vulgaris* (`", not validly publ."`) und behält *Avena ovina*, *Bromus
+  ovinus* und *Festuca duriuscula*; bei *Corynephorus canescens* fallen
+  drei Rangausschlüsse weg, während subsp. *maritimus* bleibt — die
+  SUBSPECIES-Lücke ist damit als Test festgeschrieben, nicht nur
+  dokumentiert. Das Ausschluss-Summary muss die Differenz erklären.
+- **SP6-Verdikt in `docs/research/reality-check.md`**, gemessen mit dem
+  echten Domänencode über alle 964.762 Synonymzeilen: Der Filter ändert
+  bei **103.674 von 236.030** Konzepten die Antwort und **24.918 Konzepte
+  (10,6 %)** bleiben ohne ein einziges publikationsfähiges Synonym.
+  Verdikt: **hält mit Auflagen**.
+- **Der Zielkorridor ist mit Kontrollgruppe gemessen — und taugt nicht als
+  Beleg für den Filter.** Ungefiltert liegen bereits **70,92 %** der
+  Konzepte bei ein bis drei Synonymen, gefiltert **69,20 %**: Auf UC5s
+  eigener Zielgröße ist der Filter **netto negativ**. Er zieht 20.854
+  Konzepte aus `> 3` heraus (68.642 → 47.788) und erzeugt dabei 24.918
+  Nullen; der Modalwert bleibt **1** (40,40 % → 41,38 %). Sein Nutzen ist
+  die Entfernung nomenklatorisch untauglicher Namen (89.836 Zeilen mit
+  belegtem Defekt), nicht das Treffen des Korridors. Die frühere Fassung
+  führte die 69,2 % ohne Vergleichsgröße als Beleg *für* den Filter — eine
+  Zahl ohne Kontrollgruppe ist kein Argument.
+- **Die Urteilsverteilung über alle 964.762 Synonymzeilen** steht jetzt in
+  Anleitung und Reality-Check: `absent` 872.270 / `disqualifying` 89.836 /
+  `unclassified` 2.309 / **`acceptable` 347**. Für ganze **347 Zeilen** im
+  Korpus behauptet die Quelle, der Name sei nomenklatorisch in Ordnung —
+  jede publikationsfähige Liste besteht zu über 99,9 % aus Namen, über die
+  niemand etwas gesagt hat.
+- **Die vollständige 36-Zeilen-`nom_status`-Regeltabelle** steht jetzt in
+  `docs/reference/http-api.md` — bisher versprach die Anleitung sie dort
+  zweimal, ohne dass es sie gab. Sie ist gegen `domain.NomStatusRules()`
+  festgenagelt (`internal/domain/nomstatus_doc_test.go`, Token/Urteil/
+  Trefferzahl zeilenweise), womit auch die bis dahin unbelegte Begründung
+  des exportierten Accessors („für den Doku-Generator", den es nicht gibt)
+  eingelöst ist.
+- **Doppelt ausgeschlossene Synonyme** sind jetzt im clientseitigen Vertrag
+  erklärt, nicht nur im Reality-Check: Präzedenz bucht sie unter
+  `nom_status`, weshalb `excluded.rank` die Zahl der *nur* rangbedingt
+  zurückgehaltenen Synonyme ist — im Beispiel `rank: 16` bei 17
+  infraspezifischen Synonymen, korpusweit 14.202 Zeilen.
+- **`docs/explanation/known-gaps.md`** (neu, in der Navigation): fünf
+  bewusst nicht behobene Befunde mit Auswirkung und nächstem Schritt —
+  kein Drift-Signal für das `nom_status`-Vokabular, fehlender
+  Mutanten-Mindestboden im Gate, die überholte 108,9-MB-Bundle-Angabe, der
+  vierfach kopierte `TaxonRow`-Mapper und 316 Zeilen handgepflegtes
+  OpenAPI ohne Drift-Prüfung. Sie standen bisher nur im SDD-Ledger, das
+  das nächste Teilprojekt nicht liest.
+
+### Fixed (SP6, Task 4 — Review-Nachlauf)
+- **Das neue `Not covered`-Gate lief in der CI auf keinem einzigen
+  SP6-Paket.** `.github/workflows/mutation.yml` fuhr `config`, `httperr`,
+  `adapters/telemetry`, `adapters/http`, `app`, `adapters/mcp` und
+  `cmd/hostus` — die gesamte SP6-Logik liegt aber in `internal/domain`,
+  `internal/application` und `internal/adapters/sqlite`, und `make verify`
+  ruft `mutation` gar nicht auf. Das Gate war also manuell nachgewiesen und
+  nirgends verdrahtet: Ein Rückfall bei den hochgezogenen Bedingungen in
+  `internal/domain/synonym.go` wäre unbemerkt geblieben. Die drei Pakete
+  laufen jetzt mit (gemessene Laufzeit lokal: 30 s / 62 s / 154 s, rund
+  vier Minuten zusätzlich bei 60 Minuten Job-Timeout).
+- **`internal/domain/synonym.go`, Regel `type`:** Die Notiz behauptete,
+  alle 1.099 Zellen mit `type` seien Mangelaussagen. `", type variety."`
+  (1 Name, *Helichrysum bracteatum* var. *chrysanthum*) ist eine
+  taxonomische Anmerkung. Notiz auf 1.098 von 1.099 korrigiert, der
+  Einzelfall in Code und Referenz benannt; der Name wird weiterhin
+  zurückgehalten (die sichere Richtung), die saubere Auflösung wäre ein
+  Guard.
+
+### Changed (SP6, Task 4 — Mutations-Gate)
+- **`make mutation` erzwingt jetzt `Not covered: 0`.** Ein überlebender
+  Mutant heißt „ein Test läuft durch die Zeile, prüft aber zu lasch" und
+  ist begründbar; ein NOT-COVERED-Mutant heißt „kein Test führt diesen
+  Code aus" und ist es nie. Der harte Fehlschlag hängt deshalb genau an
+  `Not covered` und nicht an einer Efficacy-Schwelle, die gegen die
+  bestehenden dokumentiert-gerechtfertigten Überlebenden spröde wäre.
+  Fehlt die Zeile `Not covered: N` im Report, bricht das Target ebenfalls
+  ab — ein Gate ohne Signal darf nicht grün melden. Genau eine Ausnahme:
+  `No results to report.` bei gesetztem `PKG` (ein Paket ohne mutierbare
+  Stelle, z. B. `./internal/httperr`) ist eine gültige Antwort; ohne `PKG`
+  ist es die bekannte gremlins-Grenze bei `./...` und damit ein Fehlschlag.
+- **Zwei Altlasten, die das neue Gate aufgedeckt hat, sind behoben** —
+  beide waren „kein Test führt diesen Code aus", keiner davon neu:
+  - `internal/app/bundle.go`: `app.Bundle` war nur über `cmd/hostus`
+    getestet, also aus Sicht von `make mutation PKG=./internal/app` gar
+    nicht. Neues `internal/app/bundle_test.go` deckt Erfolgs- und
+    Fehlerpfad im eigenen Paket ab (`Not covered: 1 -> 0`).
+  - `internal/adapters/telemetry/telemetry.go`: der `otlpEnabled`-Zweig von
+    `Setup` wurde von keinem Test betreten. Neuer Test mit aktiviertem OTLP
+    gegen einen toten Endpunkt (hermetisch — die Exporter bauen ihren
+    Client lazy und wählen nichts) (`Not covered: 2 -> 0`).
+- **`internal/domain/synonym.go`: zwei Bedingungspaare aus den `case`-Armen
+  hochgezogen.** Gos Coverage-Modell beendet den gezählten Block am `{`
+  eines tag-losen `switch`; eine Bedingung *im* `case`-Arm liegt damit in
+  keinem gezählten Block, und `make mutation` meldete sechs Mutanten in
+  `ClassifyNomStatus`/`judgeSynonym` dauerhaft als NOT COVERED — kein Test
+  hätte das beheben können. Als eigene Zuweisungen (`anyDisqualifying`,
+  `anyAcceptable`, `disqualifying`, `unclassified`) werden sie mutiert und
+  von der bestehenden Testsuite **gekillt**: `./internal/domain` steht
+  jetzt bei `Killed: 123, Lived: 8, Not covered: 0`.
+
+### Added (SP6, Task 3 — `GET /v1/concept/{id}/synonyms`)
+- **Neuer Endpunkt `GET /v1/concept/{id}/synonyms?relevance=&rank=&max=`**
+  (UC5): „Das Problem ist Filterung, nicht Beschaffung." Er wendet das
+  Relevanzmodell aus Task 2 auf die Synonyme eines Concepts an. Am realen
+  Index liefert *Corynephorus canescens* (`wcvp:concept:405825`) mit
+  `relevance=publication&rank=species&max=3` genau die drei erwarteten
+  Namen — *Aira canescens* L. führt als Basionym, *Corynephorus
+  incanescens* Bubani (`", nom. illeg. superfl."`) ist ausgeschlossen.
+- **Standard ist die UNGEFILTERTE Liste** (`relevance=all`). Der Filter
+  hält bei *Corynephorus canescens* 20 von 26 Synonymen zurück und muss
+  deshalb ausdrücklich angefordert werden; `/v1/concept/{id}` liefert
+  dieselben Synonyme ungefiltert, und zwei Endpunkte mit
+  unterschiedlicher Zeilenzahl auf dieselbe Frage lesen sich als Fehler.
+  Beide Modi tragen dieselbe Begründung pro Synonym und dieselbe Bilanz.
+- **Jeder Ausschluss ist sichtbar.** `summary` beschreibt immer das
+  Concept, nie die ausgelieferte Seite: `total`, `publishable`, `absent`,
+  `excluded` (Anzahl je Regel) und die unklassifizierten Rohwerte. Ein
+  Filter, der 20 von 26 Synonymen entfernt, ohne das zu sagen, ist von
+  einer kaputten Abfrage nicht zu unterscheiden.
+- **`max` kappt IMMER nach dem Ranking**, nie davor — `max=3` liefert die
+  drei besten Synonyme, nie drei beliebige. Bereich `[0, 2000]`; `0` und
+  ein fehlender Parameter bedeuten „keine Kappung". Die Obergrenze liegt
+  über dem gemessenen Maximum von 1.127 Synonymen pro Concept.
+- **Ein gültiger, aber nicht unterstützter `rank` wird abgelehnt**
+  (`400`, unter Nennung des Werts), nicht still ignoriert: UC5 definiert
+  nur für `species` eine Ausschlussmenge, und eine unbeabsichtigt
+  ungefilterte Antwort wäre die gefährlichere Variante.
+- **`output.Repository.SynonymCandidates`** (neu) trägt `nom_status`, das
+  dreiwertige `homotypic` und `is_basionym` pro Synonym. `is_basionym`
+  wird im SQLite-Adapter aufgelöst (`accepted_name.basionym_id = name.id`,
+  113.642 Synonymzeilen im gemessenen Index) und durch einen
+  Adapter-Test festgenagelt — bliebe das Flag überall `false`, würde
+  UC5-Regel 4 still zum No-op, und nichts in `internal/domain` könnte das
+  bemerken. `Concept()` und damit `/v1/concept/{id}` bleiben unverändert.
+- **`rank_verbatim` wird durchgereicht.** 6.409 Synonymzeilen ranken als
+  `OTHER`, 3.731 davon mit einer erfassten Schreibweise (`proles` 2.338,
+  `lusus` 658, `microgène` 336, `Convariety` 184, `grex` 41). Keine davon
+  wird von `rank=species` ausgeschlossen — sie landen also in
+  Publikationslisten, wo ein blankes `OTHER` nichts aussagt. Gleiche
+  Begründung wie bei `conceptDTO.rank_verbatim`.
+- Dokumentation: `docs/reference/http-api.md` und
+  `api/openapi/openapi.yaml` (handgepflegt, dokumentierte Abweichung seit
+  S14). Beide benennen ausdrücklich, dass `typification: heterotypic` auf
+  dem aktuellen Index nicht auftreten kann (`concept_name.homotypic` ist
+  1 oder NULL, nie 0).
+
+### Fixed (SP6, Task 3)
+- **Zwei von drei Test-Row-Sources ließen `nom_status`/`published_in`
+  fallen.** `internal/adapters/http`, `internal/adapters/sqlite` und
+  `internal/application` besitzen je einen eigenen Mapper von
+  `wcvp.TaxonRow` auf `application.TaxonRow`; zwei davon kannten die in
+  Task 1 ergänzten Felder nicht, so dass jedes Fixture-Synonym
+  nomenklatorisch sauber aussah. Alle drei spiegeln jetzt wieder das echte
+  Mapping aus `internal/app/ingest.go` (alle zwölf Felder).
+
+### Added (SP6, Task 2 — Publikations-Relevanzmodell für Synonyme)
+- **`internal/domain/synonym.go`**: das reine Entscheidungsmodell für
+  `GET /v1/concept/{id}/synonyms` (UC5) — ohne I/O, damit die Regeln
+  isoliert prüfbar bleiben. `domain.RankSynonyms` liefert **jeden**
+  Kandidaten zurück (auch die ausgeschlossenen), jeweils mit dem Grund.
+- **`domain.ClassifyNomStatus` bewertet per Token-Containment, nicht per
+  Gleichheit.** Das in Task 1 gemessene Vokabular (1.304 distinkte Werte,
+  1.225 davon mit < 10 Treffern) lässt weder ein geschlossenes Enum noch
+  fail-loud-Parsing zu. Das Lehrbeispiel aus UC5, *Corynephorus
+  incanescens* Bubani (`wcvp:name:405842`), trägt `", nom. illeg.
+  superfl."` und **nicht** `", nom. superfl."` — ein Gleichheitsvergleich
+  würde genau den Fall verfehlen, mit dem UC5 erklärt wird.
+- **`unclassified` ist ein eigenes Urteil und wird zurückgehalten**, nicht
+  stillschweigend publiziert: ein erfasster, aber nicht klassifizierbarer
+  Status wird aus der Publikationsliste genommen, behält seinen Rohwert und
+  wird in `domain.SummarizeSynonyms` gezählt. Ein *fehlender* Status
+  (`absent`, 1.349.732 Namen) ist davon strikt getrennt und bleibt
+  publizierbar.
+- **`domain.Typification` ist dreiwertig.** `concept_name.homotypic` ist
+  auf 692.941 Zeilen `NULL` — das heißt *unbekannt*, nicht „heterotypisch“.
+  Sortierung: bekannt homotypisch → unbekannt → bekannt heterotypisch, und
+  welcher der drei Fälle vorlag, steht im Ergebnis. **Hinweis:** im
+  aktuellen Index gibt es keine einzige `homotypic = 0`-Zeile, `heterotypic`
+  ist heute also unerreichbar (siehe Task-2-Report §4).
+- **Ein literales Fragezeichen schlägt jede andere Regel.** Ist die Quelle
+  selbst unsicher, löst hostus die Unsicherheit nicht auf: alle 13 Namen mit
+  `?` im `nom_status` (`", not validly publ.?"` 8, `", an nom. valid.?"` 4,
+  `", nom. superfl. ?"` 1) werden `unclassified`. Die Regel ist bewusst
+  generisch — eine wertspezifische Variante stufte `", nom. superfl. ?"`
+  über das blanke `superfl` als `disqualifying` ein und bewertete damit
+  dieselbe erkenntnistheoretische Lage gegenteilig.
+- **`domain.BotanicalOpenItems`** benennt die fünf Werte, die eine
+  botanische statt einer technischen Entscheidung brauchen (Fragezeichen 13,
+  `sensu auct.` 1.117, `tentatively listed as a synonym` 290, `fossil name`
+  274, `isonym` 13) — sie werden ausgewiesen, nicht geraten.
+- `SummarizeSynonyms` zählt zusätzlich `Absent` (wie viele publizierbare
+  Synonyme allein auf einem *fehlenden* Status beruhen); `Excluded` ist
+  immer allokiert.
+- Rang-Ausschluss (`VARIETY`, `SUBVARIETY`, `FORM`, `SUBFORM`) ist
+  **Aufrufer-gesteuert** (`domain.RanksBelowSpecies()`), nicht fest
+  verdrahtet.
+
+### Fixed (SP6, Task 1 — nomenklatorischer Status und Publikation)
+- **`nom_status` und `published_in` gingen beim Ingest verloren.** Der
+  WCVP-Reader las `nomenclaturalstatus`/`namepublishedin`, `domain.Name`
+  hatte beide Felder, der SQLite-Adapter schrieb beide Spalten — aber die
+  DTO `application.TaxonRow` und der Mapper in `pass1AcceptedAndNames`
+  kannten sie nicht. Im echten Index waren beide Spalten deshalb bei **0
+  von 1.448.984** Namen belegt. Jetzt: 99.252 Namen (6,85 %) mit
+  `nom_status`, 1.448.934 (99,997 %) mit `published_in`. Das ist die
+  Voraussetzung für den Publikations-Relevanzfilter von
+  `GET /v1/concept/{id}/synonyms` (UC5).
+- Beide Spalten werden als SQL `NULL` gespeichert, wenn die Quelle nichts
+  liefert — ein leerer Quellwert wird nicht zu einem Platzhalter.
+- Das tatsächlich gemessene `nom_status`-Vokabular (1.304 distinkte Werte,
+  Verteilung, Präfix-Artefakt `", "`, Mehrfachstatus je Zelle) ist in
+  `docs/research/reality-check.md`, Abschnitt „SP6 Task 1", dokumentiert.
+
 ### Added (SP5, Task 4 — `POST /v1/translate`)
 - **`POST /v1/translate`**: Übersetzung eines Konzepts zwischen
   `sec.`-Referenzräumen (UC6). Einstieg über `concept_id` **oder**

@@ -13,3 +13,7 @@ Aufgabenorientierte Rezepte — jedes löst ein konkretes Problem. Sie setzen
 - **[Konzepte zwischen `sec.`-Räumen übersetzen (UC6)](sec-translate-uc6.md)**
   — `POST /v1/translate`, typisierte Konzeptrelationen, Ein-Hop-Grenze und
   die Lizenzlage der CDM-Daten
+- **[Publikationsfähige Synonyme filtern (UC5)](synonyms-uc5.md)** —
+  `GET /v1/concept/{id}/synonyms?relevance=publication`, das durchgerechnete
+  *Corynephorus-canescens*-Beispiel und ausdrücklich: **was dieser Filter
+  nicht kann** (keine regionale, keine Standardwerk-Filterung)

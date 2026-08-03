@@ -26,6 +26,7 @@
           # Linting & Analyse
           golangci-lint            # Meta-Linter
           govulncheck              # Vulnerability Scanner
+          hadolint                 # Dockerfile Linter
 
           # Testing
           gotestsum                # Bessere Test-Ausgabe
@@ -41,9 +42,6 @@
           # Utilities
           jq                       # JSON Verarbeitung
           sqlite                   # SQLite CLI (für Debugging)
-
-          # Geospatial
-          libspatialite            # SpatiaLite Extension für SQLite
         ];
 
       in
@@ -54,16 +52,20 @@
 
           shellHook = ''
             # Go Umgebung
-            export GOPATH="$PWD/.go"
+            # WICHTIG: Caches liegen AUSSERHALB des Arbeitsbaums (nicht $PWD/.go).
+            # Grund: Tools wie gremlins (mutation testing) kopieren das gesamte
+            # Modulverzeichnis inkl. .go/ in ein temporäres Arbeitsverzeichnis, um
+            # Mutationen anzuwenden. Die im Go-Modul-Cache enthaltenen Dateien sind
+            # read-only (Modus 0444); eine Kopie davon innerhalb des Repos brach
+            # diesen Kopiervorgang. Ablage unter XDG_CACHE_HOME entspricht zudem
+            # dem üblichen Go-Setup.
+            export GOPATH="''${XDG_CACHE_HOME:-$HOME/.cache}/hostus/go"
             export GOBIN="$GOPATH/bin"
             export PATH="$GOBIN:$PATH"
 
             # Cache Verzeichnisse
-            export GOCACHE="$PWD/.go/cache"
-            export GOMODCACHE="$PWD/.go/mod"
-
-            # SpatiaLite Library Pfad
-            export SPATIALITE_LIBRARY_PATH="${pkgs.libspatialite}/lib/mod_spatialite"
+            export GOCACHE="$GOPATH/cache"
+            export GOMODCACHE="$GOPATH/mod"
 
             # Erstelle Verzeichnisse falls nicht vorhanden
             mkdir -p "$GOPATH" "$GOBIN" "$GOCACHE" "$GOMODCACHE"
@@ -91,8 +93,8 @@
             fi
           '';
 
-          # CGO für SQLite
-          CGO_ENABLED = "1";
+          # Pure-Go via modernc.org/sqlite - keine CGO-Abhängigkeit, distroless-fähig
+          CGO_ENABLED = "0";
         };
 
         # Packages
@@ -104,7 +106,7 @@
           # Wird beim ersten Build aktualisiert
           vendorHash = null;
 
-          CGO_ENABLED = 1;
+          CGO_ENABLED = 0;
 
           meta = with pkgs.lib; {
             description = "Hostus - Taxonomy gateway service";

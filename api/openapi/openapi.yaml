@@ -1,0 +1,73 @@
+# hostus OpenAPI baseline (SP0 skeleton).
+#
+# Hand-written for now — documents only the endpoints that exist today
+# (health probes + metrics). This is the baseline the `openapi-diff.yml`
+# CI workflow diffs future changes against (breaking-change detection via
+# oasdiff). Once the SP1+ taxonomy endpoints (e.g. GET /api/v1/taxa/suggest,
+# GET /openapi) land, this spec becomes CODE-GENERATED from the handler
+# definitions rather than hand-maintained (see CLAUDE.md: "OpenAPI must be
+# code-generated (no manual spec maintenance)").
+openapi: 3.0.3
+info:
+  title: hostus API
+  description: >-
+    Multi-Backbone-Namens- und Merkmalsdienst für Gefäßpflanzen-Taxonomie.
+    Lokaler, schreibgeschützter Namens- und Merkmalsdienst für ein
+    Frontend-Autosuggest-Feld, gespeist aus einem eigenen SQLite/FTS5-Index
+    (COL XR, WCVP/POWO, Euro+Med, FloraVeg.EU). GBIF ist höchstens eine von
+    mehreren Ingest-/Enrichment-Quellen, kein Laufzeit-Provider.
+  version: 0.2.4
+  license:
+    name: MIT
+servers:
+  - url: http://localhost:8080
+    description: Lokale Entwicklung
+
+paths:
+  /health/live:
+    get:
+      operationId: getHealthLive
+      summary: Liveness-Probe
+      description: >-
+        Antwortet 200, solange der Prozess HTTP bedienen kann. Hängt nicht
+        vom Zustand nachgelagerter Abhängigkeiten ab.
+      tags:
+        - health
+      responses:
+        '200':
+          description: Prozess ist am Leben.
+
+  /health/ready:
+    get:
+      operationId: getHealthReady
+      summary: Readiness-Probe
+      description: >-
+        Antwortet 200, sobald der Service bereit ist, Traffic zu bedienen.
+        Im aktuellen Skeleton identisch zu /health/live (keine Abhängigkeiten
+        wie GBIF-Erreichbarkeit oder Cache-Warm-up zu prüfen; folgt in SP1).
+      tags:
+        - health
+      responses:
+        '200':
+          description: Service ist bereit.
+
+  /metrics:
+    get:
+      operationId: getMetrics
+      summary: Prometheus-Metriken
+      description: Metriken im Prometheus-Text-Exposition-Format.
+      tags:
+        - observability
+      responses:
+        '200':
+          description: Metriken im Prometheus-Textformat.
+          content:
+            text/plain:
+              schema:
+                type: string
+
+tags:
+  - name: health
+    description: Liveness- und Readiness-Probes für Orchestratoren.
+  - name: observability
+    description: Metriken und Tracing.

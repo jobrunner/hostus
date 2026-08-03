@@ -1,0 +1,68 @@
+# Detect BREAKING changes to the public HTTP API by diffing the OpenAPI spec
+# against the PR's base. A breaking change (removed path, removed/renamed field,
+# tightened type, …) fails the check — forcing a deliberate version decision.
+#
+# Runs only when the spec actually changes (paths filter).
+#
+# NOTE: the OpenAPI baseline (api/openapi/openapi.yaml) doesn't exist yet on
+# the SP0 skeleton — a later task (S14) adds it. Until then this workflow is
+# tolerant: it skips instead of failing when the spec file is absent.
+name: OpenAPI Diff
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'api/openapi/openapi.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SPEC_PATH: 'api/openapi/openapi.yaml'
+  # Pinned (supply-chain hardening): see ci.yml's GOVULNCHECK_VERSION for
+  # the same rationale.
+  OASDIFF_VERSION: 'v1.27.0'
+
+jobs:
+  breaking:
+    name: Breaking-change check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # need the base commit to diff against
+
+      - name: Check spec exists
+        id: spec
+        run: |
+          if [[ ! -f "$SPEC_PATH" ]]; then
+            echo "::notice::$SPEC_PATH not present yet (lands in S14) — skipping OpenAPI diff."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Go
+        if: steps.spec.outputs.exists == 'true'
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install oasdiff
+        if: steps.spec.outputs.exists == 'true'
+        run: go install github.com/oasdiff/oasdiff@${{ env.OASDIFF_VERSION }}
+
+      - name: Breaking-change check vs base
+        if: steps.spec.outputs.exists == 'true'
+        # BASE_SHA via env (not ${{ }} in-script) to avoid template injection.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git show "$BASE_SHA:$SPEC_PATH" > /tmp/base-openapi.yaml || {
+            echo "::notice::spec didn't exist at base — nothing to diff (first introduction of the spec)."
+            exit 0
+          }
+          oasdiff breaking /tmp/base-openapi.yaml "$SPEC_PATH" --fail-on ERR

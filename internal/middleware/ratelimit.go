@@ -57,6 +57,7 @@ func RateLimit(limiter *RateLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !limiter.Allow() {
+				RateLimitRejects.Inc()
 				httperr.RateLimitError(w)
 				return
 			}

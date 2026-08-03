@@ -23,7 +23,11 @@
 # Environment
 .env
 !example.env
+.envrc.local
 
 # Build artifacts
 /hostus
 /dist/
+
+# MkDocs build output
+/site/

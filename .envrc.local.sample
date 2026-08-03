@@ -1,0 +1,6 @@
+# Sample for .envrc.local (git-ignored, never commit real secrets here).
+# Copy this file to .envrc.local and fill in real values.
+# Used only by PoCs, not by the hostus service itself.
+
+PLANTNET_API_KEY=
+PLANTNET_API_ENDPOINT=https://my-api.plantnet.org

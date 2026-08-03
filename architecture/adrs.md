@@ -2,7 +2,7 @@
 
 ## ADR‑001: Nutzung von GBIF als externer Taxonomie‑Provider
 
-**Status:** Accepted
+**Status:** Superseded — siehe [ADR-0009: Lokaler Multi-Backbone-Index](../docs/explanation/decisions/0009-local-multibackbone-index.md) (hostus 2.0)
 
 **Kontext:**
 Für die Ermittlung eindeutiger Pflanzennamen inkl. historischer Synonyme wird eine belastbare, öffentlich verfügbare Quelle benötigt.
@@ -42,7 +42,7 @@ Synonyme werden stets unter dem akzeptierten Taxon dargestellt und explizit mark
 
 ## ADR‑003: Kein Persistenz‑Layer
 
-**Status:** Accepted
+**Status:** Superseded — siehe [ADR-0009: Lokaler Multi-Backbone-Index](../docs/explanation/decisions/0009-local-multibackbone-index.md) und [ADR-0010: SQLite/FTS5-Persistenz](../docs/explanation/decisions/0010-sqlite-fts5-persistence.md) (hostus 2.0)
 
 **Kontext:**
 Der Service soll leichtgewichtig bleiben und kein System‑of‑Record sein.
@@ -59,10 +59,16 @@ Keine Datenbank, nur In‑Memory‑Cache.
 
 ## ADR‑004: Go + Minimal‑Dependencies
 
-**Status:** Accepted
+**Status:** Accepted (Wortlaut für hostus 2.0 reconciled)
 
 **Entscheidung:**
-Go mit möglichst wenig Abhängigkeiten.
+Go mit möglichst wenig Abhängigkeiten. Für hostus 2.0 zählt dazu explizit der
+im Master-Architektur-Spec freigegebene, feste Stack: `gorilla/mux`,
+`spf13/viper`, `spf13/cobra`, `modernc.org/sqlite` (CGO-frei), das
+OpenTelemetry-Go-SDK (+ `otelmux`), `modelcontextprotocol/go-sdk` und der
+offizielle Prometheus-Client — siehe `CLAUDE.md` „Allowed Libraries Only" für
+die maßgebliche, aktuelle Liste. Kein Wildwuchs darüber hinaus; keine
+schweren Frameworks, ORMs oder reflection-lastigen Abhängigkeiten.
 
 **Begründung:**
 
@@ -116,7 +122,7 @@ Releases werden nur bei Feature‑Branch‑Merges erzeugt.
 
 ## ADR‑008: Explizite Nicht‑Ziele
 
-**Status:** Accepted
+**Status:** Superseded (teilweise) — „keine Persistenz" ersetzt durch [ADR-0009](../docs/explanation/decisions/0009-local-multibackbone-index.md)/[ADR-0010](../docs/explanation/decisions/0010-sqlite-fts5-persistence.md); „keine Auth, keine User" gilt für hostus 2.0 unverändert fort (siehe Spec Abschnitt 8, Nicht-Ziele)
 
 **Entscheidung:**
 Keine Auth, keine User, keine Persistenz.

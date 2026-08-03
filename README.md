@@ -1,78 +1,78 @@
 # Hostus
 
-Ein hochperformanter Backend-Service für Taxonomie-Autosuggest von Gefäßpflanzen.
+Ein hochperformanter Backend-Service für Taxonomie- und Merkmals-Autosuggest
+von Gefäßpflanzen.
 
 ## Überblick
 
-Hostus ist ein Gateway-Service, der die GBIF API für Pflanzentaxonomie proxied und dabei:
+Hostus 2.0 ist ein lokaler, schreibgeschützter Namens- und Merkmalsdienst,
+kein zustandsloser GBIF-Proxy mehr (das war hostus 1.x). Er betreibt einen
+eigenen, versionierten Multi-Backbone-Index (COL XR, WCVP/POWO, Euro+Med,
+FloraVeg.EU, plus Merkmals-Vokabulare EIVE/Tichý/Midolo) in SQLite/FTS5,
+gespeist aus fixierten Ingest-Artefakten, und:
 
-- Ergebnisse im Speicher cached
-- Synonyme unter akzeptierten Taxa gruppiert
-- Rate-Limiting und Load-Shedding für Upstream-Schutz bietet
-- Eine stabile, frontend-optimierte REST-API bereitstellt
+- Gruppiert Synonyme unter akzeptierten Taxa
+- Bietet Rate-Limiting und Load-Shedding für die Ingest-/Enrichment-Pfade
+- Stellt eine stabile, frontend-optimierte REST-API bereit
+- Liefert OpenTelemetry-Tracing/Metrics sowie einen Debug-MCP-Server für
+  Claude Code
+
+GBIF ist dabei höchstens eine von mehreren Ingest-/Enrichment-Quellen, nicht
+der alleinige Laufzeit-Provider. Details zur Zielarchitektur stehen in
+`docs/superpowers/specs/2026-07-31-hostus-2.0-architecture.md`.
+
+> **Hinweis (SP0):** Dieser Stand ist das Harness/Hexagon-Skeleton. Die
+> fachlichen `/v1/*`-Endpunkte unten sind absichtlich Stubs; sie landen
+> schrittweise in SP1–SP6 (siehe CLAUDE.md).
 
 ## API
 
-### Autosuggest Endpoint
+### Endpoints (Zielbild, siehe CLAUDE.md für den SP-Baustellenplan)
 
-```http
-GET /api/v1/taxa/suggest?q={query}&limit={n}
-```
-
-| Parameter | Typ    | Pflicht | Beschreibung                                |
-|-----------|--------|---------|---------------------------------------------|
-| q         | string | ja      | Suchstring (min. 3 Zeichen)                 |
-| limit     | int    | nein    | Max. Anzahl Ergebnisse (Standard: 20, Max: 100) |
-
-#### Beispiel-Response
-
-```json
-[
-  {
-    "acceptedKey": 2704178,
-    "acceptedName": "Schoenoplectus lacustris",
-    "rank": "SPECIES",
-    "family": "Cyperaceae",
-    "synonyms": [
-      {
-        "key": 5298174,
-        "name": "Scirpus lacustris",
-        "status": "SYNONYM"
-      }
-    ]
-  }
-]
-```
-
-### Weitere Endpoints
-
-| Endpoint    | Beschreibung                    |
-|-------------|---------------------------------|
-| `/openapi`  | OpenAPI 3.0 Spezifikation       |
-| `/metrics`  | Prometheus Metriken             |
-| `/health`   | Health-Check                    |
+| Endpoint                          | Beschreibung                                          |
+|------------------------------------|--------------------------------------------------------|
+| `GET /v1/suggest`                  | Autosuggest, flächenbezogen gerankt (SP2)              |
+| `POST /v1/match`                   | Batch-Namensauflösung, verbatim → Concept-Kandidaten (SP1/SP3) |
+| `GET /v1/concept/{id}`             | Concept mit Xrefs + Klassifikation (SP1)               |
+| `GET /v1/xref`                     | Reverse-Lookup, fremde ID → Concept (SP1/SP4)           |
+| `GET /v1/concept/{id}/traits`      | Indikatorwerte je Vokabular (SP3)                       |
+| `GET /v1/concept/{id}/synonyms`    | Synonymliste, relevanzfilterbar (SP6)                   |
+| `POST /v1/translate`               | Concept-Übersetzung zwischen `sec.`-Referenzräumen (SP5)|
+| `GET /openapi`                     | Generierte OpenAPI-Spezifikation                        |
+| `GET /metrics`                     | Prometheus-Metriken                                     |
+| `GET /health/live`, `/health/ready`| Liveness-/Readiness-Probe (heute schon vorhanden)       |
 
 ## Konfiguration
 
-Alle Parameter können via `.env`-Datei, Umgebungsvariablen oder CLI-Parameter gesetzt werden.
+Alle Parameter können über `config.yaml`, `HOSTUS_`-Umgebungsvariablen oder
+CLI-Flags gesetzt werden (Priorität niedrig → hoch: `config.yaml` <
+`HOSTUS_*`-Env-Var < CLI-Flag). Es gibt keinen Dotenv-Loader im Binary;
+`.env`/`example.env` sind eine Convenience für `docker-compose`
+(`env_file:`), keine eigene Prioritätsstufe. Siehe
+[`docs/reference/configuration.md`](docs/reference/configuration.md) für die
+vollständige Referenz.
 
-| Parameter                   | Standard                    | Beschreibung                           |
-|-----------------------------|-----------------------------|----------------------------------------|
-| `PORT`                      | 8080                        | Server-Port                            |
-| `HOST_NAME`                 | localhost                   | Hostname für TLS                       |
-| `ENABLE_TLS`                | false                       | HTTPS aktivieren                       |
-| `CORS_ORIGINS`              | *                           | Erlaubte CORS-Origins                  |
-| `RATE_LIMIT`                | 100                         | Requests pro Sekunde                   |
-| `UPSTREAM_ERROR_THRESHOLD`  | 5                           | Fehler bis Load-Shedding               |
-| `UPSTREAM_BACKOFF_SECONDS`  | 30                          | Backoff nach Load-Shedding             |
-| `CACHE_TTL_SECONDS`         | 300                         | Cache-Lebensdauer                      |
-| `LOG_LEVEL`                 | info                        | Log-Level (debug/info/warn/error)      |
+| Umgebungsvariable              | Standard         | Beschreibung                              |
+|---------------------------------|------------------|--------------------------------------------|
+| `HOSTUS_SERVER_HOST`            | 0.0.0.0          | Bind-Adresse des HTTP-Servers              |
+| `HOSTUS_SERVER_PORT`            | 8080             | Server-Port                                |
+| `HOSTUS_LOGGING_LEVEL`          | info             | Log-Level (debug/info/warn/error)          |
+| `HOSTUS_LOGGING_FORMAT`         | json             | Log-Format (json/text)                     |
+| `HOSTUS_METRICS_ENABLED`        | true             | Prometheus-Endpoint aktivieren             |
+| `HOSTUS_CORS_ALLOWED_ORIGINS`   | (leer)           | Erlaubte CORS-Origins                      |
+| `HOSTUS_TLS_ENABLED`            | false            | HTTPS/CertMagic aktivieren                 |
+| `HOSTUS_TELEMETRY_ENABLED`      | false            | OpenTelemetry-Export aktivieren            |
+| `HOSTUS_SQLITE_PATH`            | ./data/hostus.db | Pfad zur lokalen SQLite-Indexdatei         |
 
 ### CLI-Beispiel
 
 ```bash
-./hostus --port=8080 --rate-limit=50 --log-level=debug
+./hostus --port=8080 --log-level=debug
 ```
+
+Rate-Limiting ist über die Middleware-Kette aktiv (Default: 20 req/s), ein
+CLI-Flag dafür ist noch nicht verdrahtet — landet mit dem SP1-Konfigurations-
+Ausbau.
 
 ## Schnellstart
 
@@ -111,14 +111,16 @@ Alle Fehler werden einheitlich als JSON zurückgegeben:
 
 ### Fehlercodes
 
-| Code                  | HTTP | Beschreibung                       |
-|-----------------------|------|------------------------------------|
-| `INVALID_QUERY`       | 400  | Ungültiger Query-Parameter         |
-| `RATE_LIMIT_EXCEEDED` | 429  | Rate-Limit überschritten           |
-| `UPSTREAM_OVERLOADED` | 503  | Load-Shedding aktiv                |
-| `GBIF_TIMEOUT`        | 504  | GBIF-Anfrage Timeout               |
-| `GBIF_UNAVAILABLE`    | 502  | GBIF nicht erreichbar              |
-| `INTERNAL_ERROR`      | 500  | Interner Serverfehler              |
+| Code                  | HTTP | Beschreibung                                     |
+|-----------------------|------|---------------------------------------------------|
+| `INVALID_QUERY`       | 400  | Ungültiger Query-Parameter                         |
+| `RATE_LIMIT_EXCEEDED` | 429  | Rate-Limit überschritten                           |
+| `UPSTREAM_OVERLOADED` | 503  | Load-Shedding aktiv                                |
+| `NOT_FOUND`           | 404  | Unbekannte Concept-/Xref-ID                        |
+| `UNRESOLVABLE`        | —    | Verbatim-Name lässt sich keinem Concept zuordnen   |
+| `GBIF_TIMEOUT`        | 504  | GBIF-Anfrage Timeout (nur Ingest-/Enrichment-Pfad) |
+| `GBIF_UNAVAILABLE`    | 502  | GBIF nicht erreichbar (nur Ingest-/Enrichment-Pfad)|
+| `INTERNAL_ERROR`      | 500  | Interner Serverfehler                              |
 
 ## Lizenz
 

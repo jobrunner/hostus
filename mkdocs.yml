@@ -1,0 +1,74 @@
+site_name: hostus
+site_description: Multi-Backbone-Namens- und Merkmalsdienst für Gefäßpflanzen-Taxonomie.
+repo_url: https://github.com/jobrunner/hostus
+repo_name: jobrunner/hostus
+docs_dir: docs
+edit_uri: edit/master/docs/
+
+# Internal process docs (specs/plans under sdd, and the Part-1 research
+# corpus) live under docs/ for repo-locality but must never be published nor
+# break the strict build. exclude_docs (mkdocs >= 1.5) removes them from the
+# build entirely — they are neither rendered nor link-checked.
+exclude_docs: |
+  superpowers/
+  research/
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - scheme: default
+      toggle: { icon: material/weather-night, name: Switch to dark mode }
+    - scheme: slate
+      toggle: { icon: material/weather-sunny, name: Switch to light mode }
+
+# Fail the build on broken internal links, missing nav entries, bad anchors, or
+# unresolved/absolute links — under `--strict` these warnings become errors,
+# which is what makes the docs gate real. (Keys must sit under nav/links.)
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+  links:
+    not_found: warn
+    anchors: warn
+    absolute_links: warn
+    unrecognized_links: warn
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+nav:
+  - Home: index.md
+  - Tutorials:
+      - tutorials/index.md
+      - Erste Schritte: tutorials/getting-started.md
+  - How-to-Anleitungen:
+      - how-to/index.md
+      - Entwicklungsumgebung: how-to/development.md
+  - Referenz:
+      - reference/index.md
+      - HTTP-API: reference/http-api.md
+      - Konfiguration: reference/configuration.md
+      - Observability: reference/observability.md
+  - Erklärung:
+      - explanation/index.md
+      - Architektur: explanation/architecture.md
+      - Bekannte Lücken: explanation/known-gaps.md
+      - Entscheidungen (ADRs):
+          - explanation/decisions/index.md
+          - "ADR-0009: Lokaler Multi-Backbone-Index": explanation/decisions/0009-local-multibackbone-index.md
+          - "ADR-0010: SQLite/FTS5-Persistenz": explanation/decisions/0010-sqlite-fts5-persistence.md
+          - "ADR-0011: Versionierter Artefaktvertrag": explanation/decisions/0011-versioned-artifact-contract.md
+          - "ADR-0012: Hexagonale Architektur": explanation/decisions/0012-hexagonal-architecture.md
+          - "ADR-0013: OpenTelemetry von Tag 1": explanation/decisions/0013-opentelemetry-from-day-one.md
+          - "ADR-0014: stdio Debug-MCP": explanation/decisions/0014-stdio-debug-mcp.md

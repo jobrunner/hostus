@@ -1,0 +1,60 @@
+# Beispielkonfiguration für hostus (siehe internal/config/config.go).
+#
+# Diese Datei ist NICHT erforderlich: alle Werte haben eingebaute
+# Defaults (siehe Defaults() in internal/config/config.go), und jeder
+# Schlüssel kann per Umgebungsvariable überschrieben werden, indem der
+# Präfix HOSTUS_ vorangestellt und "." durch "_" ersetzt wird, z. B.
+# server.port -> HOSTUS_SERVER_PORT. Priorität (niedrig -> hoch):
+# Defaults < diese Datei (config.yaml) < Umgebungsvariablen.
+#
+# Zum Ausprobieren: Kopieren nach "config.yaml" (wird automatisch in
+# ".", "./config" oder "/etc/hostus" gesucht) und Werte anpassen.
+
+server:
+  # Bind-Adresse des HTTP-Servers (0.0.0.0 = alle Interfaces).
+  host: "0.0.0.0"
+  # Port, auf dem der HTTP-Server lauscht.
+  port: 8080
+  # Timeout zum Lesen eines eingehenden Requests.
+  read_timeout: 30s
+  # Timeout zum Schreiben einer Antwort.
+  write_timeout: 30s
+
+logging:
+  # Log-Level: debug, info, warn, error.
+  level: "info"
+  # Ausgabeformat der Logs: json (strukturiert) oder text (lesbar).
+  format: "json"
+
+metrics:
+  # Prometheus-Metrik-Endpoint aktivieren.
+  enabled: true
+  # Pfad, unter dem die Metriken bereitgestellt werden.
+  path: "/metrics"
+
+tls:
+  # TLS/CertMagic (automatische Let's-Encrypt-Zertifikate) aktivieren.
+  enabled: false
+  # Domains, für die ein Zertifikat ausgestellt werden soll (erforderlich,
+  # wenn tls.enabled true ist).
+  domains: []
+  # Kontakt-E-Mail für die Zertifikatsstelle (erforderlich, wenn
+  # tls.enabled true ist).
+  email: ""
+
+telemetry:
+  # OpenTelemetry-Export (Traces/Metrics an einen Collector) aktivieren.
+  enabled: false
+  # OTLP-Collector-Endpoint (host:port); erforderlich, wenn
+  # telemetry.enabled true ist.
+  endpoint: ""
+  # Sampling-Anteil zwischen 0.0 (nichts) und 1.0 (alles).
+  sample_ratio: 1.0
+
+sqlite:
+  # Pfad zur lokalen SQLite-Datenbankdatei (Cache/Persistenz).
+  path: "./data/hostus.db"
+
+cors:
+  # Erlaubte Ursprünge für Cross-Origin-Requests (leer = keine erlaubt).
+  allowed_origins: []

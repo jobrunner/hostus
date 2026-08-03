@@ -1,0 +1,51 @@
+# Weekly deep fuzzing of the parse/decode boundaries. Seed corpora (once they
+# exist) run on every PR via `go test` in the CI Test job (deterministic
+# regression); this job does the actual exploratory fuzzing, kept off the PR
+# path so a newly discovered crash never flakes an unrelated PR. Crashers are
+# uploaded and should be committed as permanent regression seeds.
+#
+# NOTE: the SP0 skeleton has no Fuzz* targets yet — they land in SP1. `make
+# fuzz` discovers Fuzz* targets at runtime and no-ops cleanly when there are
+# none, so this job can call it unconditionally without failing in the
+# meantime.
+name: Fuzz
+
+on:
+  schedule:
+    - cron: '0 4 * * 1' # Monday 04:00 UTC
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: 'Fuzz time per target (e.g. 3m, 10m)'
+        default: '3m'
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: Fuzz parse boundaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Fuzz
+        # Pass the dispatch input via env (not inline ${{ }}), and let the Makefile
+        # read + validate $FUZZTIME from the environment. Avoids template-injection
+        # in this run block (zizmor) AND make-level `$(FUZZTIME)` expansion.
+        env:
+          FUZZTIME: ${{ github.event.inputs.fuzztime || '3m' }}
+        run: make fuzz
+
+      - name: Upload crashers
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-crashers
+          path: '**/testdata/fuzz/**'
+          if-no-files-found: ignore

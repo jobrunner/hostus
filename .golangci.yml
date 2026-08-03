@@ -29,6 +29,20 @@ linters:
     - unconvert
     - unparam
     - whitespace
+
+    # Architecture harness (drift protection): enforces the hexagonal import
+    # boundaries between domain / ports / application / adapters / app and
+    # blocklists heavy third-party dependencies (see CLAUDE.md "Allowed
+    # Libraries Only"). See task S3/S4 in .superpowers/sdd/.
+    - depguard
+    - gomodguard_v2
+
+    # Style / API-boundary linters ported alongside the architecture harness.
+    - revive
+
+    # Debt harness: every //nolint must name its linter(s) and explain why.
+    - nolintlint
+
   settings:
     gocyclo:
       min-complexity: 15
@@ -41,17 +55,132 @@ linters:
       min-occurrences: 3
     misspell:
       locale: US
+
+    # "exported" and "package-comments" are intentionally left out of this
+    # rule set: CLAUDE.md mandates "sparse comments, English only when
+    # necessary", which conflicts with revive's default demand for a doc
+    # comment on every exported symbol/package. The remaining rules police
+    # naming/API-shape conventions, not comment presence.
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: var-declaration
+        - name: var-naming
+
+    nolintlint:
+      require-explanation: true # every //nolint must say WHY
+      require-specific: true # ...and name the exact linter(s), never a bare //nolint
+      allow-unused: false # a //nolint that suppresses nothing is itself debt
+
+    # Hexagonal import boundaries. Allowed direction:
+    #   domain      -> nothing internal (stdlib + allowed third-party only)
+    #   ports       -> domain only
+    #   application -> domain, ports
+    #   adapters    -> domain, ports        (NOT application, NOT sibling adapters)
+    #   app (cmd)   -> everything (composition root, intentionally unrestricted)
+    # `files` matches file paths; `deny` lists forbidden imports for that layer.
+    # depguard matches an import that equals a denied pkg OR is a subpackage of
+    # it, so denying "internal/adapters" also denies "internal/adapters/http".
+    depguard:
+      rules:
+        domain:
+          files:
+            - "**/internal/domain/**"
+          deny:
+            - pkg: github.com/jobrunner/hostus/internal
+              desc: "domain is the innermost hexagon layer and must not depend on any other internal package"
+        ports:
+          files:
+            - "**/internal/ports/**"
+          deny:
+            - pkg: github.com/jobrunner/hostus/internal/application
+              desc: "ports define contracts over domain only, not the use cases that consume them"
+            - pkg: github.com/jobrunner/hostus/internal/adapters
+              desc: "ports must not know about adapters"
+            - pkg: github.com/jobrunner/hostus/internal/app
+              desc: "ports must not know about the composition root"
+            - pkg: github.com/jobrunner/hostus/internal/config
+              desc: "ports stay configuration-free"
+        application:
+          files:
+            - "**/internal/application/**"
+          deny:
+            - pkg: github.com/jobrunner/hostus/internal/adapters
+              desc: "the core talks to adapters only through ports, never directly"
+            - pkg: github.com/jobrunner/hostus/internal/app
+              desc: "the core does not know about the composition root"
+        adapters:
+          files:
+            - "**/internal/adapters/**"
+            - "!**/internal/adapters/mcp/**"
+          deny:
+            - pkg: github.com/jobrunner/hostus/internal/application
+              desc: "adapters talk to the core only through ports"
+            - pkg: github.com/jobrunner/hostus/internal/app
+              desc: "adapters do not know about the composition root"
+            - pkg: github.com/jobrunner/hostus/internal/adapters
+              desc: "no adapter-to-adapter imports (cross-coupling); shared logic belongs in domain/ports"
+        # Task S10 debug MCP: an explicit, narrow exception to the "no
+        # adapter-to-adapter imports" rule above. mcp.NewServer's signature
+        # (telemetry.RingLog, telemetry.MemoryExporter — see the S7/S10 task
+        # briefs) is the whole point of the package: it must read S7's
+        # telemetry ring buffers directly. Only that one sibling import is
+        # allowed; every other cross-adapter/cross-layer boundary still
+        # applies.
+        adapters-mcp:
+          files:
+            - "**/internal/adapters/mcp/**"
+          deny:
+            - pkg: github.com/jobrunner/hostus/internal/application
+              desc: "adapters talk to the core only through ports"
+            - pkg: github.com/jobrunner/hostus/internal/app
+              desc: "adapters do not know about the composition root"
+            - pkg: github.com/jobrunner/hostus/internal/adapters/http
+              desc: "no cross-adapter coupling to the HTTP adapter"
+
+    # Module blocklist (see CLAUDE.md "Allowed Libraries Only"): guards against
+    # dependency bloat by naming frameworks/ORMs that must never be imported
+    # directly, even though nothing in go.mod pulls them in today.
+    gomodguard_v2:
+      blocked:
+        - module: gorm.io/gorm
+          reason: "No ORM allowed; the local index uses modernc.org/sqlite directly (see ADR-0010), no ORM layer."
+        - module: github.com/gin-gonic/gin
+          reason: "Only gorilla/mux is allowed as HTTP router/framework (CLAUDE.md)."
+        - module: github.com/labstack/echo
+          reason: "Only gorilla/mux is allowed as HTTP router/framework (CLAUDE.md)."
+        - module: github.com/gofiber/fiber
+          reason: "Only gorilla/mux is allowed as HTTP router/framework (CLAUDE.md)."
+        - module: go.mongodb.org/mongo-driver
+          reason: "hostus's local index is SQLite/FTS5 (modernc.org/sqlite, see ADR-0010); no other database driver is needed."
+
   exclusions:
     rules:
+      # Tests remain linted (Global Constraints DoD: no blanket _test.go
+      # exemption). Only the following are relaxed, each for a concrete,
+      # test-only reason:
       - path: _test\.go
         linters:
-          - dupl
-          - gosec
-          - gocyclo
-          - errcheck
-          - goconst
-          - noctx
-      # OpenAPI-Spec ist Datenliteral; wiederholte JSON-Schlüssel sind kein Code-Smell.
+          - dupl # table-driven tests intentionally repeat structure across cases
+          - goconst # repeated literals are test fixture data, not a code smell
+          - noctx # httptest.NewRequest is the conventional context-free helper in tests
+          - depguard # tests are the "test composition root": they legitimately wire
+            # real adapters/application/domain together across hexagon
+            # boundaries for integration-style coverage; production code
+            # remains strictly bounded.
+      # OpenAPI-Spec ist Datenliteral; wiederholte JSON-Schluessel sind kein Code-Smell.
       - path: internal/api/openapi\.go
         linters:
           - goconst

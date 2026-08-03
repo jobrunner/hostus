@@ -71,7 +71,17 @@ test-race: ## Tests mit Race Detector
 bench: ## Benchmarks ausführen
 	$(GO) test -run='^$$' -bench=. -benchmem ./...
 
-# Mutation-Gate: `Not covered` MUSS 0 sein.
+# Pakete, für die "No results to report." (bei EINZELN gesetztem PKG) eine
+# gültige Antwort ist, weil sie keine mutierbare Stelle enthalten — nicht weil
+# gremlins v0.5.1 an einem Mehr-Paket-Muster scheitert. Jeder Eintrag braucht
+# eine Begründung; ein Paket landet hier nur, wenn tatsächlich geprüft wurde,
+# dass es keine Mutanten erzeugt (nicht auf Verdacht).
+#   ./internal/httperr — nur Konstanten + ein linearer JSON-Encode ohne
+#   Verzweigung/Vergleich/Arithmetik; verifiziert 2026-08-03 (siehe Review I3).
+MUTATION_NO_MUTABLE_CODE := ./internal/httperr
+
+# Mutation-Gate: `Not covered` MUSS 0 sein, UND es muss mindestens ein Mutant
+# tatsächlich geprüft worden sein (positiver Boden).
 #
 # Ein überlebender (LIVED) Mutant heißt "ein Test läuft durch die Zeile, prüft
 # aber das Ergebnis nicht scharf genug" — der ist begründbar und wird pro Fall
@@ -85,25 +95,41 @@ bench: ## Benchmarks ausführen
 # Fällt die Zeile "Not covered: N" ganz aus dem Report, bricht das Target
 # ebenfalls ab — ein Gate, das sein Signal nicht mehr findet, darf nicht
 # stillschweigend grün melden. Genau eine Ausnahme: gremlins meldet
-# "No results to report.", wenn es keine mutierbare Stelle gibt. Bei einem
-# EINZELNEN Paket (PKG gesetzt, z. B. ./internal/httperr) ist das eine
-# gültige Antwort. Ohne PKG dagegen ist es die bekannte v0.5.1-Grenze bei
-# Mehr-Paket-Mustern wie ./... — dann ist der Lauf wertlos und das Target
-# sagt das, statt grün zu melden.
-mutation: ## Mutation-Testing (gremlins) — package-scoped, `Not covered` = 0 erzwungen (PKG=./internal/... überschreibbar)
+# "No results to report.", wenn es keine mutierbare Stelle gibt — UND NUR,
+# wenn PKG auf der Allowlist MUTATION_NO_MUTABLE_CODE steht. Vorher (Review
+# I3) reichte "PKG ist irgendwie gesetzt", und CI setzt PKG für JEDEN Lauf —
+# die Ausnahme war damit für jedes Paket offen, das aus irgendeinem Grund
+# (falscher Pfad, kaputte Build-Tags, umbenanntes Verzeichnis, eine künftige
+# v0.5.x-Regression) plötzlich keine Mutanten mehr erzeugt. Ein Paket, das
+# NICHT auf der Allowlist steht und trotzdem "No results to report." meldet,
+# ist deshalb ein harter Fehlschlag, kein Grünmelden.
+mutation: ## Mutation-Testing (gremlins) — package-scoped, `Not covered`=0 + Mutantenboden>0 erzwungen (PKG=./internal/... überschreibbar)
 	@command -v gremlins >/dev/null 2>&1 || $(GO) install github.com/go-gremlins/gremlins/cmd/gremlins@v0.5.1
 	@out=$$(mktemp); rc=$$(mktemp); \
 	{ gremlins unleash --dry-run=false $(if $(PKG),$(PKG),./...); echo $$? >"$$rc"; } | tee "$$out"; \
 	status=$$(cat "$$rc"); \
 	notcovered=$$(sed -n 's/.*Not covered: \([0-9][0-9]*\).*/\1/p' "$$out" | tail -1); \
+	killed=$$(sed -n 's/.*Killed: \([0-9][0-9]*\).*/\1/p' "$$out" | tail -1); \
+	lived=$$(sed -n 's/.*Lived: \([0-9][0-9]*\).*/\1/p' "$$out" | tail -1); \
 	empty=$$(grep -c 'No results to report' "$$out" 2>/dev/null | tr -d ' '); \
-	[ "$$empty" = "0" ] && empty=""; \
+	if [ "$$empty" = "0" ]; then empty=""; fi; \
 	rm -f "$$out" "$$rc"; \
 	if [ "$$status" -ne 0 ]; then exit "$$status"; fi; \
+	allowed=""; \
+	for p in $(MUTATION_NO_MUTABLE_CODE); do \
+		if [ "$(PKG)" = "$$p" ]; then allowed=1; fi; \
+	done; \
 	if [ -z "$$notcovered" ]; then \
-		if [ -n "$$empty" ] && [ -n "$(PKG)" ]; then \
-			echo "✅ mutation: $(PKG) hat keine mutierbare Stelle — nichts zu prüfen."; \
+		if [ -n "$$empty" ] && [ -n "$$allowed" ]; then \
+			echo "✅ mutation: $(PKG) hat keine mutierbare Stelle (Allowlist MUTATION_NO_MUTABLE_CODE) — nichts zu prüfen."; \
 			exit 0; \
+		fi; \
+		if [ -n "$$empty" ]; then \
+			echo "❌ mutation: $(PKG) meldet 'No results to report.', steht aber NICHT auf der Allowlist MUTATION_NO_MUTABLE_CODE."; \
+			echo "   Entweder hat das Paket wirklich keine mutierbare Stelle — dann mit Begründung zur Allowlist"; \
+			echo "   hinzufügen — oder gremlins konnte keine Mutanten erzeugen (falscher Pfad, kaputte Build-Tags,"; \
+			echo "   umbenanntes Verzeichnis, v0.5.x-Regression). Ein stillschweigendes Grün ist hier keine Option."; \
+			exit 1; \
 		fi; \
 		echo "❌ mutation: kein gremlins-Report ('Not covered: N' fehlt) — das Gate kann nichts prüfen."; \
 		echo "   gremlins v0.5.1 liefert für ein Mehr-Paket-Muster wie ./... 'No results to report.';"; \
@@ -118,7 +144,14 @@ mutation: ## Mutation-Testing (gremlins) — package-scoped, `Not covered` = 0 e
 		echo "   der Bedingung in eine eigene Zuweisung (siehe internal/domain/synonym.go)."; \
 		exit 1; \
 	fi; \
-	echo "✅ mutation: Not covered = 0"
+	total=$$(( $${killed:-0} + $${lived:-0} + $${notcovered:-0} )); \
+	if [ "$$total" -eq 0 ]; then \
+		echo "❌ mutation: 0 Mutanten insgesamt (Killed+Lived+Not covered) trotz vorhandenem Report — kein positiver Boden."; \
+		echo "   Ein Gate, das keinen einzigen Mutanten geprüft hat, prüft nichts. Falls $(PKG) tatsächlich keinen"; \
+		echo "   mutierbaren Code hat: mit Begründung zur Allowlist MUTATION_NO_MUTABLE_CODE hinzufügen."; \
+		exit 1; \
+	fi; \
+	echo "✅ mutation: Not covered = 0, $$total Mutant(en) geprüft"
 
 # Fuzzt alle Fuzz*-Targets im Modul (FUZZTIME je Target überschreibbar, default
 # 30s). Targets werden zur Laufzeit per `go test -list` entdeckt — keine

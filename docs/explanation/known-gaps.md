@@ -26,19 +26,6 @@ unklassifizierten Rohwerte aus — dann ist der heutige Stand
 Vergleichsbasis statt einer Momentaufnahme. Dieselbe Disziplin wie bei
 `matched/unmatched/ambiguous`.
 
-## Das Mutations-Gate hat keinen positiven Mutantenboden (SP6)
-
-`make mutation` erzwingt `Not covered: 0`. Die Ausnahme „`No results to
-report.` ist in Ordnung, **wenn `PKG` gesetzt ist**" trifft genau den Fall,
-den die CI immer herstellt: `.github/workflows/mutation.yml` ruft
-ausschließlich mit `PKG` auf. Ein Paket, das aus irgendeinem Grund keinen
-einzigen Mutanten mehr erzeugt — falscher Pfad, kaputte Build-Tags,
-umbenanntes Verzeichnis —, meldet damit grün.
-
-*Nächster Schritt:* pro Paket eine erwartete Mindestzahl an Mutanten (ein
-grober Boden, kein Ratchet) und Fehlschlag, wenn sie unterschritten wird.
-Erst das macht die Ausnahme sicher.
-
 ## `docs/how-to/offline-bundle.md` nennt eine überholte Bundle-Größe (SP6)
 
 Die Größenangabe **108,9 MB** für das GER-Bundle stammt aus dem

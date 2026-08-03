@@ -4,6 +4,7 @@ backbones:
     license: CC-BY-4.0
     source: https://sftp.kew.org/pub/data-repositories/WCVP/
     path: ../../adapters/wcvp/testdata/wcvp-sample
+    redistribution: allowed
 trait_vocabularies:
   - id: not-a-known-vocabulary
     version: "1.0"
@@ -11,3 +12,4 @@ trait_vocabularies:
     license: CC-BY-4.0
     source: https://example.org/nope
     path: ../../adapters/traits/testdata/eive-sample.csv
+    redistribution: allowed

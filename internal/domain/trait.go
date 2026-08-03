@@ -149,6 +149,10 @@ type TraitVocabMeta struct {
 	Taxonomy  string
 	License   string
 	SourceURL string
+	// Redistribution gates whether this vocabulary's trait values may be
+	// copied into an exported bundle (see ExportBundle in
+	// internal/adapters/sqlite). It never gates local ingest or reads.
+	Redistribution Redistribution
 }
 
 // ScaleFor reports the value range and normalization state of one

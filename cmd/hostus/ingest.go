@@ -62,13 +62,30 @@ func runIngest(cmd *cobra.Command, _ []string) error {
 
 // printIngestReport renders report as one line per backbone, so an operator
 // running "hostus ingest" (and T9's smoke test) can see counts without
-// reading logs.
+// reading logs. A backbone whose manifest-pinned redistribution is not
+// "allowed" additionally gets a "hinweis:" line — local ingest is never
+// gated by redistribution, but the operator must SEE that this source
+// cannot be shipped in an exported bundle without --force-include-restricted
+// (see internal/adapters/sqlite.ExportBundle).
 func printIngestReport(w io.Writer, report application.IngestReport) {
 	_, _ = fmt.Fprintln(w, "Ingest complete:")
 	for _, b := range report.Backbones {
 		_, _ = fmt.Fprintf(w, "  %s: names=%d concepts=%d synonyms=%d orphaned=%d\n",
 			b.ID, b.Names, b.Concepts, b.Synonyms, b.Orphaned)
+		printRedistributionNotice(w, b.ID, b.Redistribution)
 	}
+}
+
+// printRedistributionNotice prints one "hinweis:" line for id if
+// redistribution is set and not "allowed" — see printIngestReport's doc
+// comment. A blank redistribution (should not happen once the manifest
+// schema enforces it, but defensively handled) is treated the same as
+// "allowed": silent, no notice.
+func printRedistributionNotice(w io.Writer, id, redistribution string) {
+	if redistribution == "" || redistribution == "allowed" {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "  hinweis: %s (redistribution=%s) — lokal genutzt, nicht redistribuierbar\n", id, redistribution)
 }
 
 // printTraitReports renders one line per ingested trait vocabulary,
@@ -87,5 +104,6 @@ func printTraitReports(w io.Writer, reports []application.TraitIngestReport) {
 		if len(r.UnmatchedSample) > 0 {
 			_, _ = fmt.Fprintf(w, "    unmatched sample: %s\n", strings.Join(r.UnmatchedSample, ", "))
 		}
+		printRedistributionNotice(w, r.Vocab, r.Redistribution)
 	}
 }

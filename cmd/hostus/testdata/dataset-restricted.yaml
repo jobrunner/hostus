@@ -1,0 +1,18 @@
+backbones:
+  - id: wcvp
+    version: "2026-06-15"
+    license: CC-BY-4.0
+    source: https://sftp.kew.org/pub/data-repositories/WCVP/
+    path: ../../../internal/adapters/wcvp/testdata/wcvp-sample
+    redistribution: allowed
+trait_vocabularies:
+  # Deliberately NOT "allowed" -- exercises the "hostus ingest" notice and
+  # the "hostus bundle" redistribution gate (fail by default, succeed with
+  # --force-include-restricted).
+  - id: eive
+    version: "1.0"
+    taxonomy: euromed-via-eurosl
+    license: CC-BY-4.0
+    source: https://example.org/eive
+    path: ../../../internal/adapters/traits/testdata/eive-sample.csv
+    redistribution: unknown

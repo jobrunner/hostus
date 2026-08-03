@@ -4,3 +4,4 @@ backbones:
     license: CC-BY-4.0
     source: https://sftp.kew.org/pub/data-repositories/WCVP/
     path: ../../adapters/wcvp/testdata/wcvp-sample
+    redistribution: allowed

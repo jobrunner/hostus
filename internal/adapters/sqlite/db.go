@@ -70,7 +70,7 @@ func (db *DB) Close() error {
 // BackboneVersions lists every ingested backbone artifact.
 func (db *DB) BackboneVersions(ctx context.Context) ([]domain.BackboneVersion, error) {
 	rows, err := db.sql.QueryContext(ctx, `
-		SELECT id, version, license, source_url, ingested_at, manifest_sha
+		SELECT id, version, license, source_url, ingested_at, manifest_sha, redistribution
 		FROM backbone_version
 		ORDER BY id`)
 	if err != nil {
@@ -82,11 +82,13 @@ func (db *DB) BackboneVersions(ctx context.Context) ([]domain.BackboneVersion, e
 	for rows.Next() {
 		var bv domain.BackboneVersion
 		var license, sourceURL sql.NullString
-		if err := rows.Scan(&bv.ID, &bv.Version, &license, &sourceURL, &bv.IngestedAt, &bv.ManifestSHA); err != nil {
+		var redistribution string
+		if err := rows.Scan(&bv.ID, &bv.Version, &license, &sourceURL, &bv.IngestedAt, &bv.ManifestSHA, &redistribution); err != nil {
 			return nil, fmt.Errorf("sqlite: scanning backbone_version row: %w", err)
 		}
 		bv.License = license.String
 		bv.SourceURL = sourceURL.String
+		bv.Redistribution = domain.Redistribution(redistribution)
 		out = append(out, bv)
 	}
 	if err := rows.Err(); err != nil {
@@ -105,9 +107,9 @@ func (db *DB) BeginIngest(ctx context.Context, bv domain.BackboneVersion) (outpu
 		return nil, fmt.Errorf("sqlite: beginning ingest transaction: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT OR REPLACE INTO backbone_version (id, version, license, source_url, ingested_at, manifest_sha)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		bv.ID, bv.Version, bv.License, bv.SourceURL, bv.IngestedAt, bv.ManifestSHA,
+		INSERT OR REPLACE INTO backbone_version (id, version, license, source_url, ingested_at, manifest_sha, redistribution)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		bv.ID, bv.Version, bv.License, bv.SourceURL, bv.IngestedAt, bv.ManifestSHA, string(bv.Redistribution),
 	); err != nil {
 		_ = tx.Rollback()
 		return nil, fmt.Errorf("sqlite: recording backbone_version %q: %w", bv.ID, err)
@@ -336,9 +338,9 @@ func (t *ingestTx) AddTraitValue(conceptID string, tv domain.TraitValue) error {
 // callers construct.
 func (t *ingestTx) UpsertTraitVocabulary(meta domain.TraitVocabMeta) error {
 	_, err := t.tx.ExecContext(t.ctx, `
-		INSERT OR REPLACE INTO trait_vocabulary (vocab, version, taxonomy, license, source_url, ingested_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		string(meta.Vocab), meta.Version, meta.Taxonomy, meta.License, meta.SourceURL, time.Now().UTC().Format(time.RFC3339),
+		INSERT OR REPLACE INTO trait_vocabulary (vocab, version, taxonomy, license, source_url, ingested_at, redistribution)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		string(meta.Vocab), meta.Version, meta.Taxonomy, meta.License, meta.SourceURL, time.Now().UTC().Format(time.RFC3339), string(meta.Redistribution),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: upserting trait vocabulary %s/%s: %w", meta.Vocab, meta.Version, err)

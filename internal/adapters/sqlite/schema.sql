@@ -7,12 +7,13 @@ PRAGMA foreign_keys = ON;
 
 -- Artifact/version metadata.
 CREATE TABLE IF NOT EXISTS backbone_version (
-  id            TEXT PRIMARY KEY,   -- e.g. "wcvp"
-  version       TEXT NOT NULL,      -- "2026-06-15" (period/version, never "latest")
-  license       TEXT,
-  source_url    TEXT,
-  ingested_at   TEXT NOT NULL,
-  manifest_sha  TEXT NOT NULL       -- checksum of the validated manifest
+  id             TEXT PRIMARY KEY,   -- e.g. "wcvp"
+  version        TEXT NOT NULL,      -- "2026-06-15" (period/version, never "latest")
+  license        TEXT,
+  source_url     TEXT,
+  ingested_at    TEXT NOT NULL,
+  manifest_sha   TEXT NOT NULL,      -- checksum of the validated manifest
+  redistribution TEXT NOT NULL DEFAULT 'unknown' -- allowed|restricted|unknown (domain.Redistribution); gates ExportBundle, never local ingest
 );
 
 -- Nomenclature.
@@ -107,12 +108,13 @@ CREATE TABLE IF NOT EXISTS trait_value (
 -- the Taxonomy namespace (see domain.TraitSet.Taxonomy) each vocabulary's
 -- values are harmonized against.
 CREATE TABLE IF NOT EXISTS trait_vocabulary (
-  vocab         TEXT NOT NULL,      -- eive|tichy2023|midolo2023
-  version       TEXT NOT NULL,
-  taxonomy      TEXT NOT NULL,      -- euromed-aligned|floraveg-eunis-aligned|...
-  license       TEXT,
-  source_url    TEXT,
-  ingested_at   TEXT NOT NULL,
+  vocab          TEXT NOT NULL,      -- eive|tichy2023|midolo2023
+  version        TEXT NOT NULL,
+  taxonomy       TEXT NOT NULL,      -- euromed-aligned|floraveg-eunis-aligned|...
+  license        TEXT,
+  source_url     TEXT,
+  ingested_at    TEXT NOT NULL,
+  redistribution TEXT NOT NULL DEFAULT 'unknown', -- allowed|restricted|unknown (domain.Redistribution); gates ExportBundle, never local ingest
   PRIMARY KEY (vocab, version)
 );
 
@@ -158,9 +160,17 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts_name USING fts5(
 -- applied to, but only ever populated by an offline bundle export (see
 -- internal/adapters/sqlite/bundle.go) — the server-side hostus.sqlite this
 -- schema also backs simply never gets a row here.
+-- restricted_sources is a comma-joined, sorted list of backbone/trait-
+-- vocabulary ids whose redistribution was NOT "allowed" but were included
+-- anyway via --force-include-restricted (see ExportBundle in bundle.go).
+-- Empty ('') means either the bundle was exported with no --force flag (in
+-- which case ExportBundle would have refused if any source were
+-- restricted, so an exported bundle with restricted_sources='' is provably
+-- clean) or every contributing source was itself "allowed".
 CREATE TABLE IF NOT EXISTS bundle_meta (
   snapshot_version     TEXT NOT NULL,
   area                 TEXT NOT NULL,
   created_at           TEXT NOT NULL,  -- RFC3339 timestamp
-  source_manifest_sha  TEXT NOT NULL
+  source_manifest_sha  TEXT NOT NULL,
+  restricted_sources   TEXT NOT NULL DEFAULT ''
 );

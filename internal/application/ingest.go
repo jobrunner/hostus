@@ -20,6 +20,11 @@ type Backbone struct {
 	License   string
 	SourceURL string
 	Path      string
+	// Redistribution gates ExportBundle (see internal/adapters/sqlite); it
+	// is trusted verbatim here, since the composition root already ran it
+	// through the manifest's schema-validated enum before constructing this
+	// DTO.
+	Redistribution string
 }
 
 // Dataset is the subset of a parsed dataset.yaml manifest the ingest use
@@ -84,6 +89,11 @@ type BackboneReport struct {
 	Concepts int
 	Synonyms int
 	Orphaned int // synonym rows whose accepted target was never ingested (dangling reference in the source data)
+	// Redistribution is this backbone's manifest-pinned redistribution
+	// value (see domain.Redistribution), surfaced here so "hostus ingest"
+	// can print a notice for anything that is not "allowed" — the local
+	// ingest itself is never gated by it.
+	Redistribution string
 }
 
 // IngestReport summarizes an Ingest run across every backbone in the dataset.
@@ -200,15 +210,16 @@ func basionymIDsByTaxon(b Backbone, taxa []TaxonRow, present map[string]bool) ma
 }
 
 func ingestBackbone(ctx context.Context, b Backbone, manifestSHA string, rs RowSource, repo output.Repository) (BackboneReport, error) {
-	report := BackboneReport{ID: b.ID}
+	report := BackboneReport{ID: b.ID, Redistribution: b.Redistribution}
 
 	tx, err := repo.BeginIngest(ctx, domain.BackboneVersion{
-		ID:          b.ID,
-		Version:     b.Version,
-		License:     b.License,
-		SourceURL:   b.SourceURL,
-		IngestedAt:  time.Now().UTC().Format(time.RFC3339),
-		ManifestSHA: manifestSHA,
+		ID:             b.ID,
+		Version:        b.Version,
+		License:        b.License,
+		SourceURL:      b.SourceURL,
+		IngestedAt:     time.Now().UTC().Format(time.RFC3339),
+		ManifestSHA:    manifestSHA,
+		Redistribution: domain.Redistribution(b.Redistribution),
 	})
 	if err != nil {
 		return report, fmt.Errorf("application: starting ingest for backbone %q: %w", b.ID, err)

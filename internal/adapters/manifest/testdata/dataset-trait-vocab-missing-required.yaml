@@ -3,6 +3,7 @@ backbones:
     version: "2026-06-15"
     license: CC-BY-4.0
     path: ../../wcvp/testdata/wcvp-sample
+    redistribution: allowed
 trait_vocabularies:
   - id: eive
     version: "1.0"

@@ -35,6 +35,10 @@ type Backbone struct {
 	SourceURL string `yaml:"source,omitempty" json:"source,omitempty"`
 	Path      string `yaml:"path" json:"path"`
 	Note      string `yaml:"note,omitempty" json:"note,omitempty"`
+	// Redistribution is required (schema-enforced): allowed|restricted|unknown.
+	// See internal/domain.Redistribution — it gates ExportBundle, never
+	// local ingest.
+	Redistribution string `yaml:"redistribution" json:"redistribution"`
 }
 
 // TraitVocabulary is one pinned trait-vocabulary entry (spec §D.2): an
@@ -49,6 +53,10 @@ type TraitVocabulary struct {
 	License   string `yaml:"license" json:"license"`
 	SourceURL string `yaml:"source" json:"source"`
 	Path      string `yaml:"path" json:"path"`
+	// Redistribution is required (schema-enforced): allowed|restricted|unknown.
+	// See internal/domain.Redistribution — it gates ExportBundle, never
+	// local ingest.
+	Redistribution string `yaml:"redistribution" json:"redistribution"`
 }
 
 // Dataset is the parsed, validated contents of a dataset.yaml manifest.

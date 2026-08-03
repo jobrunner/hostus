@@ -258,6 +258,38 @@ Spezifikation folgen in SP4+. `release-please` cuttet daraus das nächste
 - **SP2**: OpenAPI (`/v1/suggest`) und `docs/reference/http-api.md` auf den
   tatsächlichen Handler-Stand reconciled; neue Anleitung
   `docs/how-to/offline-bundle.md` für den `hostus bundle`-CLI-Workflow
+- **Reality-Check T1**: `redistribution`-Gate — jeder Backbone- und
+  Trait-Vokabular-Eintrag im Manifest trägt jetzt ein Pflichtfeld
+  `redistribution: allowed|restricted|unknown` (`internal/domain.Redistribution`,
+  schema-validiert). Lokales `hostus ingest` bleibt für jede Quelle
+  uneingeschränkt möglich (mit `hinweis:`-Zeile für nicht-`allowed`-Quellen);
+  `hostus bundle` verweigert den Export dagegen standardmäßig, sobald eine
+  nicht-`allowed`-Quelle zum Export-Scope beiträgt (Fehlermeldung nennt
+  Quelle + Wert), und `--force-include-restricted` übersteuert das bewusst,
+  protokolliert die betroffenen Quell-IDs aber unauslöschlich in
+  `bundle_meta.restricted_sources` — ein Dokumentationsversprechen wird so
+  durch eine maschinelle Prüfung ersetzt (siehe
+  `docs/how-to/trait-ingest.md`, `docs/how-to/offline-bundle.md`)
+- **Reality-Check T2–T4**: Volldaten-Messkampagne gegen den echten
+  WCVP/POWO-Dump (1.448.984 Zeilen) plus EIVE/Tichý/Midolo und die vier
+  Kandidaten-Brückenquellen Euro+Med, EuroSL, GermanSL, FloraVeg
+  (`poc/measure/`, Ergebnisse + Verdikte in `docs/research/reality-check.md`,
+  repo-lokal, nicht in der MkDocs-Navigation). Kernbefunde: der
+  Serienstand-Ingest ist an Volldaten **nicht einsatzfähig** (bricht nach
+  5,37 s an unbekannten WCVP-Rängen ab, oder läuft quadratisch und wurde
+  nach 22:48 min ohne einen einzigen committeten Datensatz abgebrochen) —
+  mit acht zusätzlichen FK-Indizes und erweiterter Rangunterstützung sinkt
+  derselbe Volldaten-Ingest auf 276,70 s; die Zeigerwert-Abdeckung ist auf
+  Taxon-Ebene 87,76–96,41 % für die Taxa, die EIVE/Tichý/Midolo tatsächlich
+  führen (die oft zitierte 2,64 %-„Abdeckung" bezieht sich auf den globalen
+  WCVP-Nenner und ist kein Defektbefund); das gebietsgescopte Offline-Bundle
+  ist mit 108,9 MB Faktor 5,4 über der Spec-Annahme von 10–20 MB, und ein
+  Mehrgebiets- oder Voll-Bundle ist mit der heutigen CLI nicht exportierbar;
+  die vier lizenzunklaren Brückenquellen liefern zusammen real nur 51
+  zusätzliche EIVE-Taxa (≈0,34 %), weil Euro+Med und FloraVeg keinen Rang
+  und keinen aufgelösten Akzeptiert-Link führen — bessere
+  Namensnormalisierung (Aggregate, Hybridzeichen, Autonyme, Orthographie)
+  ist laut Stichprobe der lohnendere Hebel als die Lizenzklärung
 
 ### Changed
 - `Dockerfile`: Build-Stage injiziert `main.Version`/`main.Commit`/`main.BuildDate` per Ldflags (statt `main.version` aus `VERSION`-Datei) — identische Variablenpfade wie im Makefile, damit `hostus version` im Image echte Build-Infos zeigt

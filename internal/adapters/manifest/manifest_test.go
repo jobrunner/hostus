@@ -142,6 +142,54 @@ func TestParse_RejectsMissingRequiredField(t *testing.T) {
 	}
 }
 
+func TestParse_RejectsMissingRedistribution(t *testing.T) {
+	_, err := manifest.Parse("testdata/dataset-missing-redistribution.yaml")
+	if err == nil {
+		t.Fatal("Parse: expected error for a backbone missing redistribution, got nil")
+	}
+	if !strings.Contains(err.Error(), "schema validation") {
+		t.Errorf("Parse error = %q, want it to mention schema validation (required rejects the missing field)", err)
+	}
+}
+
+func TestParse_RejectsInvalidRedistributionValue(t *testing.T) {
+	_, err := manifest.Parse("testdata/dataset-invalid-redistribution.yaml")
+	if err == nil {
+		t.Fatal("Parse: expected error for an invalid redistribution value, got nil")
+	}
+	if !strings.Contains(err.Error(), "schema validation") {
+		t.Errorf("Parse error = %q, want it to mention schema validation (enum rejects the invalid value)", err)
+	}
+}
+
+func TestParse_MissingAndInvalidRedistributionAreDistinctErrors(t *testing.T) {
+	_, missingErr := manifest.Parse("testdata/dataset-missing-redistribution.yaml")
+	_, invalidErr := manifest.Parse("testdata/dataset-invalid-redistribution.yaml")
+	if missingErr == nil || invalidErr == nil {
+		t.Fatal("expected both invalid manifests to fail Parse")
+	}
+	if missingErr.Error() == invalidErr.Error() {
+		t.Errorf("missing-redistribution and invalid-redistribution errors are identical (%q); want distinct failure messages", missingErr)
+	}
+}
+
+func TestParse_ValidManifestParsesRedistribution(t *testing.T) {
+	ds, err := manifest.Parse("testdata/dataset-valid.yaml")
+	if err != nil {
+		t.Fatalf("Parse: unexpected error: %v", err)
+	}
+	for _, b := range ds.Backbones {
+		if b.Redistribution != "allowed" {
+			t.Errorf("Backbone %q Redistribution = %q, want %q", b.ID, b.Redistribution, "allowed")
+		}
+	}
+	for _, tv := range ds.TraitVocabularies {
+		if tv.Redistribution != "allowed" {
+			t.Errorf("TraitVocabulary %q Redistribution = %q, want %q", tv.ID, tv.Redistribution, "allowed")
+		}
+	}
+}
+
 func TestParse_RejectsTraitVocabularyMissingRequiredField(t *testing.T) {
 	_, err := manifest.Parse("testdata/dataset-trait-vocab-missing-required.yaml")
 	if err == nil {
@@ -185,6 +233,7 @@ func TestParse_AbsolutePathLeftUntouched(t *testing.T) {
   - id: wcvp
     version: "2026-06-15"
     path: /already/absolute
+    redistribution: allowed
 `)
 	ds, err := manifest.Parse(path)
 	if err != nil {

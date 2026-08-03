@@ -2,3 +2,4 @@ backbones:
   - id: wcvp
     license: CC-BY-4.0
     path: ../../wcvp/testdata/wcvp-sample
+    redistribution: allowed

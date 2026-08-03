@@ -63,6 +63,7 @@ nav:
   - Erklärung:
       - explanation/index.md
       - Architektur: explanation/architecture.md
+      - Bekannte Lücken: explanation/known-gaps.md
       - Entscheidungen (ADRs):
           - explanation/decisions/index.md
           - "ADR-0009: Lokaler Multi-Backbone-Index": explanation/decisions/0009-local-multibackbone-index.md

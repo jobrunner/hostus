@@ -1,3 +1,7 @@
+# Bekannte Lücken
+
+Offene Punkte, die bewusst nicht gelöst sind — mit Begründung und dem, was sie
+wirklich lösen würde.
 
 ## Mutationstest für `internal/adapters/telemetry` blockiert in CI nicht
 

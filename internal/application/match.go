@@ -20,6 +20,7 @@ const (
 	noteAggregateResolved   = "Aggregat, keine Kleinartauflösung"
 	noteAggregateUnresolved = "Aggregat ohne aufgelöstes Sammelart-Konzept"
 	noteUnresolvable        = "Kein eindeutiger Treffer, keine Fuzzy-Auflösung in dieser SP"
+	noteAmbiguous           = "Mehrdeutiger Treffer: mehrere Konzepte mit gleicher Übereinstimmungsstärke, manuelle Prüfung nötig"
 )
 
 // aggregateSuffixes are the trailing tokens (case-insensitive, after
@@ -120,17 +121,37 @@ func matchAggregate(ctx context.Context, repo output.Repository, req MatchReques
 	}, nil
 }
 
-// classify runs domain.ClassifyMatch against every candidate, preferring an
-// exact_author match over a (weaker, author-less-query) exact match. Zero
-// classified matches yields an UNRESOLVABLE result carrying the candidate
-// names that were seen (if any), so a reviewer has something to look at.
+// classifiedHit is one candidate that classified as a match, carrying just
+// enough to detect ambiguity (does the winning strength resolve to more
+// than one distinct concept?) and to report it (the matched name).
+type classifiedHit struct {
+	conceptID string
+	name      string
+}
+
+// classify runs domain.ClassifyMatch against every candidate, preferring
+// exact_author matches over (weaker, author-less-query) exact matches: the
+// winning strength is exact_author if any candidate classified that way,
+// else exact, else neither (UNRESOLVABLE).
+//
+// Zero classified matches yields an UNRESOLVABLE result carrying the
+// candidate names that were seen (if any), so a reviewer has something to
+// look at.
+//
+// Two or more candidates classifying at the SAME winning strength but
+// resolving to DIFFERENT concept IDs are a genuine ambiguity (e.g. a
+// homonym: two distinct accepted concepts sharing one canonical+author) —
+// silently picking the first would hide that from the caller. That result
+// sets RequiresReview, lists every tied candidate's name in Candidates,
+// and leaves ConceptID/MatchType empty rather than guessing. Multiple
+// candidates at the winning strength that all resolve to the SAME concept
+// (e.g. a synonym and its accepted name both classifying exact_author) are
+// NOT ambiguous — they still resolve normally to that one concept.
 func classify(req MatchRequest, queryCanon, queryAuthor string, candidates []output.MatchCandidate) MatchResult {
 	var (
-		bestType      domain.MatchType
-		bestConceptID string
-		found         bool
-		exactFound    bool
-		names         []string
+		names              []string
+		exactAuthorMatches []classifiedHit
+		exactMatches       []classifiedHit
 	)
 	for _, c := range candidates {
 		names = append(names, c.MatchedName.Canonical)
@@ -140,26 +161,48 @@ func classify(req MatchRequest, queryCanon, queryAuthor string, candidates []out
 		if !ok {
 			continue
 		}
-		if mt == domain.MatchExactAuthor {
-			bestType = mt
-			bestConceptID = c.Concept.ID
-			found = true
-			break
-		}
-		if mt == domain.MatchExact && !exactFound {
-			bestType = mt
-			bestConceptID = c.Concept.ID
-			exactFound = true
-			found = true
+		hit := classifiedHit{conceptID: c.Concept.ID, name: c.MatchedName.Canonical}
+		switch mt {
+		case domain.MatchExactAuthor:
+			exactAuthorMatches = append(exactAuthorMatches, hit)
+		case domain.MatchExact:
+			exactMatches = append(exactMatches, hit)
+		case domain.MatchAggregateAlias:
+			// ClassifyMatch never produces this (it is assigned by
+			// matchAggregate, a separate code path) — unreachable here.
 		}
 	}
 
-	if !found {
+	bestType := domain.MatchExactAuthor
+	winners := exactAuthorMatches
+	if len(winners) == 0 {
+		bestType = domain.MatchExact
+		winners = exactMatches
+	}
+
+	if len(winners) == 0 {
 		return MatchResult{
 			ID:             req.ID,
 			RequiresReview: true,
 			Note:           noteUnresolvable,
 			Candidates:     names,
+		}
+	}
+
+	distinctConcepts := make(map[string]bool, len(winners))
+	for _, w := range winners {
+		distinctConcepts[w.conceptID] = true
+	}
+	if len(distinctConcepts) > 1 {
+		tiedNames := make([]string, 0, len(winners))
+		for _, w := range winners {
+			tiedNames = append(tiedNames, w.name)
+		}
+		return MatchResult{
+			ID:             req.ID,
+			RequiresReview: true,
+			Note:           noteAmbiguous,
+			Candidates:     tiedNames,
 		}
 	}
 
@@ -171,7 +214,7 @@ func classify(req MatchRequest, queryCanon, queryAuthor string, candidates []out
 		ID:         req.ID,
 		MatchType:  bestType,
 		Confidence: conf,
-		ConceptID:  bestConceptID,
+		ConceptID:  winners[0].conceptID,
 	}
 }
 

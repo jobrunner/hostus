@@ -8,9 +8,11 @@
 # changes against (breaking-change detection via oasdiff).
 #
 # SP1 adds the local SQLite/FTS5-backed `/v1/concept/{id}`, `/v1/xref` and
-# `/v1/match` endpoints on top of the SP0 health/metrics skeleton. Their
-# shapes below mirror internal/adapters/http/taxa.go's DTOs exactly — no
-# aspirational fields (traits, suggest, translate are later SPs).
+# `/v1/match` endpoints on top of the SP0 health/metrics skeleton. SP2 adds
+# the area-/rank-filtered, priority-ranked `GET /v1/suggest` autosuggest
+# endpoint. Their shapes below mirror internal/adapters/http's DTOs exactly
+# — no aspirational fields (traits, translate, synonyms are still later
+# SPs).
 openapi: 3.0.3
 info:
   title: hostus API
@@ -183,6 +185,65 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /v1/suggest:
+    get:
+      operationId: getSuggest
+      summary: Autosuggest-Kandidaten für ein Präfix
+      description: >-
+        Liefert Autosuggest-Kandidaten für ein Frontend-Eingabefeld: ein
+        FTS5-Präfix-Treffer über den lokalen Index, optional nach
+        Referenzgebiet und Rang gefiltert, priorisiert (Präfix-Treffer vor
+        Nicht-Treffer, im Gebiet vor nicht im Gebiet, akzeptiert vor
+        Synonym, breitere vor feineren Rängen, bm25-Score aufsteigend) und
+        auf `limit` gekürzt.
+      tags:
+        - taxa
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: 'Suchpräfix, z. B. `coryn`. Fehlend oder leer liefert 400.'
+          schema:
+            type: string
+        - name: area
+          in: query
+          required: false
+          description: >-
+            WGSRPD-L3-Referenzgebietscode (z. B. `AUT`) oder eine
+            dokumentierte Kurzform (z. B. `DE`). Leer bedeutet kein
+            Gebietsfilter — `in_area` ist dann bei jedem Ergebnis `false`.
+          schema:
+            type: string
+        - name: rank
+          in: query
+          required: false
+          description: >-
+            Kommagetrennte Liste von Rängen (z. B. `species,subspecies`).
+            Ein unbekannter Rang-Token liefert 400.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: >-
+            Maximale Ergebnisanzahl. Nicht-numerisch liefert 400; leer oder
+            `<= 0` verwendet den serverseitigen Standardwert.
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Priorisierte, gekürzte Liste von Autosuggest-Kandidaten.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuggestResponse'
+        '400':
+          description: '`q` fehlt/leer, ein `rank`-Token ist unbekannt, oder `limit` ist nicht numerisch.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 tags:
   - name: health
     description: Liveness- und Readiness-Probes für Orchestratoren.
@@ -191,7 +252,7 @@ tags:
   - name: taxa
     description: >-
       Taxonomie-Auflösung gegen den lokalen SQLite/FTS5-Index (Concept-
-      Lookup, Cross-Reference-Auflösung, Batch-Namensabgleich).
+      Lookup, Cross-Reference-Auflösung, Batch-Namensabgleich, Autosuggest).
 
 components:
   schemas:
@@ -384,3 +445,55 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/MatchResult'
+
+    SuggestItem:
+      type: object
+      required: [concept_id, display, canonical, rank, status, in_area, score]
+      properties:
+        concept_id:
+          type: string
+          example: 'wcvp:concept:405825'
+        display:
+          type: string
+          description: Kanonischer Name inklusive Autorenzitat (falls vorhanden).
+          example: Corynephorus canescens (L.) P.Beauv.
+        canonical:
+          type: string
+          example: Corynephorus canescens
+        vernacular_de:
+          type: string
+          description: >-
+            Deutscher Trivialname. Aktuell nicht bei jedem Concept gesetzt
+            (Vernakular-Tabelle wird noch nicht flächendeckend ingestiert).
+        rank:
+          type: string
+          example: SPECIES
+        status:
+          type: string
+          example: ACCEPTED
+        in_area:
+          type: boolean
+          description: >-
+            `true`, wenn das Concept eine Distribution im angefragten
+            `area` besitzt. Immer `false`, wenn kein `area`-Parameter
+            angegeben wurde.
+        score:
+          type: number
+          format: double
+          description: >-
+            Roher SQLite-FTS5-`bm25()`-Wert des Treffers. Niedriger bedeutet
+            relevanter (bm25 ist ein Distanzmaß, keine Ähnlichkeit).
+
+    SuggestResponse:
+      type: object
+      required: [backbone_versions, results]
+      properties:
+        backbone_versions:
+          type: object
+          description: Backbone-ID → Version, für alle ingestierten Backbones.
+          additionalProperties:
+            type: string
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SuggestItem'

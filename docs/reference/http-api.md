@@ -1,13 +1,17 @@
 # HTTP-API
 
 !!! note "Stand"
-    Dies beschreibt den SP1-Stand: die lokale SQLite/FTS5-Rückgrat-Basis ist
+    Dies beschreibt den SP2-Stand: die lokale SQLite/FTS5-Rückgrat-Basis ist
     implementiert (`hostus ingest` befüllt die Datenbank aus WCVP/POWO-
-    DwC-A-Manifesten; `hostus serve` bedient `/v1/concept/{id}`, `/v1/xref`
-    und `/v1/match` daraus). Weitere `/v1/*`-Endpunkte (`suggest`,
-    `concept/{id}/traits`, `concept/{id}/synonyms`, `translate`) sowie
+    DwC-A-Manifesten; `hostus serve` bedient `/v1/concept/{id}`, `/v1/xref`,
+    `/v1/match` und `/v1/suggest` daraus). Weitere `/v1/*`-Endpunkte
+    (`concept/{id}/traits`, `concept/{id}/synonyms`, `translate`) sowie
     `/openapi` folgen in späteren SPs. Die maßgebliche OpenAPI-Spezifikation
     liegt unter `api/openapi/openapi.yaml`.
+
+    Der Offline-Export (`hostus bundle`) ist kein HTTP-Endpunkt und daher
+    nicht Teil dieser Seite oder der OpenAPI-Spezifikation — siehe
+    [Offline-Bundle exportieren](../how-to/offline-bundle.md).
 
 ## Health-Endpunkte
 
@@ -163,6 +167,56 @@ POST /v1/match
 Autor-Mehrdeutigkeit gefüllt. `target_space`/`sec_hint` im Request werden
 entgegengenommen, aber in SP1 nicht ausgewertet (Sekundärraum-Übersetzung
 folgt erst in SP5 als `POST /v1/translate`).
+
+### `GET /v1/suggest?q={q}&area={area}&rank={rank}&limit={limit}`
+
+Autosuggest-Endpunkt für ein Frontend-Eingabefeld: ein FTS5-Präfix-Treffer
+über den lokalen Index, optional nach Referenzgebiet und Rang gefiltert,
+priorisiert und auf `limit` gekürzt. `q` ist erforderlich; fehlt oder ist es
+leer (auch nur Leerzeichen), liefert der Endpunkt `400 INVALID_QUERY`.
+
+- `area` (optional): WGSRPD-L3-Referenzgebietscode (z. B. `AUT`) oder eine
+  dokumentierte Kurzform (z. B. `DE`). Leer bedeutet kein Gebietsfilter —
+  `in_area` ist dann bei jedem Ergebnis `false`.
+- `rank` (optional): kommagetrennte Liste von Rängen, z. B.
+  `species,subspecies`. Ein unbekannter Rang-Token liefert `400
+  INVALID_QUERY`.
+- `limit` (optional): maximale Ergebnisanzahl. Nicht-numerische Werte
+  liefern `400 INVALID_QUERY`; ein leerer oder `<= 0` Wert verwendet den
+  serverseitigen Standardwert.
+
+Die Priorisierung folgt §B.1: Präfix-Treffer vor Nicht-Treffer, im
+angefragten Gebiet vor nicht im Gebiet, akzeptiert vor Synonym, breitere vor
+feineren Rängen (FAMILY/GENUS vor SPECIES vor SUBSPECIES/VARIETY/FORM),
+zuletzt bm25-Score aufsteigend (niedriger ist relevanter).
+
+**Beispiel-Request**
+
+```
+GET /v1/suggest?q=coryn&area=AUT
+```
+
+**Beispiel-Response (`200 OK`)**
+
+```json
+{
+  "backbone_versions": { "wcvp": "2026-06-15" },
+  "results": [
+    {
+      "concept_id": "wcvp:concept:405825",
+      "display": "Corynephorus canescens (L.) P.Beauv.",
+      "canonical": "Corynephorus canescens",
+      "rank": "SPECIES",
+      "status": "ACCEPTED",
+      "in_area": true,
+      "score": -2.31
+    }
+  ]
+}
+```
+
+`vernacular_de` ist Teil der DTO, wird aber nur ausgeliefert, wenn ein
+deutscher Trivialname für das Concept ingestiert wurde (`omitempty`).
 
 ## Fehlerformat
 

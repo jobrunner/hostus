@@ -1,0 +1,136 @@
+package httpx
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/jobrunner/hostus/internal/application"
+	"github.com/jobrunner/hostus/internal/domain"
+	"github.com/jobrunner/hostus/internal/httperr"
+	"github.com/jobrunner/hostus/internal/ports/output"
+)
+
+// suggestItemDTO is one autosuggest candidate, per spec §B.1. PrefixHit is
+// deliberately not rendered: it is a ranking signal domain.RankSuggestions
+// consumes internally, not something the frontend autosuggest field needs
+// on the wire.
+type suggestItemDTO struct {
+	ConceptID string `json:"concept_id"`
+	Display   string `json:"display"`
+	Canonical string `json:"canonical"`
+	// VernacularDE is omitted when empty: SP1/SP2 ingest does not yet
+	// populate every concept's German vernacular name (see conceptDTO's
+	// analogous field for the same rationale).
+	VernacularDE string  `json:"vernacular_de,omitempty"`
+	Rank         string  `json:"rank"`
+	Status       string  `json:"status"`
+	InArea       bool    `json:"in_area"`
+	Score        float64 `json:"score"`
+}
+
+// suggestResponseDTO is the GET /v1/suggest response envelope, per spec
+// §B.1.
+type suggestResponseDTO struct {
+	BackboneVersions map[string]string `json:"backbone_versions"`
+	Results          []suggestItemDTO  `json:"results"`
+}
+
+// suggestResponseToDTO renders application.Suggest's result as the wire
+// shape.
+func suggestResponseToDTO(resp application.SuggestResponse) suggestResponseDTO {
+	results := make([]suggestItemDTO, len(resp.Results))
+	for i, item := range resp.Results {
+		results[i] = suggestItemDTO{
+			ConceptID:    item.ConceptID,
+			Display:      item.Display,
+			Canonical:    item.Canonical,
+			VernacularDE: item.VernacularDE,
+			Rank:         string(item.Rank),
+			Status:       string(item.Status),
+			InArea:       item.InArea,
+			Score:        item.Score,
+		}
+	}
+	return suggestResponseDTO{
+		BackboneVersions: resp.BackboneVersions,
+		Results:          results,
+	}
+}
+
+// parseSuggestRanks splits the comma-separated `rank` query parameter into
+// domain.Rank values via domain.ParseRank. An empty param returns (nil,
+// nil) — no rank filter, per output.SuggestOpts.Ranks' documented "empty
+// means every rank is eligible" convention. Any unrecognized token is
+// reported as a fresh error naming just the offending token (e.g. `unknown
+// rank "foo"`), rather than propagating domain.ParseRank's own error
+// verbatim — concatenating that one (which already reads `domain: unknown
+// taxon rank "foo"`) produced a doubled-up, internals-leaking 400 message.
+func parseSuggestRanks(param string) ([]domain.Rank, error) {
+	if param == "" {
+		return nil, nil
+	}
+	tokens := strings.Split(param, ",")
+	ranks := make([]domain.Rank, 0, len(tokens))
+	for _, tok := range tokens {
+		trimmed := strings.TrimSpace(tok)
+		rank, err := domain.ParseRank(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("unknown rank %q", trimmed)
+		}
+		ranks = append(ranks, rank)
+	}
+	return ranks, nil
+}
+
+// parseSuggestLimit parses the `limit` query parameter as an integer. An
+// empty param returns (0, nil) — application.Suggest treats <= 0 as "use
+// the default limit". A non-numeric param is reported as an error; the
+// numeric value (including 0 or negative) is passed through unvalidated,
+// since application.Suggest already defaults/caps it.
+func parseSuggestLimit(param string) (int, error) {
+	if param == "" {
+		return 0, nil
+	}
+	return strconv.Atoi(param)
+}
+
+// handleSuggest serves GET /v1/suggest?q=&area=&rank=&limit=, the frontend
+// autosuggest endpoint, per spec §B.1. A missing/empty q, an unknown rank
+// token, or a non-numeric limit all report 400 INVALID_QUERY.
+func handleSuggest(repo output.Repository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+
+		ranks, err := parseSuggestRanks(query.Get("rank"))
+		if err != nil {
+			httperr.InvalidQueryError(w, err.Error())
+			return
+		}
+
+		limit, err := parseSuggestLimit(query.Get("limit"))
+		if err != nil {
+			httperr.InvalidQueryError(w, "limit must be an integer")
+			return
+		}
+
+		resp, err := application.Suggest(r.Context(), repo, application.SuggestRequest{
+			Q:     query.Get("q"),
+			Area:  query.Get("area"),
+			Ranks: ranks,
+			Limit: limit,
+		})
+		if errors.Is(err, application.ErrEmptyQuery) {
+			httperr.InvalidQueryError(w, "q query parameter is required")
+			return
+		}
+		if err != nil {
+			httperr.InternalError(w)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, suggestResponseToDTO(resp))
+	}
+}

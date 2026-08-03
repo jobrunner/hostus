@@ -78,12 +78,20 @@ func TestValidateWithoutFlagsFailsFast(t *testing.T) {
 	}
 }
 
-func TestBundleReturnsNotImplemented(t *testing.T) {
+// TestBundleWithoutFlagsFailsFast is bundle's counterpart to
+// TestIngestWithoutFlagsFailsFast/TestValidateWithoutFlagsFailsFast (see
+// bundle_test.go for its real behavior): "bundle" is no longer the SP0
+// errNotImplemented stub, so invoking it bare now fails because --db/--out
+// are required, not because the command is unimplemented.
+func TestBundleWithoutFlagsFailsFast(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetOut(new(bytes.Buffer))
-	cmd.SetArgs([]string{"bundle"})
+	cmd.SetArgs([]string{bundleCmdName})
 	err := cmd.Execute()
-	if !errors.Is(err, errNotImplemented) {
-		t.Fatalf("got %v, want errNotImplemented", err)
+	if err == nil {
+		t.Fatal("want an error when --db/--out are missing, got nil")
+	}
+	if errors.Is(err, errNotImplemented) {
+		t.Fatalf("got errNotImplemented, want the real --db-required error (see bundle_test.go)")
 	}
 }

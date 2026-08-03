@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"path/filepath"
 	"sort"
 	"testing"
 
@@ -313,3 +314,102 @@ func TestIngestTx_UpsertNameWithDanglingBasionymFKFails(t *testing.T) {
 
 // Concept, ConceptByXref, and MatchExact are exercised in read_test.go
 // against the real database, seeded from testdata/seed.sql (Task 3).
+
+// TestOpen_WALModeOnFileDB proves Open actually turns journal_mode to WAL
+// on a real (file-backed) database. A ":memory:" database always reports
+// "memory" regardless of the requested journal_mode — SQLite has no WAL
+// concept for an in-memory database — so this must run against a temp
+// file to mean anything.
+func TestOpen_WALModeOnFileDB(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "wal.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open(%q): unexpected error: %v", path, err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	var mode string
+	if err := db.sql.QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil {
+		t.Fatalf("querying journal_mode: %v", err)
+	}
+	if mode != "wal" {
+		t.Fatalf("journal_mode = %q, want %q", mode, "wal")
+	}
+}
+
+// TestOpen_BusyTimeoutIsSet proves Open sets a non-zero busy_timeout, so a
+// lock wait blocks briefly instead of failing immediately with
+// SQLITE_BUSY.
+func TestOpen_BusyTimeoutIsSet(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "busy.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open(%q): unexpected error: %v", path, err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	var ms int
+	if err := db.sql.QueryRow(`PRAGMA busy_timeout`).Scan(&ms); err != nil {
+		t.Fatalf("querying busy_timeout: %v", err)
+	}
+	if ms != 5000 {
+		t.Fatalf("busy_timeout = %d, want 5000", ms)
+	}
+}
+
+// TestOpen_ReaderSeesCommittedRowAlongsideOpenWriter proves the whole point
+// of WAL for hostus: a SECOND Open (modeling serve's independent reader
+// connection) can read a row committed by a FIRST Open (modeling an
+// ingest writer) even while the writer's *DB still holds a write
+// transaction open. Under the default rollback-journal mode, that open
+// write transaction would keep an exclusive lock for its own duration and
+// the reader would block (bounded only by busy_timeout, i.e. eventually
+// fail here) instead of proceeding immediately. This is a deterministic
+// committed-row read, not a sleep-based race.
+func TestOpen_ReaderSeesCommittedRowAlongsideOpenWriter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "concurrent.db")
+	ctx := context.Background()
+
+	writer, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open(writer): unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = writer.Close() })
+
+	committed := domain.BackboneVersion{ID: "wcvp", Version: "v1", IngestedAt: "2026-07-31T00:00:00Z", ManifestSHA: "x"}
+	tx, err := writer.BeginIngest(ctx, committed)
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+
+	// A second, independent write transaction on the writer connection,
+	// left open for the duration of the reader's query below.
+	holdTx, err := writer.sql.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx (holding writer): unexpected error: %v", err)
+	}
+	if _, err := holdTx.ExecContext(ctx, `
+		INSERT OR REPLACE INTO backbone_version (id, version, license, source_url, ingested_at, manifest_sha)
+		VALUES ('wfo', 'v1', '', '', '2026-07-31T00:00:00Z', 'y')`); err != nil {
+		_ = holdTx.Rollback()
+		t.Fatalf("writing inside held transaction: unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = holdTx.Rollback() })
+
+	reader, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open(reader): unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = reader.Close() })
+
+	got, err := reader.BackboneVersions(ctx)
+	if err != nil {
+		t.Fatalf("BackboneVersions (reader, writer tx still open): unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "wcvp" {
+		t.Fatalf("BackboneVersions() = %+v, want exactly the committed %q row (uncommitted 'wfo' must stay invisible)", got, "wcvp")
+	}
+}

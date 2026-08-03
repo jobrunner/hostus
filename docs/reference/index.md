@@ -2,7 +2,8 @@
 
 Informationsorientierte, präzise Beschreibungen der Maschinerie.
 
-- **[HTTP-API](http-api.md)** — Health- und Metrics-Endpunkte (Stand SP0-Skeleton).
+- **[HTTP-API](http-api.md)** — Health-, Metrics- und `/v1/*`-Taxa-Endpunkte
+  (Stand SP2: `concept`, `xref`, `match`, `suggest`).
 - **[Konfiguration](configuration.md)** — Konfigurationsquellen und Priorität.
 - **[Observability](observability.md)** — Tracing und Prometheus-Metriken.
 

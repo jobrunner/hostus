@@ -10,16 +10,20 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 hostus wird vom zustandslosen GBIF-Autosuggest-Proxy zum lokalen
 Multi-Backbone-Namens- und Merkmalsservice umgebaut (siehe
 `docs/superpowers/specs/2026-07-31-hostus-2.0-architecture.md`). Dieser
-Abschnitt sammelt den Abschluss von **SP0 (Harness & Skelett)** und **SP1
-(Foundation)**: SP1 liefert das lokale SQLite/FTS5-Rückgrat selbst — Ingest
-eines WCVP/POWO-DwC-A-Manifests (`hostus ingest`) in eine versionierte
-lokale Datenbank, gruppiert nach akzeptierten Concepts mit ihren Synonymen,
-sowie die ersten drei `/v1`-Leseendpunkte (`GET /v1/concept/{id}`, `GET
-/v1/xref`, `POST /v1/match`) darauf, an die `/health/ready` jetzt gekoppelt
-ist. Weitere Backbones (COL XR, Euro+Med, FloraVeg.EU) sowie `suggest`,
-`traits`, `translate` und `/openapi` folgen in SP2+. `release-please`
-cuttet daraus das nächste `2.0.0-alpha.N`-Release; bis dahin akkumulieren
-PRs hier.
+Abschnitt sammelt den Abschluss von **SP0 (Harness & Skelett)**, **SP1
+(Foundation)** und **SP2 (Suggest + Offline-Bundle)**: SP1 liefert das
+lokale SQLite/FTS5-Rückgrat selbst — Ingest eines WCVP/POWO-DwC-A-Manifests
+(`hostus ingest`) in eine versionierte lokale Datenbank, gruppiert nach
+akzeptierten Concepts mit ihren Synonymen, sowie die ersten drei
+`/v1`-Leseendpunkte (`GET /v1/concept/{id}`, `GET /v1/xref`, `POST
+/v1/match`) darauf, an die `/health/ready` jetzt gekoppelt ist. SP2 baut
+darauf den Frontend-Autosuggest-Endpunkt (`GET /v1/suggest`, gebiets- und
+rangfiltert, priorisiert) sowie den gebietsgescopten Offline-Export
+(`hostus bundle`) für feldeinsatztaugliches, vollständig
+netzwerkunabhängiges Serving. Weitere Backbones (COL XR, Euro+Med,
+FloraVeg.EU) sowie `traits`, `translate` und `/openapi` folgen in SP3+.
+`release-please` cuttet daraus das nächste `2.0.0-alpha.N`-Release; bis
+dahin akkumulieren PRs hier.
 
 ### Fixed
 - `google.golang.org/grpc` auf v1.82.1 angehoben (behebt GO-2026-6061 in der
@@ -44,6 +48,36 @@ PRs hier.
   Goroutine-Leak) entfernt — passte nicht zum SP1-SQLite-Design.
 - `hostus serve` loggt jetzt zusätzlich zum RingLog (MCP) auch auf stderr,
   inkl. einer Startzeile mit der Listen-Adresse.
+- `internal/adapters/sqlite/suggest.go`: der SQL-seitige Fetch-Budget-Query
+  (`ORDER BY score ASC LIMIT ?`, bm25-only) konnte in_area-Kandidaten
+  (Ranking-Priorität 2 laut Spezifikation §B.1, also ÜBER dem bm25-Score)
+  aus dem Kandidaten-Set werfen, bevor `domain.RankSuggestions` überhaupt
+  lief — bei einem breiten Prefix mit mehr Treffern als das Budget
+  (`max(20, 4×limit)`) konnten dadurch gebietsfremde Treffer vor
+  gebietseigenen landen, genau die §B.1-Inversion, die die
+  In-Area-Priorisierung verhindern soll. Fix: `ORDER BY in_area DESC, score
+  ASC LIMIT ?`, damit in_area-Zeilen das Budget-Fenster überleben; die
+  vollständige Mehrschlüssel-Sortierung bleibt weiterhin
+  `domain.RankSuggestions`s Aufgabe.
+- `GET /v1/suggest`: die 400-Fehlermeldung bei einem unbekannten
+  `rank`-Token verkettete `"unknown rank: "` mit `domain.ParseRank`s
+  eigenem Fehlertext (`domain: unknown taxon rank "foo"`) und leakte so
+  interne Domain-Fehlerformulierungen in die HTTP-Antwort; die Meldung
+  benennt das Token jetzt direkt (`unknown rank "foo"`).
+
+### Bekannte Einschränkungen
+- `ExportBundle` (`internal/adapters/sqlite/bundle.go`) kopiert Zeilen 1:1
+  (`copyRows`), ohne Fremdschlüssel-Ziele auf Gebietszugehörigkeit zu
+  prüfen: Ein gebietsgescoptes Bundle kopiert nur `taxon_concept`/`name`-
+  Zeilen der im Gebiet liegenden Concepts. Solange `taxon_concept.parent_id`
+  und `name.basionym_id` (SP1/SP2) für jedes ausgewählte Backbone durchweg
+  NULL sind, bleibt das folgenlos. Sobald eine künftige SP diese Spalten
+  erstmals befüllt, kann ein Concept/Name außerhalb des Gebiets auf einen
+  NICHT mitkopierten Parent/Basionym verweisen — das gebietsgescopte Bundle
+  würde dann mit einem FK-Fehler abbrechen. Wer diese Spalten zuerst befüllt,
+  muss `ExportBundle` gleichzeitig anpassen (gebietsfremde Selbstreferenzen
+  auf NULL setzen, oder die referenzierten Ancestor-Zeilen mit ins Bundle
+  ziehen), statt das als Feld-Crash neu zu entdecken.
 
 ### Added
 - Hexagonales Skelett (`internal/domain`, `application`, `ports/{input,output}`,
@@ -104,6 +138,35 @@ PRs hier.
 - **SP1**: OpenAPI-Baseline (`api/openapi/openapi.yaml`) und
   `docs/reference/http-api.md` um die drei neuen `/v1`-Endpunkte ergänzt
   (Concept-/Match-DTOs, Fehler-Envelope-Schema)
+- **SP2**: `GET /v1/suggest?q=&area=&rank=&limit=` — FTS5-Präfix-Autosuggest
+  über den lokalen Index (`internal/adapters/sqlite`: `fts_name`/
+  `fts_name_map`, bei `hostus ingest` befüllt), priorisiert nach §B.1
+  (Präfix-Treffer vor Nicht-Treffer, im Gebiet vor nicht im Gebiet, akzeptiert
+  vor Synonym, breitere vor feineren Rängen, bm25-Score aufsteigend) via
+  `application.Suggest`/`domain.RankSuggestions`; fehlendes/leeres `q` liefert
+  `400 INVALID_QUERY`
+- **SP2**: `hostus bundle --db <db> --area <code> --out <bundle> [--snapshot
+  v1]` — exportiert einen gebietsgescopten, eigenständigen SQLite/FTS5-
+  Auszug (`sqlite.ExportBundle`) inkl. neu aufgebautem FTS-Index und
+  `bundle_meta`-Provenienz; das Bundle ist danach vollständig offline per
+  `hostus serve` bedienbar (kein Zugriff auf die Quell-Datenbank oder ein
+  Netzwerk nötig) — siehe `docs/how-to/offline-bundle.md`
+- **SP2**: SQLite-Verbindung auf `journal_mode=WAL` + `busy_timeout=5000`
+  umgestellt (`internal/adapters/sqlite/db.go`), damit ein laufender
+  `serve`-Reader nicht von einem parallelen `ingest`/`bundle`-Writer
+  blockiert wird
+- **SP2**: `application.MatchNames`-Autoren-Mehrdeutigkeit markiert
+  mehrdeutige Treffer jetzt mit `requires_review: true` statt sie
+  stillschweigend als `exact_author` durchzuwinken
+- **SP2**: `internal/app/integration_test.go` um `GET /v1/suggest`
+  (area-priorisiert, `q` fehlt → 400) sowie einen eigenen
+  Offline-Bundle-Test erweitert: `sqlite.ExportBundle` scoped auf `area=AUT`,
+  danach `application.Suggest` ausschließlich gegen die exportierte
+  Bundle-Datei (keine Quell-Datenbank, kein HTTP-Server) — belegt den
+  Feldeinsatz-Anspruch end-to-end
+- **SP2**: OpenAPI (`/v1/suggest`) und `docs/reference/http-api.md` auf den
+  tatsächlichen Handler-Stand reconciled; neue Anleitung
+  `docs/how-to/offline-bundle.md` für den `hostus bundle`-CLI-Workflow
 
 ### Changed
 - `Dockerfile`: Build-Stage injiziert `main.Version`/`main.Commit`/`main.BuildDate` per Ldflags (statt `main.version` aus `VERSION`-Datei) — identische Variablenpfade wie im Makefile, damit `hostus version` im Image echte Build-Infos zeigt

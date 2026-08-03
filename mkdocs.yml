@@ -55,6 +55,7 @@ nav:
   - How-to-Anleitungen:
       - how-to/index.md
       - Entwicklungsumgebung: how-to/development.md
+      - Offline-Bundle exportieren: how-to/offline-bundle.md
   - Referenz:
       - reference/index.md
       - HTTP-API: reference/http-api.md

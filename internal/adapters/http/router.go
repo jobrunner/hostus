@@ -130,6 +130,7 @@ func NewRouter(deps Deps) *mux.Router {
 		r.HandleFunc("/v1/concept/{id}", handleConcept(deps.Repo)).Methods(http.MethodGet)
 		r.HandleFunc("/v1/xref", handleXref(deps.Repo)).Methods(http.MethodGet)
 		r.HandleFunc("/v1/match", handleMatch(deps.Repo)).Methods(http.MethodPost)
+		r.HandleFunc("/v1/suggest", handleSuggest(deps.Repo)).Methods(http.MethodGet)
 	}
 
 	return r

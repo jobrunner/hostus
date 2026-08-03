@@ -25,9 +25,40 @@ type Repository interface {
 	// BackboneVersions lists every ingested backbone artifact.
 	BackboneVersions(ctx context.Context) ([]domain.BackboneVersion, error)
 
+	// Suggest returns FTS5 prefix-match candidates for q (an autosuggest
+	// query fragment), scored but UNRANKED: the application layer runs
+	// domain.RankSuggestions over the result and truncates to opts.Limit
+	// itself. Suggest fetches a superset of at least opts.Limit rows
+	// before any Ranks filtering so that filtering never starves the
+	// caller of candidates that would otherwise have made the cut; the
+	// returned slice's length is therefore not bounded by opts.Limit.
+	//
+	// q is matched by its domain.Canonicalize'd form as a left-anchored
+	// FTS5 prefix query; a canonicalized q shorter than two runes
+	// (including empty) returns an empty, non-error result — too short a
+	// prefix is both a meaningless autosuggest signal and a pathologically
+	// broad FTS5 MATCH. opts.Area == "" means "no area filter": InArea is
+	// false on every returned item (an unknown area cannot be "in").
+	Suggest(ctx context.Context, q string, opts SuggestOpts) ([]domain.SuggestItem, error)
+
 	// BeginIngest starts an ingest transaction for the given backbone
 	// version. Callers must Commit or Rollback the returned IngestTx.
 	BeginIngest(ctx context.Context, bv domain.BackboneVersion) (IngestTx, error)
+}
+
+// SuggestOpts configures Repository.Suggest.
+type SuggestOpts struct {
+	// Area is a WGSRPD level-3 area code (e.g. "GER"), or one of a small
+	// set of documented convenience aliases (e.g. "DE"); see
+	// internal/adapters/sqlite's areaCodes. Empty means no area filter.
+	Area string
+	// Ranks restricts results to the given domain.Rank values. Empty means
+	// no rank filter (every rank is eligible).
+	Ranks []domain.Rank
+	// Limit is the caller's target result count; Suggest may return more
+	// than Limit candidates (see the Suggest doc comment's fetch-budget
+	// note). A value <= 0 uses the adapter's default budget.
+	Limit int
 }
 
 // MatchCandidate is one row returned by Repository.MatchExact: a concept
@@ -48,6 +79,13 @@ type IngestTx interface {
 	LinkName(conceptID, nameID, role string, homotypic *bool) error
 	AddXref(conceptID string, x domain.Xref) error
 	AddDistribution(conceptID string, d domain.Distribution) error
+	// Finalize (re)builds the FTS5 autosuggest index (fts_name/fts_name_map)
+	// for every name this transaction has linked to a concept (both the
+	// accepted name and its synonyms), so Suggest can find them. Callers
+	// must call Finalize after all UpsertName/UpsertConcept/LinkName calls
+	// for this ingest and before Commit — it is not implicit in Commit,
+	// since it needs to see the transaction's own uncommitted writes.
+	Finalize() error
 	Commit() error
 	Rollback() error
 }

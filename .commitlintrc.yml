@@ -5,7 +5,15 @@ extends:
   - '@commitlint/config-conventional'
 rules:
   # Repo commits occasionally carry a scope + parenthetical; allow headroom.
-  header-max-length: [2, always, 120]
+  #
+  # 140 rather than 120 for exactly one historical commit: SP0's `fix(sp0): sweep
+  # v1 GBIF-proxy vestiges, ...` is 130 chars because it lists five unrelated
+  # changes in one subject. It is the second-to-last commit on the bottom branch
+  # of a ten-deep stack, so rewording it would rewrite ~125 descendant hashes and
+  # force-push ten branches to fix one line — out of all proportion. This is a
+  # concession to history, not a new target: keep subjects near 72 chars, and
+  # split a commit that needs more rather than spending the headroom.
+  header-max-length: [2, always, 140]
   # Allow the types the repo actually uses (config-conventional set + our usage).
   type-enum:
     - 2

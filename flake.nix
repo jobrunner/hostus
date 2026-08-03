@@ -26,6 +26,7 @@
           # Linting & Analyse
           golangci-lint            # Meta-Linter
           govulncheck              # Vulnerability Scanner
+          go-licenses              # Lizenz-Compliance der Abhängigkeiten (make licenses)
           hadolint                 # Dockerfile Linter
 
           # Testing

@@ -80,6 +80,12 @@ bench: ## Benchmarks ausführen
 #   Verzweigung/Vergleich/Arithmetik; verifiziert 2026-08-03 (siehe Review I3).
 MUTATION_NO_MUTABLE_CODE := ./internal/httperr
 
+# MUTATION_WORKERS (optional): begrenzt gremlins' Worker-Zahl. Ohne die
+# Variable bleibt gremlins' Default (CPU-Anzahl) aktiv, damit lokale Läufe
+# parallel bleiben; CI setzt MUTATION_WORKERS=1, weil jeder Worker eine eigene
+# Neuübersetzung des Pakets im Speicher hält (siehe
+# .github/workflows/mutation.yml).
+#
 # Mutation-Gate: `Not covered` MUSS 0 sein, UND es muss mindestens ein Mutant
 # tatsächlich geprüft worden sein (positiver Boden).
 #
@@ -106,7 +112,7 @@ MUTATION_NO_MUTABLE_CODE := ./internal/httperr
 mutation: ## Mutation-Testing (gremlins) — package-scoped, `Not covered`=0 + Mutantenboden>0 erzwungen (PKG=./internal/... überschreibbar)
 	@command -v gremlins >/dev/null 2>&1 || $(GO) install github.com/go-gremlins/gremlins/cmd/gremlins@v0.5.1
 	@out=$$(mktemp); rc=$$(mktemp); \
-	{ gremlins unleash --dry-run=false $(if $(PKG),$(PKG),./...); echo $$? >"$$rc"; } | tee "$$out"; \
+	{ gremlins unleash --dry-run=false $(if $(MUTATION_WORKERS),--workers $(MUTATION_WORKERS),) $(if $(PKG),$(PKG),./...); echo $$? >"$$rc"; } | tee "$$out"; \
 	status=$$(cat "$$rc"); \
 	notcovered=$$(sed -n 's/.*Not covered: \([0-9][0-9]*\).*/\1/p' "$$out" | tail -1); \
 	killed=$$(sed -n 's/.*Killed: \([0-9][0-9]*\).*/\1/p' "$$out" | tail -1); \
@@ -199,8 +205,19 @@ gosec: ## Security Scanner (via golangci-lint)
 # Allowed dependency licenses (permissive only). First-party packages are
 # ignored (the repo itself isn't classified by go-licenses).
 ALLOWED_LICENSES := Apache-2.0,MIT,BSD-3-Clause,BSD-2-Clause,ISC,CC0-1.0,MPL-2.0
-licenses: ## Lizenz-Compliance der Abhängigkeiten (go install github.com/google/go-licenses@latest)
-	go-licenses check ./cmd/$(BINARY_NAME) --allowed_licenses=$(ALLOWED_LICENSES) --ignore $(MODULE)
+#
+# modernc.org/mathutil is ignored because go-licenses cannot CLASSIFY its
+# licence, not because the licence is a problem. Verified by hand on 2026-08-03
+# against modernc.org/mathutil@v1.7.1: the module ships a LICENSE file whose
+# text is verbatim BSD-3-Clause ("Redistribution and use in source and binary
+# forms ... * Redistributions of source code must retain the above copyright
+# notice"), and its Makefile header says "governed by a BSD-style license".
+# BSD-3-Clause is already on ALLOWED_LICENSES above, so this is a classifier
+# false positive, not an exception to the policy. It reaches us transitively
+# via modernc.org/sqlite (ADR-0010). Re-verify if the module is bumped.
+LICENSE_IGNORE := $(MODULE),modernc.org/mathutil
+licenses: ## Lizenz-Compliance der Abhängigkeiten
+	go-licenses check ./cmd/$(BINARY_NAME) --allowed_licenses=$(ALLOWED_LICENSES) --ignore $(LICENSE_IGNORE)
 
 ## Format Targets
 fmt: ## Formatiere Go Code

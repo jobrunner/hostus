@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -82,10 +83,11 @@ type integrationConceptResponse struct {
 type integrationMatchResponse struct {
 	BackboneVersions map[string]string `json:"backbone_versions"`
 	Results          []struct {
-		ID         string  `json:"id"`
-		MatchType  string  `json:"match_type"`
-		Confidence float64 `json:"confidence"`
-		ConceptID  string  `json:"concept_id"`
+		ID             string  `json:"id"`
+		MatchType      string  `json:"match_type"`
+		Confidence     float64 `json:"confidence"`
+		ConceptID      string  `json:"concept_id"`
+		RequiresReview bool    `json:"requires_review"`
 	} `json:"results"`
 }
 
@@ -117,7 +119,7 @@ func TestIntegration_EndToEndIngestServeQuery(t *testing.T) {
 	manifestPath := "testdata/dataset.yaml"
 
 	ctx := context.Background()
-	report, err := app.Ingest(ctx, manifestPath, dbPath)
+	report, _, err := app.Ingest(ctx, manifestPath, dbPath)
 	if err != nil {
 		t.Fatalf("app.Ingest: unexpected error: %v", err)
 	}
@@ -411,7 +413,7 @@ func TestIntegration_OfflineBundleServesSuggestOffline(t *testing.T) {
 	dbPath := filepath.Join(dir, "hostus.sqlite")
 	bundlePath := filepath.Join(dir, "bundle.sqlite")
 
-	if _, err := app.Ingest(ctx, "testdata/dataset.yaml", dbPath); err != nil {
+	if _, _, err := app.Ingest(ctx, "testdata/dataset.yaml", dbPath); err != nil {
 		t.Fatalf("app.Ingest: unexpected error: %v", err)
 	}
 
@@ -463,5 +465,349 @@ func TestIntegration_OfflineBundleServesSuggestOffline(t *testing.T) {
 	}
 	if !coryn.InArea {
 		t.Error("bundle in_area = false, want true for area=AUT")
+	}
+}
+
+// traitsIntegrationResponse mirrors internal/adapters/http.traitsResponseDTO
+// (see traits.go), trimmed to the fields this test asserts on.
+type traitsIntegrationResponse struct {
+	ConceptID string `json:"concept_id"`
+	Traits    []struct {
+		Vocab        string `json:"vocab"`
+		VocabVersion string `json:"vocab_version"`
+		Values       []struct {
+			Dim   string  `json:"dim"`
+			Value float64 `json:"value"`
+			Scale struct {
+				Min        float64 `json:"min"`
+				Max        float64 `json:"max"`
+				Normalized bool    `json:"normalized"`
+			} `json:"scale"`
+		} `json:"values"`
+	} `json:"traits"`
+}
+
+// TestIntegration_TraitsFuzzyClassification is SP3's end-to-end proof: it
+// ingests the WCVP fixture together with the EIVE and Tichý trait fixtures
+// (testdata/dataset-traits.yaml — a manifest dedicated to this test so the
+// SP1/SP4 fixture manifest testdata/dataset.yaml, shared with
+// internal/app/ingest_test.go's len(traitReports)==1 assertion, stays
+// untouched) through the real CLI/app path, then drives three real-HTTP
+// guarantees SP3 added on top of SP1/SP2:
+//
+//  1. GET /v1/concept/{id}/traits returns BOTH ingested vocabularies with
+//     distinct vocab_version strings, and Tichý's T and L dimensions carry
+//     DIFFERENT scale ranges in the same response — the per-value-scale
+//     honesty guarantee (domain.ScaleFor's doc comment: Tichý T is 1-12,
+//     L is 1-9, so one Set-wide scale would misrepresent one of them).
+//  2. POST /v1/match with a single-letter typo of a name the fixture
+//     actually carries (Corynephorus canescens -> "canescans") resolves
+//     match_type:"fuzzy" with requires_review:true — mandatory on every
+//     fuzzy hit regardless of how high the similarity score is.
+//  3. GET /v1/concept/{id} renders a non-empty classification chain: the
+//     WCVP fixture's Corynephorus canescens (405825) has parent_id ==
+//     Corynephorus (451295), a genus-level concept the fixture also
+//     carries.
+func TestIntegration_TraitsFuzzyClassification(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "hostus.sqlite")
+
+	ctx := context.Background()
+	backboneReport, traitReports, err := app.Ingest(ctx, "testdata/dataset-traits.yaml", dbPath)
+	if err != nil {
+		t.Fatalf("app.Ingest: unexpected error: %v", err)
+	}
+	if len(backboneReport.Backbones) == 0 {
+		t.Fatal("app.Ingest: empty backbone report, want at least the wcvp backbone")
+	}
+	if len(traitReports) != 2 {
+		t.Fatalf("len(traitReports) = %d, want 2 (eive, tichy2023)", len(traitReports))
+	}
+	for _, tr := range traitReports {
+		if tr.Matched == 0 {
+			t.Errorf("trait vocab %q: Matched = 0, want the fixture's WCVP-resolvable rows to have been written", tr.Vocab)
+		}
+	}
+
+	cfg := testConfig()
+	cfg.SQLite.Path = dbPath
+	a, err := app.New(cfg)
+	if err != nil {
+		t.Fatalf("app.New: unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Shutdown(context.Background()) })
+
+	ts := httptest.NewServer(a.Router)
+	defer ts.Close()
+	client := ts.Client()
+
+	assertTraitsEndToEnd(t, client, ts.URL)
+	assertFuzzyMatch(t, client, ts.URL)
+	assertClassificationEndToEnd(t, client, ts.URL)
+}
+
+// assertTraitsEndToEnd drives GET /v1/concept/{corynephorus}/traits over
+// real HTTP and checks both fixture vocabularies are present with distinct
+// versions, and that Tichý's T and L dimensions carry different scales in
+// the very same response — proving the per-VALUE (not per-set) scale
+// rendering end to end, not just at the in-process handler-test level
+// internal/adapters/http/traits_test.go already covers.
+func assertTraitsEndToEnd(t *testing.T, client *http.Client, baseURL string) {
+	t.Helper()
+	resp, err := client.Get(baseURL + "/v1/concept/" + corynephorusConceptID + "/traits")
+	if err != nil {
+		t.Fatalf("GET /v1/concept/{id}/traits: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /v1/concept/{id}/traits: status = %d, want 200", resp.StatusCode)
+	}
+	var body traitsIntegrationResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decoding /v1/concept/{id}/traits response: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	if body.ConceptID != corynephorusConceptID {
+		t.Errorf("concept_id = %q, want %q", body.ConceptID, corynephorusConceptID)
+	}
+	if len(body.Traits) != 2 {
+		t.Fatalf("len(traits) = %d, want 2 (eive, tichy2023)", len(body.Traits))
+	}
+
+	byVocab := make(map[string]int, len(body.Traits))
+	for i, ts := range body.Traits {
+		byVocab[ts.Vocab] = i
+	}
+	eiveIdx, haveEive := byVocab["eive"]
+	tichyIdx, haveTichy := byVocab["tichy2023"]
+	if !haveEive || !haveTichy {
+		t.Fatalf("traits = %+v, want both %q and %q vocabularies", body.Traits, "eive", "tichy2023")
+	}
+
+	eive, tichy := body.Traits[eiveIdx], body.Traits[tichyIdx]
+	if eive.VocabVersion == tichy.VocabVersion {
+		t.Errorf("eive.vocab_version == tichy2023.vocab_version == %q, want distinct versions", eive.VocabVersion)
+	}
+	if eive.VocabVersion != "1.0" {
+		t.Errorf("eive.vocab_version = %q, want %q", eive.VocabVersion, "1.0")
+	}
+	if tichy.VocabVersion != "2.0" {
+		t.Errorf("tichy2023.vocab_version = %q, want %q", tichy.VocabVersion, "2.0")
+	}
+
+	var tScale, lScale struct {
+		Min, Max   float64
+		Normalized bool
+		found      bool
+	}
+	for _, v := range tichy.Values {
+		switch v.Dim {
+		case "T":
+			tScale.Min, tScale.Max, tScale.Normalized, tScale.found = v.Scale.Min, v.Scale.Max, v.Scale.Normalized, true
+		case "L":
+			lScale.Min, lScale.Max, lScale.Normalized, lScale.found = v.Scale.Min, v.Scale.Max, v.Scale.Normalized, true
+		}
+	}
+	if !tScale.found || !lScale.found {
+		t.Fatalf("tichy2023.values = %+v, want both T and L dims present", tichy.Values)
+	}
+	if tScale.Max == lScale.Max {
+		t.Errorf("Tichý T.scale.max == L.scale.max == %v, want them to differ (T: 1-12, L: 1-9 — domain.ScaleFor)", tScale.Max)
+	}
+	if tScale.Max != 12 {
+		t.Errorf("Tichý T.scale.max = %v, want 12", tScale.Max)
+	}
+	if lScale.Max != 9 {
+		t.Errorf("Tichý L.scale.max = %v, want 9", lScale.Max)
+	}
+}
+
+// assertFuzzyMatch posts a single-letter typo of the fixture's
+// "Corynephorus canescens" ("canescans") to POST /v1/match and checks it
+// resolves match_type:"fuzzy" with requires_review:true — mandatory on
+// every fuzzy hit per spec §B.2, regardless of the similarity score, and
+// resolves to the SAME concept the correctly-spelled name would.
+func assertFuzzyMatch(t *testing.T, client *http.Client, baseURL string) {
+	t.Helper()
+	const matchBody = `{"names": [{"id": "typo", "verbatim": "Corynephorus canescans"}]}`
+	resp, err := client.Post(baseURL+"/v1/match", "application/json", bytes.NewBufferString(matchBody))
+	if err != nil {
+		t.Fatalf("POST /v1/match: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /v1/match: status = %d, want 200", resp.StatusCode)
+	}
+	var match integrationMatchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&match); err != nil {
+		t.Fatalf("decoding /v1/match response: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	if len(match.Results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(match.Results))
+	}
+	r := match.Results[0]
+	if r.MatchType != "fuzzy" {
+		t.Errorf("match_type = %q, want %q", r.MatchType, "fuzzy")
+	}
+	if r.ConceptID != corynephorusConceptID {
+		t.Errorf("concept_id = %q, want %q (the typo'd name's correctly-spelled match)", r.ConceptID, corynephorusConceptID)
+	}
+	if !r.RequiresReview {
+		t.Error("requires_review = false, want true (mandatory on every fuzzy hit per spec §B.2, regardless of similarity score)")
+	}
+}
+
+// assertClassificationEndToEnd drives GET /v1/concept/{corynephorus} over
+// real HTTP and checks the classification chain the WCVP fixture actually
+// carries: Corynephorus canescens' (405825) parent is the genus concept
+// Corynephorus (451295), also present in the fixture — see
+// wcvp_taxon.csv's parentNameUsageID column.
+func assertClassificationEndToEnd(t *testing.T, client *http.Client, baseURL string) {
+	t.Helper()
+	resp, err := client.Get(baseURL + "/v1/concept/" + corynephorusConceptID)
+	if err != nil {
+		t.Fatalf("GET /v1/concept: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /v1/concept: status = %d, want 200", resp.StatusCode)
+	}
+	var body struct {
+		Classification []struct {
+			ConceptID string `json:"concept_id"`
+			Canonical string `json:"canonical"`
+			Rank      string `json:"rank"`
+		} `json:"classification"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decoding /v1/concept response: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	if len(body.Classification) == 0 {
+		t.Fatal("classification is empty, want at least the Corynephorus genus ancestor")
+	}
+	parent := body.Classification[len(body.Classification)-1]
+	if parent.Canonical != "Corynephorus" {
+		t.Errorf("classification's last (immediate parent) entry canonical = %q, want %q", parent.Canonical, "Corynephorus")
+	}
+	if parent.Rank != "GENUS" {
+		t.Errorf("classification's last entry rank = %q, want %q", parent.Rank, "GENUS")
+	}
+}
+
+// TestIntegration_OfflineBundleConceptSuggestTraitsOffline is the SP2
+// landmine (see internal/app/integration_test.go's CHANGELOG entry on
+// ExportBundle's self-referencing FK handling), now covered end to end
+// WITH the traits SP3 added: it exports an area=AUT bundle from a database
+// carrying both WCVP and the trait fixtures, where Corynephorus canescens'
+// parent (the genus concept, 451295) is deliberately OUT OF SCOPE — the
+// WCVP fixture never gives the genus-level concept its own AUT distribution
+// row — and then opens ONLY that bundle file (never touching the source
+// database again) to prove Concept, Classification, Suggest and Traits all
+// still work against it standalone. If ExportBundle's out-of-scope
+// self-reference nulling (T7) ever regressed, Concept/Classification would
+// either 500 (dangling FK) or the bundle write itself would fail a FK
+// constraint — this test would catch either.
+func TestIntegration_OfflineBundleConceptSuggestTraitsOffline(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "hostus.sqlite")
+	bundlePath := filepath.Join(dir, "bundle.sqlite")
+
+	if _, _, err := app.Ingest(ctx, "testdata/dataset-traits.yaml", dbPath); err != nil {
+		t.Fatalf("app.Ingest: unexpected error: %v", err)
+	}
+
+	src, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open(source): unexpected error: %v", err)
+	}
+
+	// Confirm the landmine precondition on the SOURCE db before exporting:
+	// the genus parent must actually be present but WITHOUT an AUT
+	// distribution row, so scopeConceptIDs genuinely excludes it (a stale
+	// fixture that gave the genus an AUT row too would make this test
+	// exercise nothing).
+	genusConceptID := "wcvp:concept:451295"
+	if _, _, _, _, err := src.Concept(ctx, genusConceptID); err != nil {
+		_ = src.Close()
+		t.Fatalf("source db: Concept(%q): unexpected error: %v (fixture must carry the genus concept)", genusConceptID, err)
+	}
+
+	report, err := sqlite.ExportBundle(ctx, src, bundlePath, sqlite.BundleOpts{Area: "AUT", SnapshotVersion: "v1"})
+	if err != nil {
+		_ = src.Close()
+		t.Fatalf("sqlite.ExportBundle: unexpected error: %v", err)
+	}
+	if err := src.Close(); err != nil {
+		t.Fatalf("closing source db: %v", err)
+	}
+	if report.Concepts == 0 {
+		t.Fatal("sqlite.ExportBundle: report.Concepts = 0, want at least the AUT-scoped Corynephorus canescens concept")
+	}
+
+	// Open ONLY the bundle from here on.
+	bundle, err := sqlite.Open(bundlePath)
+	if err != nil {
+		t.Fatalf("sqlite.Open(bundle): unexpected error: %v", err)
+	}
+	defer func() { _ = bundle.Close() }()
+
+	// The genus parent was out of scope: it must NOT have been copied into
+	// the bundle at all.
+	if _, _, _, _, err := bundle.Concept(ctx, genusConceptID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("bundle: Concept(%q) err = %v, want %v (out-of-scope genus must not be in the bundle)", genusConceptID, err, domain.ErrNotFound)
+	}
+
+	// Concept: Corynephorus canescens itself must resolve, with its
+	// out-of-scope self-reference (parent_id) NULLed rather than the
+	// bundle write failing an FK constraint or Concept() erroring.
+	concept, _, _, _, err := bundle.Concept(ctx, corynephorusConceptID)
+	if err != nil {
+		t.Fatalf("bundle: Concept(%q): unexpected error: %v", corynephorusConceptID, err)
+	}
+	if concept.AcceptedName.Canonical != "Corynephorus canescens" {
+		t.Errorf("bundle: concept canonical = %q, want %q", concept.AcceptedName.Canonical, "Corynephorus canescens")
+	}
+
+	// Classification: must not error just because the parent it would have
+	// walked to is out of scope — an empty chain is the correct, honest
+	// result (Classification's doc comment: a NULL parent_id stops the
+	// walk without error).
+	classification, err := bundle.Classification(ctx, corynephorusConceptID)
+	if err != nil {
+		t.Fatalf("bundle: Classification(%q): unexpected error: %v", corynephorusConceptID, err)
+	}
+	if len(classification) != 0 {
+		t.Errorf("bundle: classification = %+v, want empty (the only parent was out of scope and must have been NULLed)", classification)
+	}
+
+	// Suggest: unchanged from TestIntegration_OfflineBundleServesSuggestOffline.
+	suggestResp, err := application.Suggest(ctx, bundle, application.SuggestRequest{Q: "coryn", Area: "AUT"})
+	if err != nil {
+		t.Fatalf("application.Suggest against bundle: unexpected error: %v", err)
+	}
+	var coryn *domain.SuggestItem
+	for i := range suggestResp.Results {
+		if suggestResp.Results[i].ConceptID == corynephorusConceptID {
+			coryn = &suggestResp.Results[i]
+			break
+		}
+	}
+	if coryn == nil {
+		t.Fatalf("bundle suggest results = %+v, want an entry for %q", suggestResp.Results, corynephorusConceptID)
+	}
+
+	// Traits: the bundle must carry both trait vocabularies for the
+	// AUT-scoped Corynephorus canescens concept (sqlite.copyConceptScopedTables
+	// copies trait_value scoped by the same concept id set, plus
+	// trait_vocabulary in full).
+	traitSets, err := bundle.Traits(ctx, corynephorusConceptID, nil)
+	if err != nil {
+		t.Fatalf("bundle: Traits(%q): unexpected error: %v", corynephorusConceptID, err)
+	}
+	if len(traitSets) != 2 {
+		t.Fatalf("bundle: len(traitSets) = %d, want 2 (eive, tichy2023) — traits must survive the offline bundle export", len(traitSets))
 	}
 }

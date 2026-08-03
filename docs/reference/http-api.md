@@ -1,11 +1,11 @@
 # HTTP-API
 
 !!! note "Stand"
-    Dies beschreibt den SP2-Stand: die lokale SQLite/FTS5-Rückgrat-Basis ist
+    Dies beschreibt den SP3-Stand: die lokale SQLite/FTS5-Rückgrat-Basis ist
     implementiert (`hostus ingest` befüllt die Datenbank aus WCVP/POWO-
     DwC-A-Manifesten; `hostus serve` bedient `/v1/concept/{id}`, `/v1/xref`,
-    `/v1/match` und `/v1/suggest` daraus). Weitere `/v1/*`-Endpunkte
-    (`concept/{id}/traits`, `concept/{id}/synonyms`, `translate`) sowie
+    `/v1/match`, `/v1/suggest` und `/v1/concept/{id}/traits` daraus).
+    Weitere `/v1/*`-Endpunkte (`concept/{id}/synonyms`, `translate`) sowie
     `/openapi` folgen in späteren SPs. Die maßgebliche OpenAPI-Spezifikation
     liegt unter `api/openapi/openapi.yaml`.
 
@@ -63,6 +63,9 @@ GET /v1/concept/wcvp:concept:405825
   "status": "ACCEPTED",
   "backbone": { "id": "wcvp", "version": "2026-06-15" },
   "xrefs": { "powo": "396681-1" },
+  "classification": [
+    { "concept_id": "wcvp:concept:451295", "canonical": "Corynephorus", "rank": "GENUS" }
+  ],
   "synonyms": [
     { "canonical": "Weingaertneria canescens var. pallida", "authorship": "Beckh." },
     { "canonical": "Corynephorus canescens f. pallidus", "authorship": "(Beckh.) Soó" },
@@ -83,13 +86,28 @@ GET /v1/concept/wcvp:concept:405825
 }
 ```
 
-`vernacular_de` (deutscher Trivialname) und `classification`
-(Klassifikationskette) sind Teil der DTO, aber in SP1 immer leer/omitted —
-die Vernakular-Tabelle bzw. Eltern-Verknüpfungen werden noch nicht
-ingestiert. `distribution` (Referenzgebiets-Zuordnungen, z. B. WGSRPD L3)
-wird dagegen bereits von `hostus ingest` befüllt und ausgeliefert; das
-Feld ist leer, wenn der Backbone für dieses Concept keine Distribution
-liefert.
+`vernacular_de` (deutscher Trivialname) ist Teil der DTO, aber immer
+leer/omitted — die Vernakular-Tabelle wird noch nicht ingestiert.
+
+`classification` (Klassifikationskette) wird durch Verfolgen von
+`taxon_concept.parent_id` nach oben ermittelt und ROOT-FIRST geliefert:
+Index 0 ist die oberste erreichte Vorfahren-Ebene, das letzte Element das
+direkte Elternteil des angefragten Concepts; das Concept selbst ist nie
+Teil der Kette. Die Tiefe ist auf 10 Hops begrenzt, damit eine
+zyklische/korrupte `parent_id`-Kette niemals hängen bleibt. `parent_id`
+wird nur gesetzt, wenn das Eltern-Taxon selbst als akzeptiertes Concept
+ingestiert wurde — andernfalls (und wenn die Kette nach der
+Tiefenbegrenzung endet) ist `classification` leer/omitted.
+
+`synonyms[].homotypic` ist `true`, wenn die Basionym-Verknüpfung ein
+gemeinsames Basionym mit dem akzeptierten Namen beweist (Rekombination
+davon, oder das Basionym selbst). Fehlt das Feld, ist die Typisierung
+unbekannt — das Feld wird niemals als `false` ausgeliefert, da das eine
+unbelegbare "heterotypisch"-Behauptung wäre.
+
+`distribution` (Referenzgebiets-Zuordnungen, z. B. WGSRPD L3) wird von
+`hostus ingest` befüllt und ausgeliefert; das Feld ist leer, wenn der
+Backbone für dieses Concept keine Distribution liefert.
 
 Unbekannte IDs liefern `404 NOT_FOUND` im [Fehlerformat](#fehlerformat).
 
@@ -217,6 +235,94 @@ GET /v1/suggest?q=coryn&area=AUT
 
 `vernacular_de` ist Teil der DTO, wird aber nur ausgeliefert, wenn ein
 deutscher Trivialname für das Concept ingestiert wurde (`omitempty`).
+
+## Trait-Endpunkt
+
+### `GET /v1/concept/{id}/traits?vocab={vocab}`
+
+Liefert alle für ein Concept ingestierten ökologischen Merkmalswerte
+(EIVE, Tichý et al. 2023, Midolo et al. 2023), gruppiert **pro Vokabular**
+— nie über Vokabulare hinweg zusammengeführt, da deren Taxonomie-
+Namensräume (`taxonomy`) nachweislich divergieren (z. B. `euromed-aligned`
+für EIVE vs. `floraveg-eunis-aligned` für Tichý).
+
+- `vocab` (optional): kommagetrennte Liste von Vokabular-Token (`eive`,
+  `tichy2023`, `midolo2023`). Leer bedeutet alle Vokabulare, für die
+  dieses Concept Werte hat. Ein unbekanntes Token liefert `400
+  INVALID_QUERY`.
+
+**Beispiel-Request**
+
+```
+GET /v1/concept/wcvp:concept:405825/traits?vocab=eive,tichy2023
+```
+
+**Beispiel-Response (`200 OK`)**
+
+```json
+{
+  "concept_id": "wcvp:concept:405825",
+  "traits": [
+    {
+      "vocab": "eive",
+      "vocab_version": "1.0",
+      "taxonomy": "euromed-aligned",
+      "values": [
+        {
+          "dim": "M",
+          "value": 2.49,
+          "niche_width": 3.43,
+          "n_systems": 20,
+          "scale": { "min": 0, "max": 10, "normalized": true }
+        }
+      ]
+    },
+    {
+      "vocab": "tichy2023",
+      "vocab_version": "2.0",
+      "taxonomy": "floraveg-eunis-aligned",
+      "values": [
+        {
+          "dim": "L",
+          "value": 8.4,
+          "scale": { "min": 1, "max": 9, "normalized": false }
+        },
+        {
+          "dim": "T",
+          "value": 6.3,
+          "scale": { "min": 1, "max": 12, "normalized": false }
+        }
+      ]
+    }
+  ]
+}
+```
+
+Wichtige Punkte für Clients:
+
+- **`scale` wird pro Wert gerendert, nicht pro Set.** Selbst innerhalb
+  eines Vokabulars unterscheiden sich die Skalen zwischen Dimensionen —
+  Tichý misst `T` auf 1–12, `L` aber auf 1–9. Ein einzelnes Set-weites
+  `scale`-Feld wäre für mindestens eine Dimension falsch, deshalb trägt
+  jeder Eintrag in `values` sein eigenes `scale`. `normalized: true`
+  gibt es ausschließlich bei EIVE (uniform 0–10); alle anderen
+  Kombinationen sind `normalized: false`. Ein `{"min": 0, "max": 0,
+  "normalized": false}`-Ergebnis ist ein Sentinel für "keine feste Skala
+  definiert" (z. B. Midolo-Störungsindikatoren), nicht "der Wert ist
+  exakt 0". **Ein EIVE-Wert von 4.2 ist daher niemals direkt mit einem
+  Tichý-Wert von 4.2 vergleichbar** — genau deshalb liefert jeder Wert
+  seine Skala mit.
+- **`niche_width`/`n_systems` fehlen ganz (nicht `0`), wenn das
+  Vokabular sie nicht liefert.** EIVE liefert beide für jeden Wert;
+  Tichý und Midolo liefern keines von beiden. Ein fehlendes Feld
+  bedeutet "dieses Vokabular kennt dieses Datum nicht", ein `0`-Wert
+  hätte fälschlich eine tatsächliche Nullbreite/-quellenzahl behauptet.
+- **`taxonomy` fehlt ganz, wenn keine Vokabular-Metadatenzeile
+  zugeordnet werden konnte** — wird nicht als leerer String
+  vorgetäuscht.
+- Ein unbekanntes Concept liefert `404 NOT_FOUND`. Ein **bekanntes**
+  Concept ohne ingestierte Merkmalswerte liefert `200 OK` mit leerem
+  `traits`-Array — das ist kein Fehlerfall.
 
 ## Fehlerformat
 

@@ -47,6 +47,20 @@ type TaxonRow struct {
 	Rank            string
 	Status          string
 	POWOID          string
+	// ParentTaxonID is the source row's raw parent taxon id (WCVP
+	// parentnameusageid), or "" if none. It is resolved into
+	// domain.Concept.ParentID only when the id it names is itself an
+	// ACCEPTED row in this same ingest (see ingestState.acceptedTaxonIDs) —
+	// a parent that never got its own concept has no taxon_concept row to
+	// point at, so ParentID is left "" (NULL) rather than dangling.
+	ParentTaxonID string
+	// BasionymTaxonID is the source row's raw basionym/original-name-usage
+	// id (WCVP originalnameusageid), or "" if none. It is resolved into
+	// domain.Name.BasionymID only when the id it names is present ANYWHERE
+	// in this ingest's taxa (accepted or synonym — see
+	// ingestState.presentTaxonIDs), since every row (not just accepted
+	// ones) gets its own Name.
+	BasionymTaxonID string
 }
 
 // DistributionRow is one area assignment, joined to a TaxonRow by TaxonID.
@@ -118,10 +132,71 @@ type ingestState struct {
 	backbone    Backbone
 	tx          output.IngestTx
 	distByTaxon map[string][]DistributionRow
-	// accepted tracks which source taxonIDs got their own concept in pass
-	// 1, so pass 2 can tell a real accepted-concept link from a dangling
-	// reference in the source data.
+	// accepted tracks which source taxonIDs are ACCEPTED rows (get their
+	// own concept). It is fully resolved from taxa BEFORE either pass
+	// writes anything (see acceptedTaxonIDs) — not built up progressively
+	// during pass 1 — because ParentTaxonID may name a taxon that appears
+	// LATER in taxa than the row referencing it; resolving parent linkage
+	// during pass 1 needs to see the complete set regardless of source
+	// order. Pass 2 also uses it to tell a real accepted-concept link from
+	// a dangling reference in the source data.
 	accepted map[string]bool
+	// basionymOf maps a source taxonID to the ALREADY-RESOLVED basionym
+	// name id (nameID(backbone, row.BasionymTaxonID)) that row's Name got
+	// in pass 1, or "" if BasionymTaxonID was empty or unresolvable
+	// (target not in present). Built once upfront (see basionymIDsByTaxon)
+	// so pass 2's homotypic rule can look up both the synonym's own
+	// basionym AND the accepted row's basionym without re-deriving ids.
+	basionymOf map[string]string
+	// namesByTaxon and conceptsByTaxon record each row's already-written
+	// Name/Concept from pass 1's first sub-pass (still missing
+	// BasionymID/ParentID), keyed by source taxonID, so the second
+	// sub-pass (linkSelfReferences) can look them up, set the
+	// now-safe-to-write linkage field, and re-issue the identical INSERT
+	// OR REPLACE.
+	namesByTaxon    map[string]domain.Name
+	conceptsByTaxon map[string]domain.Concept
+}
+
+// acceptedTaxonIDs resolves the full set of ACCEPTED source taxonIDs from
+// taxa, in memory, before any write happens — this is what makes parent_id
+// resolution order-independent (a child's parent may appear later in taxa
+// than the child itself).
+func acceptedTaxonIDs(taxa []TaxonRow) map[string]bool {
+	m := make(map[string]bool, len(taxa))
+	for _, row := range taxa {
+		if row.Accepted {
+			m[row.TaxonID] = true
+		}
+	}
+	return m
+}
+
+// presentTaxonIDs resolves the full set of source taxonIDs present in taxa
+// (accepted or synonym) — every row gets a Name, so this is the membership
+// test for basionym_id resolution (which may point at any row, not just
+// accepted ones).
+func presentTaxonIDs(taxa []TaxonRow) map[string]bool {
+	m := make(map[string]bool, len(taxa))
+	for _, row := range taxa {
+		m[row.TaxonID] = true
+	}
+	return m
+}
+
+// basionymIDsByTaxon resolves, for every source taxonID, the already-derived
+// basionym NAME id (or "" if unresolvable), so pass 1 (writing Name.BasionymID)
+// and pass 2 (the homotypic rule) can both look it up without recomputing.
+func basionymIDsByTaxon(b Backbone, taxa []TaxonRow, present map[string]bool) map[string]string {
+	m := make(map[string]string, len(taxa))
+	for _, row := range taxa {
+		id := ""
+		if row.BasionymTaxonID != "" && present[row.BasionymTaxonID] {
+			id = nameID(b.ID, row.BasionymTaxonID)
+		}
+		m[row.TaxonID] = id
+	}
+	return m
 }
 
 func ingestBackbone(ctx context.Context, b Backbone, manifestSHA string, rs RowSource, repo output.Repository) (BackboneReport, error) {
@@ -144,8 +219,15 @@ func ingestBackbone(ctx context.Context, b Backbone, manifestSHA string, rs RowS
 		distByTaxon[d.TaxonID] = append(distByTaxon[d.TaxonID], d)
 	}
 
-	st := &ingestState{backbone: b, tx: tx, distByTaxon: distByTaxon, accepted: make(map[string]bool)}
 	taxa := rs.Taxa()
+	present := presentTaxonIDs(taxa)
+	st := &ingestState{
+		backbone:    b,
+		tx:          tx,
+		distByTaxon: distByTaxon,
+		accepted:    acceptedTaxonIDs(taxa),
+		basionymOf:  basionymIDsByTaxon(b, taxa, present),
+	}
 
 	if err := st.pass1AcceptedAndNames(taxa, &report); err != nil {
 		_ = tx.Rollback()
@@ -168,9 +250,22 @@ func ingestBackbone(ctx context.Context, b Backbone, manifestSHA string, rs RowS
 
 // pass1AcceptedAndNames upserts every row's Name, and additionally upserts
 // a Concept (plus its "accepted" link, powo xref, and own distribution)
-// for every row that is the accepted name of its group.
+// for every row that is the accepted name of its group. It runs in two
+// SUB-passes rather than setting basionym_id/parent_id on the first write:
+// a row's basionym or parent may be a taxonID that appears LATER in taxa
+// than the row referencing it, and SQLite's (default, immediate) foreign-key
+// enforcement would reject that forward reference — the target genuinely
+// doesn't exist YET at that point in the transaction, even though it is
+// guaranteed to exist by the time the whole ingest commits. Sub-pass 1a
+// therefore writes every Name/Concept WITHOUT its self-referencing column;
+// sub-pass 1b (linkSelfReferences) then re-writes just those rows whose
+// linkage resolved to something non-empty, once every row's target
+// definitely already exists.
 func (st *ingestState) pass1AcceptedAndNames(taxa []TaxonRow, report *BackboneReport) error {
 	b := st.backbone
+	st.namesByTaxon = make(map[string]domain.Name, len(taxa))
+	st.conceptsByTaxon = make(map[string]domain.Concept)
+
 	for _, row := range taxa {
 		rank, err := domain.ParseRank(row.Rank)
 		if err != nil {
@@ -192,20 +287,23 @@ func (st *ingestState) pass1AcceptedAndNames(taxa []TaxonRow, report *BackboneRe
 			return fmt.Errorf("application: backbone %q: %w", b.ID, err)
 		}
 		report.Names++
+		st.namesByTaxon[row.TaxonID] = name
 
 		if !row.Accepted {
 			continue
 		}
-		if err := st.upsertAcceptedConcept(row, name, rank); err != nil {
+		concept, err := st.upsertAcceptedConcept(row, name, rank)
+		if err != nil {
 			return err
 		}
 		report.Concepts++
-		st.accepted[row.TaxonID] = true
+		st.conceptsByTaxon[row.TaxonID] = concept
 	}
-	return nil
+
+	return st.linkSelfReferences(taxa)
 }
 
-func (st *ingestState) upsertAcceptedConcept(row TaxonRow, name domain.Name, rank domain.Rank) error {
+func (st *ingestState) upsertAcceptedConcept(row TaxonRow, name domain.Name, rank domain.Rank) (domain.Concept, error) {
 	b := st.backbone
 	cID := conceptID(b.ID, row.TaxonID)
 	concept := domain.Concept{
@@ -216,19 +314,49 @@ func (st *ingestState) upsertAcceptedConcept(row TaxonRow, name domain.Name, ran
 		Status:       domain.ParseStatus(row.Status),
 	}
 	if err := st.tx.UpsertConcept(concept); err != nil {
-		return fmt.Errorf("application: backbone %q: %w", b.ID, err)
+		return domain.Concept{}, fmt.Errorf("application: backbone %q: %w", b.ID, err)
 	}
 	if err := st.tx.LinkName(cID, name.ID, "accepted", nil); err != nil {
-		return fmt.Errorf("application: backbone %q: %w", b.ID, err)
+		return domain.Concept{}, fmt.Errorf("application: backbone %q: %w", b.ID, err)
 	}
 	if row.POWOID != "" {
 		if err := st.tx.AddXref(cID, domain.Xref{Authority: "powo", ExtID: row.POWOID}); err != nil {
-			return fmt.Errorf("application: backbone %q: %w", b.ID, err)
+			return domain.Concept{}, fmt.Errorf("application: backbone %q: %w", b.ID, err)
 		}
 	}
 	for _, d := range st.distByTaxon[row.TaxonID] {
 		if err := st.tx.AddDistribution(cID, domain.Distribution{AreaScheme: "wgsrpd_l3", AreaCode: d.AreaCode}); err != nil {
-			return fmt.Errorf("application: backbone %q: %w", b.ID, err)
+			return domain.Concept{}, fmt.Errorf("application: backbone %q: %w", b.ID, err)
+		}
+	}
+	return concept, nil
+}
+
+// linkSelfReferences is pass 1's second sub-pass (see pass1AcceptedAndNames'
+// doc comment): it re-writes name.basionym_id (via UpsertName) and
+// taxon_concept.parent_id (via UpsertConcept) — both plain INSERT OR
+// REPLACE, so re-issuing them with the same id and the linkage field now
+// filled in is safe — for every row whose linkage resolved to something
+// non-empty, once sub-pass 1a has guaranteed every row's Name/Concept
+// already exists.
+func (st *ingestState) linkSelfReferences(taxa []TaxonRow) error {
+	b := st.backbone
+	for _, row := range taxa {
+		if basionymID := st.basionymOf[row.TaxonID]; basionymID != "" {
+			name := st.namesByTaxon[row.TaxonID]
+			name.BasionymID = basionymID
+			if err := st.tx.UpsertName(name); err != nil {
+				return fmt.Errorf("application: backbone %q: linking basionym for taxon %q: %w", b.ID, row.TaxonID, err)
+			}
+		}
+
+		if !row.Accepted || row.ParentTaxonID == "" || !st.accepted[row.ParentTaxonID] {
+			continue
+		}
+		concept := st.conceptsByTaxon[row.TaxonID]
+		concept.ParentID = conceptID(b.ID, row.ParentTaxonID)
+		if err := st.tx.UpsertConcept(concept); err != nil {
+			return fmt.Errorf("application: backbone %q: linking parent for taxon %q: %w", b.ID, row.TaxonID, err)
 		}
 	}
 	return nil
@@ -250,12 +378,53 @@ func (st *ingestState) pass2Synonyms(taxa []TaxonRow, report *BackboneReport) er
 			continue
 		}
 		cID := conceptID(b.ID, row.AcceptedTaxonID)
-		if err := st.tx.LinkName(cID, nameID(b.ID, row.TaxonID), "synonym", nil); err != nil {
+		if err := st.tx.LinkName(cID, nameID(b.ID, row.TaxonID), "synonym", st.homotypic(row)); err != nil {
 			return fmt.Errorf("application: backbone %q: %w", b.ID, err)
 		}
 		report.Synonyms++
 	}
 	return nil
+}
+
+// homotypic implements the conservative homotypic rule for a synonym row:
+// it returns a pointer to true when the basionym linkage PROVES the synonym
+// shares its accepted concept's nomenclatural type, and nil (unknown, never
+// a pointer to false) otherwise — concept_name.homotypic is NULL unless
+// provably true, since NULL means "unknown" and a literal false would
+// falsely assert "heterotypic", which absent linkage data can never prove.
+//
+// The rule fires (returns true) when any of these hold, comparing resolved
+// NAME ids (nameID(backbone, taxonID), never raw source taxonIDs):
+//
+//  1. the synonym's own basionym equals the accepted name's id — the
+//     synonym is a recombination of the accepted name (e.g. "Bromus ovinus
+//     (L.) Scop." whose originalnameusageid IS "Festuca ovina L.", the
+//     accepted name itself);
+//  2. the synonym's own basionym equals the accepted name's basionym
+//     (both non-empty) — synonym and accepted name are two recombinations
+//     of the same underlying basionym;
+//  3. the synonym IS itself the accepted name's basionym (i.e. the
+//     accepted name is a recombination of this synonym).
+//
+// Any row whose basionym linkage doesn't resolve (empty, or pointing at a
+// taxonID absent from this ingest) contributes "" to the comparison, which
+// never equals another empty/absent side — so an unresolvable case always
+// falls through to nil rather than a coincidental true.
+func (st *ingestState) homotypic(row TaxonRow) *bool {
+	b := st.backbone
+	synonymNameID := nameID(b.ID, row.TaxonID)
+	synonymBasionymID := st.basionymOf[row.TaxonID]
+	acceptedNameID := nameID(b.ID, row.AcceptedTaxonID)
+	acceptedBasionymID := st.basionymOf[row.AcceptedTaxonID]
+
+	proven := (synonymBasionymID != "" && synonymBasionymID == acceptedNameID) ||
+		(synonymBasionymID != "" && acceptedBasionymID != "" && synonymBasionymID == acceptedBasionymID) ||
+		(acceptedBasionymID != "" && synonymNameID == acceptedBasionymID)
+	if !proven {
+		return nil
+	}
+	t := true
+	return &t
 }
 
 // nameID and conceptID derive stable, deterministic ids from the backbone

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -49,12 +50,13 @@ func runIngest(cmd *cobra.Command, _ []string) error {
 		return errors.New("ingest: --db is required")
 	}
 
-	report, err := app.Ingest(cmd.Context(), datasetPath, dbPath)
+	report, traitReports, err := app.Ingest(cmd.Context(), datasetPath, dbPath)
 	if err != nil {
 		return err
 	}
 
 	printIngestReport(cmd.OutOrStdout(), report)
+	printTraitReports(cmd.OutOrStdout(), traitReports)
 	return nil
 }
 
@@ -66,5 +68,24 @@ func printIngestReport(w io.Writer, report application.IngestReport) {
 	for _, b := range report.Backbones {
 		_, _ = fmt.Fprintf(w, "  %s: names=%d concepts=%d synonyms=%d orphaned=%d\n",
 			b.ID, b.Names, b.Concepts, b.Synonyms, b.Orphaned)
+	}
+}
+
+// printTraitReports renders one line per ingested trait vocabulary,
+// including its UnmatchedSample — the crosswalk from a trait table's bare
+// taxon name to a hostus taxon_concept is lossy by construction (PoC P6:
+// the trait tables carry no external taxon id), so this is where that loss
+// becomes VISIBLE to whoever runs "hostus ingest", not silently swallowed.
+func printTraitReports(w io.Writer, reports []application.TraitIngestReport) {
+	if len(reports) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintln(w, "Trait vocabularies:")
+	for _, r := range reports {
+		_, _ = fmt.Fprintf(w, "  %s: rows=%d matched=%d unmatched=%d ambiguous=%d\n",
+			r.Vocab, r.Rows, r.Matched, r.Unmatched, r.Ambiguous)
+		if len(r.UnmatchedSample) > 0 {
+			_, _ = fmt.Fprintf(w, "    unmatched sample: %s\n", strings.Join(r.UnmatchedSample, ", "))
+		}
 	}
 }

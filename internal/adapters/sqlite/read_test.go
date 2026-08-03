@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jobrunner/hostus/internal/domain"
+	"github.com/jobrunner/hostus/internal/ports/output"
 )
 
 const (
@@ -83,7 +84,7 @@ func assertConceptFields(t *testing.T, concept *domain.Concept) {
 	}
 }
 
-func assertCorynephorusSynonyms(t *testing.T, synonyms []domain.Name) {
+func assertCorynephorusSynonyms(t *testing.T, synonyms []output.SynonymName) {
 	t.Helper()
 	wantSynonyms := []string{"n-aira-canescens", "n-weingaertneria-canescens"}
 	gotSynonyms := synonymIDs(synonyms)
@@ -342,7 +343,103 @@ func TestMatchExact_DoesNotConfuseDistinctEpithets(t *testing.T) {
 	}
 }
 
-func synonymIDs(names []domain.Name) []string {
+func TestMatchFuzzyCandidates_ReturnsNearMissForTypo(t *testing.T) {
+	db := openSeededDB(t)
+
+	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", 10)
+	if err != nil {
+		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
+	}
+	ids := make(map[string]bool, len(got))
+	for _, c := range got {
+		ids[c.MatchedName.ID] = true
+	}
+	if !ids["n-festuca-ovona"] || !ids["n-festuca-ovena"] {
+		t.Fatalf("MatchFuzzyCandidates(%q) ids = %v, want both near-miss names present", "festuca ovina", ids)
+	}
+}
+
+func TestMatchFuzzyCandidates_ExcludesUnrelatedNames(t *testing.T) {
+	db := openSeededDB(t)
+
+	// "abies alba" shares neither first letter nor length-window with
+	// "festuca ovina" — the prefilter must exclude it even though it's a
+	// perfectly real seeded name, proving the query doesn't fall back to a
+	// full scan.
+	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", 10)
+	if err != nil {
+		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
+	}
+	for _, c := range got {
+		if c.MatchedName.ID == "n-abies-alba" {
+			t.Fatalf("MatchFuzzyCandidates(%q) = %v, want n-abies-alba excluded by the prefilter", "festuca ovina", got)
+		}
+	}
+}
+
+func TestMatchFuzzyCandidates_RespectsLimit(t *testing.T) {
+	db := openSeededDB(t)
+
+	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", 1)
+	if err != nil {
+		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("MatchFuzzyCandidates(%q, limit=1) = %d candidates, want exactly 1", "festuca ovina", len(got))
+	}
+}
+
+// TestMatchFuzzyCandidates_OrdersByClosestLengthFirst pins the fix-round-1
+// gap: fuzzyCandidateNameIDs had no ORDER BY before its LIMIT, so when the
+// prefilter matched more rows than limit, SQLite could return an arbitrary
+// subset — potentially truncating away the closest (best) match before
+// domain.Similarity ever scored it. The fixture admits three candidates at
+// different length-diffs from "festuca ovina" (n-festuca-ovona/-ovena at
+// diff 0, n-festuca-ovinaxy at diff 2); with limit=1, the closest (diff-0)
+// row must always win, deterministically, never the diff-2 one.
+func TestMatchFuzzyCandidates_OrdersByClosestLengthFirst(t *testing.T) {
+	db := openSeededDB(t)
+
+	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", 1)
+	if err != nil {
+		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("MatchFuzzyCandidates(%q, limit=1) = %d candidates, want exactly 1", "festuca ovina", len(got))
+	}
+	id := got[0].MatchedName.ID
+	if id != "n-festuca-ovona" && id != "n-festuca-ovena" {
+		t.Errorf("MatchFuzzyCandidates(%q, limit=1) returned %q, want one of the length-diff-0 names (n-festuca-ovona/n-festuca-ovena), not the farther n-festuca-ovinaxy", "festuca ovina", id)
+	}
+}
+
+func TestMatchFuzzyCandidates_ZeroLimitUsesDefault(t *testing.T) {
+	db := openSeededDB(t)
+
+	// limit <= 0 must fall back to the adapter's default cap (not silently
+	// become a SQL LIMIT 0, which would return nothing at all).
+	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", 0)
+	if err != nil {
+		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatalf("MatchFuzzyCandidates(%q, limit=0) = empty, want the default cap to apply (near-misses present)", "festuca ovina")
+	}
+}
+
+func TestMatchFuzzyCandidates_NoNearMissReturnsEmpty(t *testing.T) {
+	db := openSeededDB(t)
+
+	got, err := db.MatchFuzzyCandidates(context.Background(), "zzznonexistent", 10)
+	if err != nil {
+		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("MatchFuzzyCandidates(%q) = %v, want empty", "zzznonexistent", got)
+	}
+}
+
+func synonymIDs(names []output.SynonymName) []string {
 	ids := make([]string, 0, len(names))
 	for _, n := range names {
 		ids = append(ids, n.ID)
@@ -372,4 +469,91 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// TestGlobEscape pins the literal-pattern contract of globEscape: GLOB's
+// three metacharacters must come back wrapped in a single-character bracket
+// set (GLOB has no backslash escape), everything else untouched. ']' is
+// only special INSIDE a bracket set, so it passes through unchanged.
+func TestGlobEscape(t *testing.T) {
+	cases := map[string]string{
+		"f": "f",
+		"*": "[*]",
+		"?": "[?]",
+		"[": "[[]",
+		"]": "]",
+		"ä": "ä",
+		"":  "",
+	}
+	for in, want := range cases {
+		if got := globEscape(in); got != want {
+			t.Errorf("globEscape(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestMatchFuzzyCandidates_GlobMetacharacterFirstRuneIsLiteral pins the
+// prefilter against a query whose first rune is a GLOB metacharacter.
+// domain.Canonicalize keeps punctuation, so a caller-supplied "*" or "?"
+// reaches fuzzyCandidateNameIDs verbatim; unescaped, "*"+"*" is a pattern
+// matching EVERY name, turning the prefilter into a no-op full scan that
+// then returns candidates for a query nothing should match. Escaped, the
+// rune is literal — no seeded name starts with "*" or "?", so the result is
+// empty.
+func TestMatchFuzzyCandidates_GlobMetacharacterFirstRuneIsLiteral(t *testing.T) {
+	db := openSeededDB(t)
+
+	// Same length as "festuca ovina", so only the first rune decides.
+	for _, q := range []string{"*estuca ovina", "?estuca ovina"} {
+		got, err := db.MatchFuzzyCandidates(context.Background(), q, 10)
+		if err != nil {
+			t.Fatalf("MatchFuzzyCandidates(%q): unexpected error: %v", q, err)
+		}
+		if len(got) != 0 {
+			t.Errorf("MatchFuzzyCandidates(%q) = %d candidates, want 0: the first rune must filter LITERALLY, not as a GLOB wildcard", q, len(got))
+		}
+	}
+}
+
+// TestMatchFuzzyCandidates_BracketFirstRuneStillFiltersNormally pins the
+// other metacharacter: an unescaped "[" opens a bracket set that the
+// appended "*" never closes, and an unterminated set matches nothing —
+// silently disabling fuzzy matching. Escaped, "[" is a literal the seeded
+// name below really starts with, so the near-miss is found.
+func TestMatchFuzzyCandidates_BracketFirstRuneStillFiltersNormally(t *testing.T) {
+	db := openSeededDB(t)
+	ctx := context.Background()
+
+	tx, err := db.BeginIngest(ctx, domain.BackboneVersion{ID: "bracket", Version: "v1"})
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	name := domain.Name{ID: "n-bracket", Canonical: "[bracketus testicus", Rank: domain.RankSpecies}
+	concept := domain.Concept{ID: "c-bracket", BackboneID: "bracket", AcceptedName: name, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+	if err := tx.UpsertName(name); err != nil {
+		t.Fatalf("UpsertName: unexpected error: %v", err)
+	}
+	if err := tx.UpsertConcept(concept); err != nil {
+		t.Fatalf("UpsertConcept: unexpected error: %v", err)
+	}
+	if err := tx.LinkName(concept.ID, name.ID, "accepted", nil); err != nil {
+		t.Fatalf("LinkName: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+
+	got, err := db.MatchFuzzyCandidates(ctx, "[bracketus testicos", 10)
+	if err != nil {
+		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
+	}
+	found := false
+	for _, c := range got {
+		if c.MatchedName.ID == "n-bracket" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("MatchFuzzyCandidates = %v, want n-bracket: an unterminated bracket set must not silently match nothing", got)
+	}
 }

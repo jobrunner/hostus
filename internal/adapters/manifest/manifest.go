@@ -37,11 +37,18 @@ type Backbone struct {
 	Note      string `yaml:"note,omitempty" json:"note,omitempty"`
 }
 
-// TraitVocabulary is one pinned trait-vocabulary entry (spec §D.2).
+// TraitVocabulary is one pinned trait-vocabulary entry (spec §D.2): an
+// immutable version/license/source-URL identity plus the local filesystem
+// path to its canonical trait CSV (see internal/adapters/traits), resolved
+// to an absolute path relative to the manifest file by Parse, exactly like
+// Backbone.Path.
 type TraitVocabulary struct {
-	ID       string `yaml:"id" json:"id"`
-	Version  string `yaml:"version" json:"version"`
-	Taxonomy string `yaml:"taxonomy,omitempty" json:"taxonomy,omitempty"`
+	ID        string `yaml:"id" json:"id"`
+	Version   string `yaml:"version" json:"version"`
+	Taxonomy  string `yaml:"taxonomy" json:"taxonomy"`
+	License   string `yaml:"license" json:"license"`
+	SourceURL string `yaml:"source" json:"source"`
+	Path      string `yaml:"path" json:"path"`
 }
 
 // Dataset is the parsed, validated contents of a dataset.yaml manifest.
@@ -107,6 +114,11 @@ func Parse(path string) (*Dataset, error) {
 	for i, b := range ds.Backbones {
 		if b.Path != "" && !filepath.IsAbs(b.Path) {
 			ds.Backbones[i].Path = filepath.Join(baseDir, b.Path)
+		}
+	}
+	for i, tv := range ds.TraitVocabularies {
+		if tv.Path != "" && !filepath.IsAbs(tv.Path) {
+			ds.TraitVocabularies[i].Path = filepath.Join(baseDir, tv.Path)
 		}
 	}
 

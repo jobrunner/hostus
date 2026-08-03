@@ -13,6 +13,12 @@ trait_vocabularies:
   - id: eive
     version: "1.0"
     taxonomy: euromed-via-eurosl
+    license: CC-BY-4.0
+    source: https://example.org/eive
+    path: ../../traits/testdata/eive-sample.csv
   - id: tichy2023
-    version: "1.0"
-    taxonomy: floraveg
+    version: "2.0"
+    taxonomy: floraveg-eunis-aligned
+    license: CC-BY-4.0
+    source: https://example.org/tichy
+    path: ../../traits/testdata/tichy-sample.csv

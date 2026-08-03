@@ -4,3 +4,10 @@ backbones:
     license: CC-BY-4.0
     source: https://sftp.kew.org/pub/data-repositories/WCVP/
     path: ../../adapters/wcvp/testdata/wcvp-sample
+trait_vocabularies:
+  - id: eive
+    version: "1.0"
+    taxonomy: euromed-via-eurosl
+    license: CC-BY-4.0
+    source: https://example.org/eive
+    path: ../../adapters/traits/testdata/eive-sample.csv

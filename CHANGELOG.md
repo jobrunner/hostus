@@ -20,12 +20,98 @@ akzeptierten Concepts mit ihren Synonymen, sowie die ersten drei
 darauf den Frontend-Autosuggest-Endpunkt (`GET /v1/suggest`, gebiets- und
 rangfiltert, priorisiert) sowie den gebietsgescopten Offline-Export
 (`hostus bundle`) für feldeinsatztaugliches, vollständig
-netzwerkunabhängiges Serving. Weitere Backbones (COL XR, Euro+Med,
-FloraVeg.EU) sowie `traits`, `translate` und `/openapi` folgen in SP3+.
-`release-please` cuttet daraus das nächste `2.0.0-alpha.N`-Release; bis
-dahin akkumulieren PRs hier.
+netzwerkunabhängiges Serving. **SP3 (Traits + Fuzzy-Match)** ergänzt
+ökologische Merkmalswerte (EIVE, Tichý et al. 2023, Midolo et al. 2023) und
+ein zweites Klassifikationsmerkmal — Namens-Ähnlichkeitsabgleich für
+Vegetationsaufnahme-Importe mit Tippfehlern:
+
+- Drei Trait-Pipelines (`pipelines/{eive,tichy,midolo}/build.sh`,
+  xlsx/csv → gemeinsames kanonisches CSV-Format) plus Reader
+  (`internal/adapters/traits`) und Fixtures, gegen die echten
+  Zenodo-Downloads gezogen; `internal/domain.ScaleFor` dokumentiert pro
+  (Vokabular, Dimension) Min/Max/Normalisierungsstatus anhand der
+  tatsächlich gemessenen Wertebereiche (Tichý T/M reichen bis 12, nicht
+  wie beim „klassischen" Ellenberg-Schema bis 9)
+- Namens-Crosswalk-Ingest (`application.IngestTraits`,
+  `trait_value`/`trait_vocabulary`-Tabellen): jede Trait-Tabellenzeile trägt
+  nur einen rohen Taxon-Namensstring (keine WCVP-/POWO-ID), der Abgleich
+  gegen den ingestierten Backbone ist daher verlustbehaftet — `hostus
+  ingest` gibt `matched`/`unmatched`/`ambiguous` je Vokabular UND eine
+  Stichprobe der nicht zugeordneten Namen aus, statt den Verlust
+  stillschweigend zu verschlucken
+- `GET /v1/concept/{id}/traits?vocab=` — Merkmalswerte gruppiert PRO
+  Vokabular (nie zusammengeführt, da deren Taxonomie-Namensräume
+  nachweislich divergieren), jeder Wert trägt seine eigene `scale`
+  (nicht das ganze Set), da selbst innerhalb eines Vokabulars die Skalen
+  zwischen Dimensionen abweichen (Tichý T: 1–12 vs. L: 1–9)
+- `POST /v1/match`: neue Klassifikation `fuzzy` (normalisierte
+  Levenshtein-Ähnlichkeit, Schwelle 0.85) als Auffangnetz, nachdem
+  `exact`/`exact_author`/`aggregate_alias` nichts fanden — `fuzzy` setzt
+  `requires_review` IMMER auf `true`, unabhängig von der Ähnlichkeits-Score
+- `GET /v1/concept/{id}`: `classification` (Eltern-Kette, root-first,
+  tiefenbegrenzt) und `synonyms[].homotypic` (nur `true`, wenn die
+  Basionym-Verknüpfung ein gemeinsames Basionym beweist, sonst fehlt das
+  Feld statt fälschlich `false` zu behaupten)
+- `hostus bundle`: die im "Bekannte Einschränkungen"-Abschnitt (unten)
+  angekündigte Gefahrenstelle — ein gebietsgescoptes Bundle, dessen
+  Concept/Name auf ein NICHT mitkopiertes Parent/Basionym außerhalb des
+  Gebiets verweist — ist jetzt eingetreten (SP3 befüllt `parent_id`
+  erstmals) und behoben: `ExportBundle` NULLt gebietsfremde
+  Selbstreferenzen, statt mit einem FK-Fehler abzubrechen;
+  `trait_value`/`trait_vocabulary` werden ebenfalls gebietsgescopt mit
+  exportiert, ein Bundle bleibt also vollständig offline abfragbar
+  (Concept, Suggest, Traits) — end-to-end belegt in
+  `internal/app/integration_test.go`
+- **Bewusster Lizenz-Scope-Schnitt (PoC R1)**: Euro+Med PlantBase,
+  GermanSL, EuroSL und die FloraVeg.EU-Downloads werden NICHT ingestiert —
+  für keine der vier Quellen ließ sich eine belastbare
+  Weiterverbreitungslizenz feststellen (`docs/research/quellenregister.md`).
+  Der taxonomische Anschluss für EIVE/Tichý/Midolo läuft deshalb direkt
+  gegen den WCVP/POWO-Backbone, nicht über eine dieser vier Quellen als
+  Vermittlungsschicht — dokumentiert in
+  `docs/how-to/trait-ingest.md`, nicht stillschweigend übergangen.
+
+Weitere Backbones (COL XR) sowie `translate` und `/openapi` als generierte
+Spezifikation folgen in SP4+. `release-please` cuttet daraus das nächste
+`2.0.0-alpha.N`-Release; bis dahin akkumulieren PRs hier.
 
 ### Fixed
+- Trait-Ingest schreibt keine `backbone_version`-Zeilen mehr: er lief zuvor
+  über `BeginIngest` mit einer synthetischen `trait:<vokabular>`-Version,
+  die im `backbone_versions`-Provenienzblock JEDER `/v1/suggest`- und
+  `/v1/match`-Antwort auftauchte (ein Trait-Vokabular als taxonomischer
+  Backbone ausgewiesen) und `/health/ready` verfälschte. Neuer Port
+  `output.Repository.BeginTraitIngest` öffnet die Transaktion ohne
+  Backbone-Eintrag.
+- Trait-Ingest gleicht die `(vocab, version)`-Identität aus Manifest und
+  kanonischer CSV jetzt zeilenweise ab und bricht bei Abweichung mit einer
+  Fehlermeldung ab, die beide Seiten nennt, statt Werte unter fremder
+  Identität zu speichern (ein `id: eive`, das auf Tichýs CSV zeigt, hätte
+  dessen 1–12-Werte auf EIVEs normalisierter 0–10-Skala ausgeliefert);
+  persistiert wird die im Manifest gepinnte Version. `dataset.example.yaml`
+  pinnte für Tichý/Midolo Versionen, die die Pipelines gar nicht emittieren
+  (`1.0` statt `2.0`/`3`) — korrigiert.
+- `dataset.example.yaml` verweist für Tichý/Midolo nicht mehr auf
+  `floraveg.eu/download/...` (Lizenz ungeklärt, PoC-R1-Scope-Schnitt),
+  sondern auf die Zenodo-DOIs der CC-BY-4.0-Originaldatensätze — der Wert
+  wird in `trait_vocabulary.source_url` persistiert, über die API
+  ausgeliefert und in jedes Offline-Bundle kopiert.
+- Trait-CSV-Reader: die Kurzzeilen-Prüfung ging von genau sieben Spalten
+  aus und verursachte einen Panic bei einem Header mit ZUSÄTZLICHEN Spalten (die der Reader
+  mit `FieldsPerRecord = -1` ausdrücklich zulässt); sie orientiert sich
+  jetzt an der tatsächlichen Position der gesuchten Spalten.
+- `POST /v1/match`: der Aggregat-Pfad wählte bei mehreren Treffern
+  `candidates[0]`, auch wenn diese auf VERSCHIEDENE Concepts zeigten. Er
+  wendet jetzt dieselbe Prüfung an wie der exact- und der fuzzy-Pfad:
+  `requires_review: true`, alle Kandidaten gelistet, kein geratenes
+  `concept_id`.
+- Fuzzy-Prefilter der SQLite-Adapter: das GLOB-Präfix aus dem ersten
+  Zeichen der Anfrage wird escaped — ein führendes `[` erzeugte zuvor eine
+  unterminierte Zeichenklasse (fand nichts), ein führendes `*`/`?` machte
+  den Prefilter zum No-op (voller Tabellenscan).
+- `docs/how-to/trait-ingest.md` nannte einen Pfad
+  (`pipelines/tichy/output/tichy2023-canonical.csv`), den die Pipeline nicht
+  erzeugt.
 - `google.golang.org/grpc` auf v1.82.1 angehoben (behebt GO-2026-6061 in der
   OTLP-gRPC-Exporter-Kette von `internal/adapters/telemetry`).
 - Go-Toolchain auf 1.26.5 angehoben (`go.mod` toolchain-Direktive,
@@ -65,8 +151,8 @@ dahin akkumulieren PRs hier.
   interne Domain-Fehlerformulierungen in die HTTP-Antwort; die Meldung
   benennt das Token jetzt direkt (`unknown rank "foo"`).
 
-### Bekannte Einschränkungen
-- `ExportBundle` (`internal/adapters/sqlite/bundle.go`) kopiert Zeilen 1:1
+### Bekannte Einschränkungen (SP1/SP2, behoben in SP3)
+- ~~`ExportBundle` (`internal/adapters/sqlite/bundle.go`) kopiert Zeilen 1:1
   (`copyRows`), ohne Fremdschlüssel-Ziele auf Gebietszugehörigkeit zu
   prüfen: Ein gebietsgescoptes Bundle kopiert nur `taxon_concept`/`name`-
   Zeilen der im Gebiet liegenden Concepts. Solange `taxon_concept.parent_id`
@@ -77,7 +163,12 @@ dahin akkumulieren PRs hier.
   würde dann mit einem FK-Fehler abbrechen. Wer diese Spalten zuerst befüllt,
   muss `ExportBundle` gleichzeitig anpassen (gebietsfremde Selbstreferenzen
   auf NULL setzen, oder die referenzierten Ancestor-Zeilen mit ins Bundle
-  ziehen), statt das als Feld-Crash neu zu entdecken.
+  ziehen), statt das als Feld-Crash neu zu entdecken.~~ **Eingetreten und
+  behoben in SP3**: `taxon_concept.parent_id`/`name.basionym_id` werden jetzt
+  befüllt (Classification/Homotypic); `ExportBundle` NULLt gebietsfremde
+  Selbstreferenzen statt einen FK-Fehler zu werfen — siehe SP3-Abschnitt oben
+  und `internal/app/integration_test.go`s
+  `TestIntegration_OfflineBundleConceptSuggestTraitsOffline`.
 
 ### Added
 - Hexagonales Skelett (`internal/domain`, `application`, `ports/{input,output}`,

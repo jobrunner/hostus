@@ -33,6 +33,8 @@ func (s wcvpRowSource) Taxa() []application.TaxonRow {
 			Rank:            t.Rank,
 			Status:          t.Status,
 			POWOID:          t.POWOID(),
+			ParentTaxonID:   t.ParentNameUsageID,
+			BasionymTaxonID: t.OriginalNameUsageID,
 		})
 	}
 	return out
@@ -197,6 +199,204 @@ func TestIngest_WCVPFixture_GroupsSynonymsUnderAcceptedConcept(t *testing.T) {
 	})
 }
 
+// mustConcept resolves id via repo.Concept, failing the test on error, for
+// callers that only care about the returned *domain.Concept itself (its
+// ParentID/AcceptedName.BasionymID) — not the synonyms/xrefs/distribution
+// results, which repo.Concept always returns alongside it.
+func mustConcept(ctx context.Context, t *testing.T, repo output.Repository, id string) *domain.Concept {
+	t.Helper()
+	concept, synonyms, xrefs, dists, err := repo.Concept(ctx, id)
+	if err != nil {
+		t.Fatalf("Concept(%q): unexpected error: %v", id, err)
+	}
+	_ = synonyms
+	_ = xrefs
+	_ = dists
+	return concept
+}
+
+// mustSynonyms resolves id via repo.Concept, failing the test on error, for
+// callers that only need the synonym names — not the concept/xrefs/
+// distribution results repo.Concept always returns alongside them.
+func mustSynonyms(ctx context.Context, t *testing.T, repo output.Repository, id string) []output.SynonymName {
+	t.Helper()
+	concept, synonyms, xrefs, dists, err := repo.Concept(ctx, id)
+	if err != nil {
+		t.Fatalf("Concept(%q): unexpected error: %v", id, err)
+	}
+	_ = concept
+	_ = xrefs
+	_ = dists
+	return synonyms
+}
+
+// TestIngest_WCVPFixture_PopulatesParentID proves T7's ingest resolves
+// taxon_concept.parent_id from WCVP's parentnameusageid: the fixture's
+// Corynephorus canescens (405825) has parentnameusageid=451295, and 451295
+// (Corynephorus, GENUS) IS itself an accepted row in the same fixture, so
+// it must resolve to that genus concept's id, not stay empty/NULL.
+func TestIngest_WCVPFixture_PopulatesParentID(t *testing.T) {
+	ds := loadDataset(t)
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+
+	if _, err := application.Ingest(ctx, ds, wcvpReaderFor, repo); err != nil {
+		t.Fatalf("Ingest: unexpected error: %v", err)
+	}
+
+	const (
+		corynephorusCanescensID = "wcvp:concept:405825"
+		corynephorusGenusID     = "wcvp:concept:451295"
+	)
+	concept := mustConcept(ctx, t, repo, corynephorusCanescensID)
+	if concept.ParentID != corynephorusGenusID {
+		t.Errorf("concept.ParentID = %q, want %q (the fixture's Corynephorus genus concept, ingested from the same taxon file)", concept.ParentID, corynephorusGenusID)
+	}
+}
+
+// TestIngest_WCVPFixture_ParentOutsideIngestedSetStaysEmpty proves the
+// conservative half of the parent_id rule: Festuca ovina's own accepted row
+// (415853) has parentnameusageid=451511 (Festuca, GENUS) which IS in the
+// fixture, so that one resolves — but Jacobaea vulgaris subsp. dunensis
+// (3082806, accepted) has originalnameusageid=3082804, a taxonid absent
+// from the fixture entirely; its Name.BasionymID must stay empty (NULL)
+// rather than dangling. This exercises the "target not ingested -> leave
+// NULL" rule from the OTHER linkage column (basionym_id) so both self-
+// referencing columns get an explicit not-resolvable case covered.
+func TestIngest_WCVPFixture_UnresolvableBasionymStaysEmpty(t *testing.T) {
+	ds := loadDataset(t)
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+
+	if _, err := application.Ingest(ctx, ds, wcvpReaderFor, repo); err != nil {
+		t.Fatalf("Ingest: unexpected error: %v", err)
+	}
+
+	const jacobaeaDunensisID = "wcvp:concept:3082806"
+	concept := mustConcept(ctx, t, repo, jacobaeaDunensisID)
+	if concept.AcceptedName.BasionymID != "" {
+		t.Errorf("concept.AcceptedName.BasionymID = %q, want empty (originalnameusageid 3082804 is absent from the fixture, a dangling reference that must not be invented)", concept.AcceptedName.BasionymID)
+	}
+}
+
+// TestIngest_WCVPFixture_HomotypicRule proves T7's conservative homotypic
+// rule end to end against the real fixture:
+//
+//   - Bromus ovinus (L.) Scop. (401569), a synonym of Festuca ovina L.
+//     (415853), has originalnameusageid=415853 — its basionym IS the
+//     accepted name itself, a straight recombination — so it must come
+//     back homotypic:true.
+//   - Festuca duriuscula L. (415030), also a synonym of Festuca ovina, has
+//     no originalnameusageid at all — nothing PROVES its typification, so
+//     it must stay NULL (Homotypic == nil), never a guessed false.
+func TestIngest_WCVPFixture_HomotypicRule(t *testing.T) {
+	ds := loadDataset(t)
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+
+	if _, err := application.Ingest(ctx, ds, wcvpReaderFor, repo); err != nil {
+		t.Fatalf("Ingest: unexpected error: %v", err)
+	}
+
+	const festucaOvinaID = "wcvp:concept:415853"
+	synonyms := mustSynonyms(ctx, t, repo, festucaOvinaID)
+
+	byCanonical := make(map[string]output.SynonymName, len(synonyms))
+	for _, s := range synonyms {
+		byCanonical[s.Canonical] = s
+	}
+
+	bromus, ok := byCanonical["Bromus ovinus"]
+	if !ok {
+		t.Fatalf("synonyms of %q = %+v, want an entry for %q", festucaOvinaID, synonyms, "Bromus ovinus")
+	}
+	if bromus.Homotypic == nil || !*bromus.Homotypic {
+		t.Errorf("Bromus ovinus.Homotypic = %v, want a pointer to true (recombination of the accepted name Festuca ovina L.)", bromus.Homotypic)
+	}
+	// Also assert the underlying linkage this rule is derived from:
+	// Bromus ovinus's own Name.BasionymID must actually be linked (pass 1's
+	// second sub-pass, linkSelfReferences) to Festuca ovina's name id.
+	const festucaOvinaNameID = "wcvp:name:415853"
+	if bromus.BasionymID != festucaOvinaNameID {
+		t.Errorf("Bromus ovinus.BasionymID = %q, want %q", bromus.BasionymID, festucaOvinaNameID)
+	}
+
+	duriuscula, ok := byCanonical["Festuca duriuscula"]
+	if !ok {
+		t.Fatalf("synonyms of %q = %+v, want an entry for %q", festucaOvinaID, synonyms, "Festuca duriuscula")
+	}
+	if duriuscula.Homotypic != nil {
+		t.Errorf("Festuca duriuscula.Homotypic = %v, want nil (no basionym linkage proves it either way)", duriuscula.Homotypic)
+	}
+}
+
+// TestIngest_HomotypicRule_SharedBasionym is a synthetic (non-WCVP-fixture)
+// case for the homotypic rule's SECOND disjunct — a synonym and the
+// accepted name are two DIFFERENT recombinations of the same underlying
+// basionym (both basionym ids resolve, and are equal to each other, but
+// neither equals the other's own name id directly). The real WCVP fixture
+// (see TestIngest_WCVPFixture_HomotypicRule) never happens to exercise this
+// specific disjunct, so this test builds the minimal rows by hand via
+// fakeRowSource: "acc1" (accepted, basionym "bas1"), "bas1" (a separate
+// accepted concept, present purely so its taxonID resolves), and
+// "syn-shared" (a synonym of acc1, ALSO basionym "bas1").
+func TestIngest_HomotypicRule_SharedBasionym(t *testing.T) {
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "test", Version: "v1"}}, ManifestSHA: "x"}
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+
+	taxa := []application.TaxonRow{
+		{TaxonID: "acc1", AcceptedTaxonID: "acc1", Accepted: true, Canonical: "Accepted One", Rank: "SPECIES", BasionymTaxonID: "bas1"},
+		{TaxonID: "bas1", AcceptedTaxonID: "bas1", Accepted: true, Canonical: "Basionym One", Rank: "SPECIES"},
+		{TaxonID: "syn-shared", AcceptedTaxonID: "acc1", Accepted: false, Canonical: "Shared Basionym Synonym", Rank: "SPECIES", BasionymTaxonID: "bas1"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) {
+		return fakeRowSource{taxa: taxa}, nil
+	}
+	if _, err := application.Ingest(ctx, ds, readerFor, repo); err != nil {
+		t.Fatalf("Ingest: unexpected error: %v", err)
+	}
+
+	synonyms := mustSynonyms(ctx, t, repo, "test:concept:acc1")
+	if len(synonyms) != 1 || synonyms[0].Canonical != "Shared Basionym Synonym" {
+		t.Fatalf("synonyms of test:concept:acc1 = %+v, want exactly [Shared Basionym Synonym]", synonyms)
+	}
+	if synonyms[0].Homotypic == nil || !*synonyms[0].Homotypic {
+		t.Errorf("Shared Basionym Synonym.Homotypic = %v, want a pointer to true (shares basionym %q with the accepted name)", synonyms[0].Homotypic, "bas1")
+	}
+}
+
+// TestIngest_HomotypicRule_SynonymIsAcceptedNamesBasionym is a synthetic
+// case for the homotypic rule's THIRD disjunct — the synonym IS ITSELF the
+// accepted name's basionym (the accepted name is a recombination of it),
+// the mirror image of the WCVP-fixture-covered "synonym recombines the
+// accepted name" case. "acc2" (accepted, basionym "syn-basionym") and
+// "syn-basionym" (a synonym of acc2, with no basionym of its own).
+func TestIngest_HomotypicRule_SynonymIsAcceptedNamesBasionym(t *testing.T) {
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "test", Version: "v1"}}, ManifestSHA: "x"}
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+
+	taxa := []application.TaxonRow{
+		{TaxonID: "acc2", AcceptedTaxonID: "acc2", Accepted: true, Canonical: "Accepted Two", Rank: "SPECIES", BasionymTaxonID: "syn-basionym"},
+		{TaxonID: "syn-basionym", AcceptedTaxonID: "acc2", Accepted: false, Canonical: "Reverse Basionym Synonym", Rank: "SPECIES"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) {
+		return fakeRowSource{taxa: taxa}, nil
+	}
+	if _, err := application.Ingest(ctx, ds, readerFor, repo); err != nil {
+		t.Fatalf("Ingest: unexpected error: %v", err)
+	}
+
+	synonyms := mustSynonyms(ctx, t, repo, "test:concept:acc2")
+	if len(synonyms) != 1 || synonyms[0].Canonical != "Reverse Basionym Synonym" {
+		t.Fatalf("synonyms of test:concept:acc2 = %+v, want exactly [Reverse Basionym Synonym]", synonyms)
+	}
+	if synonyms[0].Homotypic == nil || !*synonyms[0].Homotypic {
+		t.Errorf("Reverse Basionym Synonym.Homotypic = %v, want a pointer to true (it IS the accepted name's own basionym)", synonyms[0].Homotypic)
+	}
+}
+
 func assertCorynephorusConcept(t *testing.T, concept *domain.Concept) {
 	t.Helper()
 	if concept.AcceptedName.Canonical != "Corynephorus canescens" {
@@ -216,7 +416,7 @@ func assertCorynephorusConcept(t *testing.T, concept *domain.Concept) {
 	}
 }
 
-func assertCorynephorusSynonyms(t *testing.T, synonyms []domain.Name) {
+func assertCorynephorusSynonyms(t *testing.T, synonyms []output.SynonymName) {
 	t.Helper()
 	wantSynonyms := []string{
 		"Corynephorus canescens f. pallidus",

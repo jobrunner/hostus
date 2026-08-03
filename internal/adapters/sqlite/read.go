@@ -3,8 +3,10 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jobrunner/hostus/internal/domain"
 	"github.com/jobrunner/hostus/internal/ports/output"
@@ -58,7 +60,7 @@ func scanConcept(scan func(dest ...any) error) (*domain.Concept, error) {
 
 // Concept resolves a taxon_concept by id, returning its accepted concept,
 // its synonym names, its cross-references, and its distribution.
-func (db *DB) Concept(ctx context.Context, id string) (*domain.Concept, []domain.Name, []domain.Xref, []domain.Distribution, error) {
+func (db *DB) Concept(ctx context.Context, id string) (*domain.Concept, []output.SynonymName, []domain.Xref, []domain.Distribution, error) {
 	row := db.sql.QueryRowContext(ctx, `SELECT`+conceptColumns+conceptJoin+` WHERE tc.id = ?`, id)
 	concept, err := scanConcept(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -83,9 +85,9 @@ func (db *DB) Concept(ctx context.Context, id string) (*domain.Concept, []domain
 	return concept, synonyms, xrefs, dists, nil
 }
 
-func (db *DB) conceptSynonyms(ctx context.Context, conceptID string) ([]domain.Name, error) {
+func (db *DB) conceptSynonyms(ctx context.Context, conceptID string) ([]output.SynonymName, error) {
 	rows, err := db.sql.QueryContext(ctx, `
-		SELECT n.id, n.canonical, COALESCE(n.authorship, ''), n.rank, COALESCE(n.ipni_id, ''), COALESCE(n.published_in, ''), COALESCE(n.nom_status, ''), COALESCE(n.basionym_id, '')
+		SELECT n.id, n.canonical, COALESCE(n.authorship, ''), n.rank, COALESCE(n.ipni_id, ''), COALESCE(n.published_in, ''), COALESCE(n.nom_status, ''), COALESCE(n.basionym_id, ''), cn.homotypic
 		FROM concept_name cn
 		JOIN name n ON n.id = cn.name_id
 		WHERE cn.concept_id = ? AND cn.role = 'synonym'
@@ -95,18 +97,93 @@ func (db *DB) conceptSynonyms(ctx context.Context, conceptID string) ([]domain.N
 	}
 	defer func() { _ = rows.Close() }()
 
-	var out []domain.Name
+	var out []output.SynonymName
 	for rows.Next() {
-		n, err := scanName(rows.Scan)
+		var homotypic sql.NullBool
+		n, err := scanName(func(dest ...any) error {
+			return rows.Scan(append(dest, &homotypic)...)
+		})
 		if err != nil {
 			return nil, fmt.Errorf("sqlite: scanning synonym of concept %q: %w", conceptID, err)
 		}
-		out = append(out, *n)
+		sn := output.SynonymName{Name: *n}
+		if homotypic.Valid {
+			sn.Homotypic = &homotypic.Bool
+		}
+		out = append(out, sn)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("sqlite: iterating synonyms of concept %q: %w", conceptID, err)
 	}
 	return out, nil
+}
+
+// maxClassificationDepth bounds Classification's upward parent_id walk, so
+// a cyclic or otherwise corrupt parent_id chain can never hang the request
+// — 10 hops comfortably exceeds any real taxonomic rank depth this system
+// models (FAMILY > ... > FORM is far shallower).
+const maxClassificationDepth = 10
+
+// Classification walks conceptID's taxon_concept.parent_id chain upward,
+// bounded to maxClassificationDepth hops, and returns the ancestor chain
+// ROOT-FIRST: index 0 is the topmost ancestor reached, and the last element
+// is conceptID's immediate parent. conceptID itself is never included. A
+// NULL parent_id (no further ancestor) or hitting the depth bound (a
+// cyclic/corrupt chain) both stop the walk without error — a partial or
+// empty chain is a normal, valid result.
+func (db *DB) Classification(ctx context.Context, conceptID string) ([]domain.ClassificationEntry, error) {
+	exists, err := db.conceptExists(ctx, conceptID)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: checking concept %q exists: %w", conceptID, err)
+	}
+	if !exists {
+		return nil, fmt.Errorf("sqlite: concept %q: %w", conceptID, domain.ErrNotFound)
+	}
+
+	var chain []domain.ClassificationEntry
+	current := conceptID
+	for i := 0; i < maxClassificationDepth; i++ {
+		var parentID sql.NullString
+		if err := db.sql.QueryRowContext(ctx, `SELECT parent_id FROM taxon_concept WHERE id = ?`, current).Scan(&parentID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				break
+			}
+			return nil, fmt.Errorf("sqlite: walking classification for concept %q: %w", conceptID, err)
+		}
+		if !parentID.Valid || parentID.String == "" {
+			break
+		}
+
+		var canonical, rank string
+		err := db.sql.QueryRowContext(ctx, `
+			SELECT an.canonical, tc.rank
+			FROM taxon_concept tc JOIN name an ON an.id = tc.accepted_name
+			WHERE tc.id = ?`, parentID.String).Scan(&canonical, &rank)
+		if errors.Is(err, sql.ErrNoRows) {
+			// parent_id names a concept id no longer present (shouldn't
+			// happen under FK enforcement, but stop defensively rather
+			// than erroring the whole request).
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("sqlite: reading classification ancestor %q: %w", parentID.String, err)
+		}
+		r, err := domain.ParseRank(rank)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite: classification ancestor %q: %w", parentID.String, err)
+		}
+		chain = append(chain, domain.ClassificationEntry{ConceptID: parentID.String, Canonical: canonical, Rank: r})
+		current = parentID.String
+	}
+
+	// i < j is a genuinely equivalent mutant at CONDITIONALS_BOUNDARY (<=):
+	// for an odd-length chain, i <= j would run one further iteration where
+	// i == j, swapping chain[i] with itself — a no-op, producing the exact
+	// same final order either way. No test can observe the difference.
+	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
+		chain[i], chain[j] = chain[j], chain[i]
+	}
+	return chain, nil
 }
 
 // scanName reads a name row shaped like conceptSynonyms'/MatchExact's
@@ -219,6 +296,183 @@ func (db *DB) MatchExact(ctx context.Context, canon string) ([]output.MatchCandi
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: querying MatchExact %q: %w", canon, err)
 	}
+	all, err := scanMatchCandidateRows(rows, "MatchExact", canon)
+	if err != nil {
+		return nil, err
+	}
+
+	// Belt-and-suspenders recheck (see doc comment above): canonical_fold
+	// drives the SQL filter, but a stale/unpopulated fold column must never
+	// silently widen the result beyond an exact match.
+	var out []output.MatchCandidate
+	for _, c := range all {
+		if domain.Canonicalize(c.MatchedName.Canonical) != want {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// fuzzyCandidateLengthWindow bounds how far a fuzzy prefilter candidate's
+// canonical-fold length may differ (in runes/bytes — canonical_fold is
+// ASCII-folded, so the two coincide) from the query's, on either side.
+const fuzzyCandidateLengthWindow = 3
+
+// MatchFuzzyCandidates returns up to limit names that are cheap-to-find
+// near-misses of canon, for the application layer to score with
+// domain.Similarity. The prefilter is deliberately narrow so a fuzzy lookup
+// never scans the whole name table:
+//
+//   - same first rune of canonical_fold as canon's (a typo essentially
+//     never changes the first letter of a scientific name's genus),
+//     expressed as a GLOB prefix pattern rather than substr(...)=? or a
+//     LIKE pattern — SQLite's query planner turns a GLOB prefix into an
+//     indexed range scan over idx_name_canonical_fold (confirmed via EXPLAIN
+//     QUERY PLAN), whereas both substr() and (the by-default
+//     case-insensitive) LIKE force a full table scan despite the index
+//     existing; and
+//   - canonical_fold length within fuzzyCandidateLengthWindow runes of
+//     canon's, applied as a residual filter over that already-narrowed set.
+//
+// This filtering runs as its OWN query against the name table alone (see
+// fuzzyCandidateNameIDs), not folded into one big join with
+// concept_name/taxon_concept/backbone_version: tried as a single query, the
+// planner (reasonably, by its own row-count estimates) chose to drive the
+// join from taxon_concept and probe into the indexed name column per row —
+// i.e. it still touched every taxon_concept row despite the index existing,
+// exactly the whole-table scan this prefilter exists to avoid. Resolving
+// the (at most limit) matched name IDs first, then joining ONLY those IDs
+// outward to their concept/accepted-name/backbone-version context, keeps
+// that second step's cost bounded by limit regardless of which join order
+// the planner picks for it.
+//
+// Recall trade-off: a genuine near-miss whose first letter was itself
+// mistyped, or whose length differs by more than the window (e.g. a
+// dropped/added word), will NOT be returned — this is intentional; a
+// prefilter that must also catch those would have to scan every row,
+// defeating the purpose. limit <= 0 uses a modest built-in default.
+func (db *DB) MatchFuzzyCandidates(ctx context.Context, canon string, limit int) ([]output.MatchCandidate, error) {
+	want := domain.Canonicalize(canon)
+	if want == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	ids, err := fuzzyCandidateNameIDs(ctx, db.sql, want, limit)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: querying MatchFuzzyCandidates %q: %w", canon, err)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	// idsJSON binds the whole ID list as ONE parameter via json_each,
+	// rather than building a "?,?,?..." placeholder list by runtime string
+	// concatenation: the query text below is a fixed literal regardless of
+	// len(ids), which keeps it a plain parameterized query (gosec's G202
+	// rule flags any runtime-assembled SQL string, even placeholder-only
+	// concatenation, and this repo's suppression-directive budget is zero
+	// — see debt-guard.sh).
+	idsJSON, err := json.Marshal(ids)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: encoding MatchFuzzyCandidates %q id list: %w", canon, err)
+	}
+
+	rows, err := db.sql.QueryContext(ctx, `
+		SELECT cn.role,
+			n.id, n.canonical, COALESCE(n.authorship, ''), n.rank, COALESCE(n.ipni_id, ''), COALESCE(n.published_in, ''), COALESCE(n.nom_status, ''), COALESCE(n.basionym_id, ''),`+
+		conceptColumns+`
+		FROM name n
+		JOIN concept_name cn ON cn.name_id = n.id
+		JOIN taxon_concept tc ON tc.id = cn.concept_id
+		JOIN name an ON an.id = tc.accepted_name
+		JOIN backbone_version bv ON bv.id = tc.backbone_id
+		WHERE n.id IN (SELECT value FROM json_each(?))
+		ORDER BY tc.id, n.id`, string(idsJSON))
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: querying MatchFuzzyCandidates %q: %w", canon, err)
+	}
+	return scanMatchCandidateRows(rows, "MatchFuzzyCandidates", canon)
+}
+
+// fuzzyCandidateNameIDs runs MatchFuzzyCandidates' prefilter (GLOB first-rune
+// prefix + length window) against the name table ALONE, returning up to
+// limit matching name IDs. Isolating it from the enrichment join is what
+// lets it lean on idx_name_canonical_fold — see MatchFuzzyCandidates' doc
+// comment for why the combined-query version didn't.
+//
+// ORDER BY the length-window residual itself (closest length first, then
+// canonical_fold for a deterministic tiebreak) before LIMIT: without an
+// explicit order, a prefilter match count above limit would let SQLite
+// return an arbitrary subset of the matching rows, potentially truncating
+// away the true best (closest) match before domain.Similarity ever sees it.
+// Ordering by the SAME residual the WHERE clause already computed doesn't
+// change the query plan — confirmed via EXPLAIN QUERY PLAN, it still
+// resolves via idx_name_canonical_fold, with the ordering applied as a
+// cheap temp-B-tree sort over the already-narrowed row set, not a
+// re-scan.
+// globEscape makes s a GLOB pattern matching s LITERALLY, by wrapping each
+// of GLOB's three metacharacters in a single-character bracket set — GLOB
+// has no backslash escape, but "[*]", "[?]" and "[[]" are the documented
+// literal forms (and "]" is only special INSIDE a bracket set, so it needs
+// no escaping here).
+//
+// fuzzyCandidateNameIDs builds its prefix pattern from the query's first
+// rune, which is caller-controlled: an unescaped "[" would open a bracket
+// set that the appended "*" never closes (an unterminated set matches
+// nothing, silently disabling fuzzy matching), and an unescaped "*" or "?"
+// would turn the whole prefix filter into a no-op that scans the entire
+// name table — exactly the whole-table scan the prefilter exists to avoid.
+func globEscape(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch r {
+		case '*', '?', '[':
+			b.WriteByte('[')
+			b.WriteRune(r)
+			b.WriteByte(']')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func fuzzyCandidateNameIDs(ctx context.Context, db *sql.DB, want string, limit int) ([]string, error) {
+	firstRunePrefix := globEscape(string([]rune(want)[:1])) + "*"
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT id FROM name
+		WHERE canonical_fold GLOB ?
+		  AND ABS(length(canonical_fold) - length(?)) <= ?
+		ORDER BY ABS(length(canonical_fold) - length(?)), canonical_fold
+		LIMIT ?`, firstRunePrefix, want, fuzzyCandidateLengthWindow, want, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// scanMatchCandidateRows decodes rows shaped like MatchExact's/
+// MatchFuzzyCandidates' shared SELECT (role, matched name, concept,
+// accepted name) into MatchCandidates, closing rows before returning. It
+// does no canonical-equality filtering itself — callers that need an exact
+// match (MatchExact) apply that afterward; MatchFuzzyCandidates wants the
+// near-misses this returns as-is.
+func scanMatchCandidateRows(rows *sql.Rows, op, arg string) ([]output.MatchCandidate, error) {
 	defer func() { _ = rows.Close() }()
 
 	var out []output.MatchCandidate
@@ -236,11 +490,7 @@ func (db *DB) MatchExact(ctx context.Context, canon string) ([]output.MatchCandi
 			&c.ID, &c.BackboneID, &c.BackboneVersion, &conceptRank, &parentID, &secReference, &status,
 			&an.ID, &an.Canonical, &an.Authorship, &nameRank, &an.IPNIID, &an.PublishedIn, &an.NomStatus, &an.BasionymID,
 		); err != nil {
-			return nil, fmt.Errorf("sqlite: scanning MatchExact %q row: %w", canon, err)
-		}
-
-		if domain.Canonicalize(matched.Canonical) != want {
-			continue
+			return nil, fmt.Errorf("sqlite: scanning %s %q row: %w", op, arg, err)
 		}
 
 		mRank, err := domain.ParseRank(matchedRank)
@@ -268,7 +518,7 @@ func (db *DB) MatchExact(ctx context.Context, canon string) ([]output.MatchCandi
 		out = append(out, output.MatchCandidate{Concept: c, MatchedName: matched, Role: role})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("sqlite: iterating MatchExact %q rows: %w", canon, err)
+		return nil, fmt.Errorf("sqlite: iterating %s %q rows: %w", op, arg, err)
 	}
 	return out, nil
 }

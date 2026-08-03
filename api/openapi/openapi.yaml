@@ -10,9 +10,10 @@
 # SP1 adds the local SQLite/FTS5-backed `/v1/concept/{id}`, `/v1/xref` and
 # `/v1/match` endpoints on top of the SP0 health/metrics skeleton. SP2 adds
 # the area-/rank-filtered, priority-ranked `GET /v1/suggest` autosuggest
-# endpoint. Their shapes below mirror internal/adapters/http's DTOs exactly
-# — no aspirational fields (traits, translate, synonyms are still later
-# SPs).
+# endpoint. SP3 adds `GET /v1/concept/{id}/traits` (EIVE/Tichý/Midolo
+# ecological indicator values, grouped per vocabulary, per-value scale).
+# Their shapes below mirror internal/adapters/http's DTOs exactly — no
+# aspirational fields (translate is still a later SP).
 openapi: 3.0.3
 info:
   title: hostus API
@@ -159,10 +160,12 @@ paths:
       description: >-
         Löst eine Liste verbatimer Namen (z. B. aus einem Vegetationsaufnahme-
         Import) gegen den lokalen Index auf. Jeder Eintrag wird unabhängig
-        klassifiziert (`exact`, `exact_author`, `aggregate_alias` oder
-        `unresolvable`); ein `unresolvable`-Ergebnis ist ein normales
+        klassifiziert (`exact`, `exact_author`, `aggregate_alias`, `fuzzy`
+        oder `unresolvable`); ein `unresolvable`-Ergebnis ist ein normales
         Element der 200er-Antwort, kein HTTP-Fehler. Nur ein fehlerhafter
-        Request-Body liefert einen 400-Fehler.
+        Request-Body liefert einen 400-Fehler. Bei `fuzzy` ist
+        `requires_review` IMMER `true` — eine Ähnlichkeits-basierte Auflösung
+        gilt nie als endgültig bestätigt.
       tags:
         - taxa
       requestBody:
@@ -244,6 +247,63 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /v1/concept/{id}/traits:
+    get:
+      operationId: getConceptTraits
+      summary: Merkmalswerte (Traits) eines Concepts
+      description: >-
+        Liefert alle für ein Concept ingestierten Merkmalswerte, gruppiert
+        PRO Vokabular (EIVE, Tichý et al. 2023, Midolo et al. 2023) — nie
+        vokabularübergreifend zusammengeführt, da die Taxonomie-Namensräume
+        der Vokabulare nachweislich divergieren. Jeder Wert trägt seine
+        eigene `scale` (Minimum, Maximum, ob normalisiert), da selbst
+        innerhalb eines Vokabulars die Skalen pro Dimension abweichen
+        können (Tichý: T 1–12, L 1–9) — ein einzelnes Set-weites `scale`
+        wäre für mindestens eine Dimension falsch. Ein unbekanntes Concept
+        liefert 404; ein bekanntes Concept ohne Merkmalswerte liefert 200
+        mit leerem `traits`-Array (kein 404).
+      tags:
+        - traits
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: >-
+            Concept-ID im Format `<backbone-id>:concept:<taxon-id>`, z. B.
+            `wcvp:concept:405825`.
+          schema:
+            type: string
+        - name: vocab
+          in: query
+          required: false
+          description: >-
+            Kommagetrennte Liste von Vokabular-Token (`eive`, `tichy2023`,
+            `midolo2023`). Leer bedeutet alle ingestierten Vokabulare für
+            dieses Concept. Ein unbekanntes Token liefert 400.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: >-
+            Merkmalswerte des Concepts, gruppiert pro Vokabular (ggf. ein
+            leeres `traits`-Array).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TraitsResponse'
+        '400':
+          description: Ein `vocab`-Token ist unbekannt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Unbekannte Concept-ID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 tags:
   - name: health
     description: Liveness- und Readiness-Probes für Orchestratoren.
@@ -253,6 +313,10 @@ tags:
     description: >-
       Taxonomie-Auflösung gegen den lokalen SQLite/FTS5-Index (Concept-
       Lookup, Cross-Reference-Auflösung, Batch-Namensabgleich, Autosuggest).
+  - name: traits
+    description: >-
+      Ökologische Merkmalswerte (EIVE, Tichý et al. 2023, Midolo et al.
+      2023), pro Vokabular gruppiert und nie zusammengeführt.
 
 components:
   schemas:
@@ -280,8 +344,25 @@ components:
         homotypic:
           type: boolean
           description: >-
-            Aktuell nie gesetzt (SP1 ingestiert diese Information noch
-            nicht); für spätere SPs reserviert.
+            `true`, wenn die Basionym-Verknüpfung ein gemeinsames Basionym
+            mit dem akzeptierten Namen beweist (Rekombination). Fehlt das
+            Feld (kein `false`!), ist die Typisierung unbekannt/unbewiesen —
+            `false` würde fälschlich "heterotypisch" behaupten, was ohne
+            Verknüpfungsdaten nie belegbar ist.
+
+    ClassificationEntry:
+      type: object
+      required: [concept_id, canonical, rank]
+      properties:
+        concept_id:
+          type: string
+          example: 'wcvp:concept:451295'
+        canonical:
+          type: string
+          example: Corynephorus
+        rank:
+          type: string
+          example: GENUS
 
     Distribution:
       type: object
@@ -330,11 +411,14 @@ components:
         classification:
           type: array
           description: >-
-            Übergeordnete Klassifikationskette. Aktuell immer leer (SP1
-            ingestiert keine Eltern-Verknüpfungen); für spätere SPs
-            reserviert.
+            Übergeordnete Klassifikationskette, ROOT-FIRST (Index 0 = oberste
+            erreichte Vorfahren-Ebene, letztes Element = direktes Elternteil
+            dieses Concepts). Wird durch Verfolgen von `parent_id` ermittelt,
+            bis zu einer festen Tiefenbegrenzung (10 Hops), damit eine
+            zyklische/korrupte Kette nie hängen bleibt. Fehlt/leer, wenn kein
+            Eltern-Concept ingestiert wurde.
           items:
-            type: string
+            $ref: '#/components/schemas/ClassificationEntry'
         synonyms:
           type: array
           items:
@@ -409,10 +493,14 @@ components:
           description: Spiegelt die `id` aus der Anfrage.
         match_type:
           type: string
-          enum: [exact, exact_author, aggregate_alias, unresolvable]
+          enum: [exact, exact_author, aggregate_alias, fuzzy, unresolvable]
         confidence:
           type: number
           format: double
+          description: >-
+            Bei `fuzzy` die tatsächliche Ähnlichkeits-Score (0..1, siehe
+            `domain.Similarity`/`FuzzyThreshold`), nicht eine feste Stufe wie
+            bei den übrigen match_type-Werten.
           example: 0.99
         concept_id:
           type: string
@@ -420,13 +508,17 @@ components:
         candidates:
           type: array
           description: >-
-            Kandidaten-Kanonicalnamen, deren Autor nicht eindeutig
-            klassifiziert werden konnte (nur bei `unresolvable`).
+            Kandidaten-Kanonicalnamen, die nicht eindeutig klassifiziert
+            werden konnten (`unresolvable`) oder bei `fuzzy` mit der
+            Bestwertung gleichauf lagen.
           items:
             type: string
         requires_review:
           type: boolean
-          description: Gesetzt, wenn das Ergebnis manuelle Prüfung nahelegt.
+          description: >-
+            Gesetzt, wenn das Ergebnis manuelle Prüfung nahelegt. Bei
+            `match_type: fuzzy` immer `true` (§B.2) — unabhängig davon, wie
+            hoch die Ähnlichkeits-Score ausfällt.
         note:
           type: string
           description: Menschenlesbare Erläuterung, z. B. für Aggregate.
@@ -497,3 +589,101 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/SuggestItem'
+
+    Scale:
+      type: object
+      required: [min, max, normalized]
+      description: >-
+        Wertebereich und Normalisierungsstatus einer (Vokabular, Dimension)-
+        Kombination. `normalized: false` bedeutet nicht zwingend "unbounded"
+        — Tichý-Dimensionen sind z. B. begrenzt (T: 1–12, L: 1–9), aber
+        nicht auf eine gemeinsame 0–1- oder 0–10-Skala normalisiert. Ein
+        `{"min": 0, "max": 0, "normalized": false}`-Ergebnis ist ein
+        Sentinel für "keine feste Skala definiert" (z. B. Midolo), nicht
+        "der Wert ist exakt 0".
+      properties:
+        min:
+          type: number
+          format: double
+          example: 0
+        max:
+          type: number
+          format: double
+          example: 10
+        normalized:
+          type: boolean
+          example: true
+
+    TraitValue:
+      type: object
+      required: [dim, value, scale]
+      properties:
+        dim:
+          type: string
+          description: 'Indikator-Dimension, z. B. `M` (Feuchte), `L` (Licht), `T` (Temperatur).'
+          example: M
+        value:
+          type: number
+          format: double
+          example: 4.2
+        niche_width:
+          type: number
+          format: double
+          description: >-
+            Nischenbreite. Nur bei EIVE gesetzt; bei Tichý/Midolo fehlt das
+            Feld ganz (nicht `0`) — die Vokabulare liefern diesen Wert
+            schlicht nicht.
+        n_systems:
+          type: integer
+          description: >-
+            Anzahl Quellsysteme. Nur bei EIVE gesetzt; bei Tichý/Midolo
+            fehlt das Feld ganz (nicht `0`), aus demselben Grund wie
+            `niche_width`.
+        scale:
+          $ref: '#/components/schemas/Scale'
+          description: >-
+            Pro Wert (nicht pro Set) gerendert: selbst innerhalb eines
+            Vokabulars unterscheiden sich die Skalen zwischen Dimensionen
+            (Tichý T vs. L), sodass ein Set-weites `scale`-Feld für
+            mindestens eine Dimension irreführend wäre.
+
+    TraitSet:
+      type: object
+      required: [vocab, vocab_version, values]
+      properties:
+        vocab:
+          type: string
+          enum: [eive, tichy2023, midolo2023]
+          example: eive
+        vocab_version:
+          type: string
+          example: '1.0'
+        taxonomy:
+          type: string
+          description: >-
+            Taxonomie-Namensraum, gegen den dieses Vokabular harmonisiert
+            wurde (z. B. `euromed-aligned` für EIVE, `floraveg-eunis-
+            aligned` für Tichý/Midolo). Fehlt das Feld ganz, konnte keine
+            Vokabular-Metadatenzeile zugeordnet werden — wird nicht als
+            leerer String vorgetäuscht.
+          example: euromed-aligned
+        values:
+          type: array
+          items:
+            $ref: '#/components/schemas/TraitValue'
+
+    TraitsResponse:
+      type: object
+      required: [concept_id, traits]
+      properties:
+        concept_id:
+          type: string
+          example: 'wcvp:concept:405825'
+        traits:
+          type: array
+          description: >-
+            Ein Element pro (Vokabular, Version) — nie über Vokabulare
+            hinweg zusammengeführt. Leer, wenn für dieses (existierende)
+            Concept keine Merkmalswerte ingestiert wurden.
+          items:
+            $ref: '#/components/schemas/TraitSet'

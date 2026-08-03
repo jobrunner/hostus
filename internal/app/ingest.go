@@ -6,23 +6,20 @@ import (
 
 	"github.com/jobrunner/hostus/internal/adapters/manifest"
 	"github.com/jobrunner/hostus/internal/adapters/sqlite"
+	"github.com/jobrunner/hostus/internal/adapters/traits"
 	"github.com/jobrunner/hostus/internal/adapters/wcvp"
 	"github.com/jobrunner/hostus/internal/application"
+	"github.com/jobrunner/hostus/internal/domain"
 )
 
-// LoadDataset parses and schema-validates the dataset.yaml manifest at
-// path, then adapts it into the application.Dataset DTO application.Ingest
-// expects. application never imports internal/adapters/manifest (depguard),
-// so this mapping lives here in the composition root — the one place
-// allowed to know about both.
-func LoadDataset(path string) (*application.Dataset, error) {
-	ds, err := manifest.Parse(path)
-	if err != nil {
-		return nil, err
-	}
-	backbones := make([]application.Backbone, 0, len(ds.Backbones))
-	for _, b := range ds.Backbones {
-		backbones = append(backbones, application.Backbone{
+// adaptBackbones maps the manifest's backbone entries onto the
+// application.Backbone DTO application.Ingest expects. application never
+// imports internal/adapters/manifest (depguard), so this mapping lives here
+// in the composition root — the one place allowed to know about both.
+func adaptBackbones(bs []manifest.Backbone) []application.Backbone {
+	out := make([]application.Backbone, 0, len(bs))
+	for _, b := range bs {
+		out = append(out, application.Backbone{
 			ID:        b.ID,
 			Version:   b.Version,
 			License:   b.License,
@@ -30,7 +27,7 @@ func LoadDataset(path string) (*application.Dataset, error) {
 			Path:      b.Path,
 		})
 	}
-	return &application.Dataset{Backbones: backbones, ManifestSHA: ds.ManifestSHA}, nil
+	return out
 }
 
 // wcvpRowSource adapts a *wcvp.Dataset (T4's reader output) into
@@ -53,6 +50,8 @@ func (s wcvpRowSource) Taxa() []application.TaxonRow {
 			Rank:            t.Rank,
 			Status:          t.Status,
 			POWOID:          t.POWOID(),
+			ParentTaxonID:   t.ParentNameUsageID,
+			BasionymTaxonID: t.OriginalNameUsageID,
 		})
 	}
 	return out
@@ -79,21 +78,81 @@ func readerFor(b application.Backbone) (application.RowSource, error) {
 	return wcvpRowSource{ds: ds}, nil
 }
 
+// traitVocabRowSource adapts a *traits.Dataset (T2's reader output) into
+// application.TraitRowSource, so application never imports
+// internal/adapters/traits directly (depguard) — the trait-vocabulary
+// counterpart of wcvpRowSource above.
+type traitVocabRowSource struct{ ds *traits.Dataset }
+
+func (s traitVocabRowSource) Rows() []application.TraitRow {
+	out := make([]application.TraitRow, 0, len(s.ds.Rows))
+	for _, r := range s.ds.Rows {
+		out = append(out, application.TraitRow{
+			Taxon:        r.Taxon,
+			Vocab:        r.Vocab,
+			VocabVersion: r.VocabVersion,
+			Dim:          r.Dim,
+			Value:        r.Value,
+			NicheWidth:   r.NicheWidth,
+			NSystems:     r.NSystems,
+		})
+	}
+	return out
+}
+
+// ingestTraitVocab opens tv's canonical trait CSV and runs
+// application.IngestTraits against repo, adapting the manifest's
+// TraitVocabulary entry into the domain.TraitVocabMeta the use case records.
+func ingestTraitVocab(ctx context.Context, tv manifest.TraitVocabulary, repo *sqlite.DB) (application.TraitIngestReport, error) {
+	ds, err := traits.Read(tv.Path)
+	if err != nil {
+		return application.TraitIngestReport{}, fmt.Errorf("app: reading trait vocabulary %q at %q: %w", tv.ID, tv.Path, err)
+	}
+	vocab, err := domain.ParseTraitVocab(tv.ID)
+	if err != nil {
+		return application.TraitIngestReport{}, fmt.Errorf("app: trait vocabulary %q: %w", tv.ID, err)
+	}
+	meta := domain.TraitVocabMeta{
+		Vocab:     vocab,
+		Version:   tv.Version,
+		Taxonomy:  tv.Taxonomy,
+		License:   tv.License,
+		SourceURL: tv.SourceURL,
+	}
+	return application.IngestTraits(ctx, repo, traitVocabRowSource{ds: ds}, meta)
+}
+
 // Ingest parses and validates the manifest at manifestPath, opens (or
 // creates) the SQLite database at dbPath, and runs application.Ingest
-// against it end to end, returning the per-backbone report. It is the
+// against every pinned backbone followed by application.IngestTraits
+// against every pinned trait vocabulary, returning both reports. It is the
 // entry point "hostus ingest" calls.
-func Ingest(ctx context.Context, manifestPath, dbPath string) (application.IngestReport, error) {
-	ds, err := LoadDataset(manifestPath)
+func Ingest(ctx context.Context, manifestPath, dbPath string) (application.IngestReport, []application.TraitIngestReport, error) {
+	manifestDS, err := manifest.Parse(manifestPath)
 	if err != nil {
-		return application.IngestReport{}, err
+		return application.IngestReport{}, nil, err
 	}
+	ds := &application.Dataset{Backbones: adaptBackbones(manifestDS.Backbones), ManifestSHA: manifestDS.ManifestSHA}
 
 	repo, err := sqlite.Open(dbPath)
 	if err != nil {
-		return application.IngestReport{}, fmt.Errorf("app: opening database %q: %w", dbPath, err)
+		return application.IngestReport{}, nil, fmt.Errorf("app: opening database %q: %w", dbPath, err)
 	}
 	defer func() { _ = repo.Close() }()
 
-	return application.Ingest(ctx, ds, readerFor, repo)
+	backboneReport, err := application.Ingest(ctx, ds, readerFor, repo)
+	if err != nil {
+		return backboneReport, nil, err
+	}
+
+	traitReports := make([]application.TraitIngestReport, 0, len(manifestDS.TraitVocabularies))
+	for _, tv := range manifestDS.TraitVocabularies {
+		tr, err := ingestTraitVocab(ctx, tv, repo)
+		if err != nil {
+			return backboneReport, traitReports, err
+		}
+		traitReports = append(traitReports, tr)
+	}
+
+	return backboneReport, traitReports, nil
 }

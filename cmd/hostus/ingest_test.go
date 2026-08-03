@@ -35,6 +35,22 @@ func TestIngestCommand_FixtureManifest_PrintsReport(t *testing.T) {
 	if !strings.Contains(got, strconv.Itoa(20)) {
 		t.Errorf("report %q, want it to mention the Names count %d", got, 20)
 	}
+
+	// The fixture manifest's trait_vocabularies section (eive, tichy2023)
+	// must also print a report, including the unmatched sample — the
+	// crosswalk loss must be visible on the terminal, not just in the DB.
+	if !strings.Contains(got, "eive") {
+		t.Errorf("report %q, want it to mention trait vocabulary %q", got, "eive")
+	}
+	if !strings.Contains(got, "tichy2023") {
+		t.Errorf("report %q, want it to mention trait vocabulary %q", got, "tichy2023")
+	}
+	if !strings.Contains(got, "unmatched sample") {
+		t.Errorf("report %q, want it to print the unmatched sample (Abies alba/Quercus robur are absent from the wcvp fixture)", got)
+	}
+	if !strings.Contains(got, "Abies alba") {
+		t.Errorf("report %q, want the unmatched sample to name the specific lost taxa", got)
+	}
 }
 
 // TestIngestCommand_MissingDatasetFlag_ReturnsError pins the "not

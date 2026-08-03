@@ -20,6 +20,7 @@ var wantTables = []string{
 	"vernacular",
 	"distribution",
 	"trait_value",
+	"trait_vocabulary",
 	"concept_relation",
 	"fts_name_map",
 	"fts_name",
@@ -412,4 +413,112 @@ func TestOpen_ReaderSeesCommittedRowAlongsideOpenWriter(t *testing.T) {
 	if len(got) != 1 || got[0].ID != "wcvp" {
 		t.Fatalf("BackboneVersions() = %+v, want exactly the committed %q row (uncommitted 'wfo' must stay invisible)", got, "wcvp")
 	}
+}
+
+// TestBeginTraitIngest_WritesNoBackboneVersion pins the adapter half of the
+// trait/backbone separation: BeginIngest records its argument in
+// backbone_version, BeginTraitIngest must record nothing there — a trait
+// vocabulary is not a taxonomic backbone, and backbone_version is served as
+// API provenance and gates /health/ready.
+func TestBeginTraitIngest_WritesNoBackboneVersion(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	tx, err := db.BeginTraitIngest(ctx)
+	if err != nil {
+		t.Fatalf("BeginTraitIngest: unexpected error: %v", err)
+	}
+	meta := domain.TraitVocabMeta{Vocab: domain.VocabEIVE, Version: "1.0", Taxonomy: "euromed-via-eurosl", License: "CC-BY-4.0"}
+	if err := tx.UpsertTraitVocabulary(meta); err != nil {
+		t.Fatalf("UpsertTraitVocabulary: unexpected error: %v", err)
+	}
+	// Finalize must be a harmless no-op here: this transaction has no
+	// backbone, so there are no concepts of its own to FTS-index.
+	if err := tx.Finalize(); err != nil {
+		t.Fatalf("Finalize: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+
+	got, err := db.BackboneVersions(ctx)
+	if err != nil {
+		t.Fatalf("BackboneVersions: unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("BackboneVersions() = %v, want empty after a trait-only ingest", got)
+	}
+
+	vocabs, err := db.TraitVocabularies(ctx)
+	if err != nil {
+		t.Fatalf("TraitVocabularies: unexpected error: %v", err)
+	}
+	if len(vocabs) != 1 {
+		t.Fatalf("len(TraitVocabularies) = %d, want 1 — the vocabulary itself must still be recorded", len(vocabs))
+	}
+}
+
+// TestBeginTraitIngest_FinalizeDoesNotTouchAnotherBackbonesFTSIndex pins
+// why the empty backboneID is safe: Finalize filters on tc.backbone_id, so
+// a trait transaction can never re-index (and thus duplicate) the rows a
+// real backbone's own ingest already wrote.
+func TestBeginTraitIngest_FinalizeDoesNotTouchAnotherBackbonesFTSIndex(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	seedOneConcept(t, db)
+	before := ftsRowCount(t, db)
+	if before == 0 {
+		t.Fatal("fts_name_map is empty after the backbone ingest; the fixture must index something")
+	}
+
+	tx, err := db.BeginTraitIngest(ctx)
+	if err != nil {
+		t.Fatalf("BeginTraitIngest: unexpected error: %v", err)
+	}
+	if err := tx.Finalize(); err != nil {
+		t.Fatalf("Finalize: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+
+	if after := ftsRowCount(t, db); after != before {
+		t.Errorf("fts_name_map rows = %d after a trait ingest, want %d (unchanged)", after, before)
+	}
+}
+
+func seedOneConcept(t *testing.T, db *DB) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := db.BeginIngest(ctx, domain.BackboneVersion{ID: "wcvp", Version: "v1", IngestedAt: "2026-08-01T00:00:00Z", ManifestSHA: "x"})
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	name := domain.Name{ID: "n-1", Canonical: "Festuca ovina", Rank: domain.RankSpecies}
+	concept := domain.Concept{ID: "c-1", BackboneID: "wcvp", AcceptedName: name, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+	if err := tx.UpsertName(name); err != nil {
+		t.Fatalf("UpsertName: unexpected error: %v", err)
+	}
+	if err := tx.UpsertConcept(concept); err != nil {
+		t.Fatalf("UpsertConcept: unexpected error: %v", err)
+	}
+	if err := tx.LinkName(concept.ID, name.ID, "accepted", nil); err != nil {
+		t.Fatalf("LinkName: unexpected error: %v", err)
+	}
+	if err := tx.Finalize(); err != nil {
+		t.Fatalf("Finalize: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+}
+
+func ftsRowCount(t *testing.T, db *DB) int {
+	t.Helper()
+	var n int
+	if err := db.sql.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM fts_name_map`).Scan(&n); err != nil {
+		t.Fatalf("counting fts_name_map: %v", err)
+	}
+	return n
 }

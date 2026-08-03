@@ -131,6 +131,6 @@ func handleSuggest(repo output.Repository) http.HandlerFunc {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, suggestResponseToDTO(resp))
+		writeJSON(w, suggestResponseToDTO(resp))
 	}
 }

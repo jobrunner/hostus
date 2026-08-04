@@ -366,6 +366,63 @@ Rangordinal 0 für FAMILY ist in `domain.rankOrder` vorhanden, aber tot.
 `parent_id` ist auf 423.631 / 440.534 Konzepten (96,2 %) gesetzt, die
 Hierarchie GENUS→SPECIES ist also begehbar.
 
+## Nachtrag SP8: Hand-Beobachtung an der Testkonsole (2026-08-04)
+
+Diese Beobachtungen stammen **nicht** aus dem Messharnisch, sondern aus dem
+Hand-Test der eingebetteten Testkonsole (SP8, Task 2) gegen eine Kopie
+desselben vollen Index. Sie sind über die HTTP-API gemacht, mit dem Auge,
+und sie **verschärfen** die Messung oben an drei Stellen. Wer Task 2 dieses
+Teilprojekts aufnimmt, sollte sie lesen, bevor er über Quoten nachdenkt.
+
+Anderes Fenster als oben: gemessen wurde `limit=30`, also **30 Plätze je
+Präfix**, nicht die Top 10.
+
+| q | präfixbeginnende Treffer | Rangmix | Position 1 |
+|---|---|---|---|
+| `ac` | 10 / 30 | SPECIES 30 | *Lucuma multiflora* |
+| `ca` | **0 / 30** | SPECIES 30 | ***Kunzea capitata*** |
+| `al` | 7 / 30 | SPECIES 30 | *Lepechinia schiedeana* |
+
+Zusammen **17 von 90** (≈ 19 %) und **0 Gattungen auf 90 Plätzen**. Für `ca`
+ist die Quote **null**: kein einziger der 30 Treffer beginnt mit „ca". Das
+bestätigt und erweitert das oben gemessene 0/10 für `ca` — die Null hält
+auch, wenn man das Fenster verdreifacht.
+
+**Drei Befunde, die über die Quote hinausgehen:**
+
+1. **Alle 30 Scores sind identisch: `-3.736`.** Nicht „11–12 Score-Werte
+   über die Kandidatenmenge", sondern *ein* Wert über die gesamte
+   ausgelieferte Liste. Innerhalb dessen, was der Nutzer sieht,
+   diskriminiert das Ranking damit **überhaupt nicht**.
+2. **Die Reihenfolge ist Alphabet, nicht Relevanz.** Die `ca`-Liste läuft
+   von *Kunzea* über *Ladenbergia*, *Landolphia*, *Lantana*, *Maxillaria*,
+   *Myrcia*, *Syzygium* bis *Xanthosoma* — die alphabetische Ordnung der
+   akzeptierten Namen. Bei identischem Score bleibt nur die Ordnung des
+   darunterliegenden Index übrig, und genau die sieht man.
+3. **Getroffen wird das Epitheton, nicht der Namensanfang.**
+   *capitata*, *carua*, *cacaoensis*, *caquetana*, *calabarica*,
+   *canescens*, *caroliniana* — der Präfix matcht das *zweite* Token. Das
+   ist die genauere Ursachenbeschreibung als „bm25-Rauschen": es ist nicht
+   so, dass eine vorhandene Ordnung durch schlechte Gewichte verrauscht
+   wäre. **Es gibt an dieser Stelle keine wirksame Ordnung, die man
+   justieren könnte — es muss erst eine entstehen.**
+
+**Latenz, im Browser gemessen, gegen den vollen Index:**
+`q=ac&limit=30` **1.939 ms**, `q=ca` **1.402 ms**, `q=al` **349 ms**. Für
+ein Autosuggest, das bei jedem Tastendruck feuert, ist eine
+Zwei-Sekunden-Antwort auf zwei Zeichen unbrauchbar — unabhängig davon, wie
+gut die Liste danach sortiert ist.
+
+**Nebenbefund:** Ohne `area`-Parameter ist `in_area` bei jedem Treffer
+`false`. Korrekt, aber es heißt, dass die Spalte ohne Gebietseingabe keine
+Information trägt — das Gebietsscoping, auf das die Empfehlung unten
+angewiesen ist, muss der Aufrufer aktiv anfordern.
+
+Diese Beobachtungen ändern die Priorisierung unten **nicht**, sie
+bekräftigen sie: Schritt 1 („zuerst ein präfixverankertes Relevanzsignal
+statt bm25") ist nicht der erste von mehreren Hebeln, sondern der einzige,
+der überhaupt eine Ordnung herstellt.
+
 ## Empfehlung für Task 2
 
 Die Messungen tragen **keine** Empfehlung für eine Rangquote als primären

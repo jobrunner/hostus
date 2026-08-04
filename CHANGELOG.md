@@ -8,8 +8,11 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unreleased]
 
 ### Added (SP8, Task 2 — eingebettete Testkonsole)
-- **Neues Paket `internal/adapters/ui`**: die Testkonsole als
-  `embed.FS`-Asset. Ausgeliefert wird **ein** in sich geschlossenes
+- **Die Testkonsole als `embed.FS`-Asset** in
+  `internal/adapters/http/assets/`, eingebettet im HTTP-Adapter selbst: die
+  Assets sind ein Implementierungsdetail dieses Adapters, kein zweiter
+  Adapter, also braucht es dafür auch keine depguard-Ausnahme.
+  `.golangci.yml` bleibt unverändert. Ausgeliefert wird **ein** in sich geschlossenes
   HTML-Dokument — CSS und JavaScript werden hineingeschrieben, nicht
   nachgeladen, weil die Konsole sich den globalen 20-rps-Token-Bucket mit
   der API teilt. Kein CDN, keine Web-Schrift, keine externe Referenz;

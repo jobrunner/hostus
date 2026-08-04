@@ -31,19 +31,44 @@ var prefixes = []string{
 func main() {
 	base := flag.String("base", "http://127.0.0.1:8099", "base URL of the running hostus server")
 	area := flag.String("area", "", "area query parameter (empty = no area filter)")
+	runs := flag.Int("runs", 1, "number of repeated full runs; p50/p95 are then reported as a band over runs (a single run's p95 is not a stable number here — see docs/research/reality-check.md T7.1)")
 	reps := flag.Int("reps", 20, "measured repetitions per prefix")
 	warmup := flag.Int("warmup", 3, "unmeasured warmup requests per prefix")
 	limit := flag.Int("limit", 10, "limit query parameter")
 	pace := flag.Duration("pace", 100*time.Millisecond, "minimum delay between requests; the server rate-limits at 20 req/s (internal/adapters/http/router.go defaultRateLimitPerSecond), so an unpaced probe gets 429s. The pause is NOT part of the measured duration.")
 	flag.Parse()
 
-	if err := run(*base, *area, *reps, *warmup, *limit, *pace); err != nil {
-		fmt.Fprintln(os.Stderr, "latency:", err)
-		os.Exit(1)
+	var p50s, p95s []time.Duration
+	for r := 0; r < *runs; r++ {
+		if *runs > 1 {
+			fmt.Printf("=== run %d/%d ===\n", r+1, *runs)
+		}
+		p50, p95, err := run(*base, *area, *reps, *warmup, *limit, *pace)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "latency:", err)
+			os.Exit(1)
+		}
+		p50s = append(p50s, p50)
+		p95s = append(p95s, p95)
+	}
+	if *runs > 1 {
+		fmt.Printf("\np50 per run: %s\np95 per run: %s\n", fmtDurs(p50s), fmtDurs(p95s))
+		fmt.Printf("p50 band: %s .. %s (median %s)\n", q(p50s, 0), q(p50s, 1), q(p50s, 0.5))
+		fmt.Printf("p95 band: %s .. %s (median %s)\n", q(p95s, 0), q(p95s, 1), q(p95s, 0.5))
 	}
 }
 
-func run(base, area string, reps, warmup, limit int, pace time.Duration) error {
+func fmtDurs(ds []time.Duration) string {
+	parts := make([]string, len(ds))
+	for i, d := range ds {
+		parts[i] = d.Round(time.Microsecond).String()
+	}
+	return strings.Join(parts, " ")
+}
+
+// run performs one full pass over the prefix set and returns that pass's
+// overall p50 and p95.
+func run(base, area string, reps, warmup, limit int, pace time.Duration) (time.Duration, time.Duration, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 
 	var all []time.Duration
@@ -56,14 +81,14 @@ func run(base, area string, reps, warmup, limit int, pace time.Duration) error {
 		}
 		for i := 0; i < warmup; i++ {
 			if _, err := once(client, u); err != nil {
-				return err
+				return 0, 0, err
 			}
 			time.Sleep(pace)
 		}
 		for i := 0; i < reps; i++ {
 			d, err := once(client, u)
 			if err != nil {
-				return err
+				return 0, 0, err
 			}
 			time.Sleep(pace)
 			all = append(all, d)
@@ -91,7 +116,8 @@ func run(base, area string, reps, warmup, limit int, pace time.Duration) error {
 	for _, k := range keys {
 		fmt.Printf("| `%s` | %s | %s | %s |\n", k, q(perPrefix[k], 0.50), q(perPrefix[k], 0.95), q(perPrefix[k], 1))
 	}
-	return nil
+	fmt.Println()
+	return q(all, 0.50), q(all, 0.95), nil
 }
 
 func once(client *http.Client, u string) (time.Duration, error) {

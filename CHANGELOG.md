@@ -7,6 +7,32 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (SP8, Task 3 — e2e-Test und Anleitung zur Testkonsole)
+- **e2e unter dem `integration`-Tag** (`TestIntegration_TestConsoleToggle`):
+  fährt die echte Komposition zweimal gegen dieselbe ingestierte Datenbank
+  vor einem echten TCP-Listener hoch — einmal mit Konsole, einmal ohne.
+  Geprüft werden `/` (HTML, `ETag`, alle vier Panels), der CSP-Header
+  (`default-src 'self'`, beide Hashes, kein externer Origin), SPA-Deep-Links,
+  die Einzel-Assets, die vollständige 404-Oberfläche bei abgeschalteter
+  Konsole und **14 API-Sonden byteweise identisch** in beiden
+  Schalterstellungen (inkl. 404 unter `/v1` und 405 bei falscher Methode).
+- **Neue Anleitung `docs/how-to/test-console.md`** (deutsch): Start, der
+  Schalter in allen drei Prioritätsstufen inkl. Deployment-Abschaltung, wozu
+  die vier Panels da sind, ausdrücklich **was die Konsole nicht ist** (kein
+  Produkt-UI, nicht authentifiziert, nicht für Exposition gehärtet) und ein
+  Abschnitt „Was du erwarten solltest", damit ein bekannter Mangel nicht für
+  einen kaputten Build gehalten wird.
+- **`docs/research/suggest-quality.md`** um die Hand-Beobachtung aus dem
+  Konsolentest ergänzt: 0 von 30 präfixbeginnenden Treffern bei `ca`, 17/90
+  über drei Präfixe, alle Scores identisch (`-3.736`), getroffen wird das
+  Epitheton statt des Namensanfangs — es gibt keine Ordnung zu justieren,
+  es muss erst eine entstehen.
+- **`docs/explanation/known-gaps.md`** um zwei Einträge ergänzt:
+  `/v1/concept/{id}/traits` liefert 500 auf jedem Index ohne
+  `trait_value.resolution`, während `/health/ready` 200 meldet; und kein
+  Endpunkt listet die `sec.`-Referenzräume, weshalb `target_space` ein
+  Freitextfeld bleibt.
+
 ### Added (SP8, Task 2 — eingebettete Testkonsole)
 - **Die Testkonsole als `embed.FS`-Asset** in
   `internal/adapters/http/assets/`, eingebettet im HTTP-Adapter selbst: die

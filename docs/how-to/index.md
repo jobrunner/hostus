@@ -17,3 +17,7 @@ Aufgabenorientierte Rezepte — jedes löst ein konkretes Problem. Sie setzen
   `GET /v1/concept/{id}/synonyms?relevance=publication`, das durchgerechnete
   *Corynephorus-canescens*-Beispiel und ausdrücklich: **was dieser Filter
   nicht kann** (keine regionale, keine Standardwerk-Filterung)
+- **[Die eingebettete Testkonsole benutzen](test-console.md)** — die SPA
+  unter `/`, der Schalter in allen drei Stufen, wozu die vier Panels da
+  sind, ausdrücklich **was die Konsole nicht ist**, und was man an bekannten
+  Mängeln zu sehen bekommt

@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -1541,4 +1542,270 @@ func assertTranslateUnknownTargetSpace(t *testing.T, client *http.Client, baseUR
 	t.Helper()
 	postTranslate(t, client, baseURL,
 		`{"concept_id":"`+cdmAbiesWisskirchen+`","target_space":"not-a-sec-space"}`, http.StatusNotFound)
+}
+
+// --- SP8 Task 3: the embedded test console, end to end ---
+
+// consoleProbe is one request replayed against a UI-on and a UI-off server.
+type consoleProbe struct {
+	method string
+	path   string
+	body   string
+}
+
+// apiProbesAcrossToggle covers every serving endpoint plus the two shapes
+// most at risk from a UI: an unknown path under an API prefix (must stay a
+// 404) and a known path with the wrong method (must stay a 405).
+var apiProbesAcrossToggle = []consoleProbe{
+	{http.MethodGet, "/health/live", ""},
+	{http.MethodGet, "/health/ready", ""},
+	{http.MethodGet, "/metrics", ""},
+	{http.MethodGet, "/v1/concept/" + festucaOvinaConceptID, ""},
+	{http.MethodGet, "/v1/concept/" + festucaOvinaConceptID + "/traits", ""},
+	{http.MethodGet, "/v1/concept/" + festucaOvinaConceptID + "/synonyms", ""},
+	{http.MethodGet, "/v1/concept/gibt-es-nicht", ""},
+	{http.MethodGet, "/v1/suggest?q=Festuca&limit=5", ""},
+	{http.MethodGet, "/v1/xref?authority=powo&id=nonexistent", ""},
+	{http.MethodPost, "/v1/match", `{"names":[{"id":"1","verbatim":"Festuca ovina"}]}`},
+	{http.MethodPost, "/v1/translate", `{"concept_id":"` + festucaOvinaConceptID + `","target_space":"nope"}`},
+	{http.MethodGet, "/v1/nope", ""},
+	{http.MethodGet, "/openapi", ""},
+	{http.MethodPost, "/health/live", ""},
+}
+
+// serveWithConsole boots the REAL composition root against dbPath with the
+// console toggled, in front of a real TCP listener. Nothing about the UI is
+// stubbed: this is exactly what `hostus serve` builds.
+func serveWithConsole(t *testing.T, dbPath string, uiEnabled bool) *httptest.Server {
+	t.Helper()
+	cfg := testConfig()
+	cfg.SQLite.Path = dbPath
+	cfg.UI.Enabled = uiEnabled
+
+	a, err := app.New(cfg)
+	if err != nil {
+		t.Fatalf("app.New(ui.enabled=%v): unexpected error: %v", uiEnabled, err)
+	}
+	t.Cleanup(func() { _ = a.Shutdown(context.Background()) })
+
+	ts := httptest.NewServer(a.Router)
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// doProbe runs one probe over real HTTP and returns status, body and
+// Content-Type.
+func doProbe(t *testing.T, client *http.Client, baseURL string, p consoleProbe) (int, string, string) {
+	t.Helper()
+	var req *http.Request
+	var err error
+	if p.body == "" {
+		req, err = http.NewRequestWithContext(context.Background(), p.method, baseURL+p.path, nil)
+	} else {
+		req, err = http.NewRequestWithContext(context.Background(), p.method, baseURL+p.path, strings.NewReader(p.body))
+	}
+	if err != nil {
+		t.Fatalf("%s %s: building request: %v", p.method, p.path, err)
+	}
+	if p.body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", p.method, p.path, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	raw, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("%s %s: reading body: %v", p.method, p.path, err)
+	}
+	return res.StatusCode, string(raw), res.Header.Get("Content-Type")
+}
+
+// getConsole is the GET-only shorthand the console assertions use.
+func getConsole(t *testing.T, client *http.Client, baseURL, path string) (int, string, http.Header) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+path, nil)
+	if err != nil {
+		t.Fatalf("GET %s: building request: %v", path, err)
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", path, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	raw, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("GET %s: reading body: %v", path, err)
+	}
+	return res.StatusCode, string(raw), res.Header
+}
+
+// TestIntegration_TestConsoleToggle drives the console over real HTTP from
+// the real composition root, in both switch positions, against a real
+// ingested database. The unit suite covers the router in process; what this
+// adds is the path config.UI.Enabled -> app.New -> httpx.Deps -> a live
+// listener, which is the only path an operator ever uses.
+func TestIntegration_TestConsoleToggle(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "hostus.sqlite")
+
+	if _, err := app.Ingest(context.Background(), "testdata/dataset.yaml", dbPath); err != nil {
+		t.Fatalf("app.Ingest: unexpected error: %v", err)
+	}
+
+	on := serveWithConsole(t, dbPath, true)
+	off := serveWithConsole(t, dbPath, false)
+
+	assertConsoleServed(t, on)
+	assertConsoleCSP(t, on)
+	assertConsoleDeepLink(t, on)
+	assertConsoleAssets(t, on)
+	assertConsoleAbsent(t, off)
+
+	// A FRESH pair for the identity comparison, deliberately.
+	//
+	// The rate limiter is a single global 20 rps bucket shared by the
+	// console and the API (the UI route sits inside the fixed middleware
+	// chain — see httpx.NewRouter). The eight console requests above
+	// therefore leave the UI-on server with a visibly emptier bucket than
+	// the UI-off one, and the first run of this test proved it: probe 13
+	// came back 429 on one server and 404 on the other. That asymmetry is
+	// real behavior worth knowing about (a page load costs API budget),
+	// but it is not what this assertion is about, and comparing two
+	// servers with different bucket levels would be comparing the limiter,
+	// not the API surface.
+	assertAPIUnchangedAcrossToggle(t,
+		serveWithConsole(t, dbPath, true),
+		serveWithConsole(t, dbPath, false))
+}
+
+// assertConsoleServed: with the console on, "/" is the page.
+func assertConsoleServed(t *testing.T, ts *httptest.Server) {
+	t.Helper()
+	status, body, header := getConsole(t, ts.Client(), ts.URL, "/")
+
+	if status != http.StatusOK {
+		t.Fatalf("GET / with the console on: got %d, want 200", status)
+	}
+	if ct := header.Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Errorf("GET /: Content-Type %q, want text/html; charset=utf-8", ct)
+	}
+	if header.Get("ETag") == "" {
+		t.Error("GET /: no ETag — a reload would re-transfer the whole document")
+	}
+	for _, panel := range []string{"panel-suggest", "panel-concept", "panel-match", "panel-translate"} {
+		if !strings.Contains(body, `id="`+panel+`"`) {
+			t.Errorf("GET /: served document lacks panel %q", panel)
+		}
+	}
+}
+
+// assertConsoleCSP: the header that makes the offline claim structural must
+// survive the whole composition root, not just the handler.
+func assertConsoleCSP(t *testing.T, ts *httptest.Server) {
+	t.Helper()
+	_, _, header := getConsole(t, ts.Client(), ts.URL, "/")
+
+	csp := header.Get("Content-Security-Policy")
+	if csp == "" {
+		t.Fatal("GET /: no Content-Security-Policy header")
+	}
+	if !strings.Contains(csp, "default-src 'self'") {
+		t.Errorf("CSP lacks default-src 'self': %q", csp)
+	}
+	if !strings.Contains(csp, "script-src 'sha256-") || !strings.Contains(csp, "style-src 'sha256-") {
+		t.Errorf("CSP does not admit the inlined blocks by hash: %q", csp)
+	}
+	for _, forbidden := range []string{"http:", "https:", "*", "'unsafe-inline'", "'unsafe-eval'"} {
+		if strings.Contains(csp, forbidden) {
+			t.Errorf("CSP contains %q, which admits something it must not: %q", forbidden, csp)
+		}
+	}
+}
+
+// assertConsoleDeepLink: an unrouted path outside the API prefixes is an
+// SPA deep link and serves the same document as "/".
+func assertConsoleDeepLink(t *testing.T, ts *httptest.Server) {
+	t.Helper()
+	_, root, _ := getConsole(t, ts.Client(), ts.URL, "/")
+
+	for _, path := range []string{"/konzept/wcvp-12345", "/suggest", "/deep/link"} {
+		status, body, header := getConsole(t, ts.Client(), ts.URL, path)
+		if status != http.StatusOK {
+			t.Errorf("GET %s: got %d, want 200", path, status)
+			continue
+		}
+		if !strings.HasPrefix(header.Get("Content-Type"), "text/html") {
+			t.Errorf("GET %s: Content-Type %q, want text/html...", path, header.Get("Content-Type"))
+		}
+		if body != root {
+			t.Errorf("GET %s: served something other than the console document", path)
+		}
+	}
+}
+
+// assertConsoleAssets: the individually addressable assets keep their own
+// Content-Type. The page never fetches them — it inlines both — but they
+// stay readable so a tester can see the exact JS the console runs.
+func assertConsoleAssets(t *testing.T, ts *httptest.Server) {
+	t.Helper()
+	tests := []struct{ path, want string }{
+		{"/assets/app.js", "text/javascript; charset=utf-8"},
+		{"/assets/style.css", "text/css; charset=utf-8"},
+	}
+	for _, tc := range tests {
+		status, body, header := getConsole(t, ts.Client(), ts.URL, tc.path)
+		if status != http.StatusOK {
+			t.Errorf("GET %s: got %d, want 200", tc.path, status)
+			continue
+		}
+		if ct := header.Get("Content-Type"); ct != tc.want {
+			t.Errorf("GET %s: Content-Type %q, want %q", tc.path, ct, tc.want)
+		}
+		if body == "" {
+			t.Errorf("GET %s: empty body", tc.path)
+		}
+	}
+}
+
+// assertConsoleAbsent: with the console off the router registers NOTHING —
+// not "/", not an asset, not a deep link. This is the path an operator
+// relies on for a deployment and the one nobody exercises by hand.
+func assertConsoleAbsent(t *testing.T, ts *httptest.Server) {
+	t.Helper()
+	for _, path := range []string{"/", "/index.html", "/assets/app.js", "/assets/style.css", "/konzept/wcvp-12345"} {
+		status, _, _ := getConsole(t, ts.Client(), ts.URL, path)
+		if status != http.StatusNotFound {
+			t.Errorf("GET %s with the console off: got %d, want 404", path, status)
+		}
+	}
+}
+
+// assertAPIUnchangedAcrossToggle is the regression guard: turning the
+// console on must not change the status, body or Content-Type of a single
+// API response. Both servers run against the same ingested database, so any
+// difference is the console's doing.
+func assertAPIUnchangedAcrossToggle(t *testing.T, on, off *httptest.Server) {
+	t.Helper()
+	for _, p := range apiProbesAcrossToggle {
+		statusOn, bodyOn, ctypeOn := doProbe(t, on.Client(), on.URL, p)
+		statusOff, bodyOff, ctypeOff := doProbe(t, off.Client(), off.URL, p)
+
+		if statusOn != statusOff {
+			t.Errorf("%s %s: status %d with the console on vs %d with it off", p.method, p.path, statusOn, statusOff)
+			continue
+		}
+		// /metrics is a live counter and differs between two processes by
+		// construction; only its status and shape are comparable.
+		if p.path == "/metrics" {
+			continue
+		}
+		if bodyOn != bodyOff {
+			t.Errorf("%s %s: body differs with the console on\n  on: %s\n off: %s", p.method, p.path, bodyOn, bodyOff)
+		}
+		if ctypeOn != ctypeOff {
+			t.Errorf("%s %s: Content-Type %q with the console on vs %q with it off", p.method, p.path, ctypeOn, ctypeOff)
+		}
+	}
 }

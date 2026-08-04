@@ -41,6 +41,18 @@ der alleinige Laufzeit-Provider. Details zur Zielarchitektur stehen in
 | `GET /openapi`                     | Generierte OpenAPI-Spezifikation                        |
 | `GET /metrics`                     | Prometheus-Metriken                                     |
 | `GET /health/live`, `/health/ready`| Liveness-/Readiness-Probe (heute schon vorhanden)       |
+| `GET /`                            | Eingebettete Testkonsole, standardmäßig **an** (SP8)    |
+
+### Testkonsole
+
+Unter `/` liegt eine einkompilierte Testkonsole: eine einzelne, in sich
+geschlossene HTML-Seite ohne Build-Schritt und ohne externe Referenzen, mit
+je einem Panel für Suggest, Konzept, Match und Translate. Sie ist ein
+**Messinstrument, kein Produkt-UI** — nicht authentifiziert und nicht für
+Exposition gehärtet. Sie ist standardmäßig an und wird mit
+`HOSTUS_UI_ENABLED=false` oder `hostus serve --ui=false` abgeschaltet; dann
+antwortet `/` mit 404 und die API bleibt unverändert. Siehe
+[docs/how-to/test-console.md](docs/how-to/test-console.md).
 
 ## Konfiguration
 

@@ -83,6 +83,32 @@ Statt `concept_id` geht auch `verbatim` — dann läuft die Auflösung durch
 dieselbe Logik wie `POST /v1/match`, und ein **Fuzzy-Treffer setzt
 `requires_review: true`** auf der gesamten Antwort.
 
+!!! warning "`verbatim` löst mit ingestiertem CDM praktisch nie auf — nehmen Sie `concept_id`"
+
+    Gemessen am vollen Index (SP5 Task 5, siehe
+    [Reality-Check](../research/reality-check.md)): von 300 Namen, die
+    nachweislich eine CDM-Gegenseite mit Relation haben, kamen über den
+    `verbatim`-Einstieg **265 als `UNRESOLVABLE`** zurück und **0 als
+    Übersetzung**. `POST /v1/match` auf denselben 300 Namen zeigt die
+    Ursache: **265× „Mehrdeutiger Treffer"**, 0× „kein eindeutiger
+    Treffer".
+
+    Das ist **kein Fehler, sondern die Bauart der Sache.** Ein
+    `sec.`-Referenzraum trennt Konzepte, die denselben Namen tragen —
+    `Abies alba Mill.` ist **acht** verschiedene CDM-Konzepte (eines je
+    Referenzwerk) plus das WCVP-Konzept, also neun gleich starke Treffer.
+    `MatchExact` sucht über **alle** Backbones, und die Auflösung
+    verweigert bei mehreren gleich starken Kandidaten korrekt die Wahl,
+    statt zu raten. Genau die Trennung, die `/v1/translate` nutzbar macht,
+    macht den Namen mehrdeutig.
+
+    **Was zu tun ist:** Lösen Sie den Namen zuerst selbst auf — etwa über
+    `GET /v1/suggest` oder `POST /v1/match` mit anschließender Auswahl aus
+    `candidates` — und schicken Sie die gewählte **`concept_id`**. Nur so
+    ist auch entschieden, aus *welchem* Referenzraum heraus übersetzt
+    werden soll; bei `verbatim` wäre selbst ein Treffer eine unausgesprochene
+    Wahl.
+
 ## 3. Die Antwort richtig lesen
 
 ### Nur `congruent` heißt „dasselbe Taxon"

@@ -13,7 +13,9 @@ Prozess-Umgebungsvariablen injiziert — sie bilden keine eigene Prioritätsstuf
 Alle Konfigurationsschlüssel haben eingebaute Defaults (siehe `Defaults()` in
 `internal/config/config.go`). Umgebungsvariablen verwenden den Präfix
 `HOSTUS_`, wobei `.` durch `_` ersetzt wird, z. B. `server.port` →
-`HOSTUS_SERVER_PORT`.
+`HOSTUS_SERVER_PORT`. Die Regel gilt **ausnahmslos**: Abkürzungen wie
+`HOSTUS_PORT` werden stillschweigend ignoriert, der Server startet dann auf
+dem Default-Port 8080.
 
 Ein vollständiges Beispiel mit Inline-Kommentaren liegt in
 [`config.yaml.example`](https://github.com/jobrunner/hostus/blob/master/config.yaml.example)

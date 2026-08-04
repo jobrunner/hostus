@@ -418,8 +418,9 @@ func cdmRelationKey(row CDMRelationRow) string {
 // splits pass 1 into 1a/1b (see pass1AcceptedAndNames' comment): a concept's
 // parent may be a uuid that appears LATER in the source file than the child
 // referencing it. That is not a theoretical ordering worry — measured on the
-// real artifact, 697 of 51.466 rows carry a parent_uuid and 312 of those name
-// a parent that appears later in the file. Writing parent_id on the first
+// full 51.466-row artifact, 33.731 rows carry a parent_uuid and 9.897 of
+// those (29,34 %) name a parent that appears later in the file. Writing
+// parent_id on the first
 // insert therefore aborts the ingest on a FOREIGN KEY constraint, and the
 // committed fixture cannot show it (its one parent_uuid points outside the
 // file, so it lands in UnresolvedParents instead).

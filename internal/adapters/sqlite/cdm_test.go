@@ -393,8 +393,9 @@ func boolTrue() *bool { b := true; return &b }
 func TestCDMParentWrittenAfterChildStillLinks(t *testing.T) {
 	// The FK on taxon_concept.parent_id is IMMEDIATE, so a child written
 	// before its parent fails at INSERT time — not at COMMIT. Measured on the
-	// real 51.466-row artifact: 312 of the 697 rows carrying a parent_uuid
-	// name a parent that appears LATER in the file. The committed fixture
+	// full 51.466-row artifact: 9.897 of the 33.731 rows carrying a
+	// parent_uuid (29,34 %) name a parent that appears LATER in the file —
+	// nearly a third of them, not a handful. The committed fixture
 	// cannot show this (its one parent_uuid points outside the file), and a
 	// fake-repo test cannot either, because only a real database enforces the
 	// constraint. Hence this test, at the sqlite level, with the rows in the

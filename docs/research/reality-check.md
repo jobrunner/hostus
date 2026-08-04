@@ -2831,3 +2831,417 @@ Vergleichsgröße ist kein Argument.
 tatsächlich nur zwei von fünf beworbenen Kriterien anwendet, ist ohne diese
 Offenlegung irreführend. Die Dokumentation ist hier nicht Beiwerk, sondern
 Teil der Funktion.
+
+---
+
+## SP5 Task 5 — Verdikt: Konzeptübersetzung zwischen `sec.`-Referenzräumen (UC6)
+
+Gemessen am **vollen** Index: WCVP-Volldump (DwC-A, 1.448.984
+Taxonzeilen) plus die beiden kanonischen CSVs der CDM-Ernte
+(`rl_standardliste`, 51.466 Konzepte / 26.346 Relationen aus 15,6 h Crawl)
+in **eine frische** Datenbank. Kein erneuter Crawl, keine Anfrage an
+`api.cybertaxonomy.org`.
+
+```bash
+hostus ingest --dataset dataset-full.yaml --db full.sqlite
+# backbones: wcvp -> poc/data/wcvp_dwca
+# concept_sources: cdm -> pipelines/cdm/output/cdm-{concepts,relations}-canonical.csv
+```
+
+```
+Ingest complete:
+  wcvp: names=1448984 concepts=440534 synonyms=964762 orphaned=43688
+    ranks: other=6527 ((empty) 2744, proles 2351, lusus 660, microgène 371, …)
+Concept sources:
+  cdm: concepts=51466 written=51466 sec_spaces=119 relations=26346 written=26002
+    congruent: 23971
+    includes: 1591
+    includes_or_included_in_or_overlaps: 198
+    not_congruent: 1
+    overlaps: 118
+    pro_parte: 123
+    dropped: misapplied/non-concept=344 unresolved ends=0 unresolved parents=0 reader errors=0
+    unknown concept-relation flag=0, concepts without sec.=124, empty status=15523
+    ranks: other=1820 (Species Aggregate 1088, Species Group 374, …)
+  hinweis: cdm (redistribution=unknown) — lokal genutzt, nicht redistribuierbar
+real 283,92   (user 165,56  sys 132,01)
+```
+
+**283,92 s** Wandzeit für beide Backbones zusammen, ein Durchlauf, kein
+Abbruch. Alle 51.466 Konzeptzeilen und alle 26.346 Relationszeilen wurden
+gelesen — **0 Reader-Fehler**, **0 nicht auflösbare Relationsenden**,
+**0 nicht auflösbare Eltern**. Die 344 nicht geschriebenen Relationen sind
+genau die `is misapplied name for`-Zeilen (`is_concept_relation=false`), die
+die dokumentierte Regel verwirft: 26.346 − 344 = **26.002 = 98,69 %**.
+
+### Die beiden Review-Befunde, die nur ein Volllauf entscheiden konnte
+
+**1. Elternreihenfolge (Self-FK).** Die Datei enthält tatsächlich
+Vorwärtsverweise, und zwar massenhaft:
+
+```bash
+python3 -c "…"   # zählt parent_uuid, die erst später in der Datei stehen
+# rows 51466 with_parent 33731 parent_appears_later_in_file 9897
+```
+
+**9.897 von 33.731** Elternverweisen (29,3 %) zeigen auf eine Zeile, die
+erst später kommt — ein einphasiger Ingest wäre an jedem einzelnen davon
+in den Self-FK gelaufen. Der Zweiphasen-Ingest schreibt trotzdem alle
+33.731:
+
+```bash
+sqlite3 -readonly full.sqlite \
+  "SELECT COUNT(*) FROM taxon_concept WHERE backbone_id='cdm' AND parent_id IS NOT NULL AND parent_id<>'';"
+# 33731
+```
+
+33.731 stimmt exakt mit `concepts_with_parent_uuid=33731` aus
+`pipelines/cdm/cdm.summary.txt` überein. **Befund behoben, am Volldatensatz
+belegt.**
+
+**2. Fehlergrenze des Readers.** `reader errors=0` bei
+`concepts=51466 written=51466` und `relations=26346` — beides ist die volle
+Zeilenzahl der beiden Dateien (`wc -l` minus Kopfzeile: 51.467−1 und
+26.347−1). Es wurde nichts still abgeschnitten. **Befund behoben.**
+
+### Deckung des Relationsgraphen
+
+```bash
+sqlite3 -readonly full.sqlite \
+  "SELECT COUNT(*) FROM taxon_concept tc WHERE tc.backbone_id='cdm'
+     AND tc.id NOT IN (SELECT from_concept FROM concept_relation)
+     AND tc.id NOT IN (SELECT to_concept FROM concept_relation);"
+# 20122
+```
+
+| Kennzahl | Wert | Anteil |
+|---|---:|---:|
+| CDM-Konzepte gesamt | 51.466 | 100 % |
+| … mit mindestens einer Relation | 31.344 | **60,90 %** |
+| … die einen **anderen** `sec.`-Raum erreichen | 31.341 | **60,90 %** |
+| … ohne jede Relation (isoliert) | 20.122 | 39,10 % |
+
+Verteilung der erreichbaren Fremd-`sec.`-Räume je Konzept (1 Hop):
+
+```
+1 Raum: 27192   2: 410   3: 289   4: 279   5: 378   6: 1358
+7: 1240   8: 148   9: 38   10: 5   11: 3   12: 1
+```
+
+Der Graph ist also flach: 27.192 der 31.341 übersetzbaren Konzepte
+erreichen genau **einen** Fremdraum. Das ist kein Mangel des Ingests,
+sondern die Form der Quelle — die Standardliste verknüpft je Konzeptpaar,
+nicht je Kreuzprodukt.
+
+### Wie viele Konzepte tragen welchen `sec.`-Bezug?
+
+`taxon_concept.sec_reference` speichert die CDM-**Referenz**-UUID
+(`sec_uuid`), nicht die Klassifikations-UUID. Davon gibt es **119**
+verschiedene, nicht 18 — die 18 aus dem Crawl-Summary sind
+Klassifikationen, und der Crosswalk bildet 17 davon ab. Die Verteilung ist
+extrem ungleich:
+
+```bash
+sqlite3 -readonly full.sqlite \
+  "SELECT COUNT(*) c, sr.title FROM taxon_concept tc
+     LEFT JOIN sec_reference sr ON sr.id=tc.sec_reference
+    WHERE tc.backbone_id='cdm' GROUP BY 2 ORDER BY 1 DESC;"
+```
+
+| Konzepte | `sec.`-Referenzraum |
+|---:|---|
+| 14.626 | Wisskirchen & Haeupler 1998: Standardliste der Farn- und Blütenpflanzen Deutschlands |
+| 4.654 | Schubert & Vent 1990: Exkursionsflora von Deutschland (Rothmaler, 4. Kritischer Band) |
+| 4.635 | HEGI: Illustrierte Flora von Mitteleuropa, Aufl. 2 u. 3 |
+| 4.548 | OBERDORFER: Pflanzensoziologische Exkursionsflora, ed. 7 |
+| 4.390 | EHRENDORFER: Liste der Gefäßpflanzen Mitteleuropas, 2. Aufl. |
+| 4.381 | BfN: FloraWeb DB |
+| 4.351 | TUTIN et al.: Flora Europaea |
+| 4.021 | SCHMEIL-FITSCHEN: Flora von Deutschland …, 89. Aufl. |
+| 1.774 | Greuter & al.: Med-Checklist, Bde. 1, 3, 4 |
+| 1.346 | BRUMMITT 1992: Vascular Plant Families and Genera |
+| 1.080 | Greuter & al. 1993: Names in Current Use for Extant Plant Genera |
+| 446 | Andere Referenzen (fuer auct. Synonyme) |
+| 296 | Excel Taxon import |
+| 190 | Andere Referenzen (fuer Synonyme s. l.) |
+| 181 | R. Wisskirchen & H. Haeupler 1998: Standardliste (fuer Synonyme mit Fakten) |
+| 173 | Andere Referenzen (fuer Synonyme s. str.) |
+| **124** | **(leer — kein `sec.`)** |
+| 67 … 1 | 103 weitere Räume mit zusammen 288 Konzepten |
+
+11 Räume mit je ≥ 1.000 Konzepten decken **49.806 von 51.466 = 96,77 %**
+ab. Der lange Schwanz aus 100 Räumen mit 1–9 Konzepten ist für UC6
+praktisch bedeutungslos, aber er ist da und wird nicht weggerundet.
+
+### Die Zahl, die UC6 entscheidet
+
+**Wie viele unserer WCVP-Konzepte lassen sich tatsächlich in mindestens
+einen `sec.`-Raum übersetzen?**
+
+Die Brücke von WCVP in den CDM-Namensraum ist ein **Namens**-Crosswalk,
+kein ID-Join: die CDM-Ernte trägt **keine** externe ID. Ihr
+Spaltenkopf lautet vollständig
+
+```
+concept_uuid|scientific_name|authorship|rank|status|sec_uuid|sec_title|classification_uuid|parent_uuid
+```
+
+— kein IPNI, kein POWO, kein GBIF, kein WFO. Und in der Datenbank hat
+**keine einzige** `concept_relation`-Zeile ein WCVP-Ende:
+
+```bash
+sqlite3 -readonly full.sqlite \
+  "SELECT COUNT(*) FROM concept_relation cr
+     JOIN taxon_concept a ON a.id=cr.from_concept
+     JOIN taxon_concept b ON b.id=cr.to_concept
+    WHERE a.backbone_id<>'cdm' OR b.backbone_id<>'cdm';"
+# 0
+```
+
+**Obergrenze (was die Daten hergeben).** Gemessen über
+`name.canonical_fold` — genau die Spalte, auf der `MatchExact` arbeitet:
+
+```bash
+sqlite3 measure.sqlite <<'SQL'
+CREATE TEMP TABLE cdm_rel_fold AS
+  SELECT DISTINCT n.canonical_fold AS f FROM concept_name cn
+  JOIN name n ON n.id=cn.name_id JOIN taxon_concept tc ON tc.id=cn.concept_id
+  WHERE tc.backbone_id='cdm'
+    AND (tc.id IN (SELECT from_concept FROM concept_relation)
+      OR tc.id IN (SELECT to_concept FROM concept_relation));
+SELECT COUNT(*) FROM taxon_concept tc JOIN name n ON n.id=tc.accepted_name
+ WHERE tc.backbone_id='wcvp' AND n.canonical_fold IN (SELECT f FROM cdm_rel_fold);
+SQL
+# 4461
+```
+
+| Frage | WCVP-Konzepte | von 440.534 |
+|---|---:|---:|
+| akzeptierter Name trifft **irgendein** CDM-Konzept | 6.330 | 1,44 % |
+| akzeptierter Name trifft ein CDM-Konzept **mit Relation** | **4.461** | **1,01 %** |
+| irgendein Name (inkl. Synonymen) trifft ein CDM-Konzept | 8.987 | 2,04 % |
+| irgendein Name trifft ein CDM-Konzept **mit Relation** | 5.953 | 1,35 % |
+
+Die Obergrenze ist also **4.461 Konzepte = 1,01 %** (bzw. 5.953 = 1,35 %,
+wenn Synonyme als Brücke zugelassen werden). Das ist keine Überraschung und
+kein Fehler: CDM deckt die *deutsche* Flora ab, WCVP die *Welt*. 19.725
+verschiedene Namensformen in 51.466 CDM-Konzepten — die Differenz ist
+genau die `sec.`-Vervielfachung, die UC6 nutzen will.
+
+**Was der Endpunkt davon tatsächlich liefert: 0.** Gemessen, nicht
+geschätzt. 300 WCVP-Namen, deren CDM-Gegenseite nach obiger Messung
+*mindestens eine* Relation trägt, über echtes HTTP gegen den laufenden
+Server, Ziel `TUTIN et al.: Flora Europaea`, entdrosselt auf ~9 Anfragen/s
+(sonst greift der 20-rps-Limiter und verfälscht die Messung).
+
+**Ein Vorbehalt zur Stichprobe, bevor die Zahl kommt:** Das Auswahlkriterium
+war „CDM-Gegenseite hat *irgendeine* Relation", das Ziel jeder Anfrage aber
+derselbe Raum. Beides deckt sich nicht:
+
+```bash
+# Namensformen, deren CDM-Seite eine Kante nach Flora Europaea hat
+sqlite3 measure.sqlite "… JOIN taxon_concept p ON p.id=e.b
+   WHERE tc.backbone_id='cdm' AND p.sec_reference='6eeeeacc-…' …"
+# of the 300: CDM side reaches Flora Europaea | 196
+```
+
+Nur **196 der 300** hätten selbst bei perfekter Namensbrücke überhaupt
+einen Kandidaten in *diesem* Zielraum haben können; die übrigen 104 wären
+legitim `no_relation_recorded`. Am Ergebnis ändert das nichts — die
+erreichte Zahl ist 0, nicht 196 — aber die Vergleichsgröße ist 196, nicht
+300. (Auf die Obergrenze bezogen: mit Flora Europaea als festem Ziel sind
+es **2.601** WCVP-Konzepte statt 4.461.)
+
+```bash
+while read n; do
+  curl -s -X POST localhost:18131/v1/translate -H 'content-type: application/json' \
+    -d "{\"verbatim\":\"$n\",\"target_space\":\"6eeeeacc-1da9-4839-98d6-3169c4237ecd\"}"
+done < sample_names.txt | …
+# 265 UNRESOLVABLE
+#  35 no_relation_recorded wcvp
+#   0 translated
+```
+
+Zwei Ursachen, beide strukturell:
+
+1. **265 von 300 sind mehrdeutig.** `MatchExact` sucht über *alle*
+   Backbones. `classify` sieht mehrere *verschiedene* Konzepte auf
+   derselben Trefferstufe, verweigert die Wahl und liefert `UNRESOLVABLE`.
+   Das ist die *richtige* Antwort der Match-Logik und zugleich der Grund,
+   warum der `verbatim`-Pfad von `/v1/translate` mit ingestierter CDM
+   praktisch nie auflöst. Ein `sec.`-Raum trennt Konzepte — und macht damit
+   jeden geteilten Namen mehrdeutig.
+2. **Die übrigen 35 lösen auf — auf das WCVP-Konzept.** Und WCVP-Konzepte
+   haben keine Relationen (s. o., 0 Zeilen), also `no_relation_recorded`.
+
+**Beleg statt Behauptung: der Aufteilung nach.** Die Stichprobe oben hat
+nur den HTTP-Code festgehalten, und `UNRESOLVABLE` deckt *zwei*
+verschiedene Fälle ab — Mehrdeutigkeit und „nichts hat klassifiziert".
+Dieselben 300 Namen durch `POST /v1/match` (das den Grund als `note`
+ausgibt, 50 je Batch):
+
+```
+  265  noteAmbiguous          ("Mehrdeutiger Treffer: mehrere Konzepte mit gleicher Übereinstimmungsstärke")
+   35  resolved:exact_author
+```
+
+**0×** `noteUnresolvable`, **0×** Fuzzy-Mehrdeutigkeit. Die Ursache ist
+damit gemessen, nicht erschlossen: es ist ausnahmslos Mehrdeutigkeit.
+
+**Wie groß die Mehrdeutigkeit konkret ist.** Für `Abies alba Mill.`:
+
+```bash
+sqlite3 -readonly full.sqlite \
+  "SELECT tc.backbone_id, cn.role, COALESCE(n.authorship,'(kein)'), COUNT(DISTINCT tc.id)
+     FROM concept_name cn JOIN name n ON n.id=cn.name_id
+     JOIN taxon_concept tc ON tc.id=cn.concept_id
+    WHERE n.canonical_fold='abies alba' GROUP BY 1,2,3;"
+# cdm  | accepted | Mill.               | 8
+# wcvp | accepted | Mill.               | 1
+# wcvp | synonym  | (Castigl.) Michx.   | 1
+```
+
+**Acht** CDM-Konzepte (nicht neun) — eines je Referenzwerk — plus das
+akzeptierte WCVP-Konzept ergeben **neun** auf `exact_author` gleich starke
+Kandidaten; das zehnte Vorkommen fällt an der Autorprüfung heraus. Die
+Obergrenze über *alle* Namensformen liegt höher:
+
+```bash
+sqlite3 -readonly full.sqlite \
+  "SELECT MAX(c) FROM (SELECT n.canonical_fold, COUNT(DISTINCT tc.id) c
+     FROM concept_name cn JOIN name n ON n.id=cn.name_id
+     JOIN taxon_concept tc ON tc.id=cn.concept_id
+    WHERE tc.backbone_id='cdm' GROUP BY 1);"
+# 10
+```
+
+**Bis zu zehn** CDM-Konzepte je Namensform (`Stellaria palustris`,
+`Sedum telephium`, `Polypodium montanum`, `Polygonum lapathifolium`,
+`Pinus abies` u. a.); über beide Backbones zusammen maximal **16**.
+
+**Gegenprobe, damit die 0 kein Messfehler ist.** Derselbe Endpunkt,
+dieselbe Sitzung, 200 CDM-Konzepte mit bekannter Relation nach Flora
+Europaea:
+
+```bash
+# 193 translated 1
+#   7 translated 2
+```
+
+**200 von 200.** Der Endpunkt funktioniert; was fehlt, ist die Brücke
+zwischen den Namensräumen — nicht der Code dahinter.
+
+**Was diese Gegenprobe ausdrücklich *nicht* zeigt.** Sie steigt über
+`concept_id` ein und wählt vorab Konzepte, die eine Relation **in den
+Zielraum** tragen. Damit belegt sie zweierlei: dass der Relationsgraph
+tragfähig ist und dass die Antwort korrekt geformt wird. Sie belegt
+**nicht**, dass die Namensauflösung funktioniert — genau der Pfad, an dem
+die 300 scheitern, wird hier umgangen. Sie ist die richtige Kontrolle für
+die Frage „ist die 0 ein Artefakt meiner Messvorrichtung?" (Antwort: nein,
+derselbe Endpunkt in derselben Sitzung antwortet 200/200), und für keine
+darüber hinausgehende Frage.
+
+### Verdikt: **hält mit Auflagen**
+
+**Was hält.** Der Ingest hält am Volldatensatz: 51.466 Konzepte, 26.002
+Relationen, 0 Reader-Fehler, 0 unaufgelöste Enden, 0 unaufgelöste Eltern
+trotz 9.897 Vorwärtsverweisen, 283,92 s. Der Relationsgraph deckt
+**60,90 %** der CDM-Konzepte ab. `/v1/translate` liefert für CDM-Konzepte
+in **200 von 200** Stichproben eine typisierte, richtungstreue Antwort und
+verwechselt Gleichsetzung nie mit Enthaltensein. Die `sec.`-Trennung hält:
+ein Name, mehrere Konzepte, keine Verschmelzung.
+
+**Die Auflagen.**
+
+1. **UC6 ist für WCVP-Konzepte heute nicht bedienbar.** Die Obergrenze
+   liegt bei **4.461 von 440.534 Konzepten (1,01 %)**; der Endpunkt liefert
+   davon in der Messung **0**. Wer UC6 über WCVP-IDs bedienen will, braucht
+   einen expliziten WCVP↔CDM-Crosswalk (ein `xref`-Eintrag oder eine
+   Namensauflösung mit Backbone-Präferenz) — den gibt es nicht, und die
+   Quelle liefert keine ID, aus der er sich ableiten ließe.
+2. **Der `verbatim`-Pfad von `/v1/translate` ist mit ingestierter CDM
+   faktisch tot** (265/300 `UNRESOLVABLE`). Das ist kein Bug: die
+   Mehrdeutigkeit ist echt, und Raten wäre schlimmer. Aber der Endpunkt
+   bewirbt einen Einstieg, den er unter Volldaten nicht bedienen kann. Ein
+   Backbone- oder `sec.`-Filter am Match wäre die naheliegende Reparatur —
+   ungemessen, deshalb hier nur benannt.
+3. **39,10 % der CDM-Konzepte sind isoliert** und lassen sich in keinen
+   anderen Raum übersetzen. Eine leere Antwort ist hier der Normalfall,
+   nicht die Ausnahme; die explizite `no_relation_recorded`-Ausgabe ist
+   entsprechend kein Randfall des Contracts, sondern sein Hauptpfad.
+4. **`not_congruent` kommt genau einmal in 26.002 Zeilen vor.** Der Mapper
+   behandelt den Typ, aber er ist praktisch ungetestet an echten Daten.
+5. **124 CDM-Konzepte tragen keinen `sec.`-Bezug** und sind damit kein
+   gültiges Übersetzungsziel.
+
+**Lizenz — unverändert und bindend.** Für den CDM-Server der
+„Standardliste der Farn- und Blütenpflanzen Deutschlands" ist **nirgends**
+eine Lizenzangabe auffindbar: nicht auf dem Portal, nicht auf der API,
+nicht in den Payloads. Die Inhalte sind aus **urheberrechtlich geschützter
+Florenliteratur** abgeleitet (Wisskirchen & Haeupler, HEGI, OBERDORFER,
+ROTHMALER, SCHMEIL-FITSCHEN, Flora Europaea …). Deshalb im Manifest
+`redistribution: unknown`, und daraus folgt bindend:
+
+- **nur lokale Auswertung.** Die beiden CSVs sind gitignoriert und bleiben
+  es.
+- **`hostus bundle` verweigert den Export** dieser Quelle ohne
+  `--force-include-restricted` und protokolliert sie dann in
+  `bundle_meta.restricted_sources`.
+- **`/v1/translate` darf auf diesen Daten nicht öffentlich betrieben
+  werden**, solange keine schriftliche Freigabe von BGBM/EDIT vorliegt.
+
+### Nebenbefund für das nächste Milestone: FAMILY-Ränge
+
+Der Anwendungsfall „vage erfassen" (`Acer sp.`, `Asteraceae`) braucht höhere
+Ränge. WCVP liefert davon **keine**:
+
+```bash
+sqlite3 -readonly full.sqlite \
+  "SELECT backbone_id, COUNT(*) FROM taxon_concept WHERE rank='FAMILY' GROUP BY 1;"
+# cdm|629
+```
+
+Der CDM-Ingest bringt **629 FAMILY-Konzepte** — die einzigen im System.
+Sie verteilen sich auf drei `sec.`-Räume (BfN FloraWeb 280, Wisskirchen &
+Haeupler 182, BRUMMITT 1992 167) und tragen **457 verschiedene**
+Familiennamen; **171 Namen** kommen in mehr als einem Raum vor.
+
+Beide Endpunkte finden sie, ohne Änderung:
+
+```bash
+curl -s "localhost:18131/v1/suggest?q=Asteraceae&limit=5"
+# {"results":[{"concept_id":"cdm:concept:1785944e-…","canonical":"Asteraceae","rank":"FAMILY","status":"ACCEPTED",…},
+#             {"concept_id":"cdm:concept:302a66c9-…","canonical":"Asteraceae","rank":"FAMILY",…}]}
+
+curl -s "localhost:18131/v1/concept/cdm:concept:1785944e-9887-4d6d-acb3-6867a28d9c4c"
+# {"concept_id":"…","display":"Asteraceae Dumort.","canonical":"Asteraceae","rank":"FAMILY","status":"ACCEPTED",
+#  "backbone":{"id":"cdm","version":"2026-08-02"},"synonyms":[]}
+```
+
+Auch Gattungen kommen mit: `q=Acer` liefert `Aceraceae` (2×), `Acer` (2×,
+GENUS) und `Aceras`. Alle 629 stehen in `fts_name_map`, sind also
+vollwertig im Suggest-Index.
+
+**Brauchbar wie sie sind — mit zwei benannten Einschränkungen.**
+
+1. **Duplikate ohne Unterscheidungsmerkmal.** `Asteraceae` erscheint
+   zweimal in derselben Trefferliste, mit identischem Score und identischer
+   Anzeige. Weder `/v1/suggest` noch `/v1/concept` geben ein `sec.`-Feld
+   aus — ein Nutzer kann die beiden Treffer nicht auseinanderhalten. Das
+   ist die eine Änderung, die es braucht: `sec` in die Antwort beider
+   Endpunkte, oder eine Deduplikation je Namensform mit Vorzugsraum.
+2. **Familien sind nicht übersetzbar.** Keines der 629 Familienkonzepte
+   trägt eine Relation:
+
+   ```bash
+   sqlite3 -readonly full.sqlite \
+     "SELECT COUNT(*) FROM taxon_concept tc WHERE tc.rank='FAMILY'
+        AND (tc.id IN (SELECT from_concept FROM concept_relation)
+          OR tc.id IN (SELECT to_concept FROM concept_relation));"
+   # 0
+   ```
+
+   `/v1/translate` antwortet für sie immer `no_relation_recorded`. Für die
+   vage Erfassung ist das egal; für eine spätere Harmonisierung der
+   Familienumschreibungen (APG vs. BRUMMITT 1992) ist es die zentrale
+   Lücke.

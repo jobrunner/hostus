@@ -7,6 +7,89 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (SP5, Task 5 — Volllauf, End-to-End-Beweis und UC6-Verdikt)
+- **Neuer `integration`-Test
+  `TestIntegration_TranslateBetweenSecSpaces`** (`internal/app/integration_test.go`):
+  ingestiert WCVP- und CDM-Fixture über `app.Ingest`, serviert sie über
+  `app.New`/`app.Router` hinter einem echten Listener und prüft
+  `POST /v1/translate` über echtes HTTP. Er pinnt **konkrete Konzept-IDs
+  und den Relationstyp**, nicht nur den Status 200: die `sec.`-Trennung
+  (ein Name → zwei Konzepte), `congruent` mit `is_equality` und
+  Richtungsangabe `target_to_source`, `includes` als ausdrücklich **keine**
+  Gleichsetzung, die Abwesenheit der verworfenen
+  `is misapplied name for`-Zeile, die leere `no_relation_recorded`-Antwort
+  für ein WCVP-Konzept und 404 bei unbekanntem Zielraum.
+- **SP5-Verdikt in
+  [`docs/research/reality-check.md`](docs/research/reality-check.md)**, mit
+  dem Befehl hinter jeder Zahl. Voller Ingest (WCVP-Volldump + CDM-Ernte in
+  eine frische Datenbank): **283,92 s**, 440.534 WCVP- und 51.466
+  CDM-Konzepte, 26.002 von 26.346 Relationen geschrieben (die 344
+  Differenz sind genau die verworfenen misapplied-Zeilen), **0
+  Reader-Fehler, 0 unaufgelöste Relationsenden, 0 unaufgelöste Eltern**
+  trotz 9.897 Vorwärtsverweisen auf Elternzeilen — beide Review-Befunde
+  (Elternreihenfolge, Fehlergrenze des Readers) sind am Volldatensatz
+  belegt behoben.
+  - **Die UC6-Zahl: 4.461 von 440.534 WCVP-Konzepten (1,01 %)** haben
+    überhaupt eine CDM-Gegenseite mit Relation; über den Endpunkt sind es
+    in einer 300er-Stichprobe **0** (265× `UNRESOLVABLE` wegen echter
+    Namensmehrdeutigkeit über `sec.`-Räume hinweg, 35× Auflösung auf das
+    relationslose WCVP-Konzept). Gegenprobe mit 200 CDM-Konzepten:
+    **200/200 übersetzt**. Der Endpunkt ist in Ordnung, die Brücke
+    zwischen den Namensräumen fehlt.
+  - Relationsgraph: **60,90 %** der CDM-Konzepte tragen mindestens eine
+    Relation, 39,10 % sind isoliert. 119 verschiedene `sec.`-Referenzen,
+    11 davon decken 96,77 % der Konzepte.
+  - **Lizenz unverändert bindend**: keine Lizenzangabe auffindbar, aus
+    urheberrechtlich geschützter Florenliteratur abgeleitet,
+    `redistribution: unknown` — nur lokale Auswertung, kein öffentlicher
+    Betrieb von `/v1/translate` auf diesen Daten ohne schriftliche
+    Freigabe von BGBM/EDIT.
+  - **Ursache der 265 gemessen statt erschlossen**: `POST /v1/match` auf
+    denselben 300 Namen liefert **265× „Mehrdeutiger Treffer"** und **0×**
+    „kein eindeutiger Treffer" — es ist ausnahmslos Mehrdeutigkeit.
+    `Abies alba Mill.` ist **acht** CDM-Konzepte plus das WCVP-Konzept,
+    also neun gleich starke Kandidaten; über alle Namensformen sind es bis
+    zu **zehn** CDM-Konzepte (über beide Backbones 16).
+  - **Nebenbefund für das nächste Milestone**: der CDM-Ingest bringt die
+    einzigen **629 FAMILY-Konzepte** des Systems (WCVP hat 0). Sie sind
+    über `/v1/suggest` und `/v1/concept` unverändert erreichbar, aber
+    keines trägt eine Relation, und beide Endpunkte geben kein `sec.`-Feld
+    aus — namensgleiche Familien aus verschiedenen Referenzräumen sind in
+    der Antwort nicht unterscheidbar.
+
+### Changed (SP5, Task 5 — Review)
+- **Zwei Produktionskommentare korrigiert**, die eine Zahl nannten, die
+  dieser PR um rund das 30-Fache widerlegt:
+  `internal/application/cdm_ingest.go` (`writeCDM`) und
+  `internal/adapters/sqlite/cdm_test.go` begründeten den zweiten
+  `parent_id`-Unterlauf mit „312 von 697 Zeilen". Gemessen am vollen
+  Artefakt sind es **9.897 von 33.731 (29,34 %)** — knapp ein Drittel, nicht
+  eine Handvoll. Die alte Zahl hätte den Zweiphasen-Schreibpfad wie
+  Überkonstruktion aussehen lassen.
+- **[`docs/how-to/sec-translate-uc6.md`](docs/how-to/sec-translate-uc6.md)
+  warnt jetzt vor dem `verbatim`-Einstieg**, statt ihn kommentarlos
+  anzubieten: 265 von 300 `UNRESOLVABLE`, mit der Begründung, dass ein
+  geteilter Name über `sec.`-Räume hinweg **bauartbedingt** mehrdeutig ist
+  und die Verweigerung deshalb richtiges Verhalten ist, kein Fehler. Plus
+  der Handlungsanweisung, den Namen vorab selbst aufzulösen und
+  `concept_id` zu schicken.
+- **Zwei Einträge in
+  [`docs/explanation/known-gaps.md`](docs/explanation/known-gaps.md)** — die
+  SP5-Auflagen standen bislang nur im Reality-Check: der tote
+  `verbatim`-Pfad und **`sec` fehlt in den Antworten von `/v1/suggest` und
+  `/v1/concept`** (zwei `Asteraceae`-Treffer mit identischer Anzeige,
+  identischem Kanonischen und identischem Score `-17.556039197970815`,
+  unterscheidbar nur an der UUID).
+- **Reality-Check nachgeschärft**: die Ursache der 265 ist jetzt über
+  `/v1/match` belegt statt behauptet; die Stichprobenbezugsgröße ist
+  korrigiert (nur **196 der 300** haben eine CDM-Seite, die *Flora
+  Europaea* überhaupt erreicht — die 0 bleibt, die Vergleichsgröße ändert
+  sich); die Mehrdeutigkeits-Obergrenze ist richtiggestellt (acht statt
+  neun CDM-Konzepte für `Abies alba`, global bis zu zehn); und die
+  200/200-Gegenprobe sagt jetzt ausdrücklich, was sie **nicht** zeigt (sie
+  steigt über `concept_id` ein und umgeht damit genau den Pfad, an dem die
+  300 scheitern).
+
 ### Added (SP6, Task 4 — Offenlegung, End-to-End-Beweis und Verdikt)
 - **Neue Anleitung
   [„Publikationsfähige Synonyme filtern (UC5)"](docs/how-to/synonyms-uc5.md)**
@@ -343,9 +426,11 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ### Fixed (SP5, Task 3 — Review)
 - CDM-Ingest schreibt `parent_id` in einem **zweiten Unterlauf** (wie der
   WCVP-Pfad). Vorher brach der Ingest ab, sobald ein Kind vor seinem Elter
-  in der Datei stand — gemessen am echten Artefakt betrifft das 312 der 697
-  Zeilen mit `parent_uuid`. Die Fixture kann das nicht zeigen, daher ein
-  SQLite-Test mit umgekehrter Reihenfolge.
+  in der Datei stand — gemessen am **vollen** Artefakt betrifft das 9.897
+  der 33.731 Zeilen mit `parent_uuid` (29,34 %; die früher genannten
+  „312 von 697" stammten aus einer Teilmessung und sind um rund das
+  30-Fache zu niedrig, siehe SP5 Task 5). Die Fixture kann das nicht
+  zeigen, daher ein SQLite-Test mit umgekehrter Reihenfolge.
 - Der Umbau des `concept_relation`-Primärschlüssels läuft jetzt in **einer
   Transaktion**, prüft die Bedingung darin erneut, räumt eine
   Scratch-Tabelle vorher weg und verifiziert das Ergebnis per

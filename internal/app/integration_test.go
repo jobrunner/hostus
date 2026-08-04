@@ -1207,3 +1207,338 @@ func assertBundleTraitsSurviveExport(t *testing.T, bundle *sqlite.DB) {
 		t.Fatalf("bundle: len(traitSets) = %d, want 2 (eive, tichy2023) — traits must survive the offline bundle export", len(traitSets))
 	}
 }
+
+// The three CDM fixture concepts and the two sec. reference spaces SP5's
+// end-to-end assertions pin. All five ids come from
+// pipelines/cdm/fixtures/cdm-{concepts,relations}-fixture.csv, which is a
+// verbatim slice of the real crawl — so an id asserted here is an id the
+// upstream source actually issued, not a test invention.
+const (
+	// cdmAbiesWisskirchen is Abies alba Mill. sec. Wisskirchen & Haeupler
+	// 1998, the crawl's reference concept.
+	cdmAbiesWisskirchen = "cdm:concept:872088a4-95f4-472c-ae79-a29028bb3fbf"
+	// cdmAbiesFloraEuropaea is the SAME NAME in a different sec. space —
+	// the pair that makes the sec. separation visible.
+	cdmAbiesFloraEuropaea = "cdm:concept:90ee17be-d455-4564-949d-9c53e27a6a6f"
+	// cdmPinusAbiesAuct is Pinus abies L. 1753 sec. "Andere Referenzen (fuer
+	// auct. Synonyme)". It is the end of BOTH a congruent row and a
+	// misapplied-name row against cdmAbiesWisskirchen; only the former may
+	// ever surface.
+	cdmPinusAbiesAuct = "cdm:concept:122053a6-abb7-4d4c-9f87-b7b8f6d1afef"
+	// cdmAconitumNapellusWisskirchen "Includes" cdmAconitumNeomontanum —
+	// the non-congruent, direction-bearing case.
+	cdmAconitumNapellusWisskirchen = "cdm:concept:6a24cc06-c5fc-4b29-aaea-ee21be1130a6"
+	cdmAconitumNeomontanum         = "cdm:concept:568cacd9-c027-43f2-958c-af7ea6e0baef"
+
+	secFloraEuropaea = "6eeeeacc-1da9-4839-98d6-3169c4237ecd"
+	secEhrendorfer   = "790d6644-39f3-4173-ae6c-ec6cbf951a10"
+	secAuctSynonyme  = "be62f034-87fd-40e2-bd16-da024e05eaf5"
+)
+
+// integrationTranslateResponse mirrors internal/adapters/http.translateResponseDTO
+// (see translate.go), trimmed to the fields these assertions read.
+type integrationTranslateResponse struct {
+	Source struct {
+		ConceptID string `json:"concept_id"`
+		Canonical string `json:"canonical"`
+		Sec       struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		} `json:"sec"`
+	} `json:"source"`
+	TargetSpace struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	} `json:"target_space"`
+	MaxHops    int    `json:"max_hops"`
+	Result     string `json:"result"`
+	Candidates []struct {
+		ConceptID          string  `json:"concept_id"`
+		Canonical          string  `json:"canonical"`
+		Rank               string  `json:"rank"`
+		StoredRelation     string  `json:"stored_relation"`
+		RelationFromSource *string `json:"relation_from_source"`
+		HasInverse         bool    `json:"has_inverse"`
+		Direction          string  `json:"direction"`
+		Statement          struct {
+			From     string `json:"from"`
+			Relation string `json:"relation"`
+			To       string `json:"to"`
+		} `json:"statement"`
+		IsEquality bool   `json:"is_equality"`
+		Hops       int    `json:"hops"`
+		Source     string `json:"source"`
+		Sec        struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		} `json:"sec"`
+	} `json:"candidates"`
+	Note             string            `json:"note"`
+	BackboneVersions map[string]string `json:"backbone_versions"`
+}
+
+// postTranslate drives POST /v1/translate over real HTTP, asserts the given
+// status, and decodes the envelope.
+func postTranslate(t *testing.T, client *http.Client, baseURL, body string, wantStatus int) integrationTranslateResponse {
+	t.Helper()
+	resp, err := client.Post(baseURL+"/v1/translate", "application/json", bytes.NewBufferString(body))
+	if err != nil {
+		t.Fatalf("POST /v1/translate %s: %v", body, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != wantStatus {
+		t.Fatalf("POST /v1/translate %s: status = %d, want %d", body, resp.StatusCode, wantStatus)
+	}
+	var out integrationTranslateResponse
+	if wantStatus != http.StatusOK {
+		return out
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decoding /v1/translate response: %v", err)
+	}
+	return out
+}
+
+// TestIntegration_TranslateBetweenSecSpaces is SP5's end-to-end proof.
+// It ingests the WCVP fixture TOGETHER with the CDM concept-source fixture
+// through the exact code path `hostus ingest` uses (app.Ingest), serves the
+// result through the exact code path `hostus serve` uses (app.New +
+// app.Router) behind a real listener, and drives POST /v1/translate purely
+// as an HTTP client would.
+//
+// What it pins, beyond "200 OK":
+//
+//  1. The sec. separation itself: one name (Abies alba Mill.) is TWO
+//     distinct concepts, and translating between them names both ids.
+//  2. The relation TYPE and its direction, per candidate — congruent
+//     (is_equality) in one direction, includes (NOT equality) in the other.
+//  3. That the dropped misapplied-name row is genuinely absent while the
+//     congruent row between the same two concepts is present.
+//  4. That a WCVP concept translates to an explicit, empty
+//     "no_relation_recorded" answer rather than to a name guess. This is not
+//     a corner case: it is the measured UC6 reality at full scale (see
+//     docs/research/reality-check.md, SP5) — the WCVP and CDM namespaces
+//     share no ids, so no WCVP concept carries a concept_relation row.
+func TestIntegration_TranslateBetweenSecSpaces(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "hostus.sqlite")
+
+	ctx := context.Background()
+	reports, err := app.Ingest(ctx, "testdata/dataset-cdm.yaml", dbPath)
+	if err != nil {
+		t.Fatalf("app.Ingest: unexpected error: %v", err)
+	}
+	if len(reports.ConceptSources) != 1 {
+		t.Fatalf("len(reports.ConceptSources) = %d, want 1 (the cdm concept source)", len(reports.ConceptSources))
+	}
+	if reports.ConceptSources[0].RelationsWritten == 0 {
+		t.Fatal("cdm ingest wrote no relations — /v1/translate cannot be exercised")
+	}
+
+	cfg := testConfig()
+	cfg.SQLite.Path = dbPath
+	a, err := app.New(cfg)
+	if err != nil {
+		t.Fatalf("app.New: unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Shutdown(context.Background()) })
+
+	ts := httptest.NewServer(a.Router)
+	defer ts.Close()
+	client := ts.Client()
+
+	assertTranslateCongruentIntoFloraEuropaea(t, client, ts.URL)
+	assertTranslateIncludesIsNotEquality(t, client, ts.URL)
+	assertTranslateDropsMisappliedRow(t, client, ts.URL)
+	assertTranslateWCVPHasNoRelation(t, client, ts.URL)
+	assertTranslateUnknownTargetSpace(t, client, ts.URL)
+}
+
+// assertTranslateCongruentIntoFloraEuropaea translates Abies alba Mill. sec.
+// Wisskirchen & Haeupler 1998 into TUTIN et al.: Flora Europaea and pins the
+// whole answer: exactly one candidate, its id, its sec. space, the stored
+// triple verbatim, the direction (the row points AT the source), the
+// direction-safe reading, and is_equality.
+func assertTranslateCongruentIntoFloraEuropaea(t *testing.T, client *http.Client, baseURL string) {
+	t.Helper()
+	res := postTranslate(t, client, baseURL,
+		`{"concept_id":"`+cdmAbiesWisskirchen+`","target_space":"`+secFloraEuropaea+`"}`, http.StatusOK)
+
+	if res.Result != "translated" {
+		t.Fatalf("result = %q, want %q", res.Result, "translated")
+	}
+	if res.Source.ConceptID != cdmAbiesWisskirchen {
+		t.Errorf("source.concept_id = %q, want %q", res.Source.ConceptID, cdmAbiesWisskirchen)
+	}
+	if res.Source.Sec.Title != "Wisskirchen & Haeupler 1998: Standardliste der Farn- und Blütenpflanzen Deutschlands" {
+		t.Errorf("source.sec.title = %q, want the Wisskirchen & Haeupler 1998 Standardliste", res.Source.Sec.Title)
+	}
+	if res.TargetSpace.Title != "TUTIN et al.: Flora Europaea" {
+		t.Errorf("target_space.title = %q, want %q", res.TargetSpace.Title, "TUTIN et al.: Flora Europaea")
+	}
+	if res.MaxHops != 1 {
+		t.Errorf("max_hops = %d, want 1", res.MaxHops)
+	}
+	if res.BackboneVersions["cdm"] != "2026-08-02" {
+		t.Errorf("backbone_versions[cdm] = %q, want %q", res.BackboneVersions["cdm"], "2026-08-02")
+	}
+	if len(res.Candidates) != 1 {
+		t.Fatalf("len(candidates) = %d, want exactly 1 (the Flora Europaea Abies alba)", len(res.Candidates))
+	}
+	assertCongruentCandidate(t, res)
+}
+
+// assertCongruentCandidate pins the single candidate of the congruent
+// translation above. It is split out from its caller purely so neither
+// function carries the whole envelope-plus-candidate assertion set (gocognit).
+func assertCongruentCandidate(t *testing.T, res integrationTranslateResponse) {
+	t.Helper()
+	c := res.Candidates[0]
+	// The candidate is a DIFFERENT concept carrying the SAME name: that is
+	// the sec. separation SP5 exists to preserve.
+	if c.ConceptID != cdmAbiesFloraEuropaea {
+		t.Errorf("candidate.concept_id = %q, want %q", c.ConceptID, cdmAbiesFloraEuropaea)
+	}
+	if c.ConceptID == res.Source.ConceptID {
+		t.Error("candidate and source are the same concept — the two sec. spaces were merged")
+	}
+	if c.Canonical != "Abies alba" || res.Source.Canonical != "Abies alba" {
+		t.Errorf("canonicals = %q / %q, want both %q", res.Source.Canonical, c.Canonical, "Abies alba")
+	}
+	if c.Sec.ID != secFloraEuropaea {
+		t.Errorf("candidate.sec.id = %q, want %q", c.Sec.ID, secFloraEuropaea)
+	}
+	if c.StoredRelation != string(domain.RelationCongruent) {
+		t.Errorf("candidate.stored_relation = %q, want %q", c.StoredRelation, domain.RelationCongruent)
+	}
+	if !c.IsEquality {
+		t.Error("candidate.is_equality = false, want true for a congruent relation")
+	}
+	if c.Hops != 1 {
+		t.Errorf("candidate.hops = %d, want 1", c.Hops)
+	}
+	if c.Source != "cdm" {
+		t.Errorf("candidate.source = %q, want %q", c.Source, "cdm")
+	}
+	assertCongruentCandidateDirection(t, res)
+}
+
+// assertCongruentCandidateDirection pins the direction half of the same
+// candidate: the stored row reads "Flora Europaea congruent Wisskirchen",
+// i.e. it points AT the source, and the response must say so rather than
+// silently re-pointing it.
+func assertCongruentCandidateDirection(t *testing.T, res integrationTranslateResponse) {
+	t.Helper()
+	c := res.Candidates[0]
+	if c.Direction != "target_to_source" {
+		t.Errorf("candidate.direction = %q, want %q", c.Direction, "target_to_source")
+	}
+	if c.Statement.From != cdmAbiesFloraEuropaea || c.Statement.To != cdmAbiesWisskirchen {
+		t.Errorf("candidate.statement = %s -> %s, want %s -> %s",
+			c.Statement.From, c.Statement.To, cdmAbiesFloraEuropaea, cdmAbiesWisskirchen)
+	}
+	if c.Statement.Relation != string(domain.RelationCongruent) {
+		t.Errorf("candidate.statement.relation = %q, want %q", c.Statement.Relation, domain.RelationCongruent)
+	}
+	// congruent is its own inverse, so the direction-safe reading exists.
+	if !c.HasInverse || c.RelationFromSource == nil || *c.RelationFromSource != string(domain.RelationCongruent) {
+		t.Errorf("candidate.relation_from_source = %v (has_inverse=%v), want %q",
+			c.RelationFromSource, c.HasInverse, domain.RelationCongruent)
+	}
+}
+
+// assertTranslateIncludesIsNotEquality translates Aconitum napellus subsp.
+// napellus sec. Wisskirchen into EHRENDORFER's list, where the stored row
+// reads "Wisskirchen INCLUDES Ehrendorfer" — an OUTGOING, non-congruent
+// edge. It is the counter-case to the congruent one above: same endpoint,
+// same shape, different relation, and is_equality MUST be false.
+func assertTranslateIncludesIsNotEquality(t *testing.T, client *http.Client, baseURL string) {
+	t.Helper()
+	res := postTranslate(t, client, baseURL,
+		`{"concept_id":"`+cdmAconitumNapellusWisskirchen+`","target_space":"`+secEhrendorfer+`"}`, http.StatusOK)
+
+	if res.Result != "translated" {
+		t.Fatalf("result = %q, want %q", res.Result, "translated")
+	}
+	if len(res.Candidates) != 1 {
+		t.Fatalf("len(candidates) = %d, want exactly 1", len(res.Candidates))
+	}
+	c := res.Candidates[0]
+	if c.ConceptID != cdmAconitumNeomontanum {
+		t.Errorf("candidate.concept_id = %q, want %q", c.ConceptID, cdmAconitumNeomontanum)
+	}
+	if c.StoredRelation != string(domain.RelationIncludes) {
+		t.Errorf("candidate.stored_relation = %q, want %q", c.StoredRelation, domain.RelationIncludes)
+	}
+	if c.IsEquality {
+		t.Error("candidate.is_equality = true for an `includes` relation — that would claim identity the source never asserted")
+	}
+	if c.Direction != "source_to_target" {
+		t.Errorf("candidate.direction = %q, want %q", c.Direction, "source_to_target")
+	}
+	if c.Statement.From != cdmAconitumNapellusWisskirchen || c.Statement.To != cdmAconitumNeomontanum {
+		t.Errorf("candidate.statement = %s -> %s, want %s -> %s",
+			c.Statement.From, c.Statement.To, cdmAconitumNapellusWisskirchen, cdmAconitumNeomontanum)
+	}
+	if c.RelationFromSource == nil || *c.RelationFromSource != string(domain.RelationIncludes) {
+		t.Errorf("candidate.relation_from_source = %v, want %q", c.RelationFromSource, domain.RelationIncludes)
+	}
+	if c.Rank != string(domain.RankSubspecies) {
+		t.Errorf("candidate.rank = %q, want %q", c.Rank, domain.RankSubspecies)
+	}
+}
+
+// assertTranslateDropsMisappliedRow translates into the "Andere Referenzen
+// (fuer auct. Synonyme)" space, which the fixture connects to the source by
+// TWO rows for the same concept pair: a congruent one and a misapplied-name
+// one (is_concept_relation=false). The misapplied row is dropped at ingest,
+// so exactly one candidate may come back and its relation must be congruent
+// — this is where a regression in that drop rule would show up as a claim
+// the source never made about circumscriptions.
+func assertTranslateDropsMisappliedRow(t *testing.T, client *http.Client, baseURL string) {
+	t.Helper()
+	res := postTranslate(t, client, baseURL,
+		`{"concept_id":"`+cdmAbiesWisskirchen+`","target_space":"`+secAuctSynonyme+`"}`, http.StatusOK)
+
+	if len(res.Candidates) != 1 {
+		t.Fatalf("len(candidates) = %d, want exactly 1 — the misapplied-name row must not reach /v1/translate", len(res.Candidates))
+	}
+	c := res.Candidates[0]
+	if c.ConceptID != cdmPinusAbiesAuct {
+		t.Errorf("candidate.concept_id = %q, want %q", c.ConceptID, cdmPinusAbiesAuct)
+	}
+	if c.StoredRelation != string(domain.RelationCongruent) {
+		t.Errorf("candidate.stored_relation = %q, want %q", c.StoredRelation, domain.RelationCongruent)
+	}
+	if c.StoredRelation == string(domain.RelationMisapplied) {
+		t.Error("a misapplied-name row surfaced as a translation candidate")
+	}
+}
+
+// assertTranslateWCVPHasNoRelation drives the honest empty answer: a WCVP
+// concept has no concept_relation row at all, so translating it into a CDM
+// sec. space is a 200 with an EMPTY candidates array and a note — never a
+// same-name concept dressed up as a translation.
+func assertTranslateWCVPHasNoRelation(t *testing.T, client *http.Client, baseURL string) {
+	t.Helper()
+	res := postTranslate(t, client, baseURL,
+		`{"concept_id":"`+festucaOvinaConceptID+`","target_space":"`+secFloraEuropaea+`"}`, http.StatusOK)
+
+	if res.Result != "no_relation_recorded" {
+		t.Errorf("result = %q, want %q", res.Result, "no_relation_recorded")
+	}
+	if len(res.Candidates) != 0 {
+		t.Errorf("len(candidates) = %d, want 0 — a WCVP concept carries no concept_relation row", len(res.Candidates))
+	}
+	if res.Note == "" {
+		t.Error("note is empty, want the explicit \"keine erfasste Relation\" statement")
+	}
+}
+
+// assertTranslateUnknownTargetSpace pins that a typo'd sec. space is a 404,
+// not an empty translation — the two answers mean entirely different things.
+func assertTranslateUnknownTargetSpace(t *testing.T, client *http.Client, baseURL string) {
+	t.Helper()
+	postTranslate(t, client, baseURL,
+		`{"concept_id":"`+cdmAbiesWisskirchen+`","target_space":"not-a-sec-space"}`, http.StatusNotFound)
+}

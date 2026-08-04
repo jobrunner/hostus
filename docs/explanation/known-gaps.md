@@ -90,3 +90,29 @@ nichts kostet — dieselbe Lösung, die SP6 für ein `1+len()+len()` gewählt ha
 
 **Bis dahin:** vor einer Änderung an `internal/adapters/telemetry` lokal
 `make mutation PKG=./internal/adapters/telemetry` laufen lassen.
+
+## `poc/` wird von `make verify` weder kompiliert noch gelintet
+
+**Stand:** 2026-08-04 · **Betrifft:** `poc/go.mod`, `scripts/debt-guard.sh:39,65`
+
+`poc/` ist ein eigenes Go-Modul (`github.com/jobrunner/hostus-poc`) ohne
+`go.work`, und der Debt-Guard nimmt `^\./poc/` ausdrücklich aus. Damit
+läuft über die Messharnesse **kein** Schritt von `make verify`: kein
+`go build`, kein `go vet`, kein Linter, kein Test.
+
+**Warum das zählt.** Die Harnesse unter `poc/measure/` sind keine
+Wegwerfskripte — sie produzieren die Zahlen, auf denen Architektur-
+entscheidungen beruhen (`docs/research/reality-check.md`,
+`docs/research/suggest-quality.md`). SP7/Task 1 hat den strukturellen
+Preis sichtbar gemacht: `poc/measure/suggestquality` verglich den
+Konzeptstatus gegen `"accepted"`, während die Spalte `ACCEPTED` speichert.
+Der Tiebreak war toter Code und fiel erst im Review auf, nicht in der CI.
+Auf das Ergebnis wirkte es dort nicht — beim nächsten Mal kann es das.
+
+**Was es lösen würde:** ein `go.work` mit `.` und `./poc`, oder ein
+`verify`-Schritt, der `cd poc && go build ./... && go vet ./...` ausführt.
+Das Lint-Regelwerk der Hexagon-Grenzen soll für `poc/` **nicht** gelten —
+gefordert ist nur, dass der Code kompiliert und `vet`-sauber ist.
+
+**Bis dahin:** nach einer Änderung an `poc/**` von Hand
+`nix develop -c bash -c 'cd poc && gofmt -l . && go vet ./...'` laufen lassen.

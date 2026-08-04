@@ -28,10 +28,23 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   - **Gegen die Planannahme:** ein Cap vor der Rangdiversität kostet bei
     **37 von 38 Präfixen null Gattungen** (Ausnahme `ca`: 239 von 1.032).
     Das Ordnungsargument „Diversität vor Cap" trägt mit dieser Zahl nicht.
+  - **Kontrollen zur Query-Form** (Review): auch die schlankeren Varianten
+    kosten **+64 % bis +79 %** p95 — die Produktionsform (nur `in_area`,
+    keine Restriktion) liegt bei **383,5 ms (+64 %)**. Schon das bloße
+    Berechnen von `in_area` für die Sortierung ist der teure Teil.
+  - **Das Abnahmekriterium „*Acer* in den Top 10 für `ac`" ist ohne
+    Gebietsscoping nicht erreichbar:** 142 `Ac*`-Gattungen global gegen
+    **18** in Mitteleuropa. Es steht darum nach Scope getrennt im Dokument.
 - **`poc/measure/suggestquality`** (neuer Harness, misst die Szenarien
   direkt gegen die Produktions-SQL, Index strikt lesend geöffnet) und
   **`--runs` für `poc/measure/latency`**, das die p50/p95 jetzt als Band
   über mehrere vollständige Läufe ausgibt statt als Einzellauf.
+- **Neue bekannte Lücke
+  [„`poc/` wird von `make verify` weder kompiliert noch gelintet"](docs/explanation/known-gaps.md)**
+  — `poc/` ist ein eigenes Modul ohne `go.work` und im Debt-Guard
+  ausgenommen, weshalb die Messharnesse ungeprüft bleiben. SP7/Task 1 hat
+  den Preis gezeigt: ein toter Statusvergleich im Harness fiel erst im
+  Review auf (behoben, ohne Auswirkung auf die Zahlen).
 
 ### Added (SP6, Task 4 — Offenlegung, End-to-End-Beweis und Verdikt)
 - **Neue Anleitung

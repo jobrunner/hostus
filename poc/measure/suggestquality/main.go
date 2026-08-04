@@ -413,6 +413,13 @@ func ord(r string) int {
 	return unknownRankOrder
 }
 
+// isAccepted mirrors domain.ParseStatus's case-insensitivity. taxon_concept
+// stores "ACCEPTED"/"UNKNOWN"; comparing against a lowercase literal would
+// make the accepted-first tiebreak dead code.
+func isAccepted(status string) bool {
+	return strings.EqualFold(status, "accepted")
+}
+
 // rankSuggestions mirrors internal/domain.RankSuggestions. PrefixHit is
 // always true here, so that key is omitted.
 func rankSuggestions(items []item) []item {
@@ -422,7 +429,7 @@ func rankSuggestions(items []item) []item {
 		if a.inArea != b.inArea {
 			return a.inArea
 		}
-		aa, ba := a.status == "accepted", b.status == "accepted"
+		aa, ba := isAccepted(a.status), isAccepted(b.status)
 		if aa != ba {
 			return aa
 		}

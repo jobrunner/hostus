@@ -58,3 +58,38 @@ Ist die Konsole aus, registriert der Router **gar nichts** unter `/`: sowohl
 `/` als auch jeder Asset-Pfad antworten mit 404. Die API-Oberfläche (`/v1/*`,
 `/health/*`, `/metrics`, `/openapi`) ist in beiden Fällen identisch — die
 Konsole spricht dieselbe öffentliche HTTP-API wie ein Browser.
+
+### Was die Konsole ausliefert
+
+Die Konsole ist **ein einziges, in sich geschlossenes HTML-Dokument**: CSS und
+JavaScript sind hineingeschrieben, nicht nachgeladen. Grund ist der globale
+Token-Bucket (20 rps), den die Konsole sich mit der API teilt — ein Seitenaufruf
+mit einem Dutzend Einzel-Requests würde genau das Budget aufbrauchen, dessen
+Latenz man beobachten will.
+
+Es gibt **keine externe Referenz**: kein CDN, keine Web-Schrift, kein Bild von
+außerhalb. Das ist Bedingung, nicht Stil — hostus ist offline-first (UC1 ist der
+Feldeinsatz mit einem Offline-Bundle). Abgesichert wird das durch den Header
+
+```
+Content-Security-Policy: default-src 'self'; script-src 'sha256-…';
+  style-src 'sha256-…'; connect-src 'self'; base-uri 'none';
+  form-action 'none'; frame-ancestors 'none'; object-src 'none'
+```
+
+Die beiden eingebetteten Blöcke sind per **SHA-256-Hash** zugelassen, nicht per
+`'unsafe-inline'`: die Seite läuft, alles nachträglich Eingeschleuste nicht.
+
+Pfadregeln:
+
+| Pfad | Antwort |
+| ---- | ------- |
+| `/` | die Konsole |
+| `/assets/app.js`, `/assets/style.css` | die Einzel-Assets mit eigenem `Content-Type` und `ETag` (die Seite selbst lädt sie nie) |
+| unbekannter Pfad **außerhalb** `/v1`, `/health`, `/metrics`, `/openapi` (GET/HEAD) | die Konsole (SPA-Deep-Link) |
+| unbekannter Pfad **unter** diesen Präfixen | 404 wie bisher |
+| unbekannter Pfad, andere Methode als GET/HEAD | 404 wie bisher |
+
+Dokument und Assets tragen ein starkes `ETag`; ein Reload kostet einen 304.
+API-Antworten werden von der Seite **nie** zwischengespeichert (`no-store`) —
+die Konsole soll zeigen, was der Dienst gerade geantwortet hat.

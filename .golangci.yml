@@ -158,9 +158,28 @@ linters:
         # use case's only caller in SP1. Every other cross-adapter/
         # cross-layer boundary (no internal/app, no sibling adapters) still
         # applies.
+        # Task SP8-T2: the third and last narrow exception, same shape as
+        # adapters-mcp above. internal/adapters/ui is a LEAF asset package
+        # — it embeds the test console's HTML/CSS/JS and holds no
+        # behaviour, no state and no imports of its own beyond stdlib. The
+        # http adapter has to mount it (there is no port to mount it
+        # through: a static document is not a use case), and the coupling
+        # the "no adapter-to-adapter imports" rule guards against —
+        # behavioural cross-talk between adapters — cannot arise from it.
+        #
+        # The exception is scoped to the ONE file that mounts it, and is
+        # written as an allow-list rather than a hole in a deny-list, so
+        # ui.go cannot pick up any other cross-layer import by accident.
+        adapters-http-ui:
+          files:
+            - "**/internal/adapters/http/ui.go"
+          allow:
+            - $gostd
+            - github.com/jobrunner/hostus/internal/adapters/ui
         adapters-http:
           files:
             - "**/internal/adapters/http/**"
+            - "!**/internal/adapters/http/ui.go"
           deny:
             # NOTE the trailing "/" on internal/app/: depguard's pkg match
             # is a plain string-prefix check with no path-segment boundary,

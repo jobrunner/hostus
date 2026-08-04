@@ -7,6 +7,33 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (SP8, Task 2 — eingebettete Testkonsole)
+- **Neues Paket `internal/adapters/ui`**: die Testkonsole als
+  `embed.FS`-Asset. Ausgeliefert wird **ein** in sich geschlossenes
+  HTML-Dokument — CSS und JavaScript werden hineingeschrieben, nicht
+  nachgeladen, weil die Konsole sich den globalen 20-rps-Token-Bucket mit
+  der API teilt. Kein CDN, keine Web-Schrift, keine externe Referenz;
+  Vanilla HTML/CSS/JS ohne Build-Schritt.
+- **`Content-Security-Policy: default-src 'self'`** mit
+  `script-src`/`style-src` als **SHA-256-Hash** der eingebetteten Blöcke
+  statt `'unsafe-inline'`, dazu `base-uri`/`form-action`/`frame-ancestors`/
+  `object-src` auf `'none'`. Keine Inline-Handler, kein `eval`.
+- **Vier Panels** (deutschsprachig): Suggest mit Präfix- und
+  Rangmix-Auswertung je Trefferliste, Konzept (Klassifikation, Xrefs je
+  Autorität mit **allen** IDs, Verbreitung, Synonyme, Traits,
+  `?relevance=publication`), Match und Translate. Eine leere
+  Translate-Antwort wird als **Aussage** („keine Relation erfasst")
+  gerendert, nie als Fehler.
+- **Pfadregeln:** `/` liefert die Konsole; `/assets/app.js` und
+  `/assets/style.css` liefern die Einzel-Assets mit eigenem `Content-Type`
+  und `ETag`; ein unbekannter Pfad **außerhalb** `/v1`, `/health`,
+  `/metrics`, `/openapi` liefert per GET/HEAD ebenfalls die Konsole
+  (SPA-Deep-Link), ein unbekannter Pfad **darunter** behält seine 404.
+  Ein 405 bleibt ein 405.
+- **Die SPA-Weiche liegt in derselben Middleware-Kette** wie alles andere:
+  gorilla/mux umhüllt `NotFoundHandler` nicht selbst, deshalb wird die
+  Kette einmal als Slice gebaut und beidseitig angewendet.
+
 ### Added (SP8, Task 1 — Schalter für die eingebettete Testkonsole)
 - **Neuer Konfigurationsschlüssel `ui.enabled`** (Default **an**) mit
   `UIConfig` in `internal/config`, Umgebungsvariable `HOSTUS_UI_ENABLED`

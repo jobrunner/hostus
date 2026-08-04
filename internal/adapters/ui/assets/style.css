@@ -1,0 +1,133 @@
+:root {
+  --fg: #16191d;
+  --muted: #5d6672;
+  --bg: #ffffff;
+  --panel: #f6f7f9;
+  --line: #ccd2da;
+  --bad: #a4142c;
+  --bad-bg: #fdecef;
+  --ok: #14603a;
+  --ok-bg: #e9f5ee;
+  --warn: #7a4b00;
+  --warn-bg: #fdf3e0;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 1rem;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+h1 { font-size: 1.25rem; margin: 0 0 .2rem; }
+h2 { font-size: 1rem; margin: 0 0 .5rem; padding-bottom: .25rem; border-bottom: 2px solid var(--line); }
+h3 { font-size: .85rem; margin: .9rem 0 .3rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+
+header { margin-bottom: 1rem; }
+.hint { margin: 0; color: var(--muted); }
+
+main {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(30rem, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+section {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: .75rem;
+  min-width: 0;
+}
+
+.controls { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; margin-bottom: .5rem; }
+.field { display: flex; flex-direction: column; gap: .15rem; }
+.field label { font-size: .75rem; color: var(--muted); }
+.grow { flex: 1 1 12rem; }
+
+input, textarea, button {
+  font: inherit;
+  color: inherit;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: .3rem .4rem;
+  background: var(--bg);
+}
+input[type="number"] { width: 5.5rem; }
+textarea { width: 100%; min-height: 6rem; resize: vertical; }
+button { cursor: pointer; background: var(--fg); color: var(--bg); border-color: var(--fg); }
+button:disabled { opacity: .45; cursor: default; }
+
+.url {
+  margin: .1rem 0 .5rem;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: .75rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.scroll { overflow-x: auto; }
+
+table { border-collapse: collapse; width: 100%; font-size: .8rem; }
+/* Spalten laufen nie um: eine breite Tabelle scrollt waagerecht in ihrem
+   eigenen Container. Umbrechende Zellen erzeugen sonst hohe, fast leere
+   Zeilen, in denen sich die eigentliche Aussage verliert. */
+.scroll > table { width: max-content; min-width: 100%; }
+.scroll > table th, .scroll > table td { white-space: nowrap; }
+th, td { text-align: left; padding: .2rem .35rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.name { font-style: italic; }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .75rem; }
+
+tr.hit { cursor: pointer; }
+tr.hit:hover { background: #e8ecf1; }
+tr.selected { background: #dde6f2; }
+tr.noprefix td { background: var(--bad-bg); }
+
+.badge {
+  display: inline-block;
+  padding: 0 .3rem;
+  border-radius: 3px;
+  font-size: .7rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.badge.bad { background: var(--bad-bg); color: var(--bad); }
+.badge.ok { background: var(--ok-bg); color: var(--ok); }
+.badge.warn { background: var(--warn-bg); color: var(--warn); }
+.badge.neutral { background: #e5e8ec; color: var(--muted); }
+
+.summary { margin: .35rem 0 .6rem; display: flex; flex-direction: column; gap: .25rem; }
+.summary .line { padding: .25rem .4rem; border-radius: 3px; background: #e5e8ec; }
+.summary .line.bad { background: var(--bad-bg); color: var(--bad); font-weight: 600; }
+.summary .line.ok { background: var(--ok-bg); color: var(--ok); }
+.zero { color: var(--bad); font-weight: 600; }
+
+.statement {
+  padding: .5rem .6rem;
+  border-left: 4px solid var(--muted);
+  background: #eceff3;
+}
+.statement strong { display: block; margin-bottom: .2rem; }
+
+.error {
+  padding: .5rem .6rem;
+  border-left: 4px solid var(--bad);
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+
+.empty { color: var(--muted); font-style: italic; }
+.kv { margin: 0; font-size: .8rem; }
+.kv div { display: flex; gap: .4rem; padding: .1rem 0; }
+.kv dt { flex: 0 0 9rem; color: var(--muted); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+
+.busy { color: var(--muted); }

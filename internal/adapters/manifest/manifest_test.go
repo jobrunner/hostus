@@ -132,7 +132,11 @@ func TestParse_ValidExampleManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse(dataset.example.yaml): unexpected error: %v", err)
 	}
-	if got, want := len(ds.Backbones), 4; got != want {
+	// Three, not four: SP9 moved floraveg out of `backbones:` into
+	// `name_spaces:` — it pins a canonical CSV, not a DwC-A directory, and
+	// under `backbones:` it was read by the WCVP reader and thus not
+	// ingestible at all (see manifest.NameSpace's doc comment).
+	if got, want := len(ds.Backbones), 3; got != want {
 		t.Fatalf("len(Backbones) = %d, want %d", got, want)
 	}
 	if got, want := len(ds.TraitVocabularies), 3; got != want {
@@ -154,10 +158,36 @@ func TestParse_ValidExampleManifest(t *testing.T) {
 			t.Errorf("backbone %q has empty Path", b.ID)
 		}
 	}
-	for _, want := range []string{"wcvp", "colxr", "euromed", "floraveg"} {
+	for _, want := range []string{"wcvp", "colxr", "euromed"} {
 		if !ids[want] {
 			t.Errorf("Backbones missing %q", want)
 		}
+	}
+	if ids["floraveg"] {
+		t.Error("Backbones still lists floraveg — it belongs under name_spaces:, where it is actually readable")
+	}
+}
+
+// TestParse_ValidExampleManifestNameSpaces pins the SP9 section of the
+// SHIPPED example manifest (the one operators copy), separately from the
+// backbone/vocabulary assertions above so neither test grows unreadable.
+func TestParse_ValidExampleManifestNameSpaces(t *testing.T) {
+	ds, err := manifest.Parse("../../../dataset.example.yaml")
+	if err != nil {
+		t.Fatalf("Parse(dataset.example.yaml): unexpected error: %v", err)
+	}
+	if got, want := len(ds.NameSpaces), 1; got != want {
+		t.Fatalf("len(NameSpaces) = %d, want %d", got, want)
+	}
+	ns := ds.NameSpaces[0]
+	if ns.ID != "floraveg" {
+		t.Errorf("NameSpaces[0].ID = %q, want %q", ns.ID, "floraveg")
+	}
+	if ns.Redistribution != "unknown" {
+		t.Errorf("NameSpaces[0].Redistribution = %q, want %q — the bundle gate depends on it", ns.Redistribution, "unknown")
+	}
+	if ns.Version == "" || ns.Path == "" {
+		t.Errorf("NameSpaces[0] version/path = %q/%q, want both non-empty", ns.Version, ns.Path)
 	}
 }
 
@@ -364,5 +394,68 @@ concept_sources:
 	}
 	if _, err := manifest.Parse(path); err == nil {
 		t.Fatal("a concept source without redistribution must fail schema validation")
+	}
+}
+
+// TestParse_ValidManifestNameSpaces pins the SP9 `name_spaces:` section: it
+// decodes, its optional license/source stay optional (the name-list sources
+// are precisely the ones with no findable license), and its path is resolved
+// against the manifest's own directory like every other artifact path.
+func TestParse_ValidManifestNameSpaces(t *testing.T) {
+	ds, err := manifest.Parse("testdata/dataset-valid.yaml")
+	if err != nil {
+		t.Fatalf("Parse: unexpected error: %v", err)
+	}
+
+	if got, want := len(ds.NameSpaces), 1; got != want {
+		t.Fatalf("len(NameSpaces) = %d, want %d", got, want)
+	}
+	ns := ds.NameSpaces[0]
+	if ns.ID != "floraveg" {
+		t.Errorf("NameSpaces[0].ID = %q, want %q", ns.ID, "floraveg")
+	}
+	if ns.Version != "2023-01-03" {
+		t.Errorf("NameSpaces[0].Version = %q, want %q", ns.Version, "2023-01-03")
+	}
+	if ns.License != "" {
+		t.Errorf("NameSpaces[0].License = %q, want empty — FloraVeg has no findable license", ns.License)
+	}
+	if ns.Redistribution != "unknown" {
+		t.Errorf("NameSpaces[0].Redistribution = %q, want %q", ns.Redistribution, "unknown")
+	}
+	if ns.Note == "" {
+		t.Error("NameSpaces[0].Note = empty, want the manifest's note carried through")
+	}
+	wantPath := filepath.Join("testdata", "..", "..", "namelist", "testdata", "floraveg-sample.csv")
+	if ns.Path != wantPath {
+		t.Errorf("NameSpaces[0].Path = %q, want %q", ns.Path, wantPath)
+	}
+}
+
+// TestParse_NameSpaceUnknownFieldIsRejected pins that the new section is
+// covered by BOTH guards (additionalProperties:false and KnownFields(true)),
+// not silently permissive: `taxonomy` belongs to a trait vocabulary, not to a
+// name space, and pasting it here must fail rather than be ignored.
+func TestParse_NameSpaceUnknownFieldIsRejected(t *testing.T) {
+	_, err := manifest.Parse("testdata/dataset-namespace-unknown-field.yaml")
+	if err == nil {
+		t.Fatal("Parse: want an error for an unknown name_spaces field, got nil")
+	}
+	if !strings.Contains(err.Error(), "taxonomy") {
+		t.Errorf("Parse error = %q, want it to name the offending field", err)
+	}
+}
+
+// TestParse_NameSpaceWithoutRedistributionIsRejected pins the field that
+// actually matters: redistribution is what gates ExportBundle, and a name
+// space that omitted it would default to nothing at all rather than to a
+// safe value.
+func TestParse_NameSpaceWithoutRedistributionIsRejected(t *testing.T) {
+	_, err := manifest.Parse("testdata/dataset-namespace-no-redistribution.yaml")
+	if err == nil {
+		t.Fatal("Parse: want an error for a name space without redistribution, got nil")
+	}
+	if !strings.Contains(err.Error(), "redistribution") {
+		t.Errorf("Parse error = %q, want it to name the missing field", err)
 	}
 }

@@ -30,15 +30,6 @@ backbones:
     # -> lokal genutzt, aber NICHT redistribuierbar, bis geklärt.
     redistribution: unknown
 
-  # FloraVeg.EU — Namensraum für ESy-Vegetationsklassifikation.
-  - id: floraveg
-    version: "2021-06-01"
-    path: ./backbones/floraveg
-    note: "ESy-Namensraum, gepinnt — nicht mit EIVE/EuroSL verwechseln"
-    # Lizenz ungeklärt (docs/research/quellenregister.md, ⚠️ partially
-    # confirmed) -> lokal genutzt, aber NICHT redistribuierbar, bis geklärt.
-    redistribution: unknown
-
 # Trait-Vokabulare. `version` MUSS exakt der Spalte `vocab_version` der
 # kanonischen CSV entsprechen, die die jeweilige Pipeline erzeugt (siehe
 # VOCAB_VERSION in pipelines/<pipeline>/build.sh) — hostus vergleicht beide
@@ -75,6 +66,34 @@ trait_vocabularies:
     source: https://doi.org/10.5281/zenodo.7116957
     path: pipelines/midolo/output/midolo-canonical.csv
     redistribution: allowed # CC-BY-4.0, docs/research/quellenregister.md
+
+# Namensräume (SP9, UC4). Ein Namensraum ist eine Checkliste, die NAMEN
+# beiträgt, aber keine Taxonomie: keine Synonymie, keine Elternkette, keine
+# externen IDs zum Joinen — nur eine flache Liste der Schreibweisen, die
+# dieser Raum verwendet, je mit der raumeigenen stabilen ID. Gepinnt wird
+# EINE kanonische Namenslisten-CSV (Vertrag: pipelines/README.md,
+# „Canonical CSV contract (name lists)"), nicht ein DwC-A-Verzeichnis.
+#
+# Bewusst KEIN `backbones:`-Eintrag — und das ist eine Korrektur, keine
+# Geschmacksfrage: FloraVeg stand bis SP9 unter `backbones:` mit
+# `path: ./backbones/floraveg`, wurde damit vom WCVP-DwC-A-Reader gelesen
+# (internal/app.readerFor liest JEDEN Backbone-Eintrag durch ihn) und war
+# deshalb überhaupt nicht ingestierbar. Ein Namensraum erzeugt keine
+# taxon_concept-Zeilen; seine Einträge hängen sich per Namens-Crosswalk
+# (SP3-Leiter) an Konzepte, die ein Backbone bereits hält.
+#
+# ACHTUNG Lizenz: Für FloraVeg.EU ist keine Lizenzangabe auffindbar
+# (docs/research/quellenregister.md). Daher `redistribution: unknown`:
+# lokal auswertbar, aber `hostus bundle` verweigert den Export, solange
+# nicht `--force-include-restricted` gesetzt ist (und protokolliert die
+# Quelle dann in `bundle_meta.restricted_sources`).
+name_spaces:
+  - id: floraveg
+    version: "2023-01-03" # Blattdatum der Life_form.xlsx, niemals "latest"
+    source: https://files.ibot.cas.cz/cevs/downloads/floraveg/Life_form.xlsx
+    path: pipelines/floraveg/output/floraveg-canonical.csv
+    note: "ESy-Namensraum, gepinnt — nicht mit EIVE/EuroSL verwechseln"
+    redistribution: unknown
 
 # Cross-Reference-Quellen (SP4). Wikidata dient als Bridge-Hub: über die
 # powo/ipni-ID jedes Konzepts liefert dieselbe Wikidata-Position gleich

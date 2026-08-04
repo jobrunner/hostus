@@ -7,6 +7,62 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (SP9, Task 1 — FloraVeg-Namensraum ingestieren)
+- **Namensräume als eigene Quellenart.** Ein Namensraum ist eine Checkliste,
+  die NAMEN beiträgt und keine Taxonomie — keine Synonymie, keine
+  Elternkette, keine externe ID zum Joinen. Er ist damit weder ein Backbone
+  (er erzeugt keine `taxon_concept`-Zeilen und darf nicht in
+  `backbone_version` landen) noch ein Trait-Vokabular. Neu:
+  `internal/adapters/namelist` (Reader für den geteilten
+  Namenslisten-CSV-Vertrag aus `pipelines/README.md`), `domain.NameSpaceMeta`
+  / `domain.NameSpaceEntry` / `domain.IsAggregateName`, die Tabellen
+  `name_space` + `name_space_entry`, `application.IngestNameSpace`, der
+  Manifest-Abschnitt `name_spaces:` und die Verdrahtung in `hostus ingest`.
+- **`dataset.example.yaml` korrigiert:** `floraveg` stand unter `backbones:`
+  mit `path: ./backbones/floraveg` und war damit **nicht ingestierbar** —
+  `internal/app.readerFor` liest jeden Backbone-Eintrag durch den
+  WCVP-DwC-A-Reader, die Pipeline liefert aber eine einzelne kanonische CSV.
+  Der Eintrag steht jetzt unter `name_spaces:`.
+- **Der Crosswalk ist die SP3-Maschinerie, kein zweiter Pfad:**
+  `IngestNameSpace` löst über dasselbe unveränderte `resolveTraitName`
+  (`domain.NameCandidates`-Leiter) auf wie der Trait-Ingest, strikt
+  zweiphasig (auflösen ohne offene Transaktion, dann nur schreiben — der
+  Adapter läuft mit `SetMaxOpenConns(1)`).
+- **`name_space_entry` ist auf `(space, ext_id)` geschlüsselt, nicht auf das
+  Konzept.** FloraVeg schreibt *Festuca ovina* unter drei SeqIDs dreifach
+  (`Festuca ovina`, `… aggr.`, `… s. l.`), alle drei fallen auf dasselbe
+  WCVP-Konzept — auf das Konzept zu schlüsseln würde genau die
+  Unterscheidung wegwerfen, die UC4s `aggregate_policy` treffen muss.
+- **Verlust sichtbar:** `hostus ingest` gibt pro Namensraum
+  matched/unmatched/ambiguous/concepts, eine getrennte Aggregatzeile, die
+  Normalisierungsregeln und vier begrenzte Stichproben aus; ein doppelter
+  `ext_id` wird gezählt statt still überschrieben.
+
+### Fixed (SP9, Task 1 — Loch im Redistribution-Gate)
+- **`hostus bundle` ließ Namensraum-Daten ungeprüft durch.**
+  `findRestrictedSources` fragte nur `backbone_version`, `trait_vocabulary`
+  und `xref_source` ab — eine neue Quellenart war ihm schlicht unbekannt,
+  dieselbe Klasse wie das SP4-Xref-Loch. Neu: vierte Abfrage über
+  `name_space_entry → name_space`, plus **konzept-gescopte** Kopie beider
+  Tabellen (wie bei `sec_reference`: `name_space_entry.name` ist geernteter
+  Inhalt, kein Quellen-Metadatum). FloraVeg (`redistribution: unknown`) wird
+  damit standardmäßig verweigert und unter `--force-include-restricted` in
+  `bundle_meta.restricted_sources` protokolliert. Gepinnt auf Adapter- UND
+  Kompositionswurzel-Ebene (echter `app.Ingest` + echter `app.Bundle`).
+
+### Measured (SP9, Task 1 — FloraVeg-Crosswalk gegen den realen WCVP-Index)
+- Von **16.402** FloraVeg-Namen lösen **14.050 (85,7 %)** auf ein
+  WCVP-Konzept auf; 357 (2,2 %) bleiben unmatched, **1.995 (12,2 %)** sind
+  **ambiguous** — die Mehrdeutigkeit ist die eigentliche Auflage, nicht die
+  Nichttreffer, exakt wie bei den SP3-Trait-Vokabularen.
+- Von **309** Aggregaten lösen **246 (79,6 %)** auf — jeder davon über die
+  *markierte* Regel `aggregate_to_nominate`, weil WCVP null
+  aggregatmarkierte Namen führt. (Es sind 309, nicht 308: `Dryopteris
+  affinis s. lat.` trägt die Langform.)
+- **13.473 WCVP-Konzepte** bekommen ein FloraVeg-Gegenstück — **3,06 %** von
+  440.534 Konzepten (3,56 % der 368.928 Arten-Konzepte).
+- Vollständige Messung samt Kommandos: `docs/research/floraveg-namespace.md`.
+
 ### Added (SP8, Task 3 — e2e-Test und Anleitung zur Testkonsole)
 - **e2e unter dem `integration`-Tag** (`TestIntegration_TestConsoleToggle`):
   fährt die echte Komposition zweimal gegen dieselbe ingestierte Datenbank

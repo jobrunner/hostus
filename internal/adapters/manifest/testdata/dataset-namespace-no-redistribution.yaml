@@ -1,0 +1,11 @@
+backbones:
+  - id: wcvp
+    version: "2026-06-15"
+    license: CC-BY-4.0
+    source: https://sftp.kew.org/pub/data-repositories/WCVP/
+    path: ../../wcvp/testdata/wcvp-sample
+    redistribution: allowed
+name_spaces:
+  - id: floraveg
+    version: "2023-01-03"
+    path: ../../namelist/testdata/floraveg-sample.csv

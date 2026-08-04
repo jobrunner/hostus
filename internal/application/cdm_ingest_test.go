@@ -76,6 +76,10 @@ func (t *fakeCDMTx) AddDistribution(string, domain.Distribution) error { return 
 func (t *fakeCDMTx) AddTraitValue(string, domain.TraitValue) error     { return nil }
 func (t *fakeCDMTx) UpsertTraitVocabulary(domain.TraitVocabMeta) error { return nil }
 func (t *fakeCDMTx) UpsertXrefSource(domain.XrefSourceMeta) error      { return nil }
+func (t *fakeCDMTx) UpsertNameSpace(domain.NameSpaceMeta) error        { return nil }
+func (t *fakeCDMTx) AddNameSpaceEntry(string, domain.NameSpaceEntry) error {
+	return nil
+}
 func (t *fakeCDMTx) Finalize() error {
 	if t.failOn == "finalize" {
 		return errors.New("boom")
@@ -163,6 +167,14 @@ func (r *fakeCDMRepo) Traits(context.Context, string, []domain.TraitVocab) ([]do
 }
 
 func (r *fakeCDMRepo) TraitVocabularies(context.Context) ([]domain.TraitVocabMeta, error) {
+	return nil, nil
+}
+
+func (r *fakeCDMRepo) NameSpaceEntries(context.Context, string, []string) ([]domain.NameSpaceEntry, error) {
+	return nil, nil
+}
+
+func (r *fakeCDMRepo) NameSpaces(context.Context) ([]domain.NameSpaceMeta, error) {
 	return nil, nil
 }
 

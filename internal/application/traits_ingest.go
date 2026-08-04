@@ -410,12 +410,26 @@ func (t *traitTally) countMatched(taxon string, rule domain.NormalizationRule) {
 func (t *traitTally) report(r *TraitIngestReport) {
 	r.UnmatchedSample = sortedSample(t.unmatched)
 	r.FlaggedSample = sortedSample(t.flagged)
-	if len(t.ruleRows) == 0 {
-		return
+	r.Normalized = ruleCounts(t.ruleRows, t.ruleTaxa)
+}
+
+// ruleCounts folds a per-rule row/taxon tally into the sorted []RuleCount
+// both TraitIngestReport.Normalized and NameSpaceIngestReport.Normalized
+// carry. Shared by the trait and name-space crosswalks because it IS the
+// same breakdown of the same domain.NameCandidates ladder — a second copy
+// could drift in sort order or in which rules it credits, and the two
+// reports are read side by side in one "hostus ingest" run.
+//
+// Returns nil (not an empty slice) when no rule fired, so a vocabulary or
+// space resolving purely on exact keys reports an absent breakdown rather
+// than an empty one.
+func ruleCounts(ruleRows map[domain.NormalizationRule]int, ruleTaxa map[domain.NormalizationRule]map[string]bool) []RuleCount {
+	if len(ruleRows) == 0 {
+		return nil
 	}
-	out := make([]RuleCount, 0, len(t.ruleRows))
-	for rule, n := range t.ruleRows {
-		out = append(out, RuleCount{Rule: rule, Rows: n, Taxa: len(t.ruleTaxa[rule]), Flagged: rule.Flagged()})
+	out := make([]RuleCount, 0, len(ruleRows))
+	for rule, n := range ruleRows {
+		out = append(out, RuleCount{Rule: rule, Rows: n, Taxa: len(ruleTaxa[rule]), Flagged: rule.Flagged()})
 	}
 	// out[i].Rule <= out[j].Rule is a genuinely equivalent mutant at
 	// CONDITIONALS_BOUNDARY: out carries exactly one entry per DISTINCT
@@ -425,7 +439,7 @@ func (t *traitTally) report(r *TraitIngestReport) {
 	// Same provable-equivalence class as sortedSample's documented cap
 	// boundary below.
 	sort.Slice(out, func(i, j int) bool { return out[i].Rule < out[j].Rule })
-	r.Normalized = out
+	return out
 }
 
 // checkVocabIdentity reconciles the two independent sources of a trait

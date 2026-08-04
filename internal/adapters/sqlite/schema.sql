@@ -225,6 +225,58 @@ CREATE TABLE IF NOT EXISTS trait_vocabulary (
   PRIMARY KEY (vocab, version)
 );
 
+-- Name spaces (SP9, UC4). A name space is a checklist that contributes
+-- NAMES but no taxonomy — no synonymy graph, no parent chain, no external
+-- ids to join on. FloraVeg.EU's list (the namespace ESy's rules are written
+-- against) is the first one; the same canonical CSV contract covers
+-- GermanSL, EuroSL and Euro+Med (pipelines/README.md).
+--
+-- It is deliberately NOT a backbone_version row: those are served verbatim
+-- as every /v1/suggest and /v1/match response's provenance block and gate
+-- /health/ready, and a name list contributing zero taxon_concept rows must
+-- not present itself as a backbone. See internal/domain.NameSpaceMeta.
+CREATE TABLE IF NOT EXISTS name_space (
+  id             TEXT PRIMARY KEY,   -- e.g. "floraveg"
+  version        TEXT NOT NULL,      -- harvest/edition, never "latest"
+  license        TEXT,
+  source_url     TEXT,
+  ingested_at    TEXT NOT NULL,
+  manifest_sha   TEXT NOT NULL,      -- checksum of the validated manifest
+  redistribution TEXT NOT NULL DEFAULT 'unknown' -- allowed|restricted|unknown (domain.Redistribution); gates ExportBundle, never local ingest
+);
+
+-- One name-space spelling attached to a hostus concept by the SP3 name
+-- crosswalk (domain.NameCandidates).
+--
+-- The PK is (space, ext_id), NOT (space, concept_id): one concept
+-- legitimately carries several entries from the same space. FloraVeg spells
+-- Festuca ovina three ways under three SeqIDs — "Festuca ovina" (5647),
+-- "Festuca ovina aggr." (5648), "Festuca ovina s. l." (5649) — and all
+-- three crosswalk onto the SAME WCVP concept, because WCVP carries no
+-- aggregate-marked names at all. Keying on the concept would collapse
+-- exactly the distinction UC4's aggregate_policy has to make.
+--
+-- `aggregate` is 1 when the space's own spelling denotes a collective
+-- species rather than a single taxon (domain.IsAggregateName). `resolution`
+-- follows trait_value.resolution's rule exactly: NULL for an exact canonical
+-- match, else the domain.NormalizationRule that was needed — absence is
+-- information, never "unknown".
+CREATE TABLE IF NOT EXISTS name_space_entry (
+  space        TEXT NOT NULL REFERENCES name_space(id),
+  ext_id       TEXT NOT NULL,      -- the space's own stable id (FloraVeg SeqID)
+  concept_id   TEXT NOT NULL REFERENCES taxon_concept(id),
+  name         TEXT NOT NULL,      -- the space's spelling, VERBATIM (not folded)
+  aggregate    INTEGER NOT NULL DEFAULT 0,
+  resolution   TEXT,
+  PRIMARY KEY (space, ext_id)
+);
+
+-- space IS the PK's leading column (skipped per the FK-index note above);
+-- concept_id is not, so it needs its own index — both for the reverse
+-- lookup (/v1/match rendering a concept in a target space) and for the FK
+-- scan on taxon_concept deletes.
+CREATE INDEX IF NOT EXISTS idx_name_space_entry_concept_id ON name_space_entry(concept_id);
+
 -- sec. reference spaces (SP5). One row per bibliographic reference frame a
 -- concept's circumscription is stated in — "Wisskirchen & Haeupler 1998",
 -- "HEGI: Illustrierte Flora von Mitteleuropa", "TUTIN et al.: Flora

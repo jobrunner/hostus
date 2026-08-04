@@ -20,10 +20,3 @@ trait_vocabularies:
     source: https://example.org/tichy
     path: ../../../internal/adapters/traits/testdata/tichy-sample.csv
     redistribution: allowed
-name_spaces:
-  - id: floraveg
-    version: "2023-01-03"
-    source: https://files.ibot.cas.cz/cevs/downloads/floraveg/Life_form.xlsx
-    path: ../../../internal/adapters/namelist/testdata/floraveg-sample.csv
-    note: "ESy-Namensraum, gepinnt — lokal auswertbar, nicht redistribuierbar"
-    redistribution: unknown

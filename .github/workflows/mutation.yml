@@ -75,6 +75,10 @@ jobs:
           - ./internal/domain
           - ./internal/application
           - ./internal/adapters/sqlite
+          # SP9 Task 1's new reader package. Added with the package itself:
+          # a package that is not in this matrix has no `Not covered = 0`
+          # gate in CI at all, no matter how green it is locally.
+          - ./internal/adapters/namelist
     steps:
       - uses: actions/checkout@v7
 

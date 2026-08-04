@@ -1,0 +1,143 @@
+package sqlite
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"time"
+
+	"github.com/jobrunner/hostus/internal/domain"
+)
+
+// UpsertNameSpace records one name-space provenance row (SP9/UC4), the
+// name-space counterpart of UpsertXrefSource. ingested_at is stamped here
+// rather than taken from meta, for the same reason it is there: provenance
+// timing is orthogonal to the domain-level fields callers construct.
+func (t *ingestTx) UpsertNameSpace(meta domain.NameSpaceMeta) error {
+	_, err := t.tx.ExecContext(t.ctx, `
+		INSERT OR REPLACE INTO name_space (id, version, license, source_url, ingested_at, manifest_sha, redistribution)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		meta.ID, meta.Version, meta.License, meta.SourceURL, time.Now().UTC().Format(time.RFC3339), meta.ManifestSHA, string(meta.Redistribution),
+	)
+	if err != nil {
+		return fmt.Errorf("sqlite: upserting name space %s/%s: %w", meta.ID, meta.Version, err)
+	}
+	return nil
+}
+
+// AddNameSpaceEntry attaches one name-space spelling to conceptID. e.Name is
+// written VERBATIM — it is the string a target-space caller gets back, so it
+// must not be folded to the canonical match key. e.Resolution follows
+// AddTraitValue's rule: an empty resolution (an exact canonical match) is
+// stored as NULL, not as ”.
+func (t *ingestTx) AddNameSpaceEntry(conceptID string, e domain.NameSpaceEntry) error {
+	_, err := t.tx.ExecContext(t.ctx, `
+		INSERT OR REPLACE INTO name_space_entry (space, ext_id, concept_id, name, aggregate, resolution)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		e.Space, e.ExtID, conceptID, e.Name, boolToInt(e.Aggregate), nullString(e.Resolution),
+	)
+	if err != nil {
+		return fmt.Errorf("sqlite: adding name space entry %s:%s for concept %q: %w", e.Space, e.ExtID, conceptID, err)
+	}
+	return nil
+}
+
+// boolToInt renders a Go bool for SQLite's integer boolean columns.
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// NameSpaceEntries returns every name-space spelling attached to conceptID,
+// ordered by (space, ext_id). spaces restricts which spaces are returned;
+// nil/empty means every ingested space. Returns domain.ErrNotFound (wrapped)
+// if conceptID does not exist; an existing concept with no entries returns an
+// empty, non-nil-error slice — the two are never conflated.
+func (db *DB) NameSpaceEntries(ctx context.Context, conceptID string, spaces []string) ([]domain.NameSpaceEntry, error) {
+	exists, err := db.conceptExists(ctx, conceptID)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: checking concept %q exists: %w", conceptID, err)
+	}
+	if !exists {
+		return nil, fmt.Errorf("sqlite: concept %q: %w", conceptID, domain.ErrNotFound)
+	}
+
+	query, args := nameSpaceEntriesQuery(conceptID, spaces)
+	rows, err := db.sql.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: querying name space entries for concept %q: %w", conceptID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := []domain.NameSpaceEntry{}
+	for rows.Next() {
+		var (
+			e          domain.NameSpaceEntry
+			aggregate  int
+			resolution sql.NullString
+		)
+		if err := rows.Scan(&e.Space, &e.ExtID, &e.Name, &aggregate, &resolution); err != nil {
+			return nil, fmt.Errorf("sqlite: scanning name space entry for concept %q: %w", conceptID, err)
+		}
+		e.Aggregate = aggregate != 0
+		// A NULL resolution is the ordinary exact match and maps back to the
+		// empty string, exactly as AddNameSpaceEntry wrote it.
+		e.Resolution = resolution.String
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: iterating name space entries for concept %q: %w", conceptID, err)
+	}
+	return out, nil
+}
+
+// nameSpaceEntriesQuery builds the query+args NameSpaceEntries runs. The
+// space filter uses a bounded placeholder list rather than json_each: unlike
+// bundle.go's concept-id lists it is caller-bounded (a handful of ingested
+// spaces at most), the same trade-off traitsQuery makes for its vocab list.
+func nameSpaceEntriesQuery(conceptID string, spaces []string) (string, []any) {
+	query := `
+		SELECT space, ext_id, name, aggregate, resolution
+		FROM name_space_entry
+		WHERE concept_id = ?`
+	args := []any{conceptID}
+	if len(spaces) > 0 {
+		query += ` AND space IN (` + placeholdersFor(len(spaces)) + `)`
+		for _, s := range spaces {
+			args = append(args, s)
+		}
+	}
+	query += ` ORDER BY space, ext_id`
+	return query, args
+}
+
+// NameSpaces lists every ingested name-space provenance row, ordered by id.
+func (db *DB) NameSpaces(ctx context.Context) ([]domain.NameSpaceMeta, error) {
+	rows, err := db.sql.QueryContext(ctx, `
+		SELECT id, version, COALESCE(license, ''), COALESCE(source_url, ''), manifest_sha, redistribution
+		FROM name_space
+		ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: querying name_space: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.NameSpaceMeta
+	for rows.Next() {
+		var (
+			meta           domain.NameSpaceMeta
+			redistribution string
+		)
+		if err := rows.Scan(&meta.ID, &meta.Version, &meta.License, &meta.SourceURL, &meta.ManifestSHA, &redistribution); err != nil {
+			return nil, fmt.Errorf("sqlite: scanning name_space row: %w", err)
+		}
+		meta.Redistribution = domain.Redistribution(redistribution)
+		out = append(out, meta)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: iterating name_space rows: %w", err)
+	}
+	return out, nil
+}

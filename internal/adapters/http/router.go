@@ -68,6 +68,14 @@ type Deps struct {
 	// zero-value Deps{} (as used by the existing middleware/health tests)
 	// stays safe to serve.
 	Repo output.Repository
+
+	// UIEnabled mounts the embedded test console at "/". False registers
+	// nothing at all, so "/" and every asset path below it are 404 — the
+	// zero value therefore keeps the router API-only. "Default on" is a
+	// configuration decision (config.Defaults sets ui.enabled=true) and
+	// deliberately not a router-level fallback: a zero-value Deps must
+	// never expose a surface its caller did not ask for.
+	UIEnabled bool
 }
 
 // NewRouter assembles the hostus HTTP surface: the fixed middleware chain
@@ -134,6 +142,15 @@ func NewRouter(deps Deps) *mux.Router {
 		r.HandleFunc("/v1/concept/{id}/traits", handleTraits(deps.Repo)).Methods(http.MethodGet)
 		r.HandleFunc("/v1/concept/{id}/synonyms", handleSynonyms(deps.Repo)).Methods(http.MethodGet)
 		r.HandleFunc("/v1/translate", handleTranslate(deps.Repo)).Methods(http.MethodPost)
+	}
+
+	// Registered last and inside the same middleware chain as everything
+	// else: the console must be observable (request id, logs, spans,
+	// metrics) and shed/limited exactly like the API it drives. Registering
+	// it after the API routes also means the UI can never shadow a /v1,
+	// /health or /metrics path.
+	if deps.UIEnabled {
+		r.HandleFunc("/", handleUI).Methods(http.MethodGet)
 	}
 
 	return r

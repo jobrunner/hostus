@@ -236,6 +236,84 @@ func TestLoadEnvOverridesConfigFile(t *testing.T) {
 	}
 }
 
+// TestLoadUIEnabledDefaultsToTrue pins SP8's owner decision: the embedded
+// test console is on unless something explicitly turns it off. No config
+// file, no environment variable — just the built-in default.
+func TestLoadUIEnabledDefaultsToTrue(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.UI.Enabled {
+		t.Fatal("want ui.enabled default true")
+	}
+}
+
+// TestLoadUIEnabledFromEnv pins the exact env-var spelling. The key is
+// ui.enabled, so viper's "." -> "_" replacer makes it HOSTUS_UI_ENABLED —
+// there is deliberately no shorter alias (see docs/reference/configuration.md).
+func TestLoadUIEnabledFromEnv(t *testing.T) {
+	t.Setenv("HOSTUS_UI_ENABLED", "false")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UI.Enabled {
+		t.Fatal("want ui.enabled false from HOSTUS_UI_ENABLED=false")
+	}
+}
+
+// TestLoadUIEnabledEnvOverridesConfigFile pins the middle rung of the
+// ladder for the new key: env beats config.yaml.
+func TestLoadUIEnabledEnvOverridesConfigFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := writeFile(path, "ui:\n  enabled: true\n"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOSTUS_UI_ENABLED", "false")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UI.Enabled {
+		t.Fatal("want env HOSTUS_UI_ENABLED=false to beat config.yaml ui.enabled=true")
+	}
+}
+
+// TestLoadUIEnabledFromConfigFile pins the bottom rung: the file beats the
+// built-in default.
+func TestLoadUIEnabledFromConfigFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := writeFile(path, "ui:\n  enabled: false\n"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UI.Enabled {
+		t.Fatal("want ui.enabled false from config.yaml")
+	}
+}
+
+// TestLoadUIEnabledIgnoresUnrelatedPrefix guards the no-alias rule from the
+// direction that is actually ours to control: no second spelling of the key
+// was introduced. HOSTUS_UI_ON is not bound to anything and must not move
+// ui.enabled. (A bare section variable like HOSTUS_UI is a viper-wide
+// behavior that predates this key — it clobbers HOSTUS_METRICS/HOSTUS_TLS
+// the same way — and is deliberately not pinned here.)
+func TestLoadUIEnabledIgnoresUnrelatedPrefix(t *testing.T) {
+	t.Setenv("HOSTUS_UI_ON", "false")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.UI.Enabled {
+		t.Fatal("want HOSTUS_UI_ON to be ignored, ui.enabled should stay at its default true")
+	}
+}
+
 func TestLoadMissingExplicitConfigFileFails(t *testing.T) {
 	_, err := Load(filepath.Join(t.TempDir(), "does-not-exist.yaml"))
 	if err == nil {

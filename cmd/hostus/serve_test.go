@@ -89,6 +89,78 @@ func TestBindServeFlagsRejectsInvalidPort(t *testing.T) {
 	}
 }
 
+// TestUIFlagBeatsEnv pins the top rung of the configuration ladder for
+// SP8's ui.enabled: a --ui the user actually passed must override
+// HOSTUS_UI_ENABLED, in both directions. The "off" direction is the one
+// that matters most — a bool flag wired so it can only ever turn the UI
+// *on* would leave the top tier unable to disable anything.
+func TestUIFlagBeatsEnv(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		flag string
+		want bool
+	}{
+		{"flag off beats env on", "true", "false", false},
+		{"flag on beats env off", "false", "true", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HOSTUS_UI_ENABLED", tt.env)
+
+			cmd := newServeCmd()
+			if err := cmd.Flags().Set("ui", tt.flag); err != nil {
+				t.Fatal(err)
+			}
+
+			cfg, err := config.Load("")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := bindServeFlags(cmd, cfg); err != nil {
+				t.Fatal(err)
+			}
+			if cfg.UI.Enabled != tt.want {
+				t.Fatalf("got ui.enabled %v, want %v (env=%s, --ui=%s)", cfg.UI.Enabled, tt.want, tt.env, tt.flag)
+			}
+		})
+	}
+}
+
+// TestUIFlagUnsetLeavesEnvAlone is the counterpart: the flag's own default
+// (true) must not clobber an explicit HOSTUS_UI_ENABLED=false when the user
+// never passed --ui.
+func TestUIFlagUnsetLeavesEnvAlone(t *testing.T) {
+	t.Setenv("HOSTUS_UI_ENABLED", "false")
+
+	cmd := newServeCmd()
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bindServeFlags(cmd, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UI.Enabled {
+		t.Fatal("want ui.enabled false (env), got true — the untouched --ui default clobbered it")
+	}
+}
+
+// TestUIFlagDefaultsToOn pins the default with neither flag nor env set.
+func TestUIFlagDefaultsToOn(t *testing.T) {
+	cmd := newServeCmd()
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bindServeFlags(cmd, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.UI.Enabled {
+		t.Fatal("want ui.enabled default true")
+	}
+}
+
 // TestRootDefaultsToServe confirms the root command with no subcommand
 // behaves like "serve": it starts the HTTP server and shuts down cleanly
 // when ctx is canceled, rather than e.g. doing nothing or erroring.

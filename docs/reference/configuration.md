@@ -32,3 +32,29 @@ im Repository.
 | `metrics.enabled` / `HOSTUS_METRICS_ENABLED`  | true        | Prometheus-Endpunkt aktivieren     |
 | `tls.enabled` / `HOSTUS_TLS_ENABLED`          | false       | HTTPS/CertMagic aktivieren         |
 | `cors.allowed_origins`                        | []          | Erlaubte CORS-Origins              |
+| `ui.enabled` / `HOSTUS_UI_ENABLED`            | true        | Eingebettete Testkonsole unter `/` |
+
+## Testkonsole (`ui.enabled`)
+
+hostus liefert unter `/` eine eingebettete Testkonsole aus, mit der sich die
+API von Hand ausprobieren lässt. Sie ist standardmäßig **an** und lässt sich
+über alle drei Prioritätsstufen abschalten:
+
+```yaml
+# config.yaml
+ui:
+  enabled: false
+```
+
+```bash
+HOSTUS_UI_ENABLED=false hostus serve
+hostus serve --ui=false      # schlägt die Umgebungsvariable
+```
+
+Das CLI-Flag ist bewusst ein Wert-Flag: `--ui=false` muss möglich sein, sonst
+könnte die oberste Prioritätsstufe die Konsole nur ein-, aber nie ausschalten.
+
+Ist die Konsole aus, registriert der Router **gar nichts** unter `/`: sowohl
+`/` als auch jeder Asset-Pfad antworten mit 404. Die API-Oberfläche (`/v1/*`,
+`/health/*`, `/metrics`, `/openapi`) ist in beiden Fällen identisch — die
+Konsole spricht dieselbe öffentliche HTTP-API wie ein Browser.

@@ -7,6 +7,21 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (SP8, Task 1 — Schalter für die eingebettete Testkonsole)
+- **Neuer Konfigurationsschlüssel `ui.enabled`** (Default **an**) mit
+  `UIConfig` in `internal/config`, Umgebungsvariable `HOSTUS_UI_ENABLED`
+  und CLI-Flag `serve --ui` / `--ui=false`. Die Prioritätsleiter
+  (config.yaml < Umgebung < Flag) ist mit Tests festgenagelt; ein
+  Kurz-Alias wurde bewusst **nicht** eingeführt.
+- **Router-Verhalten:** ist die Konsole an, hängt unter `/` ein
+  Platzhalter-Handler (die echten Assets folgen in SP8 Task 2) innerhalb
+  der bestehenden Middleware-Kette; ist sie aus, wird **nichts**
+  registriert — `/` und jeder Asset-Pfad sind 404. Ein Test vergleicht die
+  komplette API-Oberfläche (`/v1/*`, `/health/*`, `/openapi`) mit und ohne
+  Konsole byteweise.
+- **Dokumentation:** `docs/reference/configuration.md`,
+  `config.yaml.example` und `example.env` um den Schlüssel ergänzt.
+
 ### Added (SP7, Task 1 — Suggest-Latenz und -Zusammensetzung gemessen)
 - **Neue Messung
   [`docs/research/suggest-quality.md`](docs/research/suggest-quality.md)**

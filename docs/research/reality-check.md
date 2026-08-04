@@ -3029,10 +3029,28 @@ verschiedene Namensformen in 51.466 CDM-Konzepten — die Differenz ist
 genau die `sec.`-Vervielfachung, die UC6 nutzen will.
 
 **Was der Endpunkt davon tatsächlich liefert: 0.** Gemessen, nicht
-geschätzt. 300 WCVP-Namen, die nach obiger Messung *alle* eine
-CDM-Gegenseite mit Relation haben, über echtes HTTP gegen den laufenden
+geschätzt. 300 WCVP-Namen, deren CDM-Gegenseite nach obiger Messung
+*mindestens eine* Relation trägt, über echtes HTTP gegen den laufenden
 Server, Ziel `TUTIN et al.: Flora Europaea`, entdrosselt auf ~9 Anfragen/s
-(sonst greift der 20-rps-Limiter und verfälscht die Messung):
+(sonst greift der 20-rps-Limiter und verfälscht die Messung).
+
+**Ein Vorbehalt zur Stichprobe, bevor die Zahl kommt:** Das Auswahlkriterium
+war „CDM-Gegenseite hat *irgendeine* Relation", das Ziel jeder Anfrage aber
+derselbe Raum. Beides deckt sich nicht:
+
+```bash
+# Namensformen, deren CDM-Seite eine Kante nach Flora Europaea hat
+sqlite3 measure.sqlite "… JOIN taxon_concept p ON p.id=e.b
+   WHERE tc.backbone_id='cdm' AND p.sec_reference='6eeeeacc-…' …"
+# of the 300: CDM side reaches Flora Europaea | 196
+```
+
+Nur **196 der 300** hätten selbst bei perfekter Namensbrücke überhaupt
+einen Kandidaten in *diesem* Zielraum haben können; die übrigen 104 wären
+legitim `no_relation_recorded`. Am Ergebnis ändert das nichts — die
+erreichte Zahl ist 0, nicht 196 — aber die Vergleichsgröße ist 196, nicht
+300. (Auf die Obergrenze bezogen: mit Flora Europaea als festem Ziel sind
+es **2.601** WCVP-Konzepte statt 4.461.)
 
 ```bash
 while read n; do
@@ -3047,16 +3065,59 @@ done < sample_names.txt | …
 Zwei Ursachen, beide strukturell:
 
 1. **265 von 300 sind mehrdeutig.** `MatchExact` sucht über *alle*
-   Backbones. Ein Name wie `Abies alba Mill.` existiert einmal in WCVP und
-   bis zu neunmal in CDM — je einmal pro `sec.`-Raum. `classify` sieht
-   mehrere *verschiedene* Konzepte auf derselben Trefferstufe, verweigert
-   die Wahl und liefert `UNRESOLVABLE`. Das ist die *richtige* Antwort der
-   Match-Logik und zugleich der Grund, warum der `verbatim`-Pfad von
-   `/v1/translate` mit ingestierter CDM praktisch nie auflöst. Ein
-   `sec.`-Raum trennt Konzepte — und macht damit jeden geteilten Namen
-   mehrdeutig.
+   Backbones. `classify` sieht mehrere *verschiedene* Konzepte auf
+   derselben Trefferstufe, verweigert die Wahl und liefert `UNRESOLVABLE`.
+   Das ist die *richtige* Antwort der Match-Logik und zugleich der Grund,
+   warum der `verbatim`-Pfad von `/v1/translate` mit ingestierter CDM
+   praktisch nie auflöst. Ein `sec.`-Raum trennt Konzepte — und macht damit
+   jeden geteilten Namen mehrdeutig.
 2. **Die übrigen 35 lösen auf — auf das WCVP-Konzept.** Und WCVP-Konzepte
    haben keine Relationen (s. o., 0 Zeilen), also `no_relation_recorded`.
+
+**Beleg statt Behauptung: der Aufteilung nach.** Die Stichprobe oben hat
+nur den HTTP-Code festgehalten, und `UNRESOLVABLE` deckt *zwei*
+verschiedene Fälle ab — Mehrdeutigkeit und „nichts hat klassifiziert".
+Dieselben 300 Namen durch `POST /v1/match` (das den Grund als `note`
+ausgibt, 50 je Batch):
+
+```
+  265  noteAmbiguous          ("Mehrdeutiger Treffer: mehrere Konzepte mit gleicher Übereinstimmungsstärke")
+   35  resolved:exact_author
+```
+
+**0×** `noteUnresolvable`, **0×** Fuzzy-Mehrdeutigkeit. Die Ursache ist
+damit gemessen, nicht erschlossen: es ist ausnahmslos Mehrdeutigkeit.
+
+**Wie groß die Mehrdeutigkeit konkret ist.** Für `Abies alba Mill.`:
+
+```bash
+sqlite3 -readonly full.sqlite \
+  "SELECT tc.backbone_id, cn.role, COALESCE(n.authorship,'(kein)'), COUNT(DISTINCT tc.id)
+     FROM concept_name cn JOIN name n ON n.id=cn.name_id
+     JOIN taxon_concept tc ON tc.id=cn.concept_id
+    WHERE n.canonical_fold='abies alba' GROUP BY 1,2,3;"
+# cdm  | accepted | Mill.               | 8
+# wcvp | accepted | Mill.               | 1
+# wcvp | synonym  | (Castigl.) Michx.   | 1
+```
+
+**Acht** CDM-Konzepte (nicht neun) — eines je Referenzwerk — plus das
+akzeptierte WCVP-Konzept ergeben **neun** auf `exact_author` gleich starke
+Kandidaten; das zehnte Vorkommen fällt an der Autorprüfung heraus. Die
+Obergrenze über *alle* Namensformen liegt höher:
+
+```bash
+sqlite3 -readonly full.sqlite \
+  "SELECT MAX(c) FROM (SELECT n.canonical_fold, COUNT(DISTINCT tc.id) c
+     FROM concept_name cn JOIN name n ON n.id=cn.name_id
+     JOIN taxon_concept tc ON tc.id=cn.concept_id
+    WHERE tc.backbone_id='cdm' GROUP BY 1);"
+# 10
+```
+
+**Bis zu zehn** CDM-Konzepte je Namensform (`Stellaria palustris`,
+`Sedum telephium`, `Polypodium montanum`, `Polygonum lapathifolium`,
+`Pinus abies` u. a.); über beide Backbones zusammen maximal **16**.
 
 **Gegenprobe, damit die 0 kein Messfehler ist.** Derselbe Endpunkt,
 dieselbe Sitzung, 200 CDM-Konzepte mit bekannter Relation nach Flora
@@ -3069,6 +3130,16 @@ Europaea:
 
 **200 von 200.** Der Endpunkt funktioniert; was fehlt, ist die Brücke
 zwischen den Namensräumen — nicht der Code dahinter.
+
+**Was diese Gegenprobe ausdrücklich *nicht* zeigt.** Sie steigt über
+`concept_id` ein und wählt vorab Konzepte, die eine Relation **in den
+Zielraum** tragen. Damit belegt sie zweierlei: dass der Relationsgraph
+tragfähig ist und dass die Antwort korrekt geformt wird. Sie belegt
+**nicht**, dass die Namensauflösung funktioniert — genau der Pfad, an dem
+die 300 scheitern, wird hier umgangen. Sie ist die richtige Kontrolle für
+die Frage „ist die 0 ein Artefakt meiner Messvorrichtung?" (Antwort: nein,
+derselbe Endpunkt in derselben Sitzung antwortet 200/200), und für keine
+darüber hinausgehende Frage.
 
 ### Verdikt: **hält mit Auflagen**
 

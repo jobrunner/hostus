@@ -9,6 +9,58 @@ wirklich schließen würde, nicht nur die Notiz, dass es sie gibt.
 Behobene Punkte werden hier gelöscht, nicht abgehakt; der Verlauf steht im
 `CHANGELOG.md`.
 
+## Der `verbatim`-Einstieg von `/v1/translate` ist mit CDM praktisch tot (SP5)
+
+`POST /v1/translate` bietet zwei Einstiege, `concept_id` und `verbatim`.
+Der zweite löst am vollen Index praktisch nie auf: von 300 WCVP-Namen, die
+nachweislich eine CDM-Gegenseite **mit** Relation haben, kamen **265 als
+`UNRESOLVABLE`** zurück, 35 lösten auf das relationslose WCVP-Konzept auf,
+**0** wurden übersetzt. `POST /v1/match` auf denselben 300 Namen zeigt die
+Ursache eindeutig: **265× „Mehrdeutiger Treffer"**, **0×** „kein
+eindeutiger Treffer".
+
+Die Ursache ist die Bauart, nicht ein Defekt: Ein `sec.`-Raum trennt
+Konzepte gleichen Namens, `MatchExact` sucht über **alle** Backbones, und
+`Abies alba Mill.` ist deshalb acht CDM-Konzepte plus ein WCVP-Konzept —
+neun gleich starke Treffer, bei denen die Auflösung korrekt nicht rät. Der
+Endpunkt selbst ist in Ordnung: über `concept_id` liefert er in 200 von 200
+Stichproben eine typisierte Antwort.
+
+*Nächster Schritt:* Einen Backbone- oder `sec.`-Filter für die Auflösung
+(etwa `entry_backbone`/`entry_sec` am Request), damit `verbatim` gegen
+**einen** Namensraum auflösen kann statt gegen alle. Vorher messen, wie
+viele der 265 damit eindeutig würden — die Zahl ist unbekannt, und ein
+Filter, der die Mehrdeutigkeit nur verschiebt, wäre keine Verbesserung.
+Bis dahin: `/v1/translate` mit `concept_id` benutzen, wie es
+[die Anleitung](../how-to/sec-translate-uc6.md) jetzt sagt.
+
+## `/v1/suggest` und `/v1/concept` geben kein `sec.`-Feld aus (SP5)
+
+Seit CDM als zweiter Backbone ingestiert wird, liegen mehrere Konzepte
+**desselben Namens** im Index — eines je Referenzwerk. Beide Endpunkte
+geben aber kein `sec.`-Feld aus, sodass diese Treffer in der Antwort
+**nicht unterscheidbar** sind:
+
+```bash
+curl -s "…/v1/suggest?q=Asteraceae&limit=5"
+# {"concept_id":"cdm:concept:1785944e-…","display":"Asteraceae","canonical":"Asteraceae",
+#  "rank":"FAMILY","status":"ACCEPTED","in_area":false,"score":-17.556039197970815}
+# {"concept_id":"cdm:concept:302a66c9-…","display":"Asteraceae","canonical":"Asteraceae",
+#  "rank":"FAMILY","status":"ACCEPTED","in_area":false,"score":-17.556039197970815}
+```
+
+Identische Anzeige, identischer Kanonischer, **identischer Score** — die
+einzige Differenz ist die undurchsichtige UUID. Dasselbe gilt für
+`GET /v1/concept/{id}`, dessen Antwort `backbone` nennt, aber nicht den
+`sec.`-Bezug. Das trifft nicht nur Familien: 457 verschiedene
+Familiennamen verteilen sich auf 629 Konzepte, und auf Artebene ist die
+Vervielfachung weit größer (bis zu **zehn** CDM-Konzepte je Namensform).
+
+*Nächster Schritt:* `sec` (id + title) in die Antwort beider Endpunkte
+aufnehmen — `/v1/translate` führt das Feld bereits und zeigt die Form. Eine
+Deduplikation je Namensform mit Vorzugsraum wäre die Alternative, verliert
+aber Information, die UC6 ausdrücklich braucht.
+
 ## Kein Drift-Signal für das `nom_status`-Vokabular (SP6)
 
 Die Regeltabelle in

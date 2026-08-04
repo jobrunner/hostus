@@ -7,6 +7,44 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (SP7, Task 1 — Suggest-Latenz und -Zusammensetzung gemessen)
+- **Neue Messung
+  [`docs/research/suggest-quality.md`](docs/research/suggest-quality.md)**
+  zu `GET /v1/suggest`, gegen den vollen echten Index (440.534 Konzepte),
+  alle Latenzen als Band über 5 Läufe. Vier Szenarien, p95-Mediane:
+  Baseline **237,1 ms**, Mitteleuropa-Gebiet **408,6 ms (+72 %)**,
+  Cap 2000 **64,6 ms (−73 %)**, Gebiet + Cap **72,0 ms (−70 %)**.
+  - **Die Gebietseinschränkung allein macht die Abfrage langsamer**, weil
+    sie heute ein korreliertes `EXISTS` je Kandidatenkonzept ist und nach
+    der Kandidatenbildung läuft (`ca` überschreitet damit die Sekunde).
+    Zusammen mit dem Cap ist sie bezahlbar.
+  - **Das Flooding ist belegt:** die Top 10 für `ac`, `ca` und `al`
+    enthalten **je 10 Arten und null Gattungen**, und nur **9 von 30**
+    Treffern beginnen überhaupt mit dem Präfix.
+  - **Die Ursache ist `bm25` auf Präfixanfragen:** 32.936–100.029
+    FTS-Zeilen verteilen sich auf **11–12 verschiedene Score-Werte**;
+    *Acalypha*, *Acer* und *Achillea* haben denselben Score und liegen
+    nur durch Tie-Break-Rauschen auf Position 137/272/410.
+  - **Gegen die Planannahme:** ein Cap vor der Rangdiversität kostet bei
+    **37 von 38 Präfixen null Gattungen** (Ausnahme `ca`: 239 von 1.032).
+    Das Ordnungsargument „Diversität vor Cap" trägt mit dieser Zahl nicht.
+  - **Kontrollen zur Query-Form** (Review): auch die schlankeren Varianten
+    kosten **+64 % bis +79 %** p95 — die Produktionsform (nur `in_area`,
+    keine Restriktion) liegt bei **383,5 ms (+64 %)**. Schon das bloße
+    Berechnen von `in_area` für die Sortierung ist der teure Teil.
+  - **Das Abnahmekriterium „*Acer* in den Top 10 für `ac`" ist ohne
+    Gebietsscoping nicht erreichbar:** 142 `Ac*`-Gattungen global gegen
+    **18** in Mitteleuropa. Es steht darum nach Scope getrennt im Dokument.
+- **`poc/measure/suggestquality`** (neuer Harness, misst die Szenarien
+  direkt gegen die Produktions-SQL, Index strikt lesend geöffnet) und
+  **`--runs` für `poc/measure/latency`**, das die p50/p95 jetzt als Band
+  über mehrere vollständige Läufe ausgibt statt als Einzellauf.
+- **Neue bekannte Lücke
+  [„`poc/` wird von `make verify` weder kompiliert noch gelintet"](docs/explanation/known-gaps.md)**
+  — `poc/` ist ein eigenes Modul ohne `go.work` und im Debt-Guard
+  ausgenommen, weshalb die Messharnesse ungeprüft bleiben. SP7/Task 1 hat
+  den Preis gezeigt: ein toter Statusvergleich im Harness fiel erst im
+  Review auf (behoben, ohne Auswirkung auf die Zahlen).
 ### Added (SP5, Task 5 — Volllauf, End-to-End-Beweis und UC6-Verdikt)
 - **Neuer `integration`-Test
   `TestIntegration_TranslateBetweenSecSpaces`** (`internal/app/integration_test.go`):

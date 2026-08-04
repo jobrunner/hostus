@@ -58,3 +58,8 @@ sqlite:
 cors:
   # Erlaubte Ursprünge für Cross-Origin-Requests (leer = keine erlaubt).
   allowed_origins: []
+
+ui:
+  # Eingebettete Testkonsole unter "/" ausliefern (Standard: an).
+  # Abschaltbar per HOSTUS_UI_ENABLED=false oder "serve --ui=false".
+  enabled: true

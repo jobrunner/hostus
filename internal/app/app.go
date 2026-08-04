@@ -95,6 +95,7 @@ func New(cfg *config.Config) (*App, error) {
 		Logger:             logger,
 		CORSAllowedOrigins: cfg.CORS.AllowedOrigins,
 		Repo:               repo,
+		UIEnabled:          cfg.UI.Enabled,
 	})
 
 	return &App{

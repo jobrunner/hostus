@@ -18,6 +18,7 @@ var serveFlagBinds = map[string]string{
 	"logging.format": "log-format",
 	"server.host":    "host",
 	"server.port":    "port",
+	"ui.enabled":     "ui",
 }
 
 // newServeCmd builds the explicit "hostus serve" alias. Its flags and RunE
@@ -41,6 +42,11 @@ func addServeFlags(cmd *cobra.Command) {
 	cmd.Flags().String("log-format", "json", "log format (json, text)")
 	cmd.Flags().String("host", "0.0.0.0", "server host")
 	cmd.Flags().Int("port", 8080, "server port")
+	// pflag's Bool accepts both bare --ui and explicit --ui=false. The
+	// explicit form is the point: a presence-only switch could turn the
+	// console on but never off, leaving the flag tier unable to override
+	// HOSTUS_UI_ENABLED=true.
+	cmd.Flags().Bool("ui", true, "serve the embedded test console at / (--ui=false disables it)")
 }
 
 // runServe loads configuration, layers CLI flag overrides on top via

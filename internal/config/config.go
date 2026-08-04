@@ -26,6 +26,7 @@ const (
 	defaultTelemetryEnabled     = false
 	defaultTelemetrySampleRatio = 1.0
 	defaultSQLitePath           = "./data/hostus.db"
+	defaultUIEnabled            = true
 )
 
 // Config holds all application configuration for hostus 2.0.
@@ -37,6 +38,7 @@ type Config struct {
 	Telemetry TelemetryConfig `mapstructure:"telemetry"`
 	SQLite    SQLiteConfig    `mapstructure:"sqlite"`
 	CORS      CORSConfig      `mapstructure:"cors"`
+	UI        UIConfig        `mapstructure:"ui"`
 }
 
 // ServerConfig holds HTTP server configuration.
@@ -88,6 +90,14 @@ type CORSConfig struct {
 	AllowedOrigins []string `mapstructure:"allowed_origins"`
 }
 
+// UIConfig holds the embedded test console's toggle. Enabled by default:
+// the console is the surface the operator judges the system by, so it ships
+// on and has to be switched off deliberately (env HOSTUS_UI_ENABLED, or
+// `serve --ui=false`).
+type UIConfig struct {
+	Enabled bool `mapstructure:"enabled"`
+}
+
 // Defaults sets viper's default configuration values.
 func Defaults() {
 	// The multiplication runs here (inside a function body covered by the
@@ -117,6 +127,8 @@ func Defaults() {
 	viper.SetDefault("sqlite.path", defaultSQLitePath)
 
 	viper.SetDefault("cors.allowed_origins", []string{})
+
+	viper.SetDefault("ui.enabled", defaultUIEnabled)
 }
 
 // Load loads configuration from defaults, an optional config file, and

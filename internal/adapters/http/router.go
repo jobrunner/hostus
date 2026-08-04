@@ -68,6 +68,14 @@ type Deps struct {
 	// zero-value Deps{} (as used by the existing middleware/health tests)
 	// stays safe to serve.
 	Repo output.Repository
+
+	// UIEnabled mounts the embedded test console at "/". False registers
+	// nothing at all, so "/" and every asset path below it are 404 — the
+	// zero value therefore keeps the router API-only. "Default on" is a
+	// configuration decision (config.Defaults sets ui.enabled=true) and
+	// deliberately not a router-level fallback: a zero-value Deps must
+	// never expose a surface its caller did not ask for.
+	UIEnabled bool
 }
 
 // NewRouter assembles the hostus HTTP surface: the fixed middleware chain
@@ -109,18 +117,28 @@ func NewRouter(deps Deps) *mux.Router {
 
 	r := mux.NewRouter()
 
-	// otelmux wraps the ENTIRE chain (it must be registered first: gorilla
-	// mux applies Use()-registered middleware in registration order, so
-	// the first one added is the outermost/first-to-run).
-	r.Use(otelmux.Middleware("hostus"))
-
-	r.Use(middleware.RequestID)
-	r.Use(middleware.Logging(logger))
-	r.Use(middleware.RateLimit(limiter))
-	r.Use(middleware.LoadShed(shedder))
-	r.Use(middleware.Timeout(timeout))
-	r.Use(middleware.CORS(origins))
-	r.Use(middleware.Metrics)
+	// The fixed chain, built as a slice rather than seven r.Use calls: it
+	// has to be applied twice. gorilla/mux runs Use()-registered middleware
+	// only for MATCHED routes — Router.Match assigns NotFoundHandler
+	// without wrapping it — so the SPA fallback below has to be wrapped by
+	// hand from the very same slice. One source of truth, no drift.
+	//
+	// otelmux is first because it must wrap the ENTIRE chain: mux applies
+	// middleware in registration order, so the first one added is the
+	// outermost/first-to-run.
+	chain := []mux.MiddlewareFunc{
+		otelmux.Middleware("hostus"),
+		middleware.RequestID,
+		middleware.Logging(logger),
+		middleware.RateLimit(limiter),
+		middleware.LoadShed(shedder),
+		middleware.Timeout(timeout),
+		middleware.CORS(origins),
+		middleware.Metrics,
+	}
+	for _, mw := range chain {
+		r.Use(mw)
+	}
 
 	r.HandleFunc("/health/live", handleHealthLive).Methods(http.MethodGet)
 	r.HandleFunc("/health/ready", handleHealthReady(deps.Repo)).Methods(http.MethodGet)
@@ -136,5 +154,31 @@ func NewRouter(deps Deps) *mux.Router {
 		r.HandleFunc("/v1/translate", handleTranslate(deps.Repo)).Methods(http.MethodPost)
 	}
 
+	// Registered last and inside the same middleware chain as everything
+	// else: the console must be observable (request id, logs, spans,
+	// metrics) and shed/limited exactly like the API it drives. Registering
+	// it after the API routes also means the UI can never shadow a /v1,
+	// /health or /metrics path.
+	if deps.UIEnabled {
+		r.HandleFunc("/", handleUI).Methods(http.MethodGet, http.MethodHead)
+		r.HandleFunc("/assets/{name}", handleUIAsset).Methods(http.MethodGet, http.MethodHead)
+
+		// SPA deep links. NotFoundHandler is the only hook that fires
+		// AFTER every route has been tried, which is what keeps a 405 a
+		// 405 and an unknown /v1 path a 404; a catch-all PathPrefix("/")
+		// route would swallow both. It is wrapped in the same chain by
+		// hand because mux does not wrap it (see `chain` above).
+		r.NotFoundHandler = applyChain(chain, spaFallback(http.HandlerFunc(handleUI)))
+	}
+
 	return r
+}
+
+// applyChain wraps h in mws so that mws[0] is outermost, matching the
+// order gorilla/mux itself applies Use()-registered middleware in.
+func applyChain(mws []mux.MiddlewareFunc, h http.Handler) http.Handler {
+	for i := len(mws) - 1; i >= 0; i-- {
+		h = mws[i].Middleware(h)
+	}
+	return h
 }

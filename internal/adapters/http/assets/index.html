@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hostus Testkonsole</title>
+<style>/*hostus:style*/</style>
+</head>
+<body>
+<header>
+  <h1>hostus Testkonsole</h1>
+  <p class="hint">Instrument zur Beurteilung des lokalen Index. Es wird nichts zwischengespeichert &mdash; jede Anzeige ist die Antwort, die der Dienst gerade gegeben hat.</p>
+</header>
+
+<main>
+
+<section id="panel-suggest">
+  <h2>1 &middot; Suggest</h2>
+  <div class="controls">
+    <div class="field grow">
+      <label for="suggest-q">Suchbegriff (tippen)</label>
+      <input id="suggest-q" type="search" spellcheck="false" autocomplete="off" placeholder="z. B. ca">
+    </div>
+    <div class="field">
+      <label for="suggest-area">Gebiet (genau ein Code)</label>
+      <input id="suggest-area" type="text" spellcheck="false" autocomplete="off" placeholder="z. B. GER">
+    </div>
+    <div class="field">
+      <label for="suggest-limit">Limit</label>
+      <input id="suggest-limit" type="number" min="1" max="100" value="30">
+    </div>
+  </div>
+  <p class="hint">Hinweis: <code>?area=</code> nimmt heute <strong>einen</strong> Code. Mehrere Gebiete gibt es nur in <code>hostus bundle</code>.</p>
+  <p class="url" id="suggest-url"></p>
+  <div class="summary" id="suggest-summary"></div>
+  <div class="scroll"><table id="suggest-table">
+    <thead><tr>
+      <th>#</th><th>Name</th><th>Rang</th><th>Akzeptiert</th><th>im Gebiet</th><th>Score</th><th>Pr&auml;fix</th>
+    </tr></thead>
+    <tbody id="suggest-body"></tbody>
+  </table></div>
+</section>
+
+<section id="panel-concept">
+  <h2>2 &middot; Konzept</h2>
+  <p class="hint">Treffer in Panel&nbsp;1 anklicken.</p>
+  <div id="concept-out"><p class="empty">Kein Konzept gew&auml;hlt.</p></div>
+</section>
+
+<section id="panel-match">
+  <h2>3 &middot; Match</h2>
+  <div class="field">
+    <label for="match-input">Verbatim-Namen, eine Zeile je Name</label>
+    <textarea id="match-input" spellcheck="false" placeholder="Corynephorus canescens&#10;Kunzea capitata&#10;Nicht existierender Name"></textarea>
+  </div>
+  <div class="controls"><button id="match-run" type="button">POST /v1/match</button></div>
+  <p class="url" id="match-url"></p>
+  <div id="match-out"></div>
+</section>
+
+<section id="panel-translate">
+  <h2>4 &middot; Translate</h2>
+  <p class="hint">&Uuml;bersetzt das in Panel&nbsp;2 gezeigte Konzept in einen <em>sec.</em>-Referenzraum.</p>
+  <div class="controls">
+    <div class="field grow">
+      <label for="translate-target">Ziel-<em>sec.</em>-Raum (target_space)</label>
+      <input id="translate-target" type="text" spellcheck="false" autocomplete="off" placeholder="z. B. colxr">
+    </div>
+    <div class="field">
+      <label for="translate-names">Namensgleiche mitliefern</label>
+      <input id="translate-names" type="checkbox">
+    </div>
+    <button id="translate-run" type="button" disabled>POST /v1/translate</button>
+  </div>
+  <p class="url" id="translate-url"></p>
+  <div id="translate-out"><p class="empty">Kein Konzept gew&auml;hlt.</p></div>
+</section>
+
+</main>
+<script>/*hostus:script*/</script>
+</body>
+</html>

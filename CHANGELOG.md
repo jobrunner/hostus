@@ -7,6 +7,77 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (SP8, Task 3 — e2e-Test und Anleitung zur Testkonsole)
+- **e2e unter dem `integration`-Tag** (`TestIntegration_TestConsoleToggle`):
+  fährt die echte Komposition zweimal gegen dieselbe ingestierte Datenbank
+  vor einem echten TCP-Listener hoch — einmal mit Konsole, einmal ohne.
+  Geprüft werden `/` (HTML, `ETag`, alle vier Panels), der CSP-Header
+  (`default-src 'self'`, beide Hashes, kein externer Origin), SPA-Deep-Links,
+  die Einzel-Assets, die vollständige 404-Oberfläche bei abgeschalteter
+  Konsole und **14 API-Sonden byteweise identisch** in beiden
+  Schalterstellungen (inkl. 404 unter `/v1` und 405 bei falscher Methode).
+- **Neue Anleitung `docs/how-to/test-console.md`** (deutsch): Start, der
+  Schalter in allen drei Prioritätsstufen inkl. Deployment-Abschaltung, wozu
+  die vier Panels da sind, ausdrücklich **was die Konsole nicht ist** (kein
+  Produkt-UI, nicht authentifiziert, nicht für Exposition gehärtet) und ein
+  Abschnitt „Was du erwarten solltest", damit ein bekannter Mangel nicht für
+  einen kaputten Build gehalten wird.
+- **`docs/research/suggest-quality.md`** um die Hand-Beobachtung aus dem
+  Konsolentest ergänzt: 0 von 30 präfixbeginnenden Treffern bei `ca`, 17/90
+  über drei Präfixe, alle Scores identisch (`-3.736`), getroffen wird das
+  Epitheton statt des Namensanfangs — es gibt keine Ordnung zu justieren,
+  es muss erst eine entstehen.
+- **`docs/explanation/known-gaps.md`** um zwei Einträge ergänzt:
+  `/v1/concept/{id}/traits` liefert 500 auf jedem Index ohne
+  `trait_value.resolution`, während `/health/ready` 200 meldet; und kein
+  Endpunkt listet die `sec.`-Referenzräume, weshalb `target_space` ein
+  Freitextfeld bleibt.
+
+### Added (SP8, Task 2 — eingebettete Testkonsole)
+- **Die Testkonsole als `embed.FS`-Asset** in
+  `internal/adapters/http/assets/`, eingebettet im HTTP-Adapter selbst: die
+  Assets sind ein Implementierungsdetail dieses Adapters, kein zweiter
+  Adapter, also braucht es dafür auch keine depguard-Ausnahme.
+  `.golangci.yml` bleibt unverändert. Ausgeliefert wird **ein** in sich geschlossenes
+  HTML-Dokument — CSS und JavaScript werden hineingeschrieben, nicht
+  nachgeladen, weil die Konsole sich den globalen 20-rps-Token-Bucket mit
+  der API teilt. Kein CDN, keine Web-Schrift, keine externe Referenz;
+  Vanilla HTML/CSS/JS ohne Build-Schritt.
+- **`Content-Security-Policy: default-src 'self'`** mit
+  `script-src`/`style-src` als **SHA-256-Hash** der eingebetteten Blöcke
+  statt `'unsafe-inline'`, dazu `base-uri`/`form-action`/`frame-ancestors`/
+  `object-src` auf `'none'`. Keine Inline-Handler, kein `eval`.
+- **Vier Panels** (deutschsprachig): Suggest mit Präfix- und
+  Rangmix-Auswertung je Trefferliste, Konzept (Klassifikation, Xrefs je
+  Autorität mit **allen** IDs, Verbreitung, Synonyme, Traits,
+  `?relevance=publication`), Match und Translate. Eine leere
+  Translate-Antwort wird als **Aussage** („keine Relation erfasst")
+  gerendert, nie als Fehler.
+- **Pfadregeln:** `/` liefert die Konsole; `/assets/app.js` und
+  `/assets/style.css` liefern die Einzel-Assets mit eigenem `Content-Type`
+  und `ETag`; ein unbekannter Pfad **außerhalb** `/v1`, `/health`,
+  `/metrics`, `/openapi` liefert per GET/HEAD ebenfalls die Konsole
+  (SPA-Deep-Link), ein unbekannter Pfad **darunter** behält seine 404.
+  Ein 405 bleibt ein 405.
+- **Die SPA-Weiche liegt in derselben Middleware-Kette** wie alles andere:
+  gorilla/mux umhüllt `NotFoundHandler` nicht selbst, deshalb wird die
+  Kette einmal als Slice gebaut und beidseitig angewendet.
+
+### Added (SP8, Task 1 — Schalter für die eingebettete Testkonsole)
+- **Neuer Konfigurationsschlüssel `ui.enabled`** (Default **an**) mit
+  `UIConfig` in `internal/config`, Umgebungsvariable `HOSTUS_UI_ENABLED`
+  und CLI-Flag `serve --ui` / `--ui=false`. Die Prioritätsleiter
+  (config.yaml < Umgebung < Flag) ist mit Tests festgenagelt; ein
+  Kurz-Alias wurde bewusst **nicht** eingeführt.
+- **Router-Verhalten:** ist die Konsole an, hängt unter `/` ein
+  Platzhalter-Handler (die echten Assets folgen in SP8 Task 2) innerhalb
+  der bestehenden Middleware-Kette; ist sie aus, wird **nichts**
+  registriert — `/` und jeder Asset-Pfad sind 404. Ein Test vergleicht die
+  komplette API-Oberfläche (`/v1/*`, `/health/*`, `/openapi`) mit und ohne
+  Konsole byteweise.
+- **Dokumentation:** `docs/reference/configuration.md`,
+  `config.yaml.example` und `example.env` um den Schlüssel ergänzt.
+
 ### Added (SP7, Task 1 — Suggest-Latenz und -Zusammensetzung gemessen)
 - **Neue Messung
   [`docs/research/suggest-quality.md`](docs/research/suggest-quality.md)**

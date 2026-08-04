@@ -7,6 +7,50 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (SP5, Task 5 — Volllauf, End-to-End-Beweis und UC6-Verdikt)
+- **Neuer `integration`-Test
+  `TestIntegration_TranslateBetweenSecSpaces`** (`internal/app/integration_test.go`):
+  ingestiert WCVP- und CDM-Fixture über `app.Ingest`, serviert sie über
+  `app.New`/`app.Router` hinter einem echten Listener und prüft
+  `POST /v1/translate` über echtes HTTP. Er pinnt **konkrete Konzept-IDs
+  und den Relationstyp**, nicht nur den Status 200: die `sec.`-Trennung
+  (ein Name → zwei Konzepte), `congruent` mit `is_equality` und
+  Richtungsangabe `target_to_source`, `includes` als ausdrücklich **keine**
+  Gleichsetzung, die Abwesenheit der verworfenen
+  `is misapplied name for`-Zeile, die leere `no_relation_recorded`-Antwort
+  für ein WCVP-Konzept und 404 bei unbekanntem Zielraum.
+- **SP5-Verdikt in
+  [`docs/research/reality-check.md`](docs/research/reality-check.md)**, mit
+  dem Befehl hinter jeder Zahl. Voller Ingest (WCVP-Volldump + CDM-Ernte in
+  eine frische Datenbank): **283,92 s**, 440.534 WCVP- und 51.466
+  CDM-Konzepte, 26.002 von 26.346 Relationen geschrieben (die 344
+  Differenz sind genau die verworfenen misapplied-Zeilen), **0
+  Reader-Fehler, 0 unaufgelöste Relationsenden, 0 unaufgelöste Eltern**
+  trotz 9.897 Vorwärtsverweisen auf Elternzeilen — beide Review-Befunde
+  (Elternreihenfolge, Fehlergrenze des Readers) sind am Volldatensatz
+  belegt behoben.
+  - **Die UC6-Zahl: 4.461 von 440.534 WCVP-Konzepten (1,01 %)** haben
+    überhaupt eine CDM-Gegenseite mit Relation; über den Endpunkt sind es
+    in einer 300er-Stichprobe **0** (265× `UNRESOLVABLE` wegen echter
+    Namensmehrdeutigkeit über `sec.`-Räume hinweg, 35× Auflösung auf das
+    relationslose WCVP-Konzept). Gegenprobe mit 200 CDM-Konzepten:
+    **200/200 übersetzt**. Der Endpunkt ist in Ordnung, die Brücke
+    zwischen den Namensräumen fehlt.
+  - Relationsgraph: **60,90 %** der CDM-Konzepte tragen mindestens eine
+    Relation, 39,10 % sind isoliert. 119 verschiedene `sec.`-Referenzen,
+    11 davon decken 96,77 % der Konzepte.
+  - **Lizenz unverändert bindend**: keine Lizenzangabe auffindbar, aus
+    urheberrechtlich geschützter Florenliteratur abgeleitet,
+    `redistribution: unknown` — nur lokale Auswertung, kein öffentlicher
+    Betrieb von `/v1/translate` auf diesen Daten ohne schriftliche
+    Freigabe von BGBM/EDIT.
+  - **Nebenbefund für das nächste Milestone**: der CDM-Ingest bringt die
+    einzigen **629 FAMILY-Konzepte** des Systems (WCVP hat 0). Sie sind
+    über `/v1/suggest` und `/v1/concept` unverändert erreichbar, aber
+    keines trägt eine Relation, und beide Endpunkte geben kein `sec.`-Feld
+    aus — namensgleiche Familien aus verschiedenen Referenzräumen sind in
+    der Antwort nicht unterscheidbar.
+
 ### Added (SP6, Task 4 — Offenlegung, End-to-End-Beweis und Verdikt)
 - **Neue Anleitung
   [„Publikationsfähige Synonyme filtern (UC5)"](docs/how-to/synonyms-uc5.md)**

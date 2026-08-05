@@ -2,11 +2,19 @@ package application
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/jobrunner/hostus/internal/domain"
 	"github.com/jobrunner/hostus/internal/ports/output"
 )
+
+// ErrUnknownTargetSpace is returned by MatchInSpace when the requested target
+// space is not an ingested name space. The HTTP adapter renders it as a 400
+// INVALID_QUERY that names the offending space; it is never silently ignored,
+// since a caller asking for a space hostus does not have is asking a question
+// hostus cannot answer, not a question with an empty answer.
+var ErrUnknownTargetSpace = errors.New("unknown target space")
 
 // Confidence values assigned per match type, per spec §B.2. A MatchFuzzy
 // result has no fixed confidence tier here: its Confidence IS the winning
@@ -71,6 +79,15 @@ type MatchResult struct {
 	Candidates     []string
 	RequiresReview bool
 	Note           string
+
+	// TargetSpaceName and AggregatePolicy are populated only by MatchInSpace
+	// (UC4), never by MatchNames — both stay zero on the plain match path so
+	// that path's result is byte-for-byte what it always was. TargetSpaceName
+	// is the ESy-compatible spelling the target space uses for ConceptID;
+	// AggregatePolicy is the tri-state from domain.ResolveTargetSpace (empty
+	// for a plain species). See MatchInSpace.
+	TargetSpaceName string
+	AggregatePolicy domain.AggregatePolicy
 }
 
 // MatchNames resolves every req against repo, in order, per §B.2:
@@ -106,6 +123,63 @@ func MatchNames(ctx context.Context, repo output.Repository, reqs []MatchRequest
 			return nil, err
 		}
 		results = append(results, res)
+	}
+	return results, nil
+}
+
+// MatchInSpace resolves reqs exactly as MatchNames and then, for the ingested
+// target space `space`, annotates each result with the space's ESy-compatible
+// spelling (MatchResult.TargetSpaceName) and its AggregatePolicy — the
+// buildable half of UC4.
+//
+// space == "" is the opt-out: MatchInSpace then IS MatchNames, and no UC4 field
+// is touched (UC3 and UC6 share this endpoint and must see the unchanged
+// shape). A non-empty space that is not an ingested name space returns
+// ErrUnknownTargetSpace — validated up front, before any matching, so an
+// unknown space never does partial work.
+//
+// The policy is derived from the SAME aggregate predicate the matcher itself
+// uses (isAggregate over the split canonical) and the concept's entries in the
+// target space, via domain.ResolveTargetSpace — there is no second notion of
+// "is this an aggregate" here. Results without a resolved ConceptID (an
+// UNRESOLVABLE match) carry no name-space annotation, since there is no concept
+// to look one up for.
+func MatchInSpace(ctx context.Context, repo output.Repository, reqs []MatchRequest, space string) ([]MatchResult, error) {
+	if space == "" {
+		return MatchNames(ctx, repo, reqs)
+	}
+
+	spaces, err := repo.NameSpaces(ctx)
+	if err != nil {
+		return nil, err
+	}
+	known := false
+	for _, s := range spaces {
+		if s.ID == space {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return nil, ErrUnknownTargetSpace
+	}
+
+	results, err := MatchNames(ctx, repo, reqs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range results {
+		if results[i].ConceptID == "" {
+			continue
+		}
+		entries, err := repo.NameSpaceEntries(ctx, results[i].ConceptID, []string{space})
+		if err != nil {
+			return nil, err
+		}
+		canonical, _ := splitVerbatim(reqs[i].Verbatim)
+		name, policy := domain.ResolveTargetSpace(isAggregate(canonical), entries)
+		results[i].TargetSpaceName = name
+		results[i].AggregatePolicy = policy
 	}
 	return results, nil
 }

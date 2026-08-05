@@ -77,6 +77,62 @@ type NameSpaceEntry struct {
 	Resolution string
 }
 
+// AggregatePolicy is UC4's tri-state answer to "can coverage assigned to an
+// aggregate be resolved in the target space?". It is deliberately NOT a
+// boolean — the three states are genuinely distinct (same reasoning as SP6's
+// absent-vs-unclassified):
+//
+//   - AggregatePolicyKnown: the target space carries the aggregate as a taxon
+//     of its own, so an ESy-compatible aggregate name exists for it.
+//   - AggregatePolicyUnresolvable: the query IS an aggregate but the target
+//     space knows only microspecies under it, no aggregate taxon. Per the
+//     source document this means "not decidable", NOT "not met" — and coverage
+//     must not be distributed onto the microspecies.
+//   - the ZERO value (empty string): no aggregate is involved at all (a plain
+//     species). Emitting Known here would drain the field of meaning, so a
+//     plain species carries no policy.
+type AggregatePolicy string
+
+const (
+	AggregatePolicyKnown        AggregatePolicy = "known"
+	AggregatePolicyUnresolvable AggregatePolicy = "unresolvable"
+)
+
+// ResolveTargetSpace decides, for one matched concept, the ESy-compatible name
+// the target space uses and the AggregatePolicy that applies. queryIsAggregate
+// says whether the verbatim the caller matched carried an aggregate marker
+// (see IsAggregateName); entries are that concept's spellings in the target
+// space (see NameSpaceEntry), already ordered by the repository.
+//
+// The rules mirror AggregatePolicy's three states exactly:
+//
+//   - queryIsAggregate and an aggregate-marked entry exists -> that spelling +
+//     Known.
+//   - queryIsAggregate and NO aggregate-marked entry exists -> "" + Unresolvable.
+//     No name is handed back: offering the microspecies spelling here is
+//     precisely the false "not met" the source document warns against.
+//   - not queryIsAggregate -> the nominate (non-aggregate) spelling if any,
+//     else the first spelling, else ""; policy is the zero value (absent).
+func ResolveTargetSpace(queryIsAggregate bool, entries []NameSpaceEntry) (string, AggregatePolicy) {
+	if queryIsAggregate {
+		for _, e := range entries {
+			if e.Aggregate {
+				return e.Name, AggregatePolicyKnown
+			}
+		}
+		return "", AggregatePolicyUnresolvable
+	}
+	for _, e := range entries {
+		if !e.Aggregate {
+			return e.Name, ""
+		}
+	}
+	if len(entries) > 0 {
+		return entries[0].Name, ""
+	}
+	return "", ""
+}
+
 // IsAggregateName reports whether a verbatim name denotes an AGGREGATE — a
 // collective species wider than a single taxon ("Festuca ovina aggr.",
 // "Festuca ovina s. l.").

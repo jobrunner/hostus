@@ -73,6 +73,24 @@ func TestResolveTargetSpace(t *testing.T) {
 			wantName:   "Festuca ovina aggr.",
 			wantPolicy: "",
 		},
+		{
+			// Pins the nominate PREFERENCE, not merely entries[0]: an
+			// aggregate spelling is listed FIRST, yet a plain-species query
+			// must still hand back the nominate. The repository orders entries
+			// by (space, ext_id), which is independent of the aggregate flag,
+			// so nothing but this branch guarantees the nominate wins — a
+			// concept whose aggregate spelling has the lower ext_id would
+			// otherwise leak the aggregate name as the ESy name for a plain
+			// species, exactly the confusion ResolveTargetSpace exists to avoid.
+			name:        "plain species query, aggregate spelling sorts first -> still the nominate",
+			isAggregate: false,
+			entries: []domain.NameSpaceEntry{
+				{Space: "floraveg", ExtID: "1", Name: "Festuca ovina aggr.", Aggregate: true},
+				{Space: "floraveg", ExtID: "2", Name: "Festuca ovina", Aggregate: false},
+			},
+			wantName:   "Festuca ovina",
+			wantPolicy: "",
+		},
 	}
 
 	for _, tc := range tests {

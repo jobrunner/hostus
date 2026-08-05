@@ -174,7 +174,9 @@ paths:
         400-Fehler. Bei `fuzzy` ist `requires_review` IMMER `true` — eine
         Ähnlichkeits-basierte Auflösung gilt nie als endgültig bestätigt. Mit
         `target_space` (SP9/UC4) trägt jeder Treffer zusätzlich
-        `target_space_name`, `aggregate_policy` und `esy_diagnostic_relevance`.
+        `esy_diagnostic_relevance` (immer present) sowie — sofern zutreffend —
+        `aggregate_policy` und `target_space_name` (beide können fehlen, siehe
+        Feldbeschreibungen).
       tags:
         - taxa
       requestBody:

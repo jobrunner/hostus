@@ -17,6 +17,10 @@ Aufgabenorientierte Rezepte — jedes löst ein konkretes Problem. Sie setzen
   `GET /v1/concept/{id}/synonyms?relevance=publication`, das durchgerechnete
   *Corynephorus-canescens*-Beispiel und ausdrücklich: **was dieser Filter
   nicht kann** (keine regionale, keine Standardwerk-Filterung)
+- **[Aufnahmen in den ESy-Namensraum auflösen (UC4)](aggregate-uc4.md)** —
+  `POST /v1/match` mit `target_space`, die dreiwertige `aggregate_policy`, die
+  durchgerechnete Beispielaufnahme und ausdrücklich **was fehlt**: die nicht
+  bestimmbare `esy_diagnostic_relevance` ohne ESy-Regelwerk
 - **[Die eingebettete Testkonsole benutzen](test-console.md)** — die SPA
   unter `/`, der Schalter in allen drei Stufen, wozu die vier Panels da
   sind, ausdrücklich **was die Konsole nicht ist**, und was man an bekannten

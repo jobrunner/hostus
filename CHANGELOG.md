@@ -7,6 +7,45 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (SP9, Task 2 — `target_space` und `aggregate_policy` auf `/v1/match`)
+- **`POST /v1/match` nimmt ein optionales `target_space`** (aktuell nur
+  `floraveg`) und liefert je Treffer drei zusätzliche Felder. Ohne
+  `target_space` ist die Antwort **byteweise** die SP1-Form — durch einen Test
+  gepinnt, weil UC3/UC6 denselben Endpunkt nutzen. Ein unbekannter
+  `target_space` ist `400 INVALID_QUERY` und nennt den Raum, kein stiller
+  No-Op (`application.ErrUnknownTargetSpace`).
+- **`aggregate_policy` ist dreiwertig, nicht boolesch:** `known` (der Zielraum
+  führt das Aggregat als eigenes Taxon; ESy-Name in `target_space_name`),
+  `unresolvable` (die Anfrage IST ein Aggregat, der Zielraum kennt nur
+  Kleinarten — „nicht entscheidbar", nicht „nicht erfüllt"; Deckung darf nicht
+  verteilt werden, kein Name), und **abwesend** (gar kein Aggregat im Spiel).
+  Ein `known` für jede Art hätte das Feld bedeutungslos gemacht.
+- **`esy_diagnostic_relevance` ist konspikuierend abwesend:** bei gesetztem
+  `target_space` **immer present**, **immer** `not_determinable` — ein
+  selbsterklärender String, niemals `null` und nie fehlend, damit ihn kein
+  Konsument als falsy-„nicht relevant" liest (genau der False Negative, den
+  UC4 verhindern soll). Das ESy-Regelwerk ist nicht ingestiert — als bekannte
+  Lücke in `docs/explanation/known-gaps.md` dokumentiert.
+- **Wiederverwendung statt zweitem Pfad:** die Policy stammt aus derselben
+  Aggregat-Prädikatsfunktion (`domain.IsAggregateName`) und demselben
+  SP3-Crosswalk wie der Ingest. Neu: reine `domain.ResolveTargetSpace`,
+  `application.MatchInSpace`, die drei Felder in OpenAPI und
+  `docs/reference/http-api.md`.
+
+### Added (SP9, Task 3 — e2e, Anleitung, Verdikt)
+- **e2e unter dem `integration`-Tag** (`TestIntegration_MatchTargetSpaceFloraVeg`):
+  ingestiert WCVP + FloraVeg und löst eine Beispielaufnahme über echtes HTTP
+  auf, mit **spezifischen** Namen und Policies für alle drei Zustände (`known`,
+  abwesend, `unresolvable`) und dem ESy-Sentinel auf jedem Treffer; plus ein
+  400-Test für unbekannten `target_space`.
+- **Neue Anleitung `docs/how-to/aggregate-uc4.md`** (deutsch) mit der
+  durchgerechneten Aufnahme aus dem Quelldokument und einem expliziten
+  **„Was fehlt"**-Abschnitt zur nicht bestimmbaren `esy_diagnostic_relevance`.
+- **Verdikt `docs/research/sp9-uc4-verdict.md`: hält mit Auflagen** — mit dem
+  gemessenen Befund, dass `known` über einem WCVP-only-Backbone praktisch
+  unerreichbar ist (WCVP führt keine Aggregat-Konzepte), sodass
+  `aggregate_policy` heute vor allem als `unresolvable`-Signal wertvoll ist.
+
 ### Added (SP9, Task 1 — FloraVeg-Namensraum ingestieren)
 - **Namensräume als eigene Quellenart.** Ein Namensraum ist eine Checkliste,
   die NAMEN beiträgt und keine Taxonomie — keine Synonymie, keine

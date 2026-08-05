@@ -236,3 +236,37 @@ Freitextfelds anbieten.
 
 **Bis dahin:** die Räume aus dem Index lesen
 (`select id, title from sec_reference`) und den gewünschten Wert eintippen.
+
+## Das ESy-Regelwerk ist nicht geerntet — `esy_diagnostic_relevance` bleibt unentscheidbar (SP9)
+
+**Stand:** 2026-08-05 · **Betrifft:** `POST /v1/match` mit `target_space`
+(UC4), `esy_diagnostic_relevance`
+
+**Befund.** UC4 verlangt pro Treffer eine ESy-diagnostische Relevanz. hostus
+kann sie nicht bestimmen: Die FloraVeg-Pipeline hat nur eine **Namensliste**
+aus `Life_form.xlsx` geerntet, nicht das **ESy-Expertensystem** selbst (das
+Regelwerk, das entscheidet, welche Art in welcher Regel differenzierend ist).
+SP3 hatte das Regelwerk bereits explizit ausgeklammert. Ohne die Regeln ist
+„ist dieser Name in einer Regel differenzierend?" schlicht nicht
+beantwortbar.
+
+**Auswirkung.** Das Feld ist auf dem `target_space`-Pfad **immer present** mit
+dem Sentinel `not_determinable` — bewusst kein `null` und nicht fehlend, damit
+seine Abwesenheit nie als „nicht relevant" gelesen wird. Solange das Regelwerk
+fehlt, kann hostus den vom Quelldokument als wichtigsten genannten Fall nicht
+liefern: Ruht eine Regel auf einer im Feld nicht bestimmbaren Kleinart, ist die
+richtige Antwort **„nicht entscheidbar", nicht „Habitat nicht erfüllt"** — und
+genau diese Unterscheidung fällt derzeit aus.
+
+**Was es lösen würde:** das ESy-Regelwerk beschaffen und ingestieren. Es liegt
+auf **Zenodo unter CC BY 4.0** und ist damit — anders als die
+floraveg.eu-Downloads — lizenzrechtlich unproblematisch. Zu prüfen wäre, ob es
+maschinell in einen Regelvertrag überführbar ist (analog zur P8-Sondierung für
+Wisskirchen), inklusive der Frage, gegen welchen Namensraum die Regeln
+geschlüsselt sind und ob dieser mit dem hier ingestierten FloraVeg-Namensraum
+zusammenfällt.
+
+**Bis dahin:** `esy_diagnostic_relevance` als „hier nicht entscheidbar"
+behandeln, nicht als negatives Urteil. `aggregate_policy` (baubar und
+gemessen) ist die verwertbare Hälfte von UC4 — siehe
+[SP9-Verdikt](../research/sp9-uc4-verdict.md).

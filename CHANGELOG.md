@@ -5,6 +5,17 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [2.1.0-alpha.0](https://github.com/jobrunner/hostus/compare/v2.0.0-alpha.0...v2.1.0-alpha.0) (2026-08-05)
+
+
+### Features
+
+* **config:** ui.enabled toggle, default on ([b32e26d](https://github.com/jobrunner/hostus/commit/b32e26d0ead523e49dd4ba03d635511eee37f22c))
+* **floraveg:** ingest the FloraVeg name space ([f1c0d2a](https://github.com/jobrunner/hostus/commit/f1c0d2ab2fbc3113dc003e4d437c530e1cf1a466))
+* **match:** target_space and aggregate_policy for UC4 ([a88f55b](https://github.com/jobrunner/hostus/commit/a88f55bda9ac8dfae890c8ccff9d4c2f6eab4bf7))
+* **sp9:** UC4 target_space and aggregate_policy ([82f0243](https://github.com/jobrunner/hostus/commit/82f02436b4cbbd895e9274aa600b4996c0b19fd1))
+* **ui:** embedded single-page test console ([5b86c24](https://github.com/jobrunner/hostus/commit/5b86c24ebc43f96cd87fb4eb84abd5a20faf3a82))
+
 ## [Unreleased]
 
 ### Added (SP9, Task 2 — `target_space` und `aggregate_policy` auf `/v1/match`)

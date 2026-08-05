@@ -44,17 +44,19 @@ Bundle complete: bundle.sqlite (concepts=3 names=13 areas=16)
 
 ## Redistribution-Gate: ein Bundle kann keine ungeklärte Quelle mitführen
 
-Jeder Backbone-, Trait-Vokabular- und Xref-Quellen-Eintrag im Manifest
-trägt ein Pflichtfeld `redistribution: allowed|restricted|unknown` (siehe
+Jeder Backbone-, Trait-Vokabular-, Xref-Quellen- und Namensraum-Eintrag im
+Manifest trägt ein Pflichtfeld `redistribution: allowed|restricted|unknown` (siehe
 [Merkmalswerte pipeln und ingestieren](trait-ingest.md) für die volle
 Erklärung). `hostus bundle` prüft vor jedem Export, welche Quellen
 tatsächlich Daten zum gewählten Scope (`--area` oder die ganze Datenbank)
 beitragen:
 
 - **Trägt eine nicht-`allowed`-Quelle bei** (ein Backbone, ein
-  Trait-Vokabular oder eine Xref-Quelle unter `xref_sources:` — die
+  Trait-Vokabular, eine Xref-Quelle unter `xref_sources:` — die
   Herkunft jeder Xref-Zeile steht dafür in `xref.source` und der
-  `xref_source`-Tabelle), **schlägt der Export standardmäßig fehl** —
+  `xref_source`-Tabelle — oder ein Namensraum unter `name_spaces:`, dessen
+  Einträge in `name_space_entry` am jeweiligen Konzept hängen),
+  **schlägt der Export standardmäßig fehl** —
   die Fehlermeldung nennt die Quelle und ihren Redistribution-Wert:
 
   ```
@@ -89,6 +91,13 @@ gefüllt mit nur den Zeilen, die `--area` selektiert (oder allen, wenn
 - die betroffenen `taxon_concept`-Zeilen samt `name`/`concept_name`/`xref`/
   `distribution`/`vernacular`
 - die referenzierten `backbone_version`-Zeilen
+- die `name_space_entry`-Zeilen der kopierten Konzepte samt der zugehörigen
+  `name_space`-Provenienz — beides **konzept-gescopt**, nicht vollständig
+  kopiert: `name_space_entry.name` ist geernteter Inhalt (die Schreibweise
+  des Fremdraums), kein Quellen-Metadatum. Dadurch kann ein Bundle nur
+  Namen tragen, die das Redistribution-Gate zuvor gesehen und entweder
+  abgelehnt oder in `restricted_sources` protokolliert hat. Für FloraVeg
+  (`redistribution: unknown`) heißt das: standardmäßig verweigert.
 - ein neu aufgebauter `fts_name`/`fts_name_map`-FTS5-Index (nicht kopiert,
   sondern aus den kopierten Zeilen neu erzeugt — ein Bundle ist also selbst
   über `GET /v1/suggest` abfragbar)

@@ -326,3 +326,105 @@ func TestPrintConceptSourceReports_CleanSourcePrintsNoSampleLines(t *testing.T) 
 		}
 	}
 }
+
+// TestPrintNameSpaceReports_LossCountersAndAggregatesVisible pins that every
+// loss mode of the name-space crosswalk reaches the operator's terminal —
+// and that the aggregates line is printed separately from the headline rate,
+// since an aggregate can only ever resolve through the flagged
+// aggregate-to-nominate rule.
+func TestPrintNameSpaceReports_LossCountersAndAggregatesVisible(t *testing.T) {
+	reports := []application.NameSpaceIngestReport{{
+		Space: "floraveg", Rows: 6, Matched: 3, Unmatched: 1, Ambiguous: 1,
+		Concepts: 2, Aggregates: 3, AggregatesMatched: 2,
+		DuplicateExtIDs: 1, ReaderErrors: 2,
+		Normalized: []application.RuleCount{
+			{Rule: "aggregate_to_nominate", Rows: 2, Taxa: 2, Flagged: true},
+			{Rule: "hybrid_spacing", Rows: 1, Taxa: 1},
+		},
+		FlaggedSample:   []string{"Festuca ovina aggr."},
+		UnmatchedSample: []string{"Abies alba"},
+		AmbiguousSample: []string{"Ambiguous name"},
+		DuplicateSample: []string{"5647"},
+		Redistribution:  "unknown",
+	}}
+
+	var buf bytes.Buffer
+	printNameSpaceReports(&buf, reports)
+	got := buf.String()
+
+	for _, want := range []string{
+		"floraveg: rows=6 matched=3 unmatched=1 ambiguous=1 concepts=2",
+		"aggregates: 2 of 3 resolved",
+		"dropped: duplicate ext_ids=1 reader errors=2",
+		"normalized aggregate_to_nominate: rows=2 taxa=2",
+		"normalized hybrid_spacing: rows=1 taxa=1",
+		"flagged sample: Festuca ovina aggr.",
+		"unmatched sample: Abies alba",
+		"ambiguous sample: Ambiguous name",
+		"duplicate ext_id sample: 5647",
+		"hinweis: floraveg (redistribution=unknown)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("report %q, want it to contain %q", got, want)
+		}
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(line, "hybrid_spacing") && strings.Contains(line, "flagged") {
+			t.Errorf("line %q marks an unflagged rule as flagged", line)
+		}
+	}
+}
+
+func TestPrintNameSpaceReports_NoSpacesPrintsNothing(t *testing.T) {
+	var buf bytes.Buffer
+	printNameSpaceReports(&buf, nil)
+	if buf.Len() != 0 {
+		t.Errorf("want no output, got %q", buf.String())
+	}
+}
+
+// TestPrintNameSpaceReports_CleanSpacePrintsNoSampleLines pins the other
+// boundary: a space that resolved everything prints its counters but no
+// sample or normalisation noise, and an "allowed" space gets no hinweis.
+func TestPrintNameSpaceReports_CleanSpacePrintsNoSampleLines(t *testing.T) {
+	var buf bytes.Buffer
+	printNameSpaceReports(&buf, []application.NameSpaceIngestReport{{
+		Space: "floraveg", Rows: 1, Matched: 1, Concepts: 1, Redistribution: "allowed",
+	}})
+	out := buf.String()
+	for _, unwanted := range []string{"sample:", "normalized", "hinweis:"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("clean space must not print %q:\n%s", unwanted, out)
+		}
+	}
+	if !strings.Contains(out, "aggregates: 0 of 0 resolved") {
+		t.Errorf("want the aggregates line even at zero (an absent line reads as \"not measured\"):\n%s", out)
+	}
+}
+
+// TestIngestCommand_NameSpace_PrintsReport drives the whole CLI against the
+// fixture manifest (which pins the FloraVeg name space) and asserts the
+// name-space section reaches stdout.
+func TestIngestCommand_NameSpace_PrintsReport(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
+
+	cmd := newIngestCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetArgs([]string{"--dataset=testdata/dataset.yaml", "--db=" + dbPath})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("Execute: unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{
+		"Name spaces:",
+		"floraveg: rows=5 matched=3 unmatched=2 ambiguous=0 concepts=1",
+		"aggregates: 2 of 3 resolved",
+		"hinweis: floraveg (redistribution=unknown)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("hostus ingest output %q, want it to contain %q", out, want)
+		}
+	}
+}

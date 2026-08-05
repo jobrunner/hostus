@@ -169,10 +169,14 @@ paths:
         Import) gegen den lokalen Index auf. Jeder Eintrag wird unabhängig
         klassifiziert (`exact`, `exact_author`, `aggregate_alias`, `fuzzy`
         oder `unresolvable`); ein `unresolvable`-Ergebnis ist ein normales
-        Element der 200er-Antwort, kein HTTP-Fehler. Nur ein fehlerhafter
-        Request-Body liefert einen 400-Fehler. Bei `fuzzy` ist
-        `requires_review` IMMER `true` — eine Ähnlichkeits-basierte Auflösung
-        gilt nie als endgültig bestätigt.
+        Element der 200er-Antwort, kein HTTP-Fehler. Ein fehlerhafter
+        Request-Body ODER ein unbekannter `target_space` liefert einen
+        400-Fehler. Bei `fuzzy` ist `requires_review` IMMER `true` — eine
+        Ähnlichkeits-basierte Auflösung gilt nie als endgültig bestätigt. Mit
+        `target_space` (SP9/UC4) trägt jeder Treffer zusätzlich
+        `esy_diagnostic_relevance` (immer present) sowie — sofern zutreffend —
+        `aggregate_policy` und `target_space_name` (beide können fehlen, siehe
+        Feldbeschreibungen).
       tags:
         - taxa
       requestBody:
@@ -189,7 +193,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/MatchResponse'
         '400':
-          description: Fehlerhafter (nicht parsbarer) Request-Body.
+          description: >-
+            Fehlerhafter (nicht parsbarer) Request-Body oder unbekannter
+            `target_space` (INVALID_QUERY, nennt den unbekannten Raum).
           content:
             application/json:
               schema:
@@ -1103,11 +1109,16 @@ components:
         target_space:
           type: string
           description: >-
-            Wird entgegengenommen, aber in SP1 nicht ausgewertet (Sekundär-
-            raum-Übersetzung folgt in SP5 als `POST /v1/translate`).
+            Optionaler Namensraum (SP9/UC4), in den jeder Treffer aufgelöst
+            wird — aktuell nur `floraveg`. Ohne dieses Feld ist die Antwort
+            byteweise die SP1-Form (die Felder `target_space_name`,
+            `aggregate_policy`, `esy_diagnostic_relevance` fehlen dann). Ein
+            nicht ingestierter Namensraum ist `400 INVALID_QUERY` und nennt
+            den unbekannten Raum, kein stiller No-Op.
+          example: floraveg
         sec_hint:
           type: string
-          description: Wird entgegengenommen, aber in SP1 nicht ausgewertet.
+          description: Wird entgegengenommen, aber (weiterhin) nicht ausgewertet.
 
     MatchResult:
       type: object
@@ -1148,6 +1159,41 @@ components:
           type: string
           description: Menschenlesbare Erläuterung, z. B. für Aggregate.
           example: 'Aggregat, keine Kleinartauflösung'
+        target_space_name:
+          type: string
+          description: >-
+            Nur bei gesetztem `target_space` (SP9/UC4): die ESy-kompatible
+            Schreibweise, die der Zielraum für das aufgelöste Concept führt.
+            Fehlt, wenn der Zielraum keine passende Schreibweise hat —
+            insbesondere bei `aggregate_policy: unresolvable`, wo bewusst KEIN
+            Name geliefert wird (die Kleinart als Aggregatnamen anzubieten
+            wäre genau die falsche „nicht erfüllt"-Antwort, die UC4 vermeidet).
+          example: 'Festuca ovina aggr.'
+        aggregate_policy:
+          type: string
+          enum: [known, unresolvable]
+          description: >-
+            Tri-State (SP9/UC4), nur bei gesetztem `target_space`. `known`: der
+            Zielraum führt das Aggregat als eigenes Taxon (ESy-Name in
+            `target_space_name`). `unresolvable`: die Anfrage IST ein Aggregat,
+            der Zielraum kennt darunter aber nur Kleinarten — das bedeutet
+            „nicht entscheidbar", NICHT „nicht erfüllt", und die Deckung darf
+            NICHT auf die Kleinarten verteilt werden. FEHLT das Feld (dritter
+            Zustand), ist gar kein Aggregat im Spiel (gewöhnliche Art) — ein
+            `known` für jede Art würde das Feld bedeutungslos machen.
+        esy_diagnostic_relevance:
+          type: string
+          enum: [not_determinable]
+          description: >-
+            Nur bei gesetztem `target_space`, und dann IMMER present mit dem
+            Wert `not_determinable`. hostus kann die ESy-diagnostische Relevanz
+            derzeit NICHT bestimmen, weil das ESy-Regelwerk nicht ingestiert
+            ist (siehe docs/explanation/known-gaps.md). Der Wert ist absichtlich
+            ein selbsterklärender String und niemals `null` oder fehlend: seine
+            Abwesenheit oder ein falsy-Wert dürfte NIE als „nicht relevant"
+            gelesen werden — genau dieser Fehlschluss ist der von UC4 gefürchtete
+            False Negative.
+          example: not_determinable
 
     MatchResponse:
       type: object

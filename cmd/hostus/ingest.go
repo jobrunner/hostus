@@ -65,7 +65,53 @@ func runIngest(cmd *cobra.Command, _ []string) error {
 	printTraitReports(cmd.OutOrStdout(), reports.Traits)
 	printXrefReports(cmd.OutOrStdout(), reports.Xrefs)
 	printConceptSourceReports(cmd.OutOrStdout(), reports.ConceptSources)
+	printNameSpaceReports(cmd.OutOrStdout(), reports.NameSpaces)
 	return nil
+}
+
+// printNameSpaceReports renders one line per ingested name space (SP9/UC4).
+// Its visibility posture matches the three report printers above: the
+// crosswalk from a flat name list onto hostus concepts is lossy by
+// construction (the name lists carry no external id hostus could join on), so
+// every loss mode — unmatched, ambiguous, duplicate ext_id, reader-rejected
+// row — is printed with a sample rather than swallowed.
+//
+// The aggregates line is printed separately from the headline rate on
+// purpose: aggregate-marked names can only resolve through the FLAGGED
+// aggregate-to-nominate rule (the backbones carry no aggregate names), and
+// those are exactly the entries UC4's aggregate_policy rests on.
+func printNameSpaceReports(w io.Writer, reports []application.NameSpaceIngestReport) {
+	if len(reports) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintln(w, "Name spaces:")
+	for _, r := range reports {
+		_, _ = fmt.Fprintf(w, "  %s: rows=%d matched=%d unmatched=%d ambiguous=%d concepts=%d\n",
+			r.Space, r.Rows, r.Matched, r.Unmatched, r.Ambiguous, r.Concepts)
+		_, _ = fmt.Fprintf(w, "    aggregates: %d of %d resolved\n", r.AggregatesMatched, r.Aggregates)
+		_, _ = fmt.Fprintf(w, "    dropped: duplicate ext_ids=%d reader errors=%d\n", r.DuplicateExtIDs, r.ReaderErrors)
+		for _, n := range r.Normalized {
+			flag := ""
+			if n.Flagged {
+				flag = " [flagged: circumscriptions equated, not identical]"
+			}
+			_, _ = fmt.Fprintf(w, "    normalized %s: rows=%d taxa=%d%s\n", n.Rule, n.Rows, n.Taxa, flag)
+		}
+		printSampleLine(w, "flagged sample", r.FlaggedSample)
+		printSampleLine(w, "unmatched sample", r.UnmatchedSample)
+		printSampleLine(w, "ambiguous sample", r.AmbiguousSample)
+		printSampleLine(w, "duplicate ext_id sample", r.DuplicateSample)
+		printRedistributionNotice(w, r.Space, r.Redistribution)
+	}
+}
+
+// printSampleLine renders one bounded loss sample, or nothing when the sample
+// is empty. Extracted so the four sample lines above cannot drift in format.
+func printSampleLine(w io.Writer, label string, sample []string) {
+	if len(sample) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "    %s: %s\n", label, strings.Join(sample, ", "))
 }
 
 // printIngestReport renders report as one line per backbone, so an operator

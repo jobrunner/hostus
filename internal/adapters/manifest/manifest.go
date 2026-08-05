@@ -100,12 +100,42 @@ type ConceptSource struct {
 	Redistribution string `yaml:"redistribution" json:"redistribution"`
 }
 
+// NameSpace is one pinned NAME-SPACE entry (SP9, UC4): a checklist that
+// contributes names but no taxonomy, pinned by its canonical name-list CSV
+// (see internal/adapters/namelist and pipelines/README.md's "Canonical CSV
+// contract (name lists)"). Path is resolved to an absolute path relative to
+// the manifest file by Parse, exactly like Backbone.Path.
+//
+// It is deliberately not a `backbones:` entry even though FloraVeg was
+// listed as one before SP9: a backbone entry pins a DwC-A bundle DIRECTORY
+// and produces taxon_concept rows, while a name space pins ONE canonical CSV
+// and produces none — it attaches to concepts an existing backbone already
+// holds. Leaving it under `backbones:` meant it was read by the WCVP DwC-A
+// reader (internal/app.readerFor reads every backbone entry through it), so
+// it could never actually be ingested.
+//
+// License/SourceURL are optional here, unlike TraitVocabulary: the name-list
+// sources are exactly the ones with NO findable license (pipelines/README.md)
+// — which is why Redistribution stays schema-required and gates ExportBundle.
+type NameSpace struct {
+	ID        string `yaml:"id" json:"id"`
+	Version   string `yaml:"version" json:"version"`
+	License   string `yaml:"license,omitempty" json:"license,omitempty"`
+	SourceURL string `yaml:"source,omitempty" json:"source,omitempty"`
+	Path      string `yaml:"path" json:"path"`
+	Note      string `yaml:"note,omitempty" json:"note,omitempty"`
+	// Redistribution is required (schema-enforced): allowed|restricted|unknown.
+	// FloraVeg's is "unknown".
+	Redistribution string `yaml:"redistribution" json:"redistribution"`
+}
+
 // Dataset is the parsed, validated contents of a dataset.yaml manifest.
 type Dataset struct {
 	Backbones         []Backbone        `yaml:"backbones" json:"backbones"`
 	TraitVocabularies []TraitVocabulary `yaml:"trait_vocabularies,omitempty" json:"trait_vocabularies,omitempty"`
 	XrefSources       []XrefSource      `yaml:"xref_sources,omitempty" json:"xref_sources,omitempty"`
 	ConceptSources    []ConceptSource   `yaml:"concept_sources,omitempty" json:"concept_sources,omitempty"`
+	NameSpaces        []NameSpace       `yaml:"name_spaces,omitempty" json:"name_spaces,omitempty"`
 
 	// Raw holds the exact bytes read from disk, and ManifestSHA their
 	// SHA-256 hex digest — so an ingest can record manifest_sha and bind
@@ -194,5 +224,8 @@ func resolvePaths(ds *Dataset, baseDir string) {
 	for i := range ds.ConceptSources {
 		ds.ConceptSources[i].Concepts = resolve(ds.ConceptSources[i].Concepts)
 		ds.ConceptSources[i].Relations = resolve(ds.ConceptSources[i].Relations)
+	}
+	for i := range ds.NameSpaces {
+		ds.NameSpaces[i].Path = resolve(ds.NameSpaces[i].Path)
 	}
 }

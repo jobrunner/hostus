@@ -33,3 +33,10 @@ xref_sources:
     source: https://query.wikidata.org/sparql
     path: ../../xref/testdata/wikidata-sample.csv
     redistribution: allowed
+name_spaces:
+  - id: floraveg
+    version: "2023-01-03"
+    source: https://files.ibot.cas.cz/cevs/downloads/floraveg/Life_form.xlsx
+    path: ../../namelist/testdata/floraveg-sample.csv
+    note: "ESy-Namensraum, gepinnt"
+    redistribution: unknown

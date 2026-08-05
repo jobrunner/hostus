@@ -60,6 +60,7 @@ nav:
       - Von hostus zu iNaturalist (UC2): how-to/inat-uc2.md
       - "Konzepte zwischen sec.-Räumen übersetzen (UC6)": how-to/sec-translate-uc6.md
       - "Publikationsfähige Synonyme filtern (UC5)": how-to/synonyms-uc5.md
+      - "Aufnahmen in den ESy-Namensraum auflösen (UC4)": how-to/aggregate-uc4.md
       - Testkonsole benutzen: how-to/test-console.md
   - Referenz:
       - reference/index.md

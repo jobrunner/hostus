@@ -142,3 +142,47 @@ func TestIngest_UnknownTraitVocabularyIDErrors(t *testing.T) {
 		t.Fatal("app.Ingest: expected an error for a manifest pinning an unknown trait vocabulary id, got nil")
 	}
 }
+
+// TestIngest_ReportsNameSpaces drives the REAL composition root against a
+// manifest that pins the FloraVeg name space, on a REAL on-disk SQLite file
+// — the same combination that makes the trait/xref tests above meaningful:
+// application.IngestNameSpace must never read the repository while its
+// ingest transaction is open, and with SetMaxOpenConns(1) a violation
+// DEADLOCKS here rather than failing.
+func TestIngest_ReportsNameSpaces(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
+
+	reports, err := app.Ingest(context.Background(), "testdata/dataset.yaml", dbPath)
+	if err != nil {
+		t.Fatalf("app.Ingest: unexpected error: %v", err)
+	}
+	if len(reports.NameSpaces) != 1 {
+		t.Fatalf("len(reports.NameSpaces) = %d, want 1 (the manifest pins one name space)", len(reports.NameSpaces))
+	}
+
+	ns := reports.NameSpaces[0]
+	if ns.Space != "floraveg" {
+		t.Errorf("reports.NameSpaces[0].Space = %q, want %q", ns.Space, "floraveg")
+	}
+	if ns.Rows != 5 {
+		t.Errorf("reports.NameSpaces[0].Rows = %d, want 5 (the fixture's rows)", ns.Rows)
+	}
+	if ns.Matched != 3 || ns.Unmatched != 2 {
+		t.Errorf("reports.NameSpaces[0] matched/unmatched = %d/%d, want 3/2", ns.Matched, ns.Unmatched)
+	}
+	if ns.Aggregates != 3 || ns.AggregatesMatched != 2 {
+		t.Errorf("reports.NameSpaces[0] aggregates = %d of %d, want 2 of 3", ns.AggregatesMatched, ns.Aggregates)
+	}
+	if ns.Concepts != 1 {
+		t.Errorf("reports.NameSpaces[0].Concepts = %d, want 1", ns.Concepts)
+	}
+	if ns.ReaderErrors != 0 {
+		t.Errorf("reports.NameSpaces[0].ReaderErrors = %d, want 0", ns.ReaderErrors)
+	}
+	if ns.Redistribution != string(domain.RedistributionUnknown) {
+		t.Errorf("reports.NameSpaces[0].Redistribution = %q, want %q — the gate depends on this reaching name_space", ns.Redistribution, domain.RedistributionUnknown)
+	}
+	if len(ns.UnmatchedSample) == 0 {
+		t.Error("reports.NameSpaces[0].UnmatchedSample is empty, want the lossy crosswalk to name the names it dropped")
+	}
+}

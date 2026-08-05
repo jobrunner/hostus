@@ -23,6 +23,10 @@
     "concept_sources": {
       "type": "array",
       "items": { "$ref": "#/$defs/conceptSource" }
+    },
+    "name_spaces": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/nameSpace" }
     }
   },
   "$defs": {
@@ -69,6 +73,20 @@
         "source": { "type": "string", "minLength": 1 },
         "concepts": { "type": "string", "minLength": 1 },
         "relations": { "type": "string", "minLength": 1 },
+        "note": { "type": "string" },
+        "redistribution": { "$ref": "#/$defs/redistribution" }
+      }
+    },
+    "nameSpace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "path", "redistribution"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "license": { "type": "string" },
+        "source": { "type": "string" },
+        "path": { "type": "string", "minLength": 1 },
         "note": { "type": "string" },
         "redistribution": { "$ref": "#/$defs/redistribution" }
       }

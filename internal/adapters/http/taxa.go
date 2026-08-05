@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/gorilla/mux"
 
@@ -154,9 +155,10 @@ type matchNameDTO struct {
 	Verbatim string `json:"verbatim"`
 }
 
-// matchRequestDTO is the POST /v1/match request body. TargetSpace/SecHint
-// are accepted (per §B.2's example payload) but unused in SP1: sec.-space
-// translation is out of scope until SP5 ("POST /v1/translate").
+// matchRequestDTO is the POST /v1/match request body. TargetSpace (SP9/UC4)
+// selects an ingested name space to resolve each match into; without it the
+// response is byte-for-byte the SP1 shape. SecHint remains accepted but unused
+// (sec.-space translation lives on POST /v1/translate since SP5).
 type matchRequestDTO struct {
 	Names       []matchNameDTO `json:"names"`
 	TargetSpace string         `json:"target_space,omitempty"`
@@ -174,7 +176,30 @@ type matchResultDTO struct {
 	Candidates     []string `json:"candidates,omitempty"`
 	RequiresReview bool     `json:"requires_review,omitempty"`
 	Note           string   `json:"note,omitempty"`
+
+	// The three UC4 fields below appear ONLY when the request named a
+	// target_space; on the plain path they stay zero and omitempty drops them,
+	// leaving the SP1 shape untouched.
+	//
+	// TargetSpaceName is the ESy-compatible spelling the target space uses.
+	// AggregatePolicy is the tri-state (known/unresolvable/absent) — absent
+	// (empty, dropped) means no aggregate is involved.
+	// ESyDiagnosticRelevance is ALWAYS esyRelevanceNotDeterminable on the
+	// target-space path: it is emitted precisely so its meaning ("not
+	// determinable, ESy rule set not available") is conspicuous rather than
+	// silently missing — a consumer must never read its absence as "not
+	// relevant". See docs/reference/http-api.md.
+	TargetSpaceName        string `json:"target_space_name,omitempty"`
+	AggregatePolicy        string `json:"aggregate_policy,omitempty"`
+	ESyDiagnosticRelevance string `json:"esy_diagnostic_relevance,omitempty"`
 }
+
+// esyRelevanceNotDeterminable is the sentinel value of every
+// esy_diagnostic_relevance field while the ESy rule set is not ingested (SP9).
+// It is a self-describing string, never null and never absent on the
+// target-space path, so no consumer in any language can read it as a falsy
+// "not relevant" — that false negative is exactly what UC4 exists to prevent.
+const esyRelevanceNotDeterminable = "not_determinable"
 
 // matchResponseDTO is the POST /v1/match response envelope.
 type matchResponseDTO struct {
@@ -266,7 +291,11 @@ func handleMatch(repo output.Repository) http.HandlerFunc {
 			reqs[i] = application.MatchRequest{ID: n.ID, Verbatim: n.Verbatim}
 		}
 
-		results, err := application.MatchNames(r.Context(), repo, reqs)
+		results, err := application.MatchInSpace(r.Context(), repo, reqs, body.TargetSpace)
+		if errors.Is(err, application.ErrUnknownTargetSpace) {
+			httperr.InvalidQueryError(w, "unknown target_space "+strconv.Quote(body.TargetSpace))
+			return
+		}
 		if err != nil {
 			httperr.InternalError(w)
 			return
@@ -284,22 +313,27 @@ func handleMatch(repo output.Repository) http.HandlerFunc {
 
 		writeJSON(w, matchResponseDTO{
 			BackboneVersions: backboneVersions,
-			Results:          matchResultsToDTO(results),
+			Results:          matchResultsToDTO(results, body.TargetSpace != ""),
 		})
 	}
 }
 
-// matchResultsToDTO renders application.MatchNames' results as the wire
+// matchResultsToDTO renders application.MatchInSpace's results as the wire
 // shape, mapping the zero-value domain.MatchType (UNRESOLVABLE) to
-// matchTypeUnresolvable.
-func matchResultsToDTO(results []application.MatchResult) []matchResultDTO {
+// matchTypeUnresolvable. targetSpace reports whether the request named a
+// target_space: only then are the three UC4 fields emitted, and
+// esy_diagnostic_relevance is set on EVERY result to the sentinel (its whole
+// point is to be conspicuously present, per its DTO comment), while
+// target_space_name/aggregate_policy carry whatever the matcher resolved
+// (empty ones drop via omitempty).
+func matchResultsToDTO(results []application.MatchResult, targetSpace bool) []matchResultDTO {
 	out := make([]matchResultDTO, len(results))
 	for i, res := range results {
 		matchType := string(res.MatchType)
 		if matchType == "" {
 			matchType = matchTypeUnresolvable
 		}
-		out[i] = matchResultDTO{
+		dto := matchResultDTO{
 			ID:             res.ID,
 			MatchType:      matchType,
 			Confidence:     res.Confidence,
@@ -308,6 +342,12 @@ func matchResultsToDTO(results []application.MatchResult) []matchResultDTO {
 			RequiresReview: res.RequiresReview,
 			Note:           res.Note,
 		}
+		if targetSpace {
+			dto.TargetSpaceName = res.TargetSpaceName
+			dto.AggregatePolicy = string(res.AggregatePolicy)
+			dto.ESyDiagnosticRelevance = esyRelevanceNotDeterminable
+		}
+		out[i] = dto
 	}
 	return out
 }

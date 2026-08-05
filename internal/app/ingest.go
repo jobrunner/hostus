@@ -7,6 +7,7 @@ import (
 
 	"github.com/jobrunner/hostus/internal/adapters/cdm"
 	"github.com/jobrunner/hostus/internal/adapters/manifest"
+	"github.com/jobrunner/hostus/internal/adapters/namelist"
 	"github.com/jobrunner/hostus/internal/adapters/sqlite"
 	"github.com/jobrunner/hostus/internal/adapters/traits"
 	"github.com/jobrunner/hostus/internal/adapters/wcvp"
@@ -198,6 +199,51 @@ func ingestXrefSource(ctx context.Context, xs manifest.XrefSource, manifestSHA s
 	return application.IngestXrefs(ctx, repo, xrefSourceRowSource{ds: ds}, meta)
 }
 
+// nameSpaceRowSource adapts a *namelist.Dataset into
+// application.NameRowSource, so application never imports
+// internal/adapters/namelist directly (depguard) — the name-space
+// counterpart of wcvpRowSource/traitVocabRowSource/xrefSourceRowSource above.
+type nameSpaceRowSource struct{ ds *namelist.Dataset }
+
+func (s nameSpaceRowSource) Rows() []application.NameRow {
+	out := make([]application.NameRow, 0, len(s.ds.Rows))
+	for _, r := range s.ds.Rows {
+		out = append(out, application.NameRow{Taxon: r.Taxon, SourceID: r.SourceID})
+	}
+	return out
+}
+
+// ingestNameSpace opens ns's canonical name-list CSV and runs
+// application.IngestNameSpace against repo (SP9/UC4). manifestSHA is recorded
+// onto the space's name_space row exactly as it is onto xref_source.
+//
+// Reader-level row errors are surfaced on the report rather than aborting,
+// like ingestConceptSource: one malformed line out of 16.402 must not cost
+// the whole ingest, but it must not vanish either.
+func ingestNameSpace(ctx context.Context, ns manifest.NameSpace, manifestSHA string, repo *sqlite.DB) (application.NameSpaceIngestReport, error) {
+	ds, err := namelist.Read(ns.Path)
+	if err != nil {
+		return application.NameSpaceIngestReport{}, fmt.Errorf("app: reading name space %q at %q: %w", ns.ID, ns.Path, err)
+	}
+	// ns.Redistribution is routed through ParseRedistribution for the same
+	// reason as adaptBackbones' backbone mapping above — see its doc comment.
+	redistribution, err := domain.ParseRedistribution(ns.Redistribution)
+	if err != nil {
+		return application.NameSpaceIngestReport{}, fmt.Errorf("app: name space %q: %w", ns.ID, err)
+	}
+	meta := domain.NameSpaceMeta{
+		ID:             ns.ID,
+		Version:        ns.Version,
+		License:        ns.License,
+		SourceURL:      ns.SourceURL,
+		ManifestSHA:    manifestSHA,
+		Redistribution: redistribution,
+	}
+	report, err := application.IngestNameSpace(ctx, repo, nameSpaceRowSource{ds: ds}, meta)
+	report.ReaderErrors = len(ds.Errors)
+	return report, err
+}
+
 // ingestConceptSource reads cs's two canonical CDM CSVs and runs
 // application.IngestCDM against repo. This is the adapter -> application DTO
 // bridge for SP5: internal/application must not import
@@ -279,6 +325,7 @@ type Reports struct {
 	Traits         []application.TraitIngestReport
 	Xrefs          []application.XrefIngestReport
 	ConceptSources []application.CDMIngestReport
+	NameSpaces     []application.NameSpaceIngestReport
 }
 
 // Ingest parses and validates the manifest at manifestPath, opens (or
@@ -286,11 +333,14 @@ type Reports struct {
 // against every pinned backbone, then application.IngestTraits against every
 // pinned trait vocabulary, then application.IngestXrefs against every pinned
 // xref source, then application.IngestCDM against every pinned concept
-// source. It is the entry point "hostus ingest" calls.
+// source, then application.IngestNameSpace against every pinned name space.
+// It is the entry point "hostus ingest" calls.
 //
-// Concept sources run LAST on purpose: their relation ends resolve against
+// Concept sources run LATE on purpose: their relation ends resolve against
 // taxon_concept, so anything an earlier phase wrote is already available to
-// them (see application.IngestCDM's phase 1).
+// them (see application.IngestCDM's phase 1). Name spaces run LAST for the
+// same reason — their crosswalk resolves against the name index, so every
+// concept any earlier phase contributed is a possible target.
 func Ingest(ctx context.Context, manifestPath, dbPath string) (Reports, error) {
 	var reports Reports
 
@@ -340,6 +390,15 @@ func Ingest(ctx context.Context, manifestPath, dbPath string) (Reports, error) {
 			return reports, err
 		}
 		reports.ConceptSources = append(reports.ConceptSources, cr)
+	}
+
+	reports.NameSpaces = make([]application.NameSpaceIngestReport, 0, len(manifestDS.NameSpaces))
+	for _, ns := range manifestDS.NameSpaces {
+		nr, err := ingestNameSpace(ctx, ns, manifestDS.ManifestSHA, repo)
+		if err != nil {
+			return reports, err
+		}
+		reports.NameSpaces = append(reports.NameSpaces, nr)
 	}
 
 	return reports, nil

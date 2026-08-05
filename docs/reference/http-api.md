@@ -165,8 +165,9 @@ Löst eine Liste verbatimer Namen batch-weise gegen den lokalen Index auf —
 gedacht für den Import von Vegetationsaufnahmen mit uneinheitlicher
 Namensschreibweise. Jeder Eintrag wird unabhängig klassifiziert; ein
 `unresolvable`-Ergebnis ist ein normales Element der `200`-Antwort, kein
-HTTP-Fehler. Nur ein nicht parsbarer Request-Body liefert `400
-INVALID_QUERY`.
+HTTP-Fehler. Ein nicht parsbarer Request-Body **oder** ein unbekannter
+`target_space` liefert `400 INVALID_QUERY` (die Meldung nennt den
+unbekannten Raum).
 
 **Beispiel-Request**
 
@@ -213,9 +214,63 @@ POST /v1/match
 
 `match_type` ist eines von `exact`, `exact_author`, `aggregate_alias` oder
 `unresolvable`. `candidates` (Liste von Kanonicalnamen) wird nur bei
-Autor-Mehrdeutigkeit gefüllt. `target_space`/`sec_hint` im Request werden
-entgegengenommen, aber nicht ausgewertet — die Sekundärraum-Übersetzung
-liegt in [`POST /v1/translate`](#post-v1translate).
+Autor-Mehrdeutigkeit gefüllt. `sec_hint` im Request wird entgegengenommen,
+aber nicht ausgewertet — die Sekundärraum-Übersetzung liegt in
+[`POST /v1/translate`](#post-v1translate).
+
+#### `target_space` (SP9/UC4): ESy-kompatibler Name und `aggregate_policy`
+
+Mit dem optionalen `target_space` (aktuell nur `floraveg`) wird jeder Treffer
+zusätzlich in den genannten Namensraum aufgelöst. **Ohne `target_space` ist
+die Antwort byteweise die oben gezeigte Form** — die drei folgenden Felder
+fehlen dann vollständig, damit UC3/UC6, die denselben Endpunkt nutzen, keine
+Formänderung sehen.
+
+```json
+POST /v1/match
+{ "target_space": "floraveg",
+  "names": [ { "id": "1", "verbatim": "Festuca ovina agg." } ] }
+```
+
+```json
+{
+  "backbone_versions": { "wcvp": "2026-06-15" },
+  "results": [
+    {
+      "id": "1",
+      "match_type": "aggregate_alias",
+      "confidence": 0.95,
+      "concept_id": "<aggregat-concept-id>",
+      "note": "Aggregat, keine Kleinartauflösung",
+      "target_space_name": "Festuca ovina aggr.",
+      "aggregate_policy": "known",
+      "esy_diagnostic_relevance": "not_determinable"
+    }
+  ]
+}
+```
+
+- `target_space_name` — die ESy-kompatible Schreibweise, die der Zielraum für
+  das aufgelöste Concept führt. Fehlt, wenn der Zielraum keine passende
+  Schreibweise hat, **insbesondere bei `aggregate_policy: unresolvable`**: dort
+  wird bewusst kein Name geliefert, weil die Kleinart als Aggregatnamen
+  anzubieten genau die falsche „nicht erfüllt"-Antwort wäre.
+- `aggregate_policy` — dreiwertig:
+  - `known` — der Zielraum führt das Aggregat als eigenes Taxon (Beispiel oben:
+    `Festuca ovina aggr.`).
+  - `unresolvable` — die Anfrage **ist** ein Aggregat, der Zielraum kennt
+    darunter aber nur Kleinarten. Das heißt **„nicht entscheidbar", nicht
+    „nicht erfüllt"**, und die Deckung darf **nicht** auf die Kleinarten
+    verteilt werden.
+  - **fehlt** (dritter Zustand) — gar kein Aggregat im Spiel (gewöhnliche Art).
+    Ein `known` für jede Art würde das Feld bedeutungslos machen.
+- `esy_diagnostic_relevance` — bei gesetztem `target_space` **immer present**
+  und **immer** `not_determinable`. hostus kann die ESy-diagnostische Relevanz
+  derzeit nicht bestimmen, weil das ESy-Regelwerk nicht ingestiert ist (siehe
+  [known-gaps](../explanation/known-gaps.md)). Der Wert ist absichtlich ein
+  selbsterklärender String und niemals `null` oder fehlend: seine Abwesenheit
+  oder ein falsy-Wert dürfte **nie** als „nicht relevant" gelesen werden —
+  genau dieser Fehlschluss ist der von UC4 gefürchtete False Negative.
 
 ### `GET /v1/suggest?q={q}&area={area}&rank={rank}&limit={limit}`
 

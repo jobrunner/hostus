@@ -133,6 +133,25 @@ type Repository interface {
 	// for API/response provenance.
 	TraitVocabularies(ctx context.Context) ([]domain.TraitVocabMeta, error)
 
+	// NameSpaceEntries returns every name-space spelling attached to
+	// conceptID (SP9/UC4 — e.g. the FloraVeg/ESy names for a WCVP concept),
+	// ordered by (space, ext_id) for a deterministic result. spaces
+	// restricts which name spaces are returned; nil or empty means every
+	// ingested space.
+	//
+	// A concept can carry SEVERAL entries from the SAME space (FloraVeg
+	// spells Festuca ovina three ways under three SeqIDs); they are all
+	// returned, never collapsed — see domain.NameSpaceEntry.
+	//
+	// Returns domain.ErrNotFound (wrapped) if conceptID is unknown; a known
+	// concept with no name-space entry returns an empty, non-error slice —
+	// callers must not conflate the two.
+	NameSpaceEntries(ctx context.Context, conceptID string, spaces []string) ([]domain.NameSpaceEntry, error)
+	// NameSpaces lists every ingested name-space provenance row, ordered by
+	// id, for API/response provenance and for "hostus ingest" to report what
+	// a database actually holds.
+	NameSpaces(ctx context.Context) ([]domain.NameSpaceMeta, error)
+
 	// Suggest returns FTS5 prefix-match candidates for q (an autosuggest
 	// query fragment), scored but UNRANKED: the application layer runs
 	// domain.RankSuggestions over the result and truncates to opts.Limit
@@ -273,6 +292,17 @@ type IngestTx interface {
 	// license, manifest_sha, redistribution), which AddXref's source
 	// attribution references and ExportBundle's redistribution gate reads.
 	UpsertXrefSource(meta domain.XrefSourceMeta) error
+	// UpsertNameSpace records one name-space provenance row (SP9/UC4), the
+	// name-space counterpart of UpsertXrefSource. AddNameSpaceEntry's space
+	// column is an FK onto it, and ExportBundle's redistribution gate reads
+	// it — FloraVeg's redistribution is "unknown", so a bundle carrying its
+	// entries is refused unless --force-include-restricted is set.
+	UpsertNameSpace(meta domain.NameSpaceMeta) error
+	// AddNameSpaceEntry attaches one name-space spelling to conceptID. Both
+	// e.Space and conceptID are foreign keys, so the caller must have
+	// upserted the space and resolved the concept first — see
+	// application.IngestNameSpace's two-phase resolution.
+	AddNameSpaceEntry(conceptID string, e domain.NameSpaceEntry) error
 	// Finalize (re)builds the FTS5 autosuggest index (fts_name/fts_name_map)
 	// for every name this transaction has linked to a concept (both the
 	// accepted name and its synonyms), so Suggest can find them. Callers

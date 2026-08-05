@@ -783,6 +783,12 @@ func (f *fakeCapturingRepo) Traits(context.Context, string, []domain.TraitVocab)
 func (f *fakeCapturingRepo) TraitVocabularies(context.Context) ([]domain.TraitVocabMeta, error) {
 	panic("not needed by Ingest")
 }
+func (f *fakeCapturingRepo) NameSpaceEntries(context.Context, string, []string) ([]domain.NameSpaceEntry, error) {
+	panic("not needed by Ingest")
+}
+func (f *fakeCapturingRepo) NameSpaces(context.Context) ([]domain.NameSpaceMeta, error) {
+	panic("not needed by Ingest")
+}
 func (f *fakeCapturingRepo) Suggest(context.Context, string, output.SuggestOpts) ([]domain.SuggestItem, error) {
 	panic("not needed by Ingest")
 }
@@ -833,7 +839,11 @@ func (t *fakeCapturingTx) AddDistribution(string, domain.Distribution) error { r
 func (t *fakeCapturingTx) AddTraitValue(string, domain.TraitValue) error     { return nil }
 func (t *fakeCapturingTx) UpsertTraitVocabulary(domain.TraitVocabMeta) error { return nil }
 func (t *fakeCapturingTx) UpsertXrefSource(domain.XrefSourceMeta) error      { return nil }
-func (t *fakeCapturingTx) UpsertSecReference(domain.SecReference) error      { return nil }
+func (t *fakeCapturingTx) UpsertNameSpace(domain.NameSpaceMeta) error        { return nil }
+func (t *fakeCapturingTx) AddNameSpaceEntry(string, domain.NameSpaceEntry) error {
+	return nil
+}
+func (t *fakeCapturingTx) UpsertSecReference(domain.SecReference) error { return nil }
 func (t *fakeCapturingTx) AddConceptRelation(string, string, domain.Relation, string) error {
 	return nil
 }

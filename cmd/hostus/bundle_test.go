@@ -14,13 +14,20 @@ import (
 // ingestFixtureDB runs "hostus ingest" against the shared testdata fixture
 // into a fresh temp-file database, returning its path, so bundle tests
 // exercise a real, previously-ingested database rather than an empty one.
+//
+// It uses dataset-no-namespace.yaml — dataset.yaml minus the FloraVeg name
+// space — because every source it pins is redistribution=allowed, which is
+// what the bundle happy-path tests below need. The gate's behavior on a
+// NON-allowed source is pinned separately (dataset-restricted.yaml here,
+// and internal/app's TestBundle_RefusesNameSpaceByDefault for the name
+// space).
 func ingestFixtureDB(t *testing.T) string {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
 
 	cmd := newIngestCmd()
 	cmd.SetOut(new(bytes.Buffer))
-	cmd.SetArgs([]string{"--dataset=testdata/dataset.yaml", "--db=" + dbPath})
+	cmd.SetArgs([]string{"--dataset=testdata/dataset-no-namespace.yaml", "--db=" + dbPath})
 	if err := cmd.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("ingesting fixture: unexpected error: %v", err)
 	}

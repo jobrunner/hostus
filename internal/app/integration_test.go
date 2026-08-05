@@ -745,7 +745,12 @@ func TestIntegration_OfflineBundleServesSuggestOffline(t *testing.T) {
 	dbPath := filepath.Join(dir, "hostus.sqlite")
 	bundlePath := filepath.Join(dir, "bundle.sqlite")
 
-	if _, err := app.Ingest(ctx, "testdata/dataset.yaml", dbPath); err != nil {
+	// dataset-no-namespace.yaml, not dataset.yaml: this test is about the
+	// bundle being self-contained offline, and every source it pins is
+	// redistribution=allowed. The FloraVeg name space (unknown) would be
+	// refused here by design — that refusal is pinned by
+	// internal/app's TestBundle_RefusesNameSpaceByDefault instead.
+	if _, err := app.Ingest(ctx, "testdata/dataset-no-namespace.yaml", dbPath); err != nil {
 		t.Fatalf("app.Ingest: unexpected error: %v", err)
 	}
 

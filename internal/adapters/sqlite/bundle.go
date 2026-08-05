@@ -157,6 +157,20 @@ func findRestrictedSources(ctx context.Context, src *DB, conceptIDs []string) ([
 	}
 	out = append(out, xrefSources...)
 
+	// Name spaces (SP9). A name space contributes CONTENT — the spellings
+	// the space uses — so it is gated exactly like the three above, joined
+	// through the entries actually in scope. FloraVeg's redistribution is
+	// "unknown", so a bundle carrying its names is refused by default.
+	nameSpaces, err := queryNonAllowedSources(ctx, src, `
+		SELECT DISTINCT ns.id, ns.redistribution
+		FROM name_space ns
+		JOIN name_space_entry e ON e.space = ns.id
+		WHERE e.concept_id IN (SELECT value FROM json_each(?))`, []any{idsJSON})
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: bundle: checking name space redistribution: %w", err)
+	}
+	out = append(out, nameSpaces...)
+
 	out = dedupeRestrictedSourcesByID(out)
 
 	// out[i].ID < out[j].ID vs. <=: a provable-equivalence-class boundary,
@@ -585,6 +599,37 @@ func copyConceptScopedTables(ctx context.Context, src, bundle *DB, idsJSON strin
 			  AND sec_reference IS NOT NULL AND sec_reference <> ''
 		 )`, []any{idsJSON},
 		`INSERT INTO sec_reference (id, title) VALUES (?,?)`); err != nil {
+		return err
+	}
+
+	// name_space + name_space_entry (SP9), both SCOPED — deliberately NOT
+	// the unscoped copy xref_source and trait_vocabulary get, for exactly
+	// the reason sec_reference is scoped above: name_space_entry.name holds
+	// harvested CONTENT (the spellings lifted out of the source), not
+	// provenance about a source. Scoping it by concept is what makes the
+	// redistribution gate structurally honest — the gate joins through the
+	// very same in-scope entries (findRestrictedSources), so a bundle can
+	// only ever carry a name the gate has already seen and either refused or
+	// recorded. name_space itself is scoped to the spaces whose entries
+	// survive, since a provenance row for a space that contributed nothing
+	// is unreachable from the bundle.
+	//
+	// name_space before name_space_entry: e.space is an FK onto it and the
+	// bundle connection enforces foreign keys.
+	if err := copyRows(ctx, src, bundle,
+		`SELECT id, version, license, source_url, ingested_at, manifest_sha, redistribution FROM name_space
+		 WHERE id IN (
+			SELECT DISTINCT space FROM name_space_entry
+			WHERE concept_id IN (SELECT value FROM json_each(?))
+		 )`, []any{idsJSON},
+		`INSERT INTO name_space (id, version, license, source_url, ingested_at, manifest_sha, redistribution) VALUES (?,?,?,?,?,?,?)`); err != nil {
+		return err
+	}
+
+	if err := copyRows(ctx, src, bundle,
+		`SELECT space, ext_id, concept_id, name, aggregate, resolution FROM name_space_entry
+		 WHERE concept_id IN (SELECT value FROM json_each(?))`, []any{idsJSON},
+		`INSERT INTO name_space_entry (space, ext_id, concept_id, name, aggregate, resolution) VALUES (?,?,?,?,?,?)`); err != nil {
 		return err
 	}
 

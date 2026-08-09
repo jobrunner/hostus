@@ -94,6 +94,11 @@ func Open(path string) (*DB, error) {
 // what is required. The check is one-directional — every expected column must
 // be present, but extra columns are fine — so an older binary opening a NEWER
 // database (more columns than it knows) still works.
+//
+// It compares column NAMES only, not types/nullability/PK shape: the drift it
+// targets is a column an older build never created at all (the SP3
+// trait_value.resolution case), which is a name-level absence. A legacy column
+// of the wrong type is out of scope and not detected.
 func verifySchemaColumns(ctx context.Context, sqlDB *sql.DB) error {
 	expected, tables, err := expectedSchemaColumns(ctx)
 	if err != nil {
@@ -121,7 +126,7 @@ func verifySchemaColumns(ctx context.Context, sqlDB *sql.DB) error {
 		}
 	}
 	if len(problems) > 0 {
-		return fmt.Errorf("sqlite: database schema is out of date — %s; rebuild the index with the current hostus (`hostus ingest`), or add the column(s) by hand (a value absent from a legacy row is correct as NULL)", strings.Join(problems, "; "))
+		return fmt.Errorf("sqlite: database schema is out of date — %s; re-ingest with the current hostus into a FRESH database file (`hostus ingest` reopens this same path and hits this check again), or add the column(s) in place by hand (a value absent from a legacy row is correct as NULL)", strings.Join(problems, "; "))
 	}
 	return nil
 }

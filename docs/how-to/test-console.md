@@ -151,7 +151,7 @@ Folgendes — und keines davon ist ein Fehler der Konsole:
 | ----------- | ------- |
 | Xrefs zeigen nur `powo`, immer genau eine ID | nur ein Backbone ingestiert; die Wikidata-Brücke (SP4) fehlt, die mehrere IDs je Autorität liefert |
 | Panel 4 antwortet auf **jeden** Zielraum mit 404 | `sec_reference` ist leer, es gibt keinen Zielraum |
-| Panel 2 zeigt „Traits" als Fehler (HTTP 500) | dem Index fehlt `trait_value.resolution`, und es gibt dafür keine Migration — siehe [Bekannte Lücken](../explanation/known-gaps.md) |
+| Die Konsole meldet den Dienst als „nicht bereit" (`/health/ready` = 503), obwohl der Prozess läuft | der Index ist mit einem älteren hostus gebaut und dem Schema fehlt eine Spalte (z. B. `trait_value.resolution`); `sqlite.Open` erkennt die Drift beim Start, `serve` bleibt bewusst not-ready statt später pro Anfrage einen 500 zu liefern. Das Startlog nennt Tabelle und Spalte. Behebung: Index mit dem aktuellen hostus neu ingestieren (frische DB-Datei) |
 
 ### Ein Seitenaufruf kostet API-Budget
 

@@ -169,50 +169,6 @@ gefordert ist nur, dass der Code kompiliert und `vet`-sauber ist.
 **Bis dahin:** nach einer Änderung an `poc/**` von Hand
 `nix develop -c bash -c 'cd poc && gofmt -l . && go vet ./...'` laufen lassen.
 
-## `/v1/concept/{id}/traits` liefert 500, während `/health/ready` 200 sagt (SP8)
-
-**Stand:** 2026-08-04 · **Betrifft:** `internal/adapters/sqlite/traits.go:107`,
-`internal/adapters/sqlite/db.go:63,67`
-
-**Befund.** Beim Hand-Test der Testkonsole gegen den vollen Index
-(`/tmp/full-real.sqlite`) antwortete `GET /v1/concept/{id}/traits` auf einem
-Konzept mit fünf vorhandenen EIVE-Zeilen mit `500 INTERNAL_ERROR`. Ursache
-ist eine fehlende Spalte:
-
-```
-sqlite> select resolution from trait_value limit 1;
-Error: no such column: resolution
-```
-
-Die Abfrage in `traits.go:107` selektiert `tv.resolution` unbedingt, aber
-`sqlite.Open` legt die Spalte auf einem älteren Index nicht an: es gibt
-genau **zwei** Ad-hoc-Migrationen — `migrateXrefSourceColumn` und
-`migrateConceptRelationPK` — und keine für `trait_value`. Jeder Index, der
-vor SP3s `resolution`-Spalte gebaut wurde, liefert damit auf **jedem**
-Konzept einen 500 auf `/traits`.
-
-**Auswirkung.** Der Dienst startet, `/health/ready` meldet **200**, und erst
-die erste echte Anfrage an einen von sieben Endpunkten scheitert — pro
-Anfrage neu, still, mit einer Fehlermeldung, die die Ursache nicht nennt.
-Ein Dienst, der sich bereit meldet und dann dauerhaft einen Endpunkt nicht
-bedienen kann, ist schlechter als einer, der beim Start ehrlich abbricht:
-die Bereitschaftsprüfung deckt Schema-Drift heute überhaupt nicht ab.
-
-**Was es lösen würde.** Vorzugsweise ein **Schema-Check in `sqlite.Open`,
-der laut scheitert** — die erwarteten Spalten je Tabelle gegen
-`PRAGMA table_info` prüfen und mit einer Meldung abbrechen, die Tabelle,
-Spalte und den nötigen Ingest/Migrationsschritt nennt. Ein fehlendes Stück
-Schema ist ein Startproblem, kein Laufzeitproblem, und gehört dorthin, wo
-es genau einmal auffällt. Eine dritte Ad-hoc-Migration analog
-`migrateXrefSourceColumn` behebt zwar diesen einen Fall, lässt die
-strukturelle Lücke (die nächste Spalte) aber offen — sinnvoll nur
-zusätzlich, nicht statt dessen.
-
-**Bis dahin:** gegen einen Index arbeiten, der mit dem aktuellen Ingest
-gebaut wurde; oder die Spalte von Hand nachziehen
-(`ALTER TABLE trait_value ADD COLUMN resolution TEXT`) — eine fehlende
-`resolution` bedeutet „exakter Treffer" und ist als NULL korrekt.
-
 ## Kein Endpunkt listet die verfügbaren `sec.`-Referenzräume (SP8)
 
 **Stand:** 2026-08-04 · **Betrifft:** `POST /v1/translate`,

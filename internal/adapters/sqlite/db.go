@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (CGO-free, FTS5 built in) — see ADR-0010
@@ -68,7 +69,148 @@ func Open(path string) (*DB, error) {
 		_ = sqlDB.Close()
 		return nil, err
 	}
+	if err := verifySchemaColumns(context.Background(), sqlDB); err != nil {
+		_ = sqlDB.Close()
+		return nil, err
+	}
 	return &DB{sql: sqlDB}, nil
+}
+
+// verifySchemaColumns fails Open if any table in the just-opened database is
+// missing a column the current embedded schema declares for it. It exists
+// because the schema is applied with CREATE TABLE IF NOT EXISTS, which adds a
+// missing TABLE to an old database but never a missing COLUMN to a table that
+// already exists — so an index built by an older hostus silently lacks columns
+// later releases added (e.g. trait_value.resolution, added in SP3), and the
+// first query selecting one fails at RUNTIME with an opaque 500 while
+// /health/ready still reports 200. The two ad-hoc migrations above heal the
+// specific columns they know about; this catches every other drift, present
+// and future, and turns it into a loud, named STARTUP failure — a missing
+// column is a startup problem, not a per-request one.
+//
+// The expected shape is read from the embedded schema itself, applied to a
+// throwaway in-memory database, so there is no second hand-maintained column
+// list to drift out of sync: whatever schema.sql declares today is exactly
+// what is required. The check is one-directional — every expected column must
+// be present, but extra columns are fine — so an older binary opening a NEWER
+// database (more columns than it knows) still works.
+//
+// It compares column NAMES only, not types/nullability/PK shape: the drift it
+// targets is a column an older build never created at all (the SP3
+// trait_value.resolution case), which is a name-level absence. A legacy column
+// of the wrong type is out of scope and not detected.
+func verifySchemaColumns(ctx context.Context, sqlDB *sql.DB) error {
+	expected, tables, err := expectedSchemaColumns(ctx)
+	if err != nil {
+		return err
+	}
+
+	var problems []string
+	for _, table := range tables {
+		actualCols, err := tableColumns(ctx, sqlDB, table)
+		if err != nil {
+			return err
+		}
+		actual := make(map[string]bool, len(actualCols))
+		for _, c := range actualCols {
+			actual[c] = true
+		}
+		var missing []string
+		for _, col := range expected[table] {
+			if !actual[col] {
+				missing = append(missing, col)
+			}
+		}
+		if len(missing) > 0 {
+			problems = append(problems, fmt.Sprintf("%s (missing %s)", table, strings.Join(missing, ", ")))
+		}
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("sqlite: database schema is out of date — %s; re-ingest with the current hostus into a FRESH database file (`hostus ingest` reopens this same path and hits this check again), or add the column(s) in place by hand (a value absent from a legacy row is correct as NULL)", strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+// expectedSchemaColumns applies the embedded schema to a throwaway in-memory
+// database and reads back, per user table, the columns it declares. It returns
+// the columns keyed by table plus the table names in a deterministic
+// (name-sorted) order, so verifySchemaColumns reports drift the same way every
+// run.
+//
+// "User table" excludes both the fts_name virtual table (its row is
+// `CREATE VIRTUAL TABLE ...`) and the FTS5 shadow tables it spawns (their
+// sqlite_master.sql quotes the table name: `CREATE TABLE 'fts_name_data'(...)`)
+// via the `sql LIKE 'CREATE TABLE ' || name || '%'` filter, which only the
+// hand-written `CREATE TABLE <bareName> (` statements match. fts_name_map is a
+// real table of ours and is (correctly) included.
+func expectedSchemaColumns(ctx context.Context) (map[string][]string, []string, error) {
+	ref, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		return nil, nil, fmt.Errorf("sqlite: opening schema reference database: %w", err)
+	}
+	// One connection so the applied schema is visible to the reads below —
+	// :memory: is per-connection (see Open's pool comment).
+	ref.SetMaxOpenConns(1)
+	defer func() { _ = ref.Close() }()
+	if _, err := ref.ExecContext(ctx, schemaSQL); err != nil {
+		return nil, nil, fmt.Errorf("sqlite: applying schema to reference database: %w", err)
+	}
+
+	rows, err := ref.QueryContext(ctx, `
+		SELECT name FROM sqlite_master
+		WHERE type = 'table' AND sql LIKE 'CREATE TABLE ' || name || '%'
+		ORDER BY name`)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sqlite: listing reference schema tables: %w", err)
+	}
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			_ = rows.Close()
+			return nil, nil, fmt.Errorf("sqlite: scanning reference schema table: %w", err)
+		}
+		tables = append(tables, name)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, nil, fmt.Errorf("sqlite: iterating reference schema tables: %w", err)
+	}
+	_ = rows.Close()
+
+	expected := make(map[string][]string, len(tables))
+	for _, table := range tables {
+		cols, err := tableColumns(ctx, ref, table)
+		if err != nil {
+			return nil, nil, err
+		}
+		expected[table] = cols
+	}
+	return expected, tables, nil
+}
+
+// tableColumns returns the column names of table in db, in schema (cid) order.
+// The table name comes from the embedded schema (never user input), so it is
+// interpolated into the pragma call directly.
+func tableColumns(ctx context.Context, db *sql.DB, table string) ([]string, error) {
+	rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT name FROM pragma_table_info('%s')`, table))
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: reading columns of %q: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var cols []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("sqlite: scanning column of %q: %w", table, err)
+		}
+		cols = append(cols, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: iterating columns of %q: %w", table, err)
+	}
+	return cols, nil
 }
 
 // conceptRelationRebuildTable is the scratch name the concept_relation

@@ -7,6 +7,22 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Fixed (Schema-Drift wird beim Start laut erkannt)
+- **`sqlite.Open` scheitert jetzt laut bei Schema-Drift statt still pro
+  Request.** Bisher legte `Open` das Schema mit `CREATE TABLE IF NOT EXISTS`
+  an — das ergänzt einer alten Datenbank fehlende *Tabellen*, aber nie
+  fehlende *Spalten*. Ein vor SP3 gebauter Index ohne
+  `trait_value.resolution` lieferte deshalb auf **jedem** Konzept einen
+  `500 INTERNAL_ERROR` bei `GET /v1/concept/{id}/traits`, während
+  `/health/ready` weiter `200` meldete. Neu: `verifySchemaColumns` prüft beim
+  Öffnen jede Tabelle gegen das eingebettete Schema (angewandt auf eine frische
+  In-Memory-Referenz, also **kein** zweiter handgepflegter Spaltenkatalog) und
+  bricht mit einer Meldung ab, die Tabelle und fehlende Spalte(n) nennt sowie
+  auf `hostus ingest` verweist. Der Check ist einseitig (fehlende Spalten
+  scheitern, zusätzliche sind erlaubt), sodass ein älteres Binary eine neuere
+  DB weiter öffnet. Behebt die dokumentierte SP8-Lücke; der bevorzugte
+  „laut scheitern"-Ansatz, nicht eine dritte Ad-hoc-Migration.
+
 ### Added (SP9, Task 2 — `target_space` und `aggregate_policy` auf `/v1/match`)
 - **`POST /v1/match` nimmt ein optionales `target_space`** (aktuell nur
   `floraveg`) und liefert je Treffer drei zusätzliche Felder. Ohne

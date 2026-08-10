@@ -132,11 +132,12 @@ func TestParse_ValidExampleManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse(dataset.example.yaml): unexpected error: %v", err)
 	}
-	// Three, not four: SP9 moved floraveg out of `backbones:` into
-	// `name_spaces:` — it pins a canonical CSV, not a DwC-A directory, and
-	// under `backbones:` it was read by the WCVP reader and thus not
-	// ingestible at all (see manifest.NameSpace's doc comment).
-	if got, want := len(ds.Backbones), 3; got != want {
+	// Two: wcvp + colxr. SP9 moved floraveg out of `backbones:` into
+	// `name_spaces:` (it pins a canonical CSV, not a DwC-A directory), and the
+	// euromed backbone was dropped entirely — Euro+Med is unusable AS a
+	// backbone (no rank, no accepted link) and is now served as the `eurosl`
+	// name space instead (EuroSL.sqlite = the Euro+Med checklist).
+	if got, want := len(ds.Backbones), 2; got != want {
 		t.Fatalf("len(Backbones) = %d, want %d", got, want)
 	}
 	if got, want := len(ds.TraitVocabularies), 3; got != want {
@@ -158,13 +159,16 @@ func TestParse_ValidExampleManifest(t *testing.T) {
 			t.Errorf("backbone %q has empty Path", b.ID)
 		}
 	}
-	for _, want := range []string{"wcvp", "colxr", "euromed"} {
+	for _, want := range []string{"wcvp", "colxr"} {
 		if !ids[want] {
 			t.Errorf("Backbones missing %q", want)
 		}
 	}
 	if ids["floraveg"] {
 		t.Error("Backbones still lists floraveg — it belongs under name_spaces:, where it is actually readable")
+	}
+	if ids["euromed"] {
+		t.Error("Backbones still lists euromed — it is unusable as a backbone and is now the `eurosl` name space")
 	}
 }
 
@@ -176,18 +180,26 @@ func TestParse_ValidExampleManifestNameSpaces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse(dataset.example.yaml): unexpected error: %v", err)
 	}
-	if got, want := len(ds.NameSpaces), 1; got != want {
+	if got, want := len(ds.NameSpaces), 2; got != want {
 		t.Fatalf("len(NameSpaces) = %d, want %d", got, want)
 	}
-	ns := ds.NameSpaces[0]
-	if ns.ID != "floraveg" {
-		t.Errorf("NameSpaces[0].ID = %q, want %q", ns.ID, "floraveg")
+	byID := make(map[string]manifest.NameSpace, len(ds.NameSpaces))
+	for _, ns := range ds.NameSpaces {
+		byID[ns.ID] = ns
+		if ns.Version == "" || ns.Path == "" {
+			t.Errorf("NameSpace %q version/path = %q/%q, want both non-empty", ns.ID, ns.Version, ns.Path)
+		}
+		if ns.Redistribution != "unknown" {
+			t.Errorf("NameSpace %q Redistribution = %q, want %q — the bundle gate depends on it", ns.ID, ns.Redistribution, "unknown")
+		}
 	}
-	if ns.Redistribution != "unknown" {
-		t.Errorf("NameSpaces[0].Redistribution = %q, want %q — the bundle gate depends on it", ns.Redistribution, "unknown")
+	if _, ok := byID["floraveg"]; !ok {
+		t.Error("NameSpaces missing floraveg")
 	}
-	if ns.Version == "" || ns.Path == "" {
-		t.Errorf("NameSpaces[0] version/path = %q/%q, want both non-empty", ns.Version, ns.Path)
+	// eurosl = the Euro+Med checklist (EuroSL.sqlite); it replaced the retired
+	// standalone euromed REST pipeline.
+	if _, ok := byID["eurosl"]; !ok {
+		t.Error("NameSpaces missing eurosl (the Euro+Med source)")
 	}
 }
 

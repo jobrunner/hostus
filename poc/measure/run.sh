@@ -43,7 +43,6 @@ m3() {
     --vocab eive=pipelines/eive/output/eive-canonical.csv \
     --vocab tichy=pipelines/tichy/output/tichy-canonical.csv \
     --vocab midolo=pipelines/midolo/output/midolo-canonical.csv \
-    --list euromed=pipelines/euromed/output/euromed-canonical.csv \
     --list eurosl=pipelines/eurosl/output/eurosl-canonical.csv \
     --list germansl=pipelines/germansl/output/germansl-canonical.csv \
     --list floraveg=pipelines/floraveg/output/floraveg-canonical.csv \

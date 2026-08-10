@@ -7,6 +7,24 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Removed (redundante Euro+Med-REST-Pipeline stillgelegt)
+- **`pipelines/euromed/` (REST-Crawl) entfernt** — `build.sh` und `crawl.py`.
+  Der flache `/euromed/taxon`-Endpunkt liefert nur einen autorenbehafteten
+  `titleCache` **ohne Rang und ohne Accepted-Verknüpfung** (verifiziert:
+  `nameUsage`/`concept`/`conceptId` sind `null`; `docs/research/reality-check.md`
+  M6 misst die euromed-CSV mit 0 Zeilen mit Rang / 0 mit `accepted_taxon`).
+- **Euro+Med wird stattdessen über die `eurosl`-Pipeline bezogen.**
+  `EuroSL.sqlite` ist dasselbe CDM-Datenset — die einzige Datentabelle heißt
+  `EuroPlusMed.Plantae`, `AccordingTo` steht auf jeder Zeile auf
+  `api.cybertaxonomy.org/euromed` — nur **strukturiert**: bare `TaxonName`,
+  `TaxonRank` und **85.396 Accepted-Links** (reality-check M6). Auf jeder
+  servierbaren Dimension dominiert EuroSL, also keine *nutzbare* Deckung
+  verloren (es sind verschieden datierte Snapshots desselben Datensets, kein
+  bewiesenes Superset — die überzähligen REST-Zeilen sind genau die
+  rang-/link-losen, unbrauchbaren). `dataset.example.yaml` führt Euro+Med
+  jetzt als Namensraum `eurosl` statt als (unbrauchbaren) Backbone;
+  `pipelines/README.md` dokumentiert die Stilllegung.
+
 ### Fixed (Schema-Drift wird beim Start laut erkannt)
 - **`sqlite.Open` scheitert jetzt laut bei Schema-Drift statt still pro
   Request.** Bisher legte `Open` das Schema mit `CREATE TABLE IF NOT EXISTS`

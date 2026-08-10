@@ -8,9 +8,13 @@ secName, ambiguous, OriginalName, AccordingTo.
 
 `status` is already a plain string ("Accepted", "Synonym", ...) — no boolean
 flag to translate like GermanSL. `AccordingTo` on every observed row is
-"api.cybertaxonomy.org/euromed": EuroSL is itself built from the Euro+Med
-CDM dataset (see pipelines/euromed/ for the independent CDM-REST probe of
-the same underlying data).
+"api.cybertaxonomy.org/euromed", and the single data table is literally
+`EuroPlusMed.Plantae`: EuroSL is the Euro+Med CDM dataset, structured. hostus
+therefore uses THIS pipeline as its Euro+Med source. The former standalone
+`euromed` pipeline crawled the flat /euromed/taxon REST listing of the same
+dataset — author-laden names, no rank, no accepted link (reality-check M6:
+0 rows with rank / 0 with accepted_taxon, vs EuroSL's full rank + 85,396
+accepted links) — so it was retired (see pipelines/README.md, "RETIRED").
 
 Canonical mapping:
   taxon          = TaxonName

@@ -7,6 +7,20 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Removed (redundante Euro+Med-REST-Pipeline stillgelegt)
+- **`pipelines/euromed/` (REST-Crawl) entfernt** — `build.sh` und `crawl.py`.
+  Der flache `/euromed/taxon`-Endpunkt liefert nur einen autorenbehafteten
+  `titleCache` ohne Rang und ohne Accepted-Verknüpfung (verifiziert:
+  `nameUsage`/`concept`/`conceptId` sind `null`); gemessen gegen den vollen
+  WCVP-Index crosswalkte er **216 von 167.888 Namen (0,13 %)**.
+- **Euro+Med wird stattdessen über die `eurosl`-Pipeline bezogen.**
+  `EuroSL.sqlite` ist genau dieselbe Checkliste — die einzige Datentabelle
+  heißt `EuroPlusMed.Plantae`, `AccordingTo` steht auf jeder Zeile auf
+  `api.cybertaxonomy.org/euromed` — nur strukturiert (bare `TaxonName`,
+  `TaxonRank`, Accepted-Link), und crosswalkt dadurch **~74 %**. `dataset.example.yaml`
+  führt Euro+Med jetzt als Namensraum `eurosl` statt als (unbrauchbaren)
+  Backbone; `pipelines/README.md` dokumentiert die Stilllegung.
+
 ### Fixed (Schema-Drift wird beim Start laut erkannt)
 - **`sqlite.Open` scheitert jetzt laut bei Schema-Drift statt still pro
   Request.** Bisher legte `Open` das Schema mit `CREATE TABLE IF NOT EXISTS`

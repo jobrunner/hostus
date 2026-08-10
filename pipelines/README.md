@@ -1,10 +1,13 @@
 # Pipelines (xlsx/sqlite/REST → canonical CSV)
 
 Three families of pipelines live here: three **trait** pipelines (EIVE /
-Tichý / Midolo, documented first below), four **name-list** pipelines
-(GermanSL / EuroSL / FloraVeg / Euro+Med, documented in their own section
-further down) that acquire additional backbone/checklist sources for local
-evaluation, and one **xref bridge-hub** pipeline (`wikidata`, documented
+Tichý / Midolo, documented first below), three **name-list** pipelines
+(GermanSL / EuroSL / FloraVeg, documented in their own section further down)
+that acquire additional backbone/checklist sources for local evaluation —
+the EuroSL pipeline is also how **Euro+Med** is provided (see its section:
+EuroSL.sqlite *is* the Euro+Med checklist; the former standalone `euromed`
+REST-crawl pipeline was retired) — and one **xref bridge-hub** pipeline
+(`wikidata`, documented
 last) that harvests cross-references to other taxonomic authorities via
 Wikidata, plus one **concept + relation** pipeline (`cdm`, documented at the
 very end) that harvests the CDM `rl_standardliste` taxonomic-concept graph
@@ -148,8 +151,10 @@ that serves data derived from these pipelines must retain attribution:
 
 ## Name-list pipelines
 
-Four further pipelines (`germansl`, `eurosl`, `floraveg`, `euromed`) acquire
-additional backbone/checklist sources. These are **the sources with no
+Three further pipelines (`germansl`, `eurosl`, `floraveg`) acquire
+additional backbone/checklist sources. (`eurosl` doubles as the Euro+Med
+source — see its section; the former standalone `euromed` REST pipeline is
+retired.) These are **the sources with no
 findable license** (`redistribution: unknown`/`restricted` in `dataset.yaml`
 terms — see Task 1's redistribution gate): the data is publicly offered by
 its maintainers, but nobody has stated terms permitting redistribution.
@@ -195,9 +200,8 @@ Identical shape for all four sources, pipe-delimited like the trait CSVs:
 
 ```bash
 nix develop -c bash pipelines/germansl/build.sh
-nix develop -c bash pipelines/eurosl/build.sh
+nix develop -c bash pipelines/eurosl/build.sh   # also the Euro+Med source (EuroSL.sqlite = Euro+Med)
 nix develop -c bash pipelines/floraveg/build.sh
-nix develop -c bash pipelines/euromed/build.sh   # slow: ~336 sequential HTTP pages, ~30-40 min
 ```
 
 ### GermanSL 1.5.5 (germansl.infinitenature.org)
@@ -225,10 +229,18 @@ Source: the single "latest version sqlite file" linked from the downloads
 page (no versioned filename; the file's own `Version` table records its
 build timestamp). Table `EuroPlusMed.Plantae` already has exactly the
 canonical columns (`TaxonUsageID`, `TaxonName`, `TaxonRank`, `status`,
-`TaxonConcept`), read directly via Python's stdlib `sqlite3`. **Surprise:**
-every row's `AccordingTo` column reads `api.cybertaxonomy.org/euromed` —
-EuroSL is itself built from the same underlying Euro+Med CDM dataset that
-the `euromed` pipeline probes independently below.
+`TaxonConcept`), read directly via Python's stdlib `sqlite3`.
+
+**This IS the Euro+Med checklist.** The single data table is literally named
+`EuroPlusMed.Plantae`, and every row's `AccordingTo` column reads
+`api.cybertaxonomy.org/euromed`. EuroSL is the *structured* view of the same
+Euro+Med CDM dataset — bare `TaxonName` + `TaxonRank` + accepted-name link —
+so hostus uses this pipeline as its Euro+Med source. The former standalone
+`euromed` pipeline crawled the flat `/euromed/taxon` REST listing of the same
+data, which exposes only an author-laden `titleCache` with no rank and no
+accepted link; measured against the full WCVP index it crosswalked **216 of
+167 888 names (0.13 %)** versus this pipeline's **~74 %**, so it was retired
+as a degraded duplicate (see the retired section below).
 
 ```
 version=Sun Nov  3 11:31:01 2024
@@ -261,9 +273,19 @@ rows=16402 taxa=16402
 word_counts=2:15677,3:695,4:30   # binomial vs. (mostly) infraspecific names
 ```
 
-### Euro+Med — CDM REST probe (api.cybertaxonomy.org/euromed)
+### Euro+Med — CDM REST probe (api.cybertaxonomy.org/euromed) — RETIRED
 
-R1 found no bulk export for Euro+Med. Per the task brief, this pipeline
+> **Retired.** Euro+Med is now sourced from the **EuroSL** pipeline above:
+> `EuroSL.sqlite`'s only data table is `EuroPlusMed.Plantae` (AccordingTo =
+> `api.cybertaxonomy.org/euromed` on every row), i.e. the same checklist,
+> but structured — bare name, rank and accepted link. The flat `/euromed/
+> taxon` listing this pipeline crawled carries only an author-laden
+> `titleCache` with no rank (confirmed: `nameUsage`/`concept`/`conceptId`
+> are all `null` on the record), so it crosswalked **216 / 167 888 = 0.13 %**
+> onto WCVP versus EuroSL's ~74 %. The `build.sh`/`crawl.py` were removed;
+> the probe finding is kept below for the record.
+
+R1 found no bulk export for Euro+Med. This pipeline
 re-probed the CDM REST API (the pattern PoC P8 validated against the
 Wisskirchen instance) before giving up.
 

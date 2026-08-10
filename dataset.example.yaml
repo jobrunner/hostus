@@ -22,13 +22,10 @@ backbones:
     path: ./backbones/colxr
     redistribution: allowed # CC-BY-4.0, docs/research/quellenregister.md
 
-  # Euro+Med PlantBase — regionale Konzepte für Mitteleuropa.
-  - id: euromed
-    version: "2024-12-01"
-    path: ./backbones/euromed
-    # Keine Lizenz auffindbar (docs/research/quellenregister.md, ❌ blocked)
-    # -> lokal genutzt, aber NICHT redistribuierbar, bis geklärt.
-    redistribution: unknown
+  # Euro+Med steht bewusst NICHT hier: als Backbone unbrauchbar (kein Rang,
+  # keine Accepted-Verknüpfung — docs/research/reality-check.md). Es wird als
+  # NAMENSRAUM `eurosl` geführt (siehe unten): EuroSL.sqlite IST die
+  # Euro+Med-Checkliste (Tabelle `EuroPlusMed.Plantae`), nur strukturiert.
 
 # Trait-Vokabulare. `version` MUSS exakt der Spalte `vocab_version` der
 # kanonischen CSV entsprechen, die die jeweilige Pipeline erzeugt (siehe
@@ -93,6 +90,17 @@ name_spaces:
     source: https://files.ibot.cas.cz/cevs/downloads/floraveg/Life_form.xlsx
     path: pipelines/floraveg/output/floraveg-canonical.csv
     note: "ESy-Namensraum, gepinnt — nicht mit EIVE/EuroSL verwechseln"
+    redistribution: unknown
+
+  # EuroSL = die Euro+Med-Checkliste (EuroSL.sqlite, Tabelle
+  # `EuroPlusMed.Plantae`, AccordingTo=euromed) — strukturiert mit Name/Rang/
+  # Accepted, daher als Namensraum brauchbar (der frühere flache
+  # `euromed`-REST-Crawl ist stillgelegt, siehe pipelines/README.md).
+  - id: eurosl
+    version: "2024-11-03" # Build-Datum der EuroSL.sqlite (Version-Tabelle)
+    source: https://eurosl.infinitenature.org/EuroSL/latest/EuroSL.sqlite
+    path: pipelines/eurosl/output/eurosl-canonical.csv
+    note: "Euro+Med-Checkliste via EuroSL — keine Lizenz auffindbar, nur lokal"
     redistribution: unknown
 
 # Cross-Reference-Quellen (SP4). Wikidata dient als Bridge-Hub: über die

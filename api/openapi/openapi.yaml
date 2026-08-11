@@ -194,8 +194,9 @@ paths:
                 $ref: '#/components/schemas/MatchResponse'
         '400':
           description: >-
-            Fehlerhafter (nicht parsbarer) Request-Body oder unbekannter
-            `target_space` (INVALID_QUERY, nennt den unbekannten Raum).
+            Fehlerhafter (nicht parsbarer) Request-Body oder ein unbekannter
+            `target_space` / `entry_backbone` / `entry_sec` (INVALID_QUERY,
+            nennt den unbekannten Wert).
           content:
             application/json:
               schema:
@@ -494,8 +495,9 @@ paths:
         '400':
           description: >-
             Nicht parsbarer Body, keins oder beides von
-            `concept_id`/`verbatim`, fehlendes `target_space`, oder
-            `max_hops` != 1.
+            `concept_id`/`verbatim`, fehlendes `target_space`,
+            `max_hops` != 1, oder ein unbekannter `entry_backbone`/`entry_sec`
+            (nennt den Wert).
           content:
             application/json:
               schema:

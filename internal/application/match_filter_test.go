@@ -139,6 +139,80 @@ func TestMatchFilter_SecDisambiguates(t *testing.T) {
 	}
 }
 
+// TestMatchFilter_SecDropsSeclessWcvpCandidate: with entry_sec set, a
+// same-name candidate that has NO sec. reference (a WCVP concept) is dropped,
+// leaving only the sec-space concept.
+func TestMatchFilter_SecDropsSeclessWcvpCandidate(t *testing.T) {
+	repo := seededMatchRepo(t)
+	// WCVP fixture already holds "Corynephorus canescens" (no sec). Add a
+	// same-name concept in a sec space.
+	ctx := context.Background()
+	tx, err := repo.BeginIngest(ctx, domain.BackboneVersion{ID: "test-corysec", Version: "v1"})
+	if err != nil {
+		t.Fatalf("BeginIngest: %v", err)
+	}
+	if err := tx.UpsertSecReference(domain.SecReference{ID: "sec-c", Title: "Flora C"}); err != nil {
+		t.Fatalf("UpsertSecReference: %v", err)
+	}
+	name := domain.Name{ID: "test-corysec:name", Canonical: "Corynephorus canescens", Authorship: "(L.) P.Beauv.", Rank: domain.RankSpecies}
+	concept := domain.Concept{ID: "test-corysec:concept", BackboneID: "test-corysec", AcceptedName: name, Rank: domain.RankSpecies, Status: domain.StatusAccepted, SecReference: "sec-c"}
+	_ = tx.UpsertName(name)
+	_ = tx.UpsertConcept(concept)
+	_ = tx.LinkName(concept.ID, name.ID, "accepted", nil)
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	res, err := application.MatchInSpace(ctx, repo,
+		[]application.MatchRequest{{ID: "1", Verbatim: "Corynephorus canescens (L.) P.Beauv."}}, "",
+		application.MatchFilter{Sec: "sec-c"})
+	if err != nil {
+		t.Fatalf("MatchInSpace: %v", err)
+	}
+	if res[0].ConceptID != "test-corysec:concept" || res[0].MatchType != domain.MatchExactAuthor {
+		t.Errorf("entry_sec=sec-c = %+v, want the sec concept, exact_author (the sec-less WCVP candidate dropped)", res[0])
+	}
+}
+
+// TestMatchFilter_BackboneAndSecCompose: entry_backbone AND entry_sec together
+// select the one concept matching both.
+func TestMatchFilter_BackboneAndSecCompose(t *testing.T) {
+	repo := seededMatchRepo(t)
+	ctx := context.Background()
+	// Three same-name concepts: (bbA, secX), (bbA, secY), (bbB, secX).
+	mk := func(bb, sec, suffix string) {
+		tx, err := repo.BeginIngest(ctx, domain.BackboneVersion{ID: bb, Version: "v1"})
+		if err != nil {
+			t.Fatalf("BeginIngest(%s): %v", bb, err)
+		}
+		if sec != "" {
+			_ = tx.UpsertSecReference(domain.SecReference{ID: sec, Title: sec})
+		}
+		id := "compose:" + suffix
+		name := domain.Name{ID: id + ":name", Canonical: "Composandum testicum", Authorship: "L.", Rank: domain.RankSpecies}
+		concept := domain.Concept{ID: id, BackboneID: bb, AcceptedName: name, Rank: domain.RankSpecies, Status: domain.StatusAccepted, SecReference: sec}
+		_ = tx.UpsertName(name)
+		_ = tx.UpsertConcept(concept)
+		_ = tx.LinkName(concept.ID, name.ID, "accepted", nil)
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("Commit(%s): %v", bb, err)
+		}
+	}
+	mk("cmp-bba", "cmp-secx", "ax")
+	mk("cmp-bba", "cmp-secy", "ay")
+	mk("cmp-bbb", "cmp-secx", "bx")
+
+	res, err := application.MatchInSpace(ctx, repo,
+		[]application.MatchRequest{{ID: "1", Verbatim: "Composandum testicum L."}}, "",
+		application.MatchFilter{Backbone: "cmp-bba", Sec: "cmp-secx"})
+	if err != nil {
+		t.Fatalf("MatchInSpace: %v", err)
+	}
+	if res[0].ConceptID != "compose:ax" || res[0].MatchType != domain.MatchExactAuthor {
+		t.Errorf("backbone=cmp-bba+sec=cmp-secx = %+v, want compose:ax exact_author", res[0])
+	}
+}
+
 // TestMatchFilter_UnknownBackboneAndSecAreRejected pins the validation: an
 // un-ingested backbone or sec is a named error (HTTP renders 400), checked
 // before any matching.

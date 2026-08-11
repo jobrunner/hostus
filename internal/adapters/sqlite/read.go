@@ -403,7 +403,7 @@ const fuzzyCandidateLengthWindow = 3
 // dropped/added word), will NOT be returned — this is intentional; a
 // prefilter that must also catch those would have to scan every row,
 // defeating the purpose. limit <= 0 uses a modest built-in default.
-func (db *DB) MatchFuzzyCandidates(ctx context.Context, canon string, limit int) ([]output.MatchCandidate, error) {
+func (db *DB) MatchFuzzyCandidates(ctx context.Context, canon string, limit int, backbone, sec string) ([]output.MatchCandidate, error) {
 	want := domain.Canonicalize(canon)
 	if want == "" {
 		return nil, nil
@@ -412,7 +412,7 @@ func (db *DB) MatchFuzzyCandidates(ctx context.Context, canon string, limit int)
 		limit = 20
 	}
 
-	ids, err := fuzzyCandidateNameIDs(ctx, db.sql, want, limit)
+	ids, err := fuzzyCandidateNameIDs(ctx, db.sql, want, limit, backbone, sec)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: querying MatchFuzzyCandidates %q: %w", canon, err)
 	}
@@ -492,15 +492,35 @@ func globEscape(s string) string {
 	return b.String()
 }
 
-func fuzzyCandidateNameIDs(ctx context.Context, db *sql.DB, want string, limit int) ([]string, error) {
+// fuzzyCandidateRows runs the near-miss prefilter SELECT: up to `limit` name
+// ids whose fold shares canon's first rune and is within the length window,
+// closest length first. It always JOINs through to taxon_concept and applies
+// the backbone/sec filter (both "" = no restriction, via the `? = ” OR …`
+// guards) BEFORE the LIMIT — so a SP5 resolution filter never loses the wanted
+// space's genuine near-miss to the limit when out-of-space same-length names
+// crowd the top-N (the multi-sec case the filter exists to serve). Joining
+// unconditionally is also why an orphaned name (no concept link) is not a
+// candidate here: it could never survive MatchFuzzyCandidates' own concept
+// join downstream anyway, so excluding it up front only frees prefilter slots
+// for real near-misses. One FIXED query literal (never runtime-assembled SQL —
+// gosec G202, and this repo's suppression budget is zero).
+func fuzzyCandidateRows(ctx context.Context, db *sql.DB, want, firstRunePrefix string, limit int, backbone, sec string) (*sql.Rows, error) {
+	return db.QueryContext(ctx, `
+		SELECT DISTINCT n.id FROM name n
+		JOIN concept_name cn ON cn.name_id = n.id
+		JOIN taxon_concept tc ON tc.id = cn.concept_id
+		WHERE n.canonical_fold GLOB ?
+		  AND ABS(length(n.canonical_fold) - length(?)) <= ?
+		  AND (? = '' OR tc.backbone_id = ?)
+		  AND (? = '' OR tc.sec_reference = ?)
+		ORDER BY ABS(length(n.canonical_fold) - length(?)), n.canonical_fold
+		LIMIT ?`, firstRunePrefix, want, fuzzyCandidateLengthWindow, backbone, backbone, sec, sec, want, limit)
+}
+
+func fuzzyCandidateNameIDs(ctx context.Context, db *sql.DB, want string, limit int, backbone, sec string) ([]string, error) {
 	firstRunePrefix := globEscape(string([]rune(want)[:1])) + "*"
 
-	rows, err := db.QueryContext(ctx, `
-		SELECT id FROM name
-		WHERE canonical_fold GLOB ?
-		  AND ABS(length(canonical_fold) - length(?)) <= ?
-		ORDER BY ABS(length(canonical_fold) - length(?)), canonical_fold
-		LIMIT ?`, firstRunePrefix, want, fuzzyCandidateLengthWindow, want, limit)
+	rows, err := fuzzyCandidateRows(ctx, db, want, firstRunePrefix, limit, backbone, sec)
 	if err != nil {
 		return nil, err
 	}

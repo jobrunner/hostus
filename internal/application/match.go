@@ -329,10 +329,14 @@ func matchOne(ctx context.Context, repo output.Repository, req MatchRequest, fil
 //     genuine ambiguity from the caller, same principle as classify's own
 //     ambiguity handling.
 func matchFuzzy(ctx context.Context, repo output.Repository, req MatchRequest, queryCanon string, filter MatchFilter) (*MatchResult, error) {
-	candidates, err := repo.MatchFuzzyCandidates(ctx, queryCanon, fuzzyCandidateLimit)
+	candidates, err := repo.MatchFuzzyCandidates(ctx, queryCanon, fuzzyCandidateLimit, filter.Backbone, filter.Sec)
 	if err != nil {
 		return nil, err
 	}
+	// The repo already restricts to backbone/sec BEFORE its LIMIT (so the
+	// wanted space's near-miss is not truncated away); apply is a defensive
+	// no-op on a correct repo, and still filters a fake repo that ignores the
+	// hints.
 	candidates = filter.apply(candidates)
 
 	best := 0.0

@@ -74,11 +74,47 @@ Die zwei Filter sind komplementär und beide messbar wirksam:
 Kein „nur verschoben": die Rest-Mehrdeutigkeit unter `entry_sec` ist 0,33 %
 und ist echte Quelldaten-Dublette, kein Filterartefakt.
 
-## Kommandos
+## Kommandos (reproduzierbar)
 
-Gemessen mit einem Wegwerf-Python-Skript gegen eine schreibbare Kopie des
-realen Index (`sqlite3`, GROUP-BY-Aggregate statt korrelierter Subqueries):
-Mehrdeutigkeits-Population über `count(distinct tc.id) group by
-n.canonical_fold`; `entry_backbone`-Eindeutigkeit als JOIN gegen die
-WCVP-Konzeptzahl je Namensform; `entry_sec`-Rest-Mehrdeutigkeit über
-`group by tc.sec_reference, n.canonical_fold having count(distinct tc.id)>1`.
+Gegen eine schreibbare Kopie des realen Index (`sqlite3`). **Wichtig:** die
+Namensform wird über `name → concept_name → taxon_concept` (ALLE Rollen,
+accepted UND synonym) auf Konzepte abgebildet — genau wie `MatchExact`
+(`internal/adapters/sqlite/read.go`, „every name (accepted or synonym) whose
+canonical form equals canon"), nicht nur über `accepted_name`. Ein separater
+Ingest reproduziert den Index (siehe die reale Ingest-Anleitung), dann:
+
+```sql
+-- Mehrdeutigkeits-Population: Konzepte je Namensform (alle Rollen)
+CREATE TEMP TABLE tot AS
+  SELECT n.canonical_fold cf, count(DISTINCT tc.id) k
+  FROM name n JOIN concept_name cn ON cn.name_id=n.id
+  JOIN taxon_concept tc ON tc.id=cn.concept_id
+  GROUP BY n.canonical_fold;
+SELECT count(*) FROM tot;              -- 1.361.597 Namensformen
+SELECT count(*) FROM tot WHERE k>1;    -- 49.688 mehrdeutig
+
+-- entry_backbone=wcvp: WCVP-Konzepte je Namensform (alle Rollen)
+CREATE TEMP TABLE w AS
+  SELECT n.canonical_fold cf, count(DISTINCT tc.id) k
+  FROM name n JOIN concept_name cn ON cn.name_id=n.id
+  JOIN taxon_concept tc ON tc.id=cn.concept_id
+  WHERE tc.backbone_id='wcvp' GROUP BY n.canonical_fold;
+SELECT count(*) FROM tot t JOIN w ON w.cf=t.cf
+  WHERE t.k>1 AND w.k=1;               -- 12.979 werden eindeutig
+
+-- entry_sec: Rest-Mehrdeutigkeit je (Name, sec)
+SELECT count(*) FROM (
+  SELECT tc.sec_reference s, n.canonical_fold cf, count(DISTINCT tc.id) k
+  FROM name n JOIN concept_name cn ON cn.name_id=n.id
+  JOIN taxon_concept tc ON tc.id=cn.concept_id
+  WHERE tc.sec_reference<>'' GROUP BY tc.sec_reference, n.canonical_fold
+  HAVING k>1);                         -- 167 von 51.167 (0,33 %)
+
+-- translate-fähige CDM-Quellkonzepte
+SELECT count(DISTINCT from_concept) FROM concept_relation;  -- 24.987
+```
+
+Die Zahlen hängen an der Index-Edition (WCVP 2026-06-04 + CDM 2026-08-02);
+gegen eine andere Ernte neu messen. Der `entry_backbone`-Wert schließt
+Synonym-Rollen ein (wie `MatchExact`), ist also keine
+`accepted_name`-Untergrenze.

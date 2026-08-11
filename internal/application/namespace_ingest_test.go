@@ -560,7 +560,7 @@ func (r *fakeNameSpaceRepo) SecReferenceByID(context.Context, string) (domain.Se
 func (r *fakeNameSpaceRepo) ConceptRelationsInSec(context.Context, string, string) (output.ConceptRelations, error) {
 	return output.ConceptRelations{}, nil
 }
-func (r *fakeNameSpaceRepo) MatchFuzzyCandidates(context.Context, string, int) ([]output.MatchCandidate, error) {
+func (r *fakeNameSpaceRepo) MatchFuzzyCandidates(context.Context, string, int, string, string) ([]output.MatchCandidate, error) {
 	return nil, nil
 }
 func (r *fakeNameSpaceRepo) BackboneVersions(context.Context) ([]domain.BackboneVersion, error) {

@@ -771,7 +771,7 @@ func (f *fakeCapturingRepo) ConceptIDsByXref(context.Context, string, []string) 
 func (f *fakeCapturingRepo) MatchExact(context.Context, string) ([]output.MatchCandidate, error) {
 	panic("not needed by Ingest")
 }
-func (f *fakeCapturingRepo) MatchFuzzyCandidates(context.Context, string, int) ([]output.MatchCandidate, error) {
+func (f *fakeCapturingRepo) MatchFuzzyCandidates(context.Context, string, int, string, string) ([]output.MatchCandidate, error) {
 	panic("not needed by Ingest")
 }
 func (f *fakeCapturingRepo) BackboneVersions(context.Context) ([]domain.BackboneVersion, error) {

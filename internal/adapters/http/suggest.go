@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -29,6 +30,12 @@ type suggestItemDTO struct {
 	Status       string  `json:"status"`
 	InArea       bool    `json:"in_area"`
 	Score        float64 `json:"score"`
+	// Sec names the candidate's sec. reference space (id + title), present
+	// only for a sec-bearing (CDM) concept. Since CDM holds many concepts of
+	// the SAME name — one per reference work, all otherwise identical here
+	// down to the score — this is what distinguishes them (SP5). Omitted for a
+	// concept with no sec. reference (WCVP), so the SP1/SP2 shape is unchanged.
+	Sec *secReferenceDTO `json:"sec,omitempty"`
 }
 
 // suggestResponseDTO is the GET /v1/suggest response envelope, per spec
@@ -57,6 +64,23 @@ func suggestResponseToDTO(resp application.SuggestResponse) suggestResponseDTO {
 	return suggestResponseDTO{
 		BackboneVersions: resp.BackboneVersions,
 		Results:          results,
+	}
+}
+
+// attachSuggestSec fills each result's Sec {id,title} for a sec-bearing
+// concept, resolving the title from the concept's sec_reference id. items and
+// dtos are parallel (same order, same length). A missing sec_reference row is
+// context, not the answer — leave Sec absent rather than fail the suggest.
+// Resolved per item (no cache): §B.1 caps suggest at a small limit, so this is
+// a handful of point lookups at most.
+func attachSuggestSec(ctx context.Context, repo output.Repository, items []domain.SuggestItem, dtos []suggestItemDTO) {
+	for i := range items {
+		if items[i].SecReference == "" {
+			continue
+		}
+		if sr, err := repo.SecReferenceByID(ctx, items[i].SecReference); err == nil {
+			dtos[i].Sec = &secReferenceDTO{ID: sr.ID, Title: sr.Title}
+		}
 	}
 }
 
@@ -131,6 +155,8 @@ func handleSuggest(repo output.Repository) http.HandlerFunc {
 			return
 		}
 
-		writeJSON(w, suggestResponseToDTO(resp))
+		dto := suggestResponseToDTO(resp)
+		attachSuggestSec(r.Context(), repo, resp.Results, dto.Results)
+		writeJSON(w, dto)
 	}
 }

@@ -16,6 +16,79 @@ import (
 // hostus cannot answer, not a question with an empty answer.
 var ErrUnknownTargetSpace = errors.New("unknown target space")
 
+// ErrUnknownBackbone and ErrUnknownSec are returned by MatchInSpace when an
+// entry_backbone / entry_sec resolution filter names a backbone / sec.
+// reference that is not ingested. The HTTP adapter renders each as a 400
+// INVALID_QUERY naming the offending value.
+var (
+	ErrUnknownBackbone = errors.New("unknown entry_backbone")
+	ErrUnknownSec      = errors.New("unknown entry_sec")
+)
+
+// MatchFilter narrows verbatim resolution to a single backbone and/or sec.
+// reference space, so a name shared across the multi-backbone index (WCVP +
+// CDM's ~119 sec spaces) resolves to one concept instead of an ambiguous tie.
+// The zero value is no filter: resolution is then byte-for-byte the unfiltered
+// match. Backbone and Sec compose with AND; Sec alone implies a sec-bearing
+// concept (WCVP candidates, whose SecReference is empty, are then dropped).
+type MatchFilter struct {
+	Backbone string
+	Sec      string
+}
+
+func (f MatchFilter) empty() bool { return f.Backbone == "" && f.Sec == "" }
+
+// apply drops the candidates that do not match the filter. A zero filter
+// returns the slice unchanged (the byte-identical unfiltered path).
+func (f MatchFilter) apply(cands []output.MatchCandidate) []output.MatchCandidate {
+	if f.empty() {
+		return cands
+	}
+	kept := make([]output.MatchCandidate, 0, len(cands))
+	for _, c := range cands {
+		if f.Backbone != "" && c.Concept.BackboneID != f.Backbone {
+			continue
+		}
+		if f.Sec != "" && c.Concept.SecReference != f.Sec {
+			continue
+		}
+		kept = append(kept, c)
+	}
+	return kept
+}
+
+// validateFilter checks an entry_backbone/entry_sec filter against the ingested
+// backbones and sec. references BEFORE any name is resolved, so an unknown
+// value never does partial work. A zero filter is always valid.
+func validateFilter(ctx context.Context, repo output.Repository, filter MatchFilter) error {
+	if filter.Backbone != "" {
+		bvs, err := repo.BackboneVersions(ctx)
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, b := range bvs {
+			if b.ID == filter.Backbone {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return ErrUnknownBackbone
+		}
+	}
+	if filter.Sec != "" {
+		_, err := repo.SecReferenceByID(ctx, filter.Sec)
+		if errors.Is(err, domain.ErrNotFound) {
+			return ErrUnknownSec
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Confidence values assigned per match type, per spec §B.2. A MatchFuzzy
 // result has no fixed confidence tier here: its Confidence IS the winning
 // domain.Similarity score (see matchFuzzy) — fuzzy confidence is inherently
@@ -116,9 +189,15 @@ type MatchResult struct {
 //     liefert"), fuzzy is the catch-all for exact, exact_author, AND
 //     aggregate all coming up empty — not just the first two.
 func MatchNames(ctx context.Context, repo output.Repository, reqs []MatchRequest) ([]MatchResult, error) {
+	return matchNamesFiltered(ctx, repo, reqs, MatchFilter{})
+}
+
+// matchNamesFiltered is MatchNames with an optional resolution filter applied
+// to every entry. A zero filter makes it byte-for-byte MatchNames.
+func matchNamesFiltered(ctx context.Context, repo output.Repository, reqs []MatchRequest, filter MatchFilter) ([]MatchResult, error) {
 	results := make([]MatchResult, 0, len(reqs))
 	for _, req := range reqs {
-		res, err := matchOne(ctx, repo, req)
+		res, err := matchOne(ctx, repo, req, filter)
 		if err != nil {
 			return nil, err
 		}
@@ -144,9 +223,12 @@ func MatchNames(ctx context.Context, repo output.Repository, reqs []MatchRequest
 // "is this an aggregate" here. Results without a resolved ConceptID (an
 // UNRESOLVABLE match) carry no name-space annotation, since there is no concept
 // to look one up for.
-func MatchInSpace(ctx context.Context, repo output.Repository, reqs []MatchRequest, space string) ([]MatchResult, error) {
+func MatchInSpace(ctx context.Context, repo output.Repository, reqs []MatchRequest, space string, filter MatchFilter) ([]MatchResult, error) {
+	if err := validateFilter(ctx, repo, filter); err != nil {
+		return nil, err
+	}
 	if space == "" {
-		return MatchNames(ctx, repo, reqs)
+		return matchNamesFiltered(ctx, repo, reqs, filter)
 	}
 
 	spaces, err := repo.NameSpaces(ctx)
@@ -164,7 +246,7 @@ func MatchInSpace(ctx context.Context, repo output.Repository, reqs []MatchReque
 		return nil, ErrUnknownTargetSpace
 	}
 
-	results, err := MatchNames(ctx, repo, reqs)
+	results, err := matchNamesFiltered(ctx, repo, reqs, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -184,11 +266,11 @@ func MatchInSpace(ctx context.Context, repo output.Repository, reqs []MatchReque
 	return results, nil
 }
 
-func matchOne(ctx context.Context, repo output.Repository, req MatchRequest) (MatchResult, error) {
+func matchOne(ctx context.Context, repo output.Repository, req MatchRequest, filter MatchFilter) (MatchResult, error) {
 	canonical, author := splitVerbatim(req.Verbatim)
 
 	if isAggregate(canonical) {
-		return matchAggregate(ctx, repo, req, canonical)
+		return matchAggregate(ctx, repo, req, canonical, filter)
 	}
 
 	queryCanon := domain.Canonicalize(canonical)
@@ -198,6 +280,7 @@ func matchOne(ctx context.Context, repo output.Repository, req MatchRequest) (Ma
 	if err != nil {
 		return MatchResult{}, err
 	}
+	candidates = filter.apply(candidates)
 	res, unresolved := classify(req, queryCanon, queryAuthor, candidates)
 	if !unresolved {
 		return res, nil
@@ -213,7 +296,7 @@ func matchOne(ctx context.Context, repo output.Repository, req MatchRequest) (Ma
 		return res, nil
 	}
 
-	fuzzy, err := matchFuzzy(ctx, repo, req, queryCanon)
+	fuzzy, err := matchFuzzy(ctx, repo, req, queryCanon, filter)
 	if err != nil {
 		return MatchResult{}, err
 	}
@@ -245,11 +328,16 @@ func matchOne(ctx context.Context, repo output.Repository, req MatchRequest) (Ma
 //     Candidates lists the tied names — silently picking one would hide a
 //     genuine ambiguity from the caller, same principle as classify's own
 //     ambiguity handling.
-func matchFuzzy(ctx context.Context, repo output.Repository, req MatchRequest, queryCanon string) (*MatchResult, error) {
-	candidates, err := repo.MatchFuzzyCandidates(ctx, queryCanon, fuzzyCandidateLimit)
+func matchFuzzy(ctx context.Context, repo output.Repository, req MatchRequest, queryCanon string, filter MatchFilter) (*MatchResult, error) {
+	candidates, err := repo.MatchFuzzyCandidates(ctx, queryCanon, fuzzyCandidateLimit, filter.Backbone, filter.Sec)
 	if err != nil {
 		return nil, err
 	}
+	// The repo already restricts to backbone/sec BEFORE its LIMIT (so the
+	// wanted space's near-miss is not truncated away); apply is a defensive
+	// no-op on a correct repo, and still filters a fake repo that ignores the
+	// hints.
+	candidates = filter.apply(candidates)
 
 	best := 0.0
 	scores := make([]float64, len(candidates))
@@ -338,14 +426,15 @@ func matchFuzzy(ctx context.Context, repo output.Repository, req MatchRequest, q
 // is invented, RequiresReview is set and every candidate name is listed.
 // Picking candidates[0] there would silently answer a question hostus
 // cannot answer, which is precisely what the other two paths refuse to do.
-func matchAggregate(ctx context.Context, repo output.Repository, req MatchRequest, canonical string) (MatchResult, error) {
+func matchAggregate(ctx context.Context, repo output.Repository, req MatchRequest, canonical string, filter MatchFilter) (MatchResult, error) {
 	queryCanon := domain.Canonicalize(canonical)
 	candidates, err := repo.MatchExact(ctx, queryCanon)
 	if err != nil {
 		return MatchResult{}, err
 	}
+	candidates = filter.apply(candidates)
 	if len(candidates) == 0 {
-		fuzzy, err := matchFuzzy(ctx, repo, req, queryCanon)
+		fuzzy, err := matchFuzzy(ctx, repo, req, queryCanon, filter)
 		if err != nil {
 			return MatchResult{}, err
 		}

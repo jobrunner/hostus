@@ -154,7 +154,7 @@ func (r *fakeCDMRepo) MatchExact(context.Context, string) ([]output.MatchCandida
 	return nil, nil
 }
 
-func (r *fakeCDMRepo) MatchFuzzyCandidates(context.Context, string, int) ([]output.MatchCandidate, error) {
+func (r *fakeCDMRepo) MatchFuzzyCandidates(context.Context, string, int, string, string) ([]output.MatchCandidate, error) {
 	return nil, nil
 }
 

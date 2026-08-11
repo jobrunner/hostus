@@ -83,31 +83,32 @@ Statt `concept_id` geht auch `verbatim` — dann läuft die Auflösung durch
 dieselbe Logik wie `POST /v1/match`, und ein **Fuzzy-Treffer setzt
 `requires_review: true`** auf der gesamten Antwort.
 
-!!! warning "`verbatim` löst mit ingestiertem CDM praktisch nie auf — nehmen Sie `concept_id`"
+!!! tip "`verbatim` braucht `entry_sec` — sonst ist der Name mehrdeutig"
 
-    Gemessen am vollen Index (SP5 Task 5, siehe
-    [Reality-Check](../research/reality-check.md)): von 300 Namen, die
-    nachweislich eine CDM-Gegenseite mit Relation haben, kamen über den
-    `verbatim`-Einstieg **265 als `UNRESOLVABLE`** zurück und **0 als
-    Übersetzung**. `POST /v1/match` auf denselben 300 Namen zeigt die
-    Ursache: **265× „Mehrdeutiger Treffer"**, 0× „kein eindeutiger
-    Treffer".
+    Ein `sec.`-Referenzraum trennt Konzepte gleichen Namens: `Abies alba`
+    Mill. ist mehrere CDM-Konzepte (eines je Referenzwerk) plus das
+    WCVP-Konzept. `MatchExact` sucht über **alle** Backbones, also ist ein
+    bloßes `verbatim` mehrdeutig — ohne Filter kam es am vollen Index in
+    **265 von 300** Fällen als `UNRESOLVABLE` zurück, 0 übersetzt.
 
-    Das ist **kein Fehler, sondern die Bauart der Sache.** Ein
-    `sec.`-Referenzraum trennt Konzepte, die denselben Namen tragen —
-    `Abies alba Mill.` ist **acht** verschiedene CDM-Konzepte (eines je
-    Referenzwerk) plus das WCVP-Konzept, also neun gleich starke Treffer.
-    `MatchExact` sucht über **alle** Backbones, und die Auflösung
-    verweigert bei mehreren gleich starken Kandidaten korrekt die Wahl,
-    statt zu raten. Genau die Trennung, die `/v1/translate` nutzbar macht,
-    macht den Namen mehrdeutig.
+    **Lösung (SP5):** den `verbatim`-Einstieg mit **`entry_sec`** (der Id des
+    **Quell**-`sec.`-Raums) auf genau einen Raum einschränken. Gemessen wird
+    ein Name damit in **99,67 %** der Fälle eindeutig
+    ([`docs/research/sp5-sec-filter.md`](../research/sp5-sec-filter.md)) und
+    übersetzt dann über seine Relation. Alternativ `entry_backbone` (z. B.
+    `wcvp`). Ein unbekannter `entry_sec`/`entry_backbone` ist `400
+    INVALID_QUERY`.
 
-    **Was zu tun ist:** Lösen Sie den Namen zuerst selbst auf — etwa über
-    `GET /v1/suggest` oder `POST /v1/match` mit anschließender Auswahl aus
-    `candidates` — und schicken Sie die gewählte **`concept_id`**. Nur so
-    ist auch entschieden, aus *welchem* Referenzraum heraus übersetzt
-    werden soll; bei `verbatim` wäre selbst ein Treffer eine unausgesprochene
-    Wahl.
+    ```bash
+    curl -sS -X POST http://localhost:8080/v1/translate \
+      -H 'Content-Type: application/json' \
+      -d '{"verbatim":"Abies alba Mill.","entry_sec":"<quell-sec-id>",
+           "target_space":"<ziel-sec-id>"}'
+    ```
+
+    `concept_id` bleibt der direkteste Weg, wenn man die Id schon hat (dann
+    wird der Filter ignoriert); mit `entry_sec` ist aber auch der
+    Namens-Einstieg produktiv nutzbar.
 
 ## 3. Die Antwort richtig lesen
 
@@ -234,8 +235,9 @@ Sobald eine echte Relation existiert, entfällt der Block.
 | Fall | Status | Code |
 |---|---|---|
 | Body nicht parsbar; keins oder beides von `concept_id`/`verbatim`; `target_space` fehlt; `max_hops != 1` | `400` | `INVALID_QUERY` |
+| Unbekannter `entry_backbone` oder `entry_sec` (Filter, SP5) | `400` | `INVALID_QUERY` |
 | Unbekannte `concept_id` **oder** unbekannter `target_space` | `404` | `NOT_FOUND` |
-| `verbatim` nicht auf genau ein Konzept auflösbar | `422` | `UNRESOLVABLE` |
+| `verbatim` nicht auf genau ein Konzept auflösbar (Filter erwägen: `entry_sec`) | `422` | `UNRESOLVABLE` |
 
 Ein unbekannter `target_space` ist ausdrücklich ein `404` und **keine leere
 Antwort**: Ein Tippfehler im Zielraum darf nicht wie „keine Relation

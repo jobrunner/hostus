@@ -113,7 +113,14 @@ type Repository interface {
 	// recall trade-off (a real near-miss whose length or first letter
 	// diverges enough from canon can be missed — deliberately, to keep this
 	// cheap). limit <= 0 uses the adapter's default cap.
-	MatchFuzzyCandidates(ctx context.Context, canon string, limit int) ([]MatchCandidate, error)
+	//
+	// backbone/sec (either or both "" for no restriction) narrow the prefilter
+	// to one backbone / sec. reference space BEFORE the limit is applied, so a
+	// SP5 resolution filter (MatchFilter) does not lose the target space's
+	// genuine near-miss to the limit when many out-of-space same-length names
+	// crowd the top-N. Applying the filter only after this call would truncate
+	// the wanted candidate away in the very multi-sec case the filter serves.
+	MatchFuzzyCandidates(ctx context.Context, canon string, limit int, backbone, sec string) ([]MatchCandidate, error)
 	// BackboneVersions lists every ingested backbone artifact.
 	BackboneVersions(ctx context.Context) ([]domain.BackboneVersion, error)
 

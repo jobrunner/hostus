@@ -391,7 +391,7 @@ func TestMatchExact_DoesNotConfuseDistinctEpithets(t *testing.T) {
 func TestMatchFuzzyCandidates_ReturnsNearMissForTypo(t *testing.T) {
 	db := openSeededDB(t)
 
-	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", 10)
+	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", 10, "", "")
 	if err != nil {
 		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
 	}
@@ -411,7 +411,7 @@ func TestMatchFuzzyCandidates_ExcludesUnrelatedNames(t *testing.T) {
 	// "festuca ovina" — the prefilter must exclude it even though it's a
 	// perfectly real seeded name, proving the query doesn't fall back to a
 	// full scan.
-	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", 10)
+	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", 10, "", "")
 	if err != nil {
 		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
 	}
@@ -425,7 +425,7 @@ func TestMatchFuzzyCandidates_ExcludesUnrelatedNames(t *testing.T) {
 func TestMatchFuzzyCandidates_RespectsLimit(t *testing.T) {
 	db := openSeededDB(t)
 
-	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", 1)
+	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", 1, "", "")
 	if err != nil {
 		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
 	}
@@ -445,7 +445,7 @@ func TestMatchFuzzyCandidates_RespectsLimit(t *testing.T) {
 func TestMatchFuzzyCandidates_OrdersByClosestLengthFirst(t *testing.T) {
 	db := openSeededDB(t)
 
-	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", 1)
+	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", 1, "", "")
 	if err != nil {
 		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
 	}
@@ -463,7 +463,7 @@ func TestMatchFuzzyCandidates_ZeroLimitUsesDefault(t *testing.T) {
 
 	// limit <= 0 must fall back to the adapter's default cap (not silently
 	// become a SQL LIMIT 0, which would return nothing at all).
-	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", 0)
+	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", 0, "", "")
 	if err != nil {
 		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
 	}
@@ -475,7 +475,7 @@ func TestMatchFuzzyCandidates_ZeroLimitUsesDefault(t *testing.T) {
 func TestMatchFuzzyCandidates_NoNearMissReturnsEmpty(t *testing.T) {
 	db := openSeededDB(t)
 
-	got, err := db.MatchFuzzyCandidates(context.Background(), "zzznonexistent", 10)
+	got, err := db.MatchFuzzyCandidates(context.Background(), "zzznonexistent", 10, "", "")
 	if err != nil {
 		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
 	}
@@ -550,7 +550,7 @@ func TestMatchFuzzyCandidates_GlobMetacharacterFirstRuneIsLiteral(t *testing.T) 
 
 	// Same length as "festuca ovina", so only the first rune decides.
 	for _, q := range []string{"*estuca ovina", "?estuca ovina"} {
-		got, err := db.MatchFuzzyCandidates(context.Background(), q, 10)
+		got, err := db.MatchFuzzyCandidates(context.Background(), q, 10, "", "")
 		if err != nil {
 			t.Fatalf("MatchFuzzyCandidates(%q): unexpected error: %v", q, err)
 		}
@@ -588,7 +588,7 @@ func TestMatchFuzzyCandidates_BracketFirstRuneStillFiltersNormally(t *testing.T)
 		t.Fatalf("Commit: unexpected error: %v", err)
 	}
 
-	got, err := db.MatchFuzzyCandidates(ctx, "[bracketus testicos", 10)
+	got, err := db.MatchFuzzyCandidates(ctx, "[bracketus testicos", 10, "", "")
 	if err != nil {
 		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
 	}

@@ -61,7 +61,7 @@ func TestMatchInSpace_AggregateKnown(t *testing.T) {
 
 	results, err := application.MatchInSpace(context.Background(), repo, []application.MatchRequest{
 		{ID: "1", Verbatim: "Festuca ovina agg."},
-	}, "floraveg")
+	}, "floraveg", application.MatchFilter{})
 	if err != nil {
 		t.Fatalf("MatchInSpace: unexpected error: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestMatchInSpace_AggregateUnresolvable(t *testing.T) {
 
 	results, err := application.MatchInSpace(context.Background(), repo, []application.MatchRequest{
 		{ID: "1", Verbatim: "Festuca ovina agg."},
-	}, "floraveg")
+	}, "floraveg", application.MatchFilter{})
 	if err != nil {
 		t.Fatalf("MatchInSpace: unexpected error: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestMatchInSpace_PlainSpeciesCarriesNoPolicy(t *testing.T) {
 
 	results, err := application.MatchInSpace(context.Background(), repo, []application.MatchRequest{
 		{ID: "1", Verbatim: "Corynephorus canescens"},
-	}, "floraveg")
+	}, "floraveg", application.MatchFilter{})
 	if err != nil {
 		t.Fatalf("MatchInSpace: unexpected error: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestMatchInSpace_UnknownTargetSpaceIsRejected(t *testing.T) {
 
 	_, err := application.MatchInSpace(context.Background(), repo, []application.MatchRequest{
 		{ID: "1", Verbatim: "Corynephorus canescens"},
-	}, "germansl")
+	}, "germansl", application.MatchFilter{})
 	if !errors.Is(err, application.ErrUnknownTargetSpace) {
 		t.Fatalf("err = %v, want ErrUnknownTargetSpace", err)
 	}
@@ -159,7 +159,7 @@ func TestMatchInSpace_WithoutSpaceMatchesUnchanged(t *testing.T) {
 	repo := seededMatchRepo(t)
 	reqs := []application.MatchRequest{{ID: "1", Verbatim: "Corynephorus canescens"}}
 
-	withEmpty, err := application.MatchInSpace(context.Background(), repo, reqs, "")
+	withEmpty, err := application.MatchInSpace(context.Background(), repo, reqs, "", application.MatchFilter{})
 	if err != nil {
 		t.Fatalf("MatchInSpace(\"\"): unexpected error: %v", err)
 	}

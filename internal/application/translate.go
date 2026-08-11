@@ -76,6 +76,11 @@ type TranslateRequest struct {
 	// /v1/match uses — including its discipline that a fuzzy hit ALWAYS
 	// sets RequiresReview.
 	Verbatim string
+	// Filter narrows the Verbatim resolution to one backbone/sec. reference
+	// space (SP5), so a name shared across the multi-backbone index resolves
+	// to one concept instead of an ambiguous tie. Ignored on the ConceptID
+	// entry (an id is already unambiguous) — not even validated there.
+	Filter MatchFilter
 	// TargetSec is the id of the sec. reference space to translate into.
 	TargetSec string
 	// MaxHops, when > 0, must be MaxTranslateHops; anything else is
@@ -308,7 +313,10 @@ func resolveTranslateEntry(ctx context.Context, repo output.Repository, req Tran
 	if req.ConceptID != "" {
 		return req.ConceptID, TranslateEntry{Mode: EntryModeConceptID}, nil
 	}
-	results, err := MatchNames(ctx, repo, []MatchRequest{{ID: "source", Verbatim: req.Verbatim}})
+	if err := validateFilter(ctx, repo, req.Filter); err != nil {
+		return "", TranslateEntry{}, err
+	}
+	results, err := matchNamesFiltered(ctx, repo, []MatchRequest{{ID: "source", Verbatim: req.Verbatim}}, req.Filter)
 	if err != nil {
 		return "", TranslateEntry{}, err
 	}

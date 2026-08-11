@@ -53,7 +53,7 @@ func (f *fakeTranslateRepo) MatchExact(_ context.Context, canon string) ([]outpu
 	return f.exact[canon], nil
 }
 
-func (f *fakeTranslateRepo) MatchFuzzyCandidates(context.Context, string, int) ([]output.MatchCandidate, error) {
+func (f *fakeTranslateRepo) MatchFuzzyCandidates(context.Context, string, int, string, string) ([]output.MatchCandidate, error) {
 	return f.fuzzy, nil
 }
 

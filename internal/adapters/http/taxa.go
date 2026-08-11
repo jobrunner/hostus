@@ -157,12 +157,18 @@ type matchNameDTO struct {
 
 // matchRequestDTO is the POST /v1/match request body. TargetSpace (SP9/UC4)
 // selects an ingested name space to resolve each match into; without it the
-// response is byte-for-byte the SP1 shape. SecHint remains accepted but unused
-// (sec.-space translation lives on POST /v1/translate since SP5).
+// response is byte-for-byte the SP1 shape. EntryBackbone/EntrySec (SP5) narrow
+// verbatim RESOLUTION to one backbone / sec. reference space, so a name shared
+// across the multi-backbone index resolves to one concept instead of an
+// ambiguous tie; they apply to every name in the batch. (They replace the
+// former, never-implemented `sec_hint` field — an unknown JSON field is
+// ignored by the decoder, so old clients that still send `sec_hint` are
+// unaffected.)
 type matchRequestDTO struct {
-	Names       []matchNameDTO `json:"names"`
-	TargetSpace string         `json:"target_space,omitempty"`
-	SecHint     string         `json:"sec_hint,omitempty"`
+	Names         []matchNameDTO `json:"names"`
+	TargetSpace   string         `json:"target_space,omitempty"`
+	EntryBackbone string         `json:"entry_backbone,omitempty"`
+	EntrySec      string         `json:"entry_sec,omitempty"`
 }
 
 // matchResultDTO is one entry of POST /v1/match's response, per §B.2. An
@@ -291,9 +297,18 @@ func handleMatch(repo output.Repository) http.HandlerFunc {
 			reqs[i] = application.MatchRequest{ID: n.ID, Verbatim: n.Verbatim}
 		}
 
-		results, err := application.MatchInSpace(r.Context(), repo, reqs, body.TargetSpace)
+		results, err := application.MatchInSpace(r.Context(), repo, reqs, body.TargetSpace,
+			application.MatchFilter{Backbone: body.EntryBackbone, Sec: body.EntrySec})
 		if errors.Is(err, application.ErrUnknownTargetSpace) {
 			httperr.InvalidQueryError(w, "unknown target_space "+strconv.Quote(body.TargetSpace))
+			return
+		}
+		if errors.Is(err, application.ErrUnknownBackbone) {
+			httperr.InvalidQueryError(w, "unknown entry_backbone "+strconv.Quote(body.EntryBackbone))
+			return
+		}
+		if errors.Is(err, application.ErrUnknownSec) {
+			httperr.InvalidQueryError(w, "unknown entry_sec "+strconv.Quote(body.EntrySec))
 			return
 		}
 		if err != nil {

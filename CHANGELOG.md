@@ -7,6 +7,29 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (SP5 — `sec.`-Auflösungsfilter und `sec`-Ausgabe)
+- **`entry_backbone`/`entry_sec` auf `POST /v1/match` und `POST /v1/translate`.**
+  Im Multi-Backbone-Index (WCVP + CDMs ~119 `sec.`-Räumen) liegt derselbe Name
+  mehrfach, sodass gängige Namen mehrdeutig (`unresolvable`) blieben — der
+  Grund, warum `target_space` und der `/v1/translate`-`verbatim`-Einstieg kaum
+  bedienbar waren. Neu: `application.MatchFilter{Backbone, Sec}` verwirft
+  `MatchExact`-Kandidaten nach `Concept.BackboneID`/`SecReference` (im
+  Application-Layer, Port unverändert), UND-verknüpft. Ohne Filter byteweise
+  die alte Form. Unbekannter `entry_backbone`/`entry_sec` → `400 INVALID_QUERY`,
+  benennt den Wert. Bei `/v1/translate` nur auf dem `verbatim`-Pfad (bei
+  `concept_id` ignoriert). Ersetzt das nie implementierte `sec_hint`-Feld.
+- **`sec` `{id, title}` in `GET /v1/concept/{id}` und `GET /v1/suggest`.** Für
+  ein sec-tragendes (CDM-)Concept present, für WCVP weggelassen (SP1-Form
+  unverändert) — macht gleichnamige Konzepte unterscheidbar.
+- **Gemessen** (`docs/research/sp5-sec-filter.md`, realer WCVP+CDM-Index):
+  `entry_sec` löst **99,67 %** der (Name, `sec.`)-Kombis eindeutig auf (nur 167
+  von 51.167 bleiben, echte CDM-Dubletten); `entry_backbone=wcvp` macht 12.979
+  bisher mehrdeutige Namen eindeutig. Der Filter beseitigt die Mehrdeutigkeit,
+  verschiebt sie nicht — die known-gap-Auflage ist erfüllt.
+- Behebt beide SP5-known-gaps (`/v1/translate`-`verbatim` praktisch tot; kein
+  `sec.`-Feld in suggest/concept); Einträge aus `docs/explanation/known-gaps.md`
+  entfernt.
+
 ### Removed (redundante Euro+Med-REST-Pipeline stillgelegt)
 - **`pipelines/euromed/` (REST-Crawl) entfernt** — `build.sh` und `crawl.py`.
   Der flache `/euromed/taxon`-Endpunkt liefert nur einen autorenbehafteten

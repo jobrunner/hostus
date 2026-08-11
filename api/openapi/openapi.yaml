@@ -661,6 +661,14 @@ components:
             dieses Concept liefert.
           items:
             $ref: '#/components/schemas/Distribution'
+        sec:
+          allOf:
+            - $ref: '#/components/schemas/SecReference'
+          description: >-
+            `sec.`-Referenzraum des Concepts (id + Titel), NUR für ein
+            sec-tragendes (CDM-)Concept present — so sind zwei gleichnamige
+            Konzepte unterscheidbar (SP5). Fehlt bei einem WCVP-Concept ohne
+            `sec_reference` (SP1-Form unverändert).
 
     SynonymDetail:
       type: object
@@ -863,6 +871,19 @@ components:
             Name, der zuerst über dieselbe Auflösung wie `POST /v1/match`
             aufgelöst wird. Ein Fuzzy-Treffer setzt `requires_review` auf
             der gesamten Antwort.
+        entry_backbone:
+          type: string
+          description: >-
+            Auflösungs-Filter (SP5) für den `verbatim`-Einstieg: beschränkt auf
+            ein Backbone. Bei `concept_id` ignoriert. Unbekannt → `400`.
+          example: cdm
+        entry_sec:
+          type: string
+          description: >-
+            Auflösungs-Filter (SP5) für den `verbatim`-Einstieg: beschränkt auf
+            EINEN `sec.`-Referenzraum, sodass ein gleichnamiger Name in genau
+            einem Raum auflöst und dann übersetzt wird (behebt den bisher toten
+            verbatim-Pfad). Bei `concept_id` ignoriert. Unbekannt → `400`.
         target_space:
           type: string
           description: Id des Ziel-`sec.`-Referenzraums.
@@ -1116,9 +1137,25 @@ components:
             nicht ingestierter Namensraum ist `400 INVALID_QUERY` und nennt
             den unbekannten Raum, kein stiller No-Op.
           example: floraveg
-        sec_hint:
+        entry_backbone:
           type: string
-          description: Wird entgegengenommen, aber (weiterhin) nicht ausgewertet.
+          description: >-
+            Optionaler Auflösungs-Filter (SP5): beschränkt die
+            verbatim-Auflösung JEDES Namens auf ein ingestiertes Backbone
+            (`wcvp`|`cdm`|`colxr`), sodass ein über den Multi-Backbone-Index
+            geteilter Name auf EIN Konzept auflöst statt mehrdeutig zu bleiben.
+            `entry_backbone=wcvp` ist der `target_space`-Kernfall. Unbekannter
+            Wert → `400 INVALID_QUERY`, benennt ihn. Ohne Filter unverändert.
+          example: wcvp
+        entry_sec:
+          type: string
+          description: >-
+            Optionaler Auflösungs-Filter (SP5): beschränkt die
+            verbatim-Auflösung auf EINEN `sec.`-Referenzraum (eine
+            `sec_reference`-id; impliziert ein sec-tragendes Backbone). Löst
+            gemessen 99,67 % der (Name, Raum)-Kombis eindeutig auf. Mit
+            `entry_backbone` UND-verknüpft. Unbekannter Wert → `400
+            INVALID_QUERY`.
 
     MatchResult:
       type: object
@@ -1246,6 +1283,14 @@ components:
           description: >-
             Roher SQLite-FTS5-`bm25()`-Wert des Treffers. Niedriger bedeutet
             relevanter (bm25 ist ein Distanzmaß, keine Ähnlichkeit).
+        sec:
+          allOf:
+            - $ref: '#/components/schemas/SecReference'
+          description: >-
+            `sec.`-Referenzraum des Treffers (id + Titel), NUR für ein
+            sec-tragendes (CDM-)Concept present — unterscheidet gleichnamige
+            CDM-Treffer, die sonst bis zum Score identisch sind (SP5). Fehlt
+            bei WCVP-Treffern.
 
     SuggestResponse:
       type: object

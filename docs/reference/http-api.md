@@ -137,6 +137,11 @@ Autorität hat schlicht keinen Schlüssel dafür (nie ein leeres Array). Zum
 dort gemessene 41,50-%-Obergrenze: nur gut zwei Fünftel aller Concepts
 tragen überhaupt eine iNat-Verknüpfung.
 
+`sec` `{id, title}` (SP5) nennt den `sec.`-Referenzraum des Concepts — nur
+für ein sec-tragendes (CDM-)Concept present, weggelassen für ein
+WCVP-Concept. So sind zwei gleichnamige Konzepte (eines je Referenzwerk)
+unterscheidbar.
+
 Unbekannte IDs liefern `404 NOT_FOUND` im [Fehlerformat](#fehlerformat).
 
 ### `GET /v1/xref?authority={authority}&id={id}`
@@ -214,9 +219,24 @@ POST /v1/match
 
 `match_type` ist eines von `exact`, `exact_author`, `aggregate_alias` oder
 `unresolvable`. `candidates` (Liste von Kanonicalnamen) wird nur bei
-Autor-Mehrdeutigkeit gefüllt. `sec_hint` im Request wird entgegengenommen,
-aber nicht ausgewertet — die Sekundärraum-Übersetzung liegt in
-[`POST /v1/translate`](#post-v1translate).
+Autor-Mehrdeutigkeit gefüllt.
+
+#### `entry_backbone` / `entry_sec` (SP5): Auflösungs-Filter
+
+Im Multi-Backbone-Index (WCVP + CDMs ~119 `sec.`-Räumen) liegt derselbe Name
+oft mehrfach — `MatchExact` sucht über alle Backbones, also bleibt ein
+Allerweltsname mehrdeutig (`unresolvable`). Zwei optionale, komponierbare
+Request-Felder (top-level, für den ganzen Batch) beschränken die Auflösung:
+
+- `entry_backbone` — eine Backbone-id (`wcvp`|`cdm`|`colxr`). `entry_backbone=wcvp`
+  löst gemessen 12.979 bisher mehrdeutige Namen eindeutig auf ihr WCVP-Konzept
+  auf — der Kernfall für `target_space` (kombinierbar).
+- `entry_sec` — eine `sec_reference`-id (impliziert CDM). Löst gemessen
+  **99,67 %** der (Name, Raum)-Kombis eindeutig auf.
+
+Beide verknüpfen mit UND. Ohne Filter ist die Antwort **byteweise** die
+gewohnte Form. Ein unbekannter Wert ist `400 INVALID_QUERY` und nennt ihn.
+Messung: [`docs/research/sp5-sec-filter.md`](../research/sp5-sec-filter.md).
 
 #### `target_space` (SP9/UC4): ESy-kompatibler Name und `aggregate_policy`
 
@@ -293,6 +313,11 @@ Die Priorisierung folgt §B.1: Präfix-Treffer vor Nicht-Treffer, im
 angefragten Gebiet vor nicht im Gebiet, akzeptiert vor Synonym, breitere vor
 feineren Rängen (FAMILY/GENUS vor SPECIES vor SUBSPECIES/VARIETY/FORM),
 zuletzt bm25-Score aufsteigend (niedriger ist relevanter).
+
+Jeder Treffer trägt `sec` `{id, title}` (SP5), sofern er zu einem
+sec-tragenden (CDM-)Concept gehört — das unterscheidet gleichnamige
+CDM-Treffer, die sonst bis zum Score identisch sind. Für WCVP-Treffer fehlt
+das Feld.
 
 **Beispiel-Request**
 
@@ -735,6 +760,12 @@ behauptet.
 
 Genau eines von `concept_id` und `verbatim` muss gesetzt sein, dazu
 `target_space` (die Id eines `sec.`-Referenzraums).
+
+Der `verbatim`-Einstieg war am vollen Index praktisch tot (gleichnamige
+Konzepte über die `sec.`-Räume → mehrdeutig). Mit dem SP5-Filter
+**`entry_sec`** (id eines `sec.`-Raums; oder `entry_backbone`) löst `verbatim`
+in **einem** Raum auf und übersetzt dann — gemessen eindeutig in 99,67 % der
+Fälle. Bei `concept_id` wird der Filter ignoriert. Unbekannter Wert → `400`.
 
 ```json
 POST /v1/translate

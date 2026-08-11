@@ -94,6 +94,12 @@ type conceptDTO struct {
 	Classification []classificationDTO `json:"classification,omitempty"`
 	Synonyms       []synonymDTO        `json:"synonyms"`
 	Distribution   []distributionDTO   `json:"distribution,omitempty"`
+	// Sec names the concept's sec. reference space (id + title), present only
+	// for a sec-bearing concept (CDM). Since CDM added many concepts of the
+	// SAME name — one per reference work — this is what tells two otherwise
+	// identical results apart (SP5). Omitted (never empty) for a concept with
+	// no sec. reference (WCVP), so the SP1 shape is unchanged.
+	Sec *secReferenceDTO `json:"sec,omitempty"`
 }
 
 // conceptToDTO renders a resolved concept (as returned by
@@ -245,7 +251,16 @@ func writeConcept(w http.ResponseWriter, r *http.Request, repo output.Repository
 		httperr.InternalError(w)
 		return
 	}
-	writeJSON(w, conceptToDTO(c, synonyms, xrefs, distribution, classification))
+	dto := conceptToDTO(c, synonyms, xrefs, distribution, classification)
+	// A sec-bearing concept (CDM) carries its reference space so same-name
+	// concepts are distinguishable (SP5). A missing sec_reference row is
+	// context, not the answer — omit it rather than fail the concept.
+	if c.SecReference != "" {
+		if sr, err := repo.SecReferenceByID(r.Context(), c.SecReference); err == nil {
+			dto.Sec = &secReferenceDTO{ID: sr.ID, Title: sr.Title}
+		}
+	}
+	writeJSON(w, dto)
 }
 
 // handleConcept serves GET /v1/concept/{id}.

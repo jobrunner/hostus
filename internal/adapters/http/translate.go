@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/jobrunner/hostus/internal/application"
 	"github.com/jobrunner/hostus/internal/domain"
@@ -40,6 +41,11 @@ type secReferenceDTO struct {
 type translateRequestDTO struct {
 	ConceptID string `json:"concept_id,omitempty"`
 	Verbatim  string `json:"verbatim,omitempty"`
+	// EntryBackbone/EntrySec (SP5) narrow the Verbatim RESOLUTION to one
+	// backbone / sec. reference space, so an ambiguous name resolves to a
+	// single source concept. Ignored on the concept_id entry.
+	EntryBackbone string `json:"entry_backbone,omitempty"`
+	EntrySec      string `json:"entry_sec,omitempty"`
 	// TargetSpace is the id of the sec. reference space to translate into.
 	TargetSpace string `json:"target_space"`
 	// MaxHops must be 1 (or omitted) — see application.MaxTranslateHops.
@@ -169,10 +175,19 @@ func handleTranslate(repo output.Repository) http.HandlerFunc {
 		res, err := application.Translate(r.Context(), repo, application.TranslateRequest{
 			ConceptID:             body.ConceptID,
 			Verbatim:              body.Verbatim,
+			Filter:                application.MatchFilter{Backbone: body.EntryBackbone, Sec: body.EntrySec},
 			TargetSec:             body.TargetSpace,
 			MaxHops:               body.MaxHops,
 			IncludeNameCandidates: body.IncludeNameCandidates,
 		})
+		if errors.Is(err, application.ErrUnknownBackbone) {
+			httperr.InvalidQueryError(w, "unknown entry_backbone "+strconv.Quote(body.EntryBackbone))
+			return
+		}
+		if errors.Is(err, application.ErrUnknownSec) {
+			httperr.InvalidQueryError(w, "unknown entry_sec "+strconv.Quote(body.EntrySec))
+			return
+		}
 		if err != nil {
 			writeTranslateError(w, err)
 			return

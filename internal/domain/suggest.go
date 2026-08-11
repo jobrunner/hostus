@@ -21,6 +21,10 @@ type SuggestItem struct {
 	InArea       bool
 	PrefixHit    bool
 	Score        float64
+	// SecReference is the concept's sec. reference space id, or "" for a
+	// concept with none (WCVP). Its presence lets a caller tell two same-name
+	// CDM concepts apart (SP5); the HTTP layer resolves the title from it.
+	SecReference string
 }
 
 // rankOrder assigns the ordinal used by RankOrder/RankSuggestions priority

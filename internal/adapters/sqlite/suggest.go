@@ -153,7 +153,7 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 			FROM fts_name
 			WHERE fts_name MATCH ?
 		)
-		SELECT tc.id, an.canonical, an.rank, tc.status, MIN(m.score) AS score, ` + inAreaExpr + ` AS in_area
+		SELECT tc.id, an.canonical, an.rank, tc.status, MIN(m.score) AS score, ` + inAreaExpr + ` AS in_area, COALESCE(tc.sec_reference, '') AS sec_reference
 		FROM matches m
 		JOIN fts_name_map fnm ON fnm.rowid = m.rowid
 		JOIN taxon_concept tc ON tc.id = fnm.concept_id
@@ -190,7 +190,7 @@ func scanSuggestItem(scan func(dest ...any) error) (domain.SuggestItem, error) {
 	var item domain.SuggestItem
 	var rank, status string
 	var inArea int
-	if err := scan(&item.ConceptID, &item.Canonical, &rank, &status, &item.Score, &inArea); err != nil {
+	if err := scan(&item.ConceptID, &item.Canonical, &rank, &status, &item.Score, &inArea, &item.SecReference); err != nil {
 		return domain.SuggestItem{}, err
 	}
 	r, err := domain.ParseRank(rank)

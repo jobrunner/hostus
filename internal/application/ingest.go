@@ -98,12 +98,16 @@ type BackboneReport struct {
 	Synonyms int
 	Orphaned int // synonym rows whose accepted target was never ingested (dangling reference in the source data)
 	// NomStatusAbsent/Acceptable/Disqualifying/Unclassified tally the
-	// publication judgement (domain.ClassifyNomStatus) of every SYNONYM row's
-	// nom_status — the population the /synonyms endpoint classifies. They are a
-	// DRIFT SIGNAL: a WCVP bump that introduces new status spellings shows up
-	// here as a shift (especially a rising Unclassified) instead of silently
-	// landing in `unclassified` and being withheld unnoticed. Same discipline
-	// as OtherRanks for exotic rank spellings.
+	// publication judgement (domain.ClassifyNomStatus) of every NON-ACCEPTED
+	// (synonym) row's nom_status. This deliberately includes ORPHANED synonyms
+	// (whose accepted target was never ingested, so they never surface via
+	// /synonyms and are reported separately as Orphaned): the four counts sum
+	// to Synonyms + Orphaned, not Synonyms, because a drift signal wants the
+	// full status vocabulary PRESENT IN THE SOURCE, not just the servable
+	// subset. They are that DRIFT SIGNAL: a WCVP bump introducing new status
+	// spellings shows up here as a shift (especially a rising Unclassified)
+	// instead of silently landing in `unclassified` and being withheld
+	// unnoticed. Same discipline as OtherRanks for exotic rank spellings.
 	NomStatusAbsent        int
 	NomStatusAcceptable    int
 	NomStatusDisqualifying int

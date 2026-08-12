@@ -10,9 +10,11 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ### Added (Schulden-Batch 2 — stiller Verlust: `nom_status`-Drift-Signal + `TaxonRow`-Mapper-Guard)
 - **`hostus ingest` meldet die vier `nom_status`-Urteile pro Backbone.** Neue
   Zeile `nom_status: absent=… acceptable=… disqualifying=… unclassified=…`
-  plus eine nach Häufigkeit sortierte Stichprobe der unklassifizierten
-  Rohwerte. `domain.ClassifyNomStatus` wird über jede **Synonymzeile**
-  (accepted rows zählen bewusst nicht) gelegt und in
+  plus eine nach Häufigkeit sortierte Stichprobe der unklassifizierten,
+  **normalisierten** Statuswerte (kleingeschrieben, Whitespace kollabiert —
+  wie `domain.NormalizeNomStatus`, nicht die Rohzellen).
+  `domain.ClassifyNomStatus` wird über jede **Nicht-akzeptiert-Zeile**
+  (Synonyme inkl. verwaister; accepted rows zählen bewusst nicht) gelegt und in
   `BackboneReport.NomStatus*`/`UnclassifiedNomStatusSample` getallyt. Damit
   wird ein WCVP-Bump, der neue Statuswerte einführt, als **Anstieg von
   `unclassified` sichtbar**, statt still dort zu landen und lautlos

@@ -88,4 +88,10 @@ func TestHandleSec_RepoError_Returns500(t *testing.T) {
 	if rr.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500 (body: %s)", rr.Code, rr.Body.String())
 	}
+	// Not just the status: the body must carry the project's INTERNAL_ERROR
+	// envelope, so a regression that returned a bare 500 or a wrong code is
+	// caught too.
+	if body := rr.Body.String(); !strings.Contains(body, "INTERNAL_ERROR") {
+		t.Errorf("body = %s, want an INTERNAL_ERROR error envelope", body)
+	}
 }

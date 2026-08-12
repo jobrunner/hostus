@@ -15,7 +15,21 @@
       "Bash(gh run view:*)",
       "Bash(gofmt:*)",
       "Bash(make lint:*)",
-      "Bash(golangci-lint help:*)"
+      "Bash(golangci-lint help:*)",
+      "Bash(nix --extra-experimental-features 'nix-command flakes' eval --raw nixpkgs#go_1_25.version)",
+      "Bash(nix --extra-experimental-features 'nix-command flakes' eval --raw --impure --expr 'let pkgs = \\(builtins.getFlake \\(toString ./.\\)\\).inputs.nixpkgs.legacyPackages.${builtins.currentSystem}; in pkgs.go_1_25.version')",
+      "Bash(nix --extra-experimental-features 'nix-command flakes' eval --raw --impure --expr ' *)",
+      "Bash(gh pr *)",
+      "Bash(gh api *)",
+      "Bash(git stash *)",
+      "Bash(git pull *)",
+      "Bash(git branch *)",
+      "Bash(gh run *)",
+      "WebFetch(domain:github.com)",
+      "Bash(gh release *)",
+      "Bash(git fetch *)",
+      "Bash(git rebase *)",
+      "Bash(nix --extra-experimental-features 'nix-command flakes' develop --command bash -c 'make lint vet test build')"
     ]
   }
 }

@@ -591,6 +591,52 @@ func TestIngest_UnknownRankDegradesToOther(t *testing.T) {
 // the tie alphabetically) and one ordinary "Species" row, so both of
 // sortedRankCounts' sort keys (count desc, then verbatim asc) are actually
 // exercised, not just the count-desc one.
+// TestIngest_PopulatesAreaNamesFromDistribution pins that the distribution
+// rows' area NAME (WCVP Locality) is captured into the area lookup table, so
+// Areas() can offer "Germany (GER)". Only areas with data are listed, each
+// with its name.
+func TestIngest_PopulatesAreaNamesFromDistribution(t *testing.T) {
+	ds := &application.Dataset{
+		Backbones:   []application.Backbone{{ID: "wcvp", Version: "v1"}},
+		ManifestSHA: "x",
+	}
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+
+	taxa := []application.TaxonRow{
+		{TaxonID: "1", AcceptedTaxonID: "1", Accepted: true, Canonical: "Some plant", Rank: "Species"},
+	}
+	dists := []application.DistributionRow{
+		{TaxonID: "1", AreaCode: "GER", AreaName: "Germany"},
+		{TaxonID: "1", AreaCode: "FRA", AreaName: "France"},
+		{TaxonID: "1", AreaCode: "ITA"}, // has data but the source carried no name
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) {
+		return fakeRowSource{taxa: taxa, dists: dists}, nil
+	}
+	if _, err := application.Ingest(ctx, ds, readerFor, repo); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	areas, err := repo.Areas(ctx)
+	if err != nil {
+		t.Fatalf("Areas: %v", err)
+	}
+	want := []domain.Area{
+		{Scheme: "wgsrpd_l3", Code: "FRA", Name: "France"},
+		{Scheme: "wgsrpd_l3", Code: "GER", Name: "Germany"},
+		{Scheme: "wgsrpd_l3", Code: "ITA", Name: ""}, // code with data but no name -> empty name
+	}
+	if len(areas) != len(want) {
+		t.Fatalf("Areas = %+v, want %+v", areas, want)
+	}
+	for i, w := range want {
+		if areas[i] != w {
+			t.Errorf("Areas[%d] = %+v, want %+v", i, areas[i], w)
+		}
+	}
+}
+
 func TestIngest_WCVPExoticRanks_CompletesAndReportsThem(t *testing.T) {
 	ds := &application.Dataset{
 		Backbones:   []application.Backbone{{ID: "wcvp-exotic", Version: "v1"}},
@@ -869,6 +915,8 @@ func (f *fakeCapturingRepo) ExistingConceptIDs(context.Context, []string) (map[s
 	return nil, nil
 }
 
+func (f *fakeCapturingRepo) Areas(context.Context) ([]domain.Area, error) { return nil, nil }
+
 func (f *fakeCapturingRepo) SecReferences(context.Context) ([]domain.SecReference, error) {
 	return nil, nil
 }
@@ -906,6 +954,7 @@ func (t *fakeCapturingTx) UpsertConcept(domain.Concept) error                { r
 func (t *fakeCapturingTx) LinkName(string, string, string, *bool) error      { return nil }
 func (t *fakeCapturingTx) AddXref(string, domain.Xref, string) error         { return nil }
 func (t *fakeCapturingTx) AddDistribution(string, domain.Distribution) error { return nil }
+func (t *fakeCapturingTx) UpsertArea(domain.Area) error                      { return nil }
 func (t *fakeCapturingTx) AddTraitValue(string, domain.TraitValue) error     { return nil }
 func (t *fakeCapturingTx) UpsertTraitVocabulary(domain.TraitVocabMeta) error { return nil }
 func (t *fakeCapturingTx) UpsertXrefSource(domain.XrefSourceMeta) error      { return nil }

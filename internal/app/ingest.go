@@ -81,7 +81,7 @@ func (s wcvpRowSource) Taxa() []application.TaxonRow {
 func (s wcvpRowSource) Distributions() []application.DistributionRow {
 	out := make([]application.DistributionRow, 0, len(s.ds.Distributions))
 	for _, d := range s.ds.Distributions {
-		out = append(out, application.DistributionRow{TaxonID: d.CoreID, AreaCode: d.AreaCode()})
+		out = append(out, application.DistributionRow{TaxonID: d.CoreID, AreaCode: d.AreaCode(), AreaName: d.Locality})
 	}
 	return out
 }

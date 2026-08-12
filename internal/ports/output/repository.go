@@ -73,6 +73,11 @@ type Repository interface {
 	// bibliographic identity of a circumscription's reference frame),
 	// ordered by id.
 	SecReferences(ctx context.Context) ([]domain.SecReference, error)
+	// Areas lists every distribution area that actually carries data (a
+	// DISTINCT area_scheme/area_code from the distribution table), each with
+	// its human-readable name where one was ingested (empty otherwise),
+	// ordered by (scheme, code). Backs GET /v1/areas.
+	Areas(ctx context.Context) ([]domain.Area, error)
 	// SecReferenceByID resolves one sec. reference space by its id.
 	// Returns domain.ErrNotFound (wrapped) if the id is unknown — which is
 	// what lets /v1/translate tell a MISTYPED target space (404) apart from
@@ -276,6 +281,10 @@ type IngestTx interface {
 	// what ExportBundle's redistribution gate joins against.
 	AddXref(conceptID string, x domain.Xref, source string) error
 	AddDistribution(conceptID string, d domain.Distribution) error
+	// UpsertArea records one (scheme, code) area's human-readable name, keyed
+	// by (scheme, code) — first non-empty name wins (INSERT OR IGNORE), so it
+	// is safe to call once per distinct area. Backs Repository.Areas.
+	UpsertArea(a domain.Area) error
 	// AddTraitValue writes one trait_value row for conceptID. A nil
 	// tv.NicheWidth/tv.NSystems must be persisted as SQL NULL, not as a
 	// 0/0.0 literal — see domain.TraitValue's doc comment on why nil and

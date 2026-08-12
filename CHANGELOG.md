@@ -7,6 +7,22 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (`GET /v1/areas` — Region-Kombobox mit Namen + Codes)
+- **Neuer Endpunkt `GET /v1/areas`** listet jedes Verbreitungsgebiet mit Daten
+  als `{code, name, scheme}` (id-sortiert, `[]` nie `null`, `500` bei
+  Repo-Fehler). Die Gebietsnamen werden beim Ingest **selbst beschafft**: die
+  bisher verworfene `Locality`-Spalte des WCVP-Distributionsdumps landet in
+  einer neuen `area`-Lookup-Tabelle (`INSERT OR IGNORE`, erster nicht-leerer
+  Name je (scheme, code)). `Repository.Areas` listet nur Codes **mit Daten**
+  (`DISTINCT area_code` LEFT JOIN Name). OpenAPI (`Area`/`AreaListResponse`,
+  contract-getestet) + `http-api.md`.
+- **Testkonsole: Gebiets-Kombobox.** Das Gebiets-Feld ist jetzt an eine
+  `<datalist>` gebunden, die aus `GET /v1/areas` mit „Germany (GER)" gefüllt
+  wird; eine getippte Bezeichnung wird client-seitig auf den Code aufgelöst, so
+  dass „Germany" **und** „GER" funktionieren. Server-`?area=` bleibt
+  code-basiert (plus die Aliase `DE/AT/CH`). Gemessen an Realdaten: 381 Gebiete,
+  GER→Germany, FRA→France, AUT→Austria.
+
 ### Added (Suggest — Aggregat-Schreibweisen finden das Taxon)
 - **Marker-insensitives Aggregat-Suggest.** Der FTS-Query streift den
   Aggregat-Marker ab (`domain.StripAggregateMarkers`, wiederverwendete

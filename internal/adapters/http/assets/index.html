@@ -22,8 +22,9 @@
       <input id="suggest-q" type="search" spellcheck="false" autocomplete="off" placeholder="z. B. ca">
     </div>
     <div class="field">
-      <label for="suggest-area">Gebiet (genau ein Code)</label>
-      <input id="suggest-area" type="text" spellcheck="false" autocomplete="off" placeholder="z. B. GER">
+      <label for="suggest-area">Gebiet (Name oder Code)</label>
+      <input id="suggest-area" type="text" list="areas" spellcheck="false" autocomplete="off" placeholder="z. B. Germany oder GER">
+      <datalist id="areas"></datalist>
     </div>
     <div class="field">
       <label for="suggest-limit">Limit</label>

@@ -485,6 +485,7 @@ func (t *fakeNameSpaceTx) UpsertConcept(domain.Concept) error                { r
 func (t *fakeNameSpaceTx) LinkName(string, string, string, *bool) error      { return nil }
 func (t *fakeNameSpaceTx) AddXref(string, domain.Xref, string) error         { return nil }
 func (t *fakeNameSpaceTx) AddDistribution(string, domain.Distribution) error { return nil }
+func (t *fakeNameSpaceTx) UpsertArea(domain.Area) error                      { return nil }
 func (t *fakeNameSpaceTx) AddTraitValue(string, domain.TraitValue) error     { return nil }
 func (t *fakeNameSpaceTx) UpsertTraitVocabulary(domain.TraitVocabMeta) error { return nil }
 func (t *fakeNameSpaceTx) UpsertSecReference(domain.SecReference) error      { return nil }
@@ -551,6 +552,8 @@ func (r *fakeNameSpaceRepo) ConceptIDsByXref(context.Context, string, []string) 
 func (r *fakeNameSpaceRepo) ExistingConceptIDs(context.Context, []string) (map[string]bool, error) {
 	return nil, nil
 }
+func (r *fakeNameSpaceRepo) Areas(context.Context) ([]domain.Area, error) { return nil, nil }
+
 func (r *fakeNameSpaceRepo) SecReferences(context.Context) ([]domain.SecReference, error) {
 	return nil, nil
 }

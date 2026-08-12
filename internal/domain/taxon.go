@@ -206,6 +206,16 @@ type Distribution struct {
 	AreaCode   string
 }
 
+// Area is the human-readable identity of one distribution area: its scheme
+// (e.g. "wgsrpd_l3"), its code (e.g. "GER") and its name (e.g. "Germany").
+// The name is self-sourced from the backbone's distribution data at ingest so
+// a client can offer "Germany (GER)" instead of a bare WGSRPD code.
+type Area struct {
+	Scheme string
+	Code   string
+	Name   string
+}
+
 // Canonicalize normalizes a scientific name (or name fragment) into a
 // comparison key: it trims leading/trailing whitespace, collapses internal
 // whitespace runs to a single space, lower-cases, and strips diacritics.

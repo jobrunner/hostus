@@ -31,31 +31,38 @@ ist an dieser Stelle nicht eingelöst.
 *Nächster Schritt:* Routen-Contract-Test aktivieren (Router-Routen gegen
 die Spec-Pfade), damit die `skip`-Zweige entfallen.
 
-## Mutationstest für `internal/adapters/telemetry` blockiert in CI nicht
+## `telemetry`- und `sqlite`-Mutation laufen nicht im Per-PR-Gate (7-GB-Runner-OOM)
 
 **Stand:** 2026-08-12 · **Betrifft:** `.github/workflows/mutation.yml`
 
-Das Paket meldet sein Mutationsergebnis, lässt den Job aber nicht rot werden
-(`continue-on-error` nur für diesen Matrix-Eintrag), weil es auf dem 7-GB-
-`ubuntu-latest`-Runner OOM-gekillt wird (exit 143): gremlins kompiliert das
-Paket je Mutant neu, und dieses eine zieht das komplette OpenTelemetry-SDK.
+Zwei Pakete lassen sich auf dem 7-GB-`ubuntu-latest`-Runner nicht verlässlich
+mutationstesten: `internal/adapters/telemetry` (zieht je Mutant das komplette
+OpenTelemetry-SDK) und `internal/adapters/sqlite` (den `modernc.org/sqlite`-
+Treiber). gremlins rekompiliert das Paket je Mutant, und der `go build`-
+Subprozess spitzt dabei auf ~6+ GB RSS — Ergebnis: `exit 143` (OOM-Kill) oder
+Thrashing bis zum 60-min-Timeout. Lokal laufen beide vollständig durch
+(telemetry 56/0/0, sqlite `Not covered: 0`, 302/4).
 
-**Was seit 2026-08-12 anders ist.** Die früher als Ursache vermutete
-`make()`-Kapazitätsangabe (`RingLog.Handle`) wurde gestrichen
-(`make(map[string]string)`) — das entfernte einen äquivalenten LIVED-Mutanten
-und hebt die lokale Efficacy auf **100 % (56 killed / 0 lived / 0 not
-covered)**. Aber der OOM blieb: PR #33 reproduzierte ihn in CI nach ~2 min
-**ohne** diesen Mutanten. Der Engpass ist also die Neukompilierung des SDK je
-Mutant, nicht eine einzelne Allokation.
+**Was PR #35 geklärt hat.** Ein Swap-Headroom-Schritt behebt es **nicht**
+deterministisch: telemetry wird trotz 12 GB Swap OOM-gekillt (der OTel-Compile-
+Peak ist aktives Working-Set, das der OOM-Killer vor dem Auslagern trifft), und
+sqlite thrasht auf Swap 15–60 min statt der ~154 s lokal. Deshalb sind beide
+Pakete aus dem **Per-PR-Job** entfernt und laufen in einem separaten
+`mutation-heavy`-Job **nur** auf wöchentlichem Cron/`workflow_dispatch` — so ist
+das Per-PR-Gate schnell, deterministisch und vollständig blockierend, und kein
+OOM kann je einen PR flaky machen. Auf dem Cron behält telemetry
+`continue-on-error` (OOMt dort weiterhin), sqlite bekommt Swap + vollen Timeout.
 
 **Was es wirklich lösen würde:** ein Runner mit mehr RAM
-(`ubuntu-latest-4-core` o. ä.). Das Repo hat aktuell **keinen** größeren
-Runner konfiguriert (alle Jobs auf `ubuntu-latest`), und größere GitHub-Runner
-sind eine Org-/Kosten-Entscheidung — daher bleibt `continue-on-error`.
+(`ubuntu-latest-4-core`, 16 GB). Dann fielen beide Pakete zurück in die
+Per-PR-Matrix und der ganze `mutation-heavy`-Job entfiele. Größere
+GitHub-Runner sind eine Org-/Kosten-Entscheidung — daher die Zwei-Stufen-
+Trennung als runnerneutrale Lösung.
 
-**Bis dahin:** vor einer Änderung an `internal/adapters/telemetry` lokal
-`make mutation PKG=./internal/adapters/telemetry` laufen lassen (läuft dort
-vollständig durch).
+**Bis dahin:** vor einer Änderung an `internal/adapters/telemetry` oder
+`internal/adapters/sqlite` lokal `make mutation PKG=…` laufen lassen (läuft
+dort vollständig durch) — das ist das eigentliche Entwickler-Gate für diese
+beiden Pakete.
 
 ## Kein Endpunkt listet die verfügbaren `sec.`-Referenzräume (SP8)
 

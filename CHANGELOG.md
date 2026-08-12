@@ -7,19 +7,19 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
-### Fixed (zwei Tooling-known-gaps geschlossen)
-- **`internal/adapters/telemetry` blockiert die Mutations-CI jetzt.** Der
-  Kapazitäts-Hinweis `make(map[string]string, rec.NumAttrs()+len(r.attrs))` in
-  `RingLog.Handle` wurde zu `make(map[string]string)` — die
-  Arithmetik-Mutation dieser Größe sprengte den 7-GB-`ubuntu-latest`-Runner
-  (OOM, exit 143) und war der Grund für `continue-on-error`. Ohne den Hinweis
-  (messbar kostenlos) entfällt der Mutant; das Paket läuft durch (56 killed /
-  0 lived / 0 not covered, 100 %), und `continue-on-error` ist entfernt.
+### Fixed (poc-in-verify geschlossen; telemetry-Mutation verbessert)
 - **`poc/` wird von `make verify` abgedeckt.** Neues `poc-check`-Target
   (`cd poc && go build ./... && go vet ./...`) — das eigene Messmodul war
   bisher von keinem verify-Schritt erfasst (eigenes Modul, kein go.work), so
   konnte toter/kaputter Harness-Code unbemerkt bleiben. Bewusst OHNE die
   Hexagon-Lint-Regeln (die nur für den Laufzeit-Code gelten).
+- **`internal/adapters/telemetry`-Mutation verbessert (nicht geschlossen).**
+  Die `make()`-Kapazitätsangabe in `RingLog.Handle` wurde zu
+  `make(map[string]string)` — entfernt einen äquivalenten LIVED-Mutanten,
+  lokale Efficacy jetzt 100 % (56/0/0). Der CI-OOM auf dem 7-GB-Runner besteht
+  aber fort (Neukompilierung des OTel-SDK je Mutant, in PR #33 reproduziert),
+  daher bleibt `continue-on-error` — der echte Fix ist ein größerer Runner.
+  known-gap entsprechend aktualisiert.
 
 ### Added (SP5 — `sec.`-Auflösungsfilter und `sec`-Ausgabe)
 - **`entry_backbone`/`entry_sec` auf `POST /v1/match` und `POST /v1/translate`.**

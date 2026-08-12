@@ -63,6 +63,32 @@ ist an dieser Stelle nicht eingelöst.
 *Nächster Schritt:* Routen-Contract-Test aktivieren (Router-Routen gegen
 die Spec-Pfade), damit die `skip`-Zweige entfallen.
 
+## Mutationstest für `internal/adapters/telemetry` blockiert in CI nicht
+
+**Stand:** 2026-08-12 · **Betrifft:** `.github/workflows/mutation.yml`
+
+Das Paket meldet sein Mutationsergebnis, lässt den Job aber nicht rot werden
+(`continue-on-error` nur für diesen Matrix-Eintrag), weil es auf dem 7-GB-
+`ubuntu-latest`-Runner OOM-gekillt wird (exit 143): gremlins kompiliert das
+Paket je Mutant neu, und dieses eine zieht das komplette OpenTelemetry-SDK.
+
+**Was seit 2026-08-12 anders ist.** Die früher als Ursache vermutete
+`make()`-Kapazitätsangabe (`RingLog.Handle`) wurde gestrichen
+(`make(map[string]string)`) — das entfernte einen äquivalenten LIVED-Mutanten
+und hebt die lokale Efficacy auf **100 % (56 killed / 0 lived / 0 not
+covered)**. Aber der OOM blieb: PR #33 reproduzierte ihn in CI nach ~2 min
+**ohne** diesen Mutanten. Der Engpass ist also die Neukompilierung des SDK je
+Mutant, nicht eine einzelne Allokation.
+
+**Was es wirklich lösen würde:** ein Runner mit mehr RAM
+(`ubuntu-latest-4-core` o. ä.). Das Repo hat aktuell **keinen** größeren
+Runner konfiguriert (alle Jobs auf `ubuntu-latest`), und größere GitHub-Runner
+sind eine Org-/Kosten-Entscheidung — daher bleibt `continue-on-error`.
+
+**Bis dahin:** vor einer Änderung an `internal/adapters/telemetry` lokal
+`make mutation PKG=./internal/adapters/telemetry` laufen lassen (läuft dort
+vollständig durch).
+
 ## Kein Endpunkt listet die verfügbaren `sec.`-Referenzräume (SP8)
 
 **Stand:** 2026-08-04 · **Betrifft:** `POST /v1/translate`,

@@ -7,6 +7,19 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (Suggest — Aggregat-Schreibweisen finden das Taxon)
+- **Marker-insensitives Aggregat-Suggest.** Der FTS-Query streift den
+  Aggregat-Marker ab (`domain.StripAggregateMarkers`, wiederverwendete
+  Marker-Definition), sodass `agg./aggr./s.l.` gleichwertig sind und die Basis
+  finden. Zusätzlich werden aufgelöste aggregatmarkierte FloraVeg-Namen als
+  `fts_name`-Aliase indexiert (`fts_name_map.is_aggregate`); Suggest reicht
+  `MAX(is_aggregate)` als `SuggestItem.aggregate` durch (DTO/OpenAPI/`http-api.md`),
+  und die Testkonsole zeigt ein „agg."-Badge. Gemessen an Realdaten (WCVP +
+  FloraVeg): „Achillea millefolium agg." und „… aggr." liefern beide
+  *Achillea millefolium* mit `aggregate=true`. Da FloraVeg-Aggregate auf die
+  Nominatart zeigen, ist der Treffer die Nominatart mit Badge, kein separater
+  Aggregat-Eintrag.
+
 ### Added (OpenAPI — deterministischer Schema-Inhalt-Check)
 - **`TestOpenAPISchemasMatchDTOs`** (`internal/adapters/http`) reflektiert über
   jeden Request/Response-DTO und gleicht **rekursiv** jedes der 28

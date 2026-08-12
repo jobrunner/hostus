@@ -90,20 +90,43 @@ jobs:
       - name: Install gremlins
         run: go install github.com/go-gremlins/gremlins/cmd/gremlins@${{ env.GREMLINS_VERSION }}
 
+      # DETERMINISM FIX (see docs/explanation/known-gaps.md): gremlins recompiles
+      # the package once per mutant, and two packages each peak the *go build
+      # subprocess* at ~6+ GB RSS — internal/adapters/telemetry (whole OTel SDK)
+      # and internal/adapters/sqlite (modernc.org/sqlite pure-Go driver). That
+      # over-runs the 7 GB ubuntu-latest ceiling, so the job was either OOM-killed
+      # (exit 143) or thrashed at the memory limit until the 60 min timeout — a
+      # non-deterministic outcome that reads like a flake. GOMEMLIMIT cannot fix
+      # it: it bounds gremlins' own Go heap, not the child compiler process that
+      # actually blows up. Swap gives that subprocess peak the headroom to
+      # complete; it is only touched at peaks, so steady-state stays in RAM and
+      # the wall-clock cost is small. This makes every leg terminate with a real
+      # green/red instead of being killed. If the org later enables larger GitHub
+      # runners, `runs-on: ubuntu-latest-4-core` (16 GB) is the simpler successor
+      # and this step can be dropped.
+      - name: Add swap headroom (deterministic OOM fix for heavy legs)
+        run: |
+          set -eux
+          sudo swapoff -a || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 12G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=12288
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+          swapon --show
+
       # Each package must meet its (currently permissive) baseline in
       # .gremlins.yaml, or gremlins exits non-zero and the job fails.
       # fail-fast: false keeps the other matrix legs running, so one failing
       # package still yields a report for every other one.
       - name: Run mutation testing
-        # GOFLAGS/GOMEMLIMIT cap the Go toolchain's memory. gremlins recompiles the
-        # package once per mutant, and internal/adapters/telemetry pulls the whole
-        # OpenTelemetry SDK (otelmux, otlptrace/otlpmetric): measured locally, the
-        # toolchain peaks at ~6.1 GB RSS on that package. A standard ubuntu-latest
-        # runner has 7 GB, so the job was OOM-killed mid-run — twice, both times
-        # surfacing as "the runner has received a shutdown signal" / exit 143 after
-        # ~2 min against a 60 min timeout, which reads like a flake and is not one.
-        # -p=1 serialises compile actions; GOMEMLIMIT makes the GC work harder
-        # before the kernel decides for us.
+        # -p=1 serialises the Go compile actions (one heavy `go build` at a time)
+        # and GOMEMLIMIT makes gremlins' own GC work harder before allocating; the
+        # "Add swap headroom" step above is what actually absorbs the per-mutant
+        # compiler-subprocess RSS peak that used to OOM-kill the heavy legs
+        # (internal/adapters/telemetry, internal/adapters/sqlite). Together they
+        # let every leg run to a deterministic conclusion on a 7 GB runner.
         env:
           GOFLAGS: -p=1
           GOMEMLIMIT: 4GiB

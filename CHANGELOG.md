@@ -7,6 +7,18 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Changed (CI — Mutationstests laufen deterministisch durch)
+- **Swap-Headroom im Mutation-Job.** `gremlins` rekompiliert das Paket je
+  Mutant; `internal/adapters/telemetry` (OTel-SDK) und
+  `internal/adapters/sqlite` (`modernc.org/sqlite`) trieben den
+  `go build`-Subprozess je auf ~6+ GB RSS und sprengten den 7-GB-Runner →
+  `exit 143` (OOM) oder Thrashing bis zum 60-min-Timeout, ein
+  nicht-deterministischer Ausgang. `GOMEMLIMIT` half nicht (bändigt nur
+  gremlins' eigenen Heap, nicht den Compiler-Subprozess). Ein
+  Swap-Setup-Schritt fängt den Peak ab, sodass jedes Matrix-Bein deterministisch
+  mit echtem Grün/Rot terminiert. Erhält die Per-PR-Mutationsabdeckung aller
+  Pakete (inkl. `sqlite`, dem größten Logik-Paket).
+
 ### Added (Schulden-Batch 2 — stiller Verlust: `nom_status`-Drift-Signal + `TaxonRow`-Mapper-Guard)
 - **`hostus ingest` meldet die vier `nom_status`-Urteile pro Backbone.** Neue
   Zeile `nom_status: absent=… acceptable=… disqualifying=… unclassified=…`

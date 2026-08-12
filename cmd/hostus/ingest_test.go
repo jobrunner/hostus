@@ -94,6 +94,42 @@ func TestPrintIngestReport_OtherRanksNotice(t *testing.T) {
 	}
 }
 
+func TestPrintIngestReport_NomStatusNotice(t *testing.T) {
+	report := application.IngestReport{
+		Backbones: []application.BackboneReport{
+			{
+				ID:                     "wcvp",
+				Names:                  7,
+				NomStatusAbsent:        1,
+				NomStatusAcceptable:    1,
+				NomStatusDisqualifying: 1,
+				NomStatusUnclassified:  3,
+				UnclassifiedNomStatusSample: []application.RankVerbatimCount{
+					{Verbatim: "sensu auct.", Count: 2},
+					{Verbatim: "fossil name", Count: 1},
+				},
+			},
+			{ID: "clean", Names: 1},
+		},
+	}
+
+	var out bytes.Buffer
+	printIngestReport(&out, report)
+
+	got := out.String()
+	want := "nom_status: absent=1 acceptable=1 disqualifying=1 unclassified=3 (sensu auct. 2, fossil name 1)"
+	if !strings.Contains(got, want) {
+		t.Errorf("report %q, want a %q line", got, want)
+	}
+	cleanIdx := strings.Index(got, "clean:")
+	if cleanIdx == -1 {
+		t.Fatalf("report %q, want it to mention backbone %q", got, "clean")
+	}
+	if cleanSection := got[cleanIdx:]; strings.Contains(cleanSection, "nom_status:") {
+		t.Errorf("report %q, want no \"nom_status:\" line for a backbone with no synonym rows", cleanSection)
+	}
+}
+
 // TestIngestCommand_RestrictedVocabulary_PrintsRedistributionNotice drives
 // "hostus ingest" against a manifest whose eive trait vocabulary is pinned
 // redistribution: unknown (testdata/dataset-restricted.yaml) and asserts

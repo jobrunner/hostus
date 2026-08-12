@@ -9,24 +9,6 @@ wirklich schließen würde, nicht nur die Notiz, dass es sie gibt.
 Behobene Punkte werden hier gelöscht, nicht abgehakt; der Verlauf steht im
 `CHANGELOG.md`.
 
-## Kein Drift-Signal für das `nom_status`-Vokabular (SP6)
-
-Die Regeltabelle in
-[der HTTP-Referenz](../reference/http-api.md) ist gegen **einen gemessenen
-Stand** des WCVP-Artefakts geschrieben: 1.304 distinkte Werte, 99.252
-belegte Namen, 36 Token mit Trefferzahlen. `internal/domain/nomstatus_doc_test.go`
-hält Code und Doku zusammen — aber **nichts merkt, wenn sich die Quelle
-ändert**. Beim nächsten Artefakt-Bump kann WCVP neue Statuswerte einführen,
-und die einzige Folge wäre, dass sie still in `unclassified` landen und
-lautlos zurückgehalten werden.
-
-*Nächster Schritt:* `hostus ingest` gibt die vier Urteilszahlen
-(`absent`/`disqualifying`/`unclassified`/`acceptable`) plus die Top-N der
-unklassifizierten Rohwerte aus — dann ist der heutige Stand
-(872.270 / 89.836 / 2.309 / 347 über 964.762 Synonymzeilen) eine
-Vergleichsbasis statt einer Momentaufnahme. Dieselbe Disziplin wie bei
-`matched/unmatched/ambiguous`.
-
 ## `docs/how-to/offline-bundle.md` nennt eine überholte Bundle-Größe (SP6)
 
 Die Größenangabe **108,9 MB** für das GER-Bundle stammt aus dem
@@ -36,20 +18,6 @@ Spalten (`nom_status`, `rank_verbatim`) befüllt, was das Bundle um rund
 
 *Nächster Schritt:* Bundle neu messen und Zahl plus Faktor-Aussage
 aktualisieren — nicht schätzen.
-
-## Der vierfach kopierte `TaxonRow`-Mapper (SP6)
-
-Der Befund, der SP6 Task 1 ausgelöst hat: Eine Quellspalte wird an vier
-Stellen auf dieselbe Struktur abgebildet, und Task 1 war genau die Reparatur
-einer Stelle, an der eine davon vergessen worden war — geparst, dann von
-einer Mapping-Zeile fallen gelassen, Spalte leer, niemand hat sich
-beschwert. Der Hazard ist bislang nur im SDD-Ledger von SP6 festgehalten,
-das SP7 nicht liest.
-
-*Nächster Schritt:* die vier Abbildungen auf eine zusammenführen oder
-mindestens einen Test, der für jede Quellspalte prüft, dass sie in der
-Zieltabelle ankommt. Die Fehlerklasse ist „stiller Verlust", und die tritt
-in diesem Projekt wiederholt auf.
 
 ## 316 Zeilen handgepflegtes OpenAPI ohne Drift-Prüfung (SP6)
 

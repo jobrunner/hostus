@@ -7,6 +7,26 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (Schulden-Batch 2 — stiller Verlust: `nom_status`-Drift-Signal + `TaxonRow`-Mapper-Guard)
+- **`hostus ingest` meldet die vier `nom_status`-Urteile pro Backbone.** Neue
+  Zeile `nom_status: absent=… acceptable=… disqualifying=… unclassified=…`
+  plus eine nach Häufigkeit sortierte Stichprobe der unklassifizierten
+  Rohwerte. `domain.ClassifyNomStatus` wird über jede **Synonymzeile**
+  (accepted rows zählen bewusst nicht) gelegt und in
+  `BackboneReport.NomStatus*`/`UnclassifiedNomStatusSample` getallyt. Damit
+  wird ein WCVP-Bump, der neue Statuswerte einführt, als **Anstieg von
+  `unclassified` sichtbar**, statt still dort zu landen und lautlos
+  zurückgehalten zu werden — dieselbe Disziplin wie bei `ranks: other=…` und
+  `matched/unmatched/ambiguous`.
+- **Guard-Test gegen stillen Spaltenverlust im `TaxonRow`-Mapper.**
+  `wcvpRowSource.Taxa()` (die eine Kopie, die Produktionscode aufruft) bildet
+  jetzt in einem White-Box-Test jede Quellspalte auf einen eigenen Sentinel
+  ab und vergleicht die gesamte `application.TaxonRow`-Struktur — fällt eine
+  Mapping-Zeile weg, wird das Feld leer und der Test benennt genau die
+  verlorene Spalte. Schließt die Fehlerklasse „geparst, dann von einer
+  Mapping-Zeile fallen gelassen" für den einzigen produktiv genutzten Mapper.
+- Beide zugehörigen Einträge in `docs/explanation/known-gaps.md` entfernt.
+
 ### Fixed (poc-in-verify geschlossen; telemetry-Mutation verbessert)
 - **`poc/` wird von `make verify` abgedeckt.** Neues `poc-check`-Target
   (`cd poc && go build ./... && go vet ./...`) — das eigene Messmodul war

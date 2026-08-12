@@ -97,6 +97,22 @@ type BackboneReport struct {
 	Concepts int
 	Synonyms int
 	Orphaned int // synonym rows whose accepted target was never ingested (dangling reference in the source data)
+	// NomStatusAbsent/Acceptable/Disqualifying/Unclassified tally the
+	// publication judgement (domain.ClassifyNomStatus) of every SYNONYM row's
+	// nom_status — the population the /synonyms endpoint classifies. They are a
+	// DRIFT SIGNAL: a WCVP bump that introduces new status spellings shows up
+	// here as a shift (especially a rising Unclassified) instead of silently
+	// landing in `unclassified` and being withheld unnoticed. Same discipline
+	// as OtherRanks for exotic rank spellings.
+	NomStatusAbsent        int
+	NomStatusAcceptable    int
+	NomStatusDisqualifying int
+	NomStatusUnclassified  int
+	// UnclassifiedNomStatusSample is a bounded (otherRankSampleCap),
+	// deterministic sample of the normalized nom_status values that fell
+	// through to `unclassified`, most frequent first — the concrete values to
+	// inspect after a bump.
+	UnclassifiedNomStatusSample []RankVerbatimCount
 	// OtherRanks counts taxon rows whose "taxonrank" column didn't match one
 	// of domain's canonical Rank constants and so normalized to
 	// domain.RankOther (see domain.ParseRankLenient) — this is what makes
@@ -206,6 +222,13 @@ type ingestState struct {
 	// BackboneReport.OtherRanks/OtherRankSample (see
 	// finalizeOtherRanksReport).
 	otherRankCounts map[string]int
+	// unclassifiedNomStatusCounts tallies, per normalized nom_status value,
+	// how many SYNONYM rows classified as JudgementUnclassified via
+	// domain.ClassifyNomStatus — the raw material for
+	// BackboneReport.UnclassifiedNomStatusSample (see
+	// finalizeOtherRanksReport). The four judgement totals are counted inline
+	// on the report in pass 1; only the sample needs a map to top-N.
+	unclassifiedNomStatusCounts map[string]int
 }
 
 // acceptedTaxonIDs resolves the full set of ACCEPTED source taxonIDs from
@@ -273,12 +296,13 @@ func ingestBackbone(ctx context.Context, b Backbone, manifestSHA string, rs RowS
 	taxa := rs.Taxa()
 	present := presentTaxonIDs(taxa)
 	st := &ingestState{
-		backbone:        b,
-		tx:              tx,
-		distByTaxon:     distByTaxon,
-		accepted:        acceptedTaxonIDs(taxa),
-		basionymOf:      basionymIDsByTaxon(b, taxa, present),
-		otherRankCounts: make(map[string]int),
+		backbone:                    b,
+		tx:                          tx,
+		distByTaxon:                 distByTaxon,
+		accepted:                    acceptedTaxonIDs(taxa),
+		basionymOf:                  basionymIDsByTaxon(b, taxa, present),
+		otherRankCounts:             make(map[string]int),
+		unclassifiedNomStatusCounts: make(map[string]int),
 	}
 
 	if err := st.pass1AcceptedAndNames(taxa, &report); err != nil {
@@ -354,6 +378,28 @@ func (st *ingestState) pass1AcceptedAndNames(taxa []TaxonRow, report *BackboneRe
 		st.namesByTaxon[row.TaxonID] = name
 
 		if !row.Accepted {
+			// nom_status drift signal: classify every synonym row's status so
+			// a future WCVP bump that introduces new spellings surfaces as a
+			// shift in these totals (a rising Unclassified) instead of
+			// silently landing in `unclassified` and being withheld unnoticed.
+			// Same discipline as st.otherRankCounts for exotic ranks. Tagged
+			// switch on the judgement value (not a tag-less switch) so each
+			// increment sits in its own counted block.
+			v := domain.ClassifyNomStatus(row.NomStatus)
+			switch v.Judgement {
+			case domain.JudgementAbsent:
+				report.NomStatusAbsent++
+			case domain.JudgementAcceptable:
+				report.NomStatusAcceptable++
+			case domain.JudgementDisqualifying:
+				report.NomStatusDisqualifying++
+			case domain.JudgementUnclassified:
+				report.NomStatusUnclassified++
+				// An unclassified verdict always carries a non-empty
+				// Normalized value — an empty one classifies as Absent above —
+				// so this sample key is never "".
+				st.unclassifiedNomStatusCounts[v.Normalized]++
+			}
 			continue
 		}
 		concept, err := st.upsertAcceptedConcept(row, name, rank)
@@ -510,6 +556,7 @@ func (st *ingestState) finalizeOtherRanksReport(report *BackboneReport) {
 		report.OtherRanks += n
 	}
 	report.OtherRankSample = sortedRankCounts(st.otherRankCounts, otherRankSampleCap)
+	report.UnclassifiedNomStatusSample = sortedRankCounts(st.unclassifiedNomStatusCounts, otherRankSampleCap)
 }
 
 // sortedRankCounts returns a deterministic, bounded (at most cap) sample of

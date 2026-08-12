@@ -663,6 +663,76 @@ func TestIngest_WCVPExoticRanks_CompletesAndReportsThem(t *testing.T) {
 	}
 }
 
+// TestIngest_NomStatusJudgements_TalliedInReport pins the nom_status DRIFT
+// SIGNAL: every SYNONYM row's nom_status is classified via
+// domain.ClassifyNomStatus and tallied by judgement into the backbone
+// report, and the values that fall through to `unclassified` are surfaced as
+// a bounded, most-frequent-first sample. This is what turns "some new WCVP
+// spelling landed in unclassified and was silently withheld" into a visible
+// shift in the ingest report — the same discipline the report already
+// applies to exotic ranks. Accepted rows are NOT tallied (nom_status of an
+// accepted name is not the population the /synonyms endpoint classifies).
+func TestIngest_NomStatusJudgements_TalliedInReport(t *testing.T) {
+	ds := &application.Dataset{
+		Backbones:   []application.Backbone{{ID: "wcvp-nom", Version: "v1"}},
+		ManifestSHA: "deadbeef",
+	}
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+
+	// One accepted parent (its own nom_status is deliberately a
+	// disqualifying value to prove accepted rows are NOT counted), plus one
+	// synonym per judgement and two extra unclassified rows to exercise the
+	// most-frequent-first sample.
+	taxa := []application.TaxonRow{
+		{TaxonID: "1", AcceptedTaxonID: "1", Accepted: true, Canonical: "Accepted parent", Rank: "Species", NomStatus: "nom. illeg."},
+		{TaxonID: "2", AcceptedTaxonID: "1", Accepted: false, Canonical: "Synonym absent", Rank: "Species", NomStatus: ""},
+		{TaxonID: "3", AcceptedTaxonID: "1", Accepted: false, Canonical: "Synonym acceptable", Rank: "Species", NomStatus: "nom. cons."},
+		{TaxonID: "4", AcceptedTaxonID: "1", Accepted: false, Canonical: "Synonym disqualifying", Rank: "Species", NomStatus: "nom. illeg."},
+		{TaxonID: "5", AcceptedTaxonID: "1", Accepted: false, Canonical: "Synonym unclass a1", Rank: "Species", NomStatus: "sensu auct."},
+		{TaxonID: "6", AcceptedTaxonID: "1", Accepted: false, Canonical: "Synonym unclass a2", Rank: "Species", NomStatus: "sensu auct."},
+		{TaxonID: "7", AcceptedTaxonID: "1", Accepted: false, Canonical: "Synonym unclass b", Rank: "Species", NomStatus: "fossil name"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) {
+		return fakeRowSource{taxa: taxa}, nil
+	}
+
+	report, err := application.Ingest(ctx, ds, readerFor, repo)
+	if err != nil {
+		t.Fatalf("Ingest: unexpected error: %v", err)
+	}
+	if len(report.Backbones) != 1 {
+		t.Fatalf("len(report.Backbones) = %d, want 1", len(report.Backbones))
+	}
+	b := report.Backbones[0]
+
+	if b.NomStatusAbsent != 1 {
+		t.Errorf("NomStatusAbsent = %d, want 1 (taxon 2 only; accepted taxon 1 is not tallied)", b.NomStatusAbsent)
+	}
+	if b.NomStatusAcceptable != 1 {
+		t.Errorf("NomStatusAcceptable = %d, want 1 (taxon 3, \"nom. cons.\")", b.NomStatusAcceptable)
+	}
+	if b.NomStatusDisqualifying != 1 {
+		t.Errorf("NomStatusDisqualifying = %d, want 1 (taxon 4 only; accepted taxon 1's \"nom. illeg.\" must NOT count)", b.NomStatusDisqualifying)
+	}
+	if b.NomStatusUnclassified != 3 {
+		t.Errorf("NomStatusUnclassified = %d, want 3 (two \"sensu auct.\" + one \"fossil name\")", b.NomStatusUnclassified)
+	}
+
+	wantSample := []application.RankVerbatimCount{
+		{Verbatim: "sensu auct.", Count: 2},
+		{Verbatim: "fossil name", Count: 1},
+	}
+	if len(b.UnclassifiedNomStatusSample) != len(wantSample) {
+		t.Fatalf("UnclassifiedNomStatusSample = %+v, want %+v", b.UnclassifiedNomStatusSample, wantSample)
+	}
+	for i, want := range wantSample {
+		if b.UnclassifiedNomStatusSample[i] != want {
+			t.Errorf("UnclassifiedNomStatusSample[%d] = %+v, want %+v (most frequent first)", i, b.UnclassifiedNomStatusSample[i], want)
+		}
+	}
+}
+
 // TestIngest_OtherRank_PopulatesNameRankVerbatim proves the OTHER half of
 // the "verbatim source string must be preserved" requirement: pass 1 sets
 // domain.Name.RankVerbatim to the raw source spelling for every row that

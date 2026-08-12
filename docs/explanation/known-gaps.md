@@ -62,60 +62,32 @@ ist an dieser Stelle nicht eingelöst.
 
 *Nächster Schritt:* Routen-Contract-Test aktivieren (Router-Routen gegen
 die Spec-Pfade), damit die `skip`-Zweige entfallen.
+
 ## Mutationstest für `internal/adapters/telemetry` blockiert in CI nicht
 
-**Stand:** 2026-08-03 · **Betrifft:** `.github/workflows/mutation.yml`
+**Stand:** 2026-08-12 · **Betrifft:** `.github/workflows/mutation.yml`
 
-Das Paket meldet sein Ergebnis, lässt den Job aber nicht rot werden
-(`continue-on-error` nur für diesen Matrix-Eintrag).
+Das Paket meldet sein Mutationsergebnis, lässt den Job aber nicht rot werden
+(`continue-on-error` nur für diesen Matrix-Eintrag), weil es auf dem 7-GB-
+`ubuntu-latest`-Runner OOM-gekillt wird (exit 143): gremlins kompiliert das
+Paket je Mutant neu, und dieses eine zieht das komplette OpenTelemetry-SDK.
 
-**Warum.** gremlins kompiliert das Paket je Mutant neu, und dieses eine zieht das
-komplette OpenTelemetry-SDK. Ein einzelner Mutant auf einer Kapazitätsangabe
-(`memory.go:173`, `make(map[string]string, rec.NumAttrs()+len(r.attrs))`) sprengt
-die 7 GB eines `ubuntu-latest`-Runners: im Log ticken die Mutanten in ~1,75 s
-durch, dann 60 s Stille, dann „the runner has received a shutdown signal" und
-exit 143. Nacheinander erfolglos versucht: eigener Runner je Paket (Matrix),
-`GOFLAGS=-p=1`, `GOMEMLIMIT=4GiB`, `--workers 1`. Jede Maßnahme half, keine
-reichte.
+**Was seit 2026-08-12 anders ist.** Die früher als Ursache vermutete
+`make()`-Kapazitätsangabe (`RingLog.Handle`) wurde gestrichen
+(`make(map[string]string)`) — das entfernte einen äquivalenten LIVED-Mutanten
+und hebt die lokale Efficacy auf **100 % (56 killed / 0 lived / 0 not
+covered)**. Aber der OOM blieb: PR #33 reproduzierte ihn in CI nach ~2 min
+**ohne** diesen Mutanten. Der Engpass ist also die Neukompilierung des SDK je
+Mutant, nicht eine einzelne Allokation.
 
-**Das Paket ist nicht ungeprüft.** Lokal läuft es vollständig durch:
-53 killed / 1 lived / 2 not covered, **98,15 % efficacy**. Der eine Überlebende
-ist genau jene Kapazitätsangabe — ein äquivalenter Mutant, den kein Test töten
-kann, weil `make(m, n)` nur die Vorab-Allokation betrifft.
-
-**Was es wirklich lösen würde**, in absteigender Präferenz: einen Runner mit mehr
-RAM (`ubuntu-latest-4-core` o. ä.); oder die Kapazitätsangabe streichen
-(`make(map[string]string)`), was den Mutanten ersatzlos entfernt und messbar
-nichts kostet — dieselbe Lösung, die SP6 für ein `1+len()+len()` gewählt hat.
+**Was es wirklich lösen würde:** ein Runner mit mehr RAM
+(`ubuntu-latest-4-core` o. ä.). Das Repo hat aktuell **keinen** größeren
+Runner konfiguriert (alle Jobs auf `ubuntu-latest`), und größere GitHub-Runner
+sind eine Org-/Kosten-Entscheidung — daher bleibt `continue-on-error`.
 
 **Bis dahin:** vor einer Änderung an `internal/adapters/telemetry` lokal
-`make mutation PKG=./internal/adapters/telemetry` laufen lassen.
-
-## `poc/` wird von `make verify` weder kompiliert noch gelintet
-
-**Stand:** 2026-08-04 · **Betrifft:** `poc/go.mod`, `scripts/debt-guard.sh:39,65`
-
-`poc/` ist ein eigenes Go-Modul (`github.com/jobrunner/hostus-poc`) ohne
-`go.work`, und der Debt-Guard nimmt `^\./poc/` ausdrücklich aus. Damit
-läuft über die Messharnesse **kein** Schritt von `make verify`: kein
-`go build`, kein `go vet`, kein Linter, kein Test.
-
-**Warum das zählt.** Die Harnesse unter `poc/measure/` sind keine
-Wegwerfskripte — sie produzieren die Zahlen, auf denen Architektur-
-entscheidungen beruhen (`docs/research/reality-check.md`,
-`docs/research/suggest-quality.md`). SP7/Task 1 hat den strukturellen
-Preis sichtbar gemacht: `poc/measure/suggestquality` verglich den
-Konzeptstatus gegen `"accepted"`, während die Spalte `ACCEPTED` speichert.
-Der Tiebreak war toter Code und fiel erst im Review auf, nicht in der CI.
-Auf das Ergebnis wirkte es dort nicht — beim nächsten Mal kann es das.
-
-**Was es lösen würde:** ein `go.work` mit `.` und `./poc`, oder ein
-`verify`-Schritt, der `cd poc && go build ./... && go vet ./...` ausführt.
-Das Lint-Regelwerk der Hexagon-Grenzen soll für `poc/` **nicht** gelten —
-gefordert ist nur, dass der Code kompiliert und `vet`-sauber ist.
-
-**Bis dahin:** nach einer Änderung an `poc/**` von Hand
-`nix develop -c bash -c 'cd poc && gofmt -l . && go vet ./...'` laufen lassen.
+`make mutation PKG=./internal/adapters/telemetry` laufen lassen (läuft dort
+vollständig durch).
 
 ## Kein Endpunkt listet die verfügbaren `sec.`-Referenzräume (SP8)
 

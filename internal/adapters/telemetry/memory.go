@@ -170,7 +170,7 @@ func (r *RingLog) Enabled(_ context.Context, _ slog.Level) bool { return true }
 
 // Handle implements slog.Handler.
 func (r *RingLog) Handle(ctx context.Context, rec slog.Record) error {
-	attrs := make(map[string]string, rec.NumAttrs()+len(r.attrs))
+	attrs := make(map[string]string)
 	for _, a := range r.attrs {
 		attrs[a.Key] = a.Value.String()
 	}

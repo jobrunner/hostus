@@ -39,18 +39,18 @@ jobs:
     name: gremlins (${{ matrix.pkg }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    # internal/adapters/telemetry reports but does not block. gremlins recompiles
-    # the package per mutant and this one pulls the whole OpenTelemetry SDK; a
-    # single mutant on a make() capacity hint (memory.go:173,
-    # `make(map[string]string, rec.NumAttrs()+len(r.attrs))`) blows the 7 GB
-    # ubuntu-latest ceiling: the log shows mutants ticking by at ~1.75 s each, then
-    # 60 s of silence, then "the runner has received a shutdown signal" / exit 143.
-    # Own runner, GOFLAGS=-p=1, GOMEMLIMIT=4GiB and --workers 1 each helped and
-    # none cleared it. The package is NOT unverified -- it completes locally at
-    # 98.15 % efficacy (53 killed / 1 lived / 2 not covered), and the one survivor
-    # is that same capacity hint, an equivalent mutant no test can kill. Blocking
-    # the whole SP0-SP6 stack on a runner size is the wrong trade; see
-    # docs/explanation/known-gaps.md for what would actually fix it.
+    # internal/adapters/telemetry reports but does not block (continue-on-error).
+    # gremlins recompiles the package per mutant and this one pulls the whole
+    # OpenTelemetry SDK, which blows the 7 GB ubuntu-latest ceiling: "the runner
+    # has received a shutdown signal" / exit 143. Dropping the make() capacity
+    # hint that used to be the worst offender (now `make(map[string]string)` in
+    # RingLog.Handle) did NOT clear it — PR #33's CI reproduced the OOM at ~2 min
+    # even without that mutant, so the cause is the per-mutant recompilation of
+    # the SDK, not one allocation. The real fix is a larger runner
+    # (ubuntu-latest-4-core or similar); none is configured for this repo, so
+    # telemetry stays non-blocking. It is NOT unverified: locally it now runs to
+    # completion at 100 % efficacy (56 killed / 0 lived / 0 not covered). See
+    # docs/explanation/known-gaps.md.
     continue-on-error: ${{ matrix.pkg == './internal/adapters/telemetry' }}
     strategy:
       fail-fast: false

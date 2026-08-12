@@ -1300,6 +1300,17 @@ name ORDER BY 1 DESC`, GER-Bundle):
 | `xref` + Index | 0,48 MB | (nicht separat neu gemessen, unverändert klein) |
 | **Dateigröße gesamt** | **108.892.160 Byte (103,8 MiB)** | **84.987.904 Byte (81,05 MiB)** |
 
+**Nachmessung (2026-08-12, nach SP6 Task 1: `nom_status`/`rank_verbatim`
+befüllt).** Gegen einen frischen WCVP-+-Trait-Ingest mit **identischen** 11.583
+Konzepten / 169.670 Namen wie in der Nach-Hardening-Spalte oben ist das
+GER-Bundle jetzt **93.536.256 Byte (89,20 MiB)** — **+8,15 MiB** gegenüber den
+81,05 MiB, praktisch vollständig durch die zwei seither befüllten
+`name`-Spalten (`nom_status` auf 20.688, `rank_verbatim` auf 2.243 der 169.670
+Namen; größter Einzelposten bleibt `name` samt Indizes mit ~28 MiB). Die frühere
+Grobschätzung „~50 MB" (known-gaps) war weit daneben, und das Bundle bleibt
+trotz der Spalten **kleiner** als die 108,9-MB-M5.2-Baseline, weil die
+Distribution-Kürzung überwiegt.
+
 (Die Nach-Hardening-Messung lief gegen `/tmp/full-real.sqlite`, nicht
 gegen das M5.2-`m2.sqlite` — daher leicht andere Konzept-/Namenszahlen für
 GER: 11.583 Konzepte/169.670 Namen statt 11.514/163.350 — und trägt

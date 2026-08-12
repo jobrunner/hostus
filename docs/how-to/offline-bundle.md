@@ -135,11 +135,22 @@ gebunden). Trait-Werte und die FTS5-Volltextsuche sind ebenfalls
 unverändert — beides sind Daten, die ein Feldeinsatz direkt braucht, keine
 verwerfbaren Nebenprodukte.
 
-Die gemessenen Zahlen nach dieser Kürzung (Mitteleuropa-Bundle vs. die
-108,9-MB-GER-Baseline und das 10–20-MB-Spec-Ziel) stehen im
-"Nach Hardening"-Abschnitt von M5 in `docs/research/reality-check.md`
-(repo-lokal, nicht Teil der veröffentlichten Doku — siehe deren eigener
-Hinweis dazu).
+**Aktuell gemessen (2026-08-12, frischer WCVP-+-Trait-Ingest, `--area GER`):**
+das GER-Bundle ist **89,2 MiB (93,5 MB)** — 11.583 Konzepte, 169.670 Namen,
+`distribution` auf 11.583 GER-Zeilen gekürzt. Das ist **kleiner** als die
+108,9-MB-M5.2-Baseline (die Distribution-Kürzung überwiegt deutlich) und liegt
+nur rund **8 MiB** über der 81-MiB-Messung direkt nach Task 4: die seither in
+SP6 befüllten Spalten `nom_status`/`rank_verbatim` (auf 20.688 bzw. 2.243 der
+169.670 Namen) kosten zusammen einstellige MiB — **nicht** die früher grob
+geschätzten ~50 MB (deshalb: messen, nicht schätzen). Größter Einzelposten ist
+jetzt das `name`-Table samt Indizes (~28 MiB), nicht mehr `distribution`. Gegen
+das 10–20-MB-Spec-Ziel bleibt das Bundle damit **Faktor ~4,7–9,4 zu groß** —
+die Kürzung half, reicht aber nicht an die Obergrenze heran.
+
+Die vollständige dbstat-Aufschlüsselung und die Mitteleuropa-Zahlen (`--area
+DE,AT,CH`) stehen im "Nach Hardening"-Abschnitt von M5 in
+`docs/research/reality-check.md` (repo-lokal, nicht Teil der veröffentlichten
+Doku — siehe deren eigener Hinweis dazu).
 
 ## Bundle offline bedienen
 

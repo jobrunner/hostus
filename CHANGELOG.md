@@ -7,6 +7,17 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Changed (Doku — Offline-Bundle-Größe real nachgemessen)
+- **`docs/how-to/offline-bundle.md` mit gemessener aktueller GER-Bundle-Größe.**
+  Frischer WCVP-+-Trait-Ingest, `--area GER`: **89,2 MiB (93,5 MB)** (11.583
+  Konzepte, 169.670 Namen). Gegen dieselbe Konzept-/Namenmenge direkt nach
+  Task 4 (81,05 MiB, reality-check M5.3) kosten die in SP6 befüllten Spalten
+  `nom_status`/`rank_verbatim` nur **+8,15 MiB** — nicht die in den known-gaps
+  grob geschätzten ~50 MB (gemessen statt geschätzt). Das Bundle bleibt trotz
+  der Spalten kleiner als die 108,9-MB-M5.2-Baseline (Distribution-Kürzung
+  überwiegt) und Faktor ~4,7–9,4 über dem 10–20-MB-Spec-Ziel. reality-check
+  M5.3 um eine datierte Nachmessung ergänzt; known-gaps-Eintrag entfernt.
+
 ### Changed (CI — Per-PR-Mutationstests laufen deterministisch durch)
 - **Mutation-Workflow in zwei Stufen getrennt.** `gremlins` rekompiliert das
   Paket je Mutant; `internal/adapters/telemetry` (OTel-SDK) und

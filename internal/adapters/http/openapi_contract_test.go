@@ -55,7 +55,12 @@ func routerAPISurface(t *testing.T) map[string]bool {
 		}
 		methods, err := route.GetMethods()
 		if err != nil {
-			// No explicit methods: not one of our endpoints (all use .Methods()).
+			// A path-bearing route with NO method constraint matches every
+			// verb and would escape this contract silently. The house idiom is
+			// that every API route declares .Methods(); a violation is a
+			// failure, not a skip — otherwise an undocumented all-verbs route
+			// is the one drift this guard would miss.
+			t.Errorf("route %q has no explicit .Methods() — it matches all verbs and escapes the OpenAPI contract", tmpl)
 			return nil
 		}
 		for _, m := range methods {

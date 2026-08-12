@@ -86,16 +86,19 @@ if [ "$FAST" = 1 ]; then
   exit "$fail"
 fi
 
-# --- 3. routes <-> spec contract test ---------------------------------------
-# TestRoutesMatchOpenAPISpec (internal/adapters/http) reads the hand-written
-# api/openapi/openapi.yaml directly and asserts it matches the router's mounted
-# routes both ways — no embedded/code-generated copy required, so this is gated
-# on the API spec + go, not on an embedded spec.
+# --- 3. routes <-> spec contract + schema-content test ----------------------
+# Two Go tests in internal/adapters/http read the hand-written
+# api/openapi/openapi.yaml directly (no embedded/code-generated copy required):
+#   TestRoutesMatchOpenAPISpec   — routes <-> spec paths+methods, both ways
+#   TestOpenAPISchemasMatchDTOs  — every component schema's properties/required/
+#                                  types match its DTO, recursively
+# Together they stop the hand-written spec from drifting from the router OR the
+# wire shapes. Gated on the API spec + go, not on an embedded spec.
 if [ -f "$API_COPY" ] && command -v go >/dev/null 2>&1; then
-  if go test ./internal/adapters/http/ -run TestRoutesMatchOpenAPISpec -count=1 >/tmp/doc-drift-contract.log 2>&1; then
-    ok "routes <-> spec contract test passes"
+  if go test ./internal/adapters/http/ -run 'TestRoutesMatchOpenAPISpec|TestOpenAPISchemasMatchDTOs' -count=1 >/tmp/doc-drift-contract.log 2>&1; then
+    ok "routes <-> spec contract + schema-content tests pass"
   else
-    bad "routes <-> spec contract test FAILED:"; sed 's/^/      /' /tmp/doc-drift-contract.log >&2
+    bad "routes <-> spec contract/schema-content test FAILED:"; sed 's/^/      /' /tmp/doc-drift-contract.log >&2
   fi
 else
   skip "routes <-> spec contract test" "api/openapi/openapi.yaml or go not available"

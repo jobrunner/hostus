@@ -19,16 +19,25 @@ umgekehrt) lässt CI rot werden. `scripts/doc-drift-check.sh` führt ihn als
 Check 3 aus (der frühere `skip`-Zweig ist entfallen). Die handgepflegte Spec
 kann damit **nicht mehr still von den Routen driften**.
 
+**Schema-*Inhalt* ebenfalls gepinnt (2026-08-12).** `TestOpenAPISchemasMatchDTOs`
+(`internal/adapters/http`) reflektiert über jeden Request/Response-DTO und
+gleicht rekursiv jedes Component-Schema ab: Property-Namen, required-Status (Go
+`omitempty` ⇔ Schema-`required`), Skalartypen, Array-Element- und Map-Wert-Typen
+sowie die `$ref`/Inline-Objekt-Verschachtelung. Ein Feld, das umbenannt,
+(nicht-)optional gemacht oder umtypisiert wird, ohne die Spec anzupassen, lässt
+CI rot werden. doc-drift führt beide Tests in Check 3 aus.
+
 **Weiter offen (bewusst zurückgestellt):** die Projektregel „OpenAPI muss
 codegeneriert sein" ist damit nicht *wörtlich* eingelöst — die Spec wird
-weiterhin von Hand geschrieben, nur jetzt verifiziert. Volle Codegenerierung
-(Spec aus Routen/Handlern) hätte entweder einen bespoke Generator oder eine
-zusätzliche Abhängigkeit gebraucht, was mit der „keine schweren Deps"-Regel
-kollidiert. Der Contract-Test schließt das eigentliche Risiko (stiller Drift);
-die Vollgenerierung bliebe ein eigener SP, falls sie über die
-Drift-Sicherung hinaus gewünscht wird. Offen bleibt auch der Schema-*Inhalt*
-(Request/Response-Bodies): der Contract-Test prüft Pfad+Methode, nicht, ob die
-dokumentierten Schemas den tatsächlichen DTOs entsprechen.
+weiterhin von Hand geschrieben, nur jetzt in **Pfad+Methode UND Schema-Inhalt**
+verifiziert. Volle Codegenerierung (Spec aus Routen/Handlern) hätte einen
+bespoke Generator oder eine zusätzliche Abhängigkeit gebraucht, was mit der
+„keine schweren Deps"-Regel kollidiert; sie bliebe ein eigener SP, falls über
+die Drift-Sicherung hinaus gewünscht. Nicht geprüft (bewusst, kein Struktur-
+Drift): Enum-Wertlisten, `nullable`, Descriptions/Examples und Format-Hinweise —
+`nullable` fällt zudem mit der `omitempty`⇔required-Regel zusammen (ein
+`*string` ohne `omitempty` bleibt JSON-`string`). Prosa/Feinheiten, kein
+Struktur-Vertrag.
 
 ## `telemetry`- und `sqlite`-Mutation laufen nicht im Per-PR-Gate (7-GB-Runner-OOM)
 

@@ -7,6 +7,18 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (OpenAPI — deterministischer Schema-Inhalt-Check)
+- **`TestOpenAPISchemasMatchDTOs`** (`internal/adapters/http`) reflektiert über
+  jeden Request/Response-DTO und gleicht **rekursiv** jedes der 28
+  Component-Schemas ab: Property-Namen, required-Status (`omitempty` ⇔
+  `required`), Skalartypen, Array-Element-/Map-Wert-Typen und die
+  `$ref`/Inline-Objekt-Verschachtelung. Damit ist neben Pfad+Methode nun auch
+  der **Schema-Inhalt** driftsicher: ein umbenanntes, um-typisiertes oder
+  (nicht-)optional gemachtes DTO-Feld ohne Spec-Anpassung lässt CI rot werden.
+  Nutzt den bereits vorhandenen `go.yaml.in/yaml/v3`-Parser (kein neuer Dep).
+  doc-drift Check 3 führt beide OpenAPI-Tests aus. Enum-Werte/Descriptions
+  bleiben bewusst außen vor (Prosa, kein Struktur-Vertrag).
+
 ### Added (OpenAPI — Routen↔Spec-Contract-Test schließt das Drift-Risiko)
 - **`TestRoutesMatchOpenAPISpec`** (`internal/adapters/http`) gleicht jede vom
   Router gemountete Route beidseitig gegen Pfad+Methode in

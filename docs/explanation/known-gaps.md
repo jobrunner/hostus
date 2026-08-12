@@ -9,16 +9,6 @@ wirklich schließen würde, nicht nur die Notiz, dass es sie gibt.
 Behobene Punkte werden hier gelöscht, nicht abgehakt; der Verlauf steht im
 `CHANGELOG.md`.
 
-## `docs/how-to/offline-bundle.md` nennt eine überholte Bundle-Größe (SP6)
-
-Die Größenangabe **108,9 MB** für das GER-Bundle stammt aus dem
-Reality-Check M5.2 und ist seit SP6 Task 1 überholt: Der Task hat zwei
-Spalten (`nom_status`, `rank_verbatim`) befüllt, was das Bundle um rund
-50 MB wachsen lässt. Der Text argumentiert weiter gegen die alte Zahl.
-
-*Nächster Schritt:* Bundle neu messen und Zahl plus Faktor-Aussage
-aktualisieren — nicht schätzen.
-
 ## 316 Zeilen handgepflegtes OpenAPI ohne Drift-Prüfung (SP6)
 
 `make doc-drift` prüft die OpenAPI-Baseline gegen die Doku, überspringt

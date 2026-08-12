@@ -1300,6 +1300,22 @@ name ORDER BY 1 DESC`, GER-Bundle):
 | `xref` + Index | 0,48 MB | (nicht separat neu gemessen, unverändert klein) |
 | **Dateigröße gesamt** | **108.892.160 Byte (103,8 MiB)** | **84.987.904 Byte (81,05 MiB)** |
 
+**Nachmessung (2026-08-12, nach SP6 Task 1: `nom_status`/`rank_verbatim`
+befüllt).** Ein frischer WCVP-+-Trait-Ingest (gleiche Konzept-/Namenzahl wie
+oben: 11.583 / 169.670) liefert ein GER-Bundle von **93.536.256 Byte
+(89,20 MiB)** — **+8,15 MiB** gegenüber den 81,05 MiB. Vorsicht bei der
+Zurechnung: das ist ein Vergleich über **zwei verschiedene Ingest-DBs**
+(abweichender FTS-/Index-/`trait_value`-Zustand — `trait_value` ist hier sogar
+kleiner), dieselbe Vorsicht wie im Absatz oben, wo nur die `distribution`-Zeile
+ein sauberer Cross-DB-Vergleich ist; der 8-MiB-Gesamtdelta ist also **nicht**
+vollständig den zwei Spalten zuzuschreiben. Belastbar ist die Größenordnung:
+die Spalten sind nur auf 20.688 (`nom_status`) bzw. 2.243 (`rank_verbatim`) der
+169.670 Namen gesetzt und können keine zweistelligen MB kosten — die frühere
+Grobschätzung „~50 MB" (known-gaps) war damit um eine Größenordnung daneben.
+Das Bundle bleibt trotz der Spalten **kleiner** als die 108,9-MB-M5.2-Baseline
+(Distribution-Kürzung überwiegt). Die `name`-Tabelle allein misst hier ~28 MiB
+(ohne ihre Indizes).
+
 (Die Nach-Hardening-Messung lief gegen `/tmp/full-real.sqlite`, nicht
 gegen das M5.2-`m2.sqlite` — daher leicht andere Konzept-/Namenszahlen für
 GER: 11.583 Konzepte/169.670 Namen statt 11.514/163.350 — und trägt

@@ -7,6 +7,24 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Changed (CI — Per-PR-Mutationstests laufen deterministisch durch)
+- **Mutation-Workflow in zwei Stufen getrennt.** `gremlins` rekompiliert das
+  Paket je Mutant; `internal/adapters/telemetry` (OTel-SDK) und
+  `internal/adapters/sqlite` (`modernc.org/sqlite`) treiben den
+  `go build`-Subprozess je auf ~6+ GB RSS und sprengen den 7-GB-`ubuntu-latest`
+  → `exit 143` (OOM) oder Thrashing bis zum 60-min-Timeout, ein
+  nicht-deterministischer Ausgang, der PRs blockierte. In PR #35 wurde belegt,
+  dass ein Swap-Headroom-Schritt den telemetry-OOM **nicht** verhindert (der
+  OTel-Compile-Peak ist aktives Working-Set, das der OOM-Killer vor dem Swap
+  trifft) und sqlite auf Swap 15–60 min thrasht. Konsequenz: Der **Per-PR-Job**
+  (`mutation`) fährt nur noch die **leichten** Pakete — jedes terminiert
+  deterministisch in Minuten, alle blockierend, kein `continue-on-error` mehr.
+  Die zwei schweren Pakete laufen in einem separaten Job (`mutation-heavy`)
+  **nur** auf wöchentlichem Cron/`workflow_dispatch`, nie auf PRs, sodass ein
+  OOM keinen PR mehr flaky macht. Entwickler-Gate für die zwei bleibt lokal
+  (`make mutation PKG=…`, läuft dort vollständig durch). Größerer Runner
+  (`ubuntu-latest-4-core`) wäre der einfachere Nachfolger, ist aber Org-Sache.
+
 ### Added (Schulden-Batch 2 — stiller Verlust: `nom_status`-Drift-Signal + `TaxonRow`-Mapper-Guard)
 - **`hostus ingest` meldet die vier `nom_status`-Urteile pro Backbone.** Neue
   Zeile `nom_status: absent=… acceptable=… disqualifying=… unclassified=…`

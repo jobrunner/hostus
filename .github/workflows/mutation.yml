@@ -8,11 +8,26 @@
 # until real logic lands per task. Ratchet .gremlins.yaml (and this job, if
 # per-package overrides are added there) up as tests improve; don't hardcode
 # stricter numbers here than the shared config uses, or the two will drift.
+#
+# TWO TIERS, on purpose (see docs/explanation/known-gaps.md):
+#   * `mutation` (this runs on every PR) — the LIGHT packages. Each finishes in
+#     a couple of minutes on a 7 GB ubuntu-latest, so the per-PR gate is FAST
+#     and DETERMINISTIC: every leg terminates with a real green/red, none can
+#     OOM. This is the tier meant to be a required status check.
+#   * `mutation-heavy` (schedule + manual ONLY, never on a PR) — the two
+#     packages whose per-mutant recompilation blows the 7 GB ceiling:
+#     internal/adapters/telemetry (whole OTel SDK) and internal/adapters/sqlite
+#     (modernc.org/sqlite pure-Go driver), measured at ~6+ GB RSS in the child
+#     `go build`. On a 7 GB runner they get OOM-killed (exit 143) or thrash to
+#     the timeout — a non-deterministic outcome that must NOT gate PRs. Keeping
+#     them on a weekly cron gives periodic coverage without ever flaking a PR;
+#     the developer gate for these two is local `make mutation PKG=...`, which
+#     runs to completion (see the known-gaps "Bis dahin").
 name: Mutation Testing
 
 on:
-  # Runs on every PR to master (not path-filtered) so it can be a REQUIRED
-  # status check — a path-filtered check that skips would leave the
+  # Runs on every PR to master (not path-filtered) so the light tier can be a
+  # REQUIRED status check — a path-filtered check that skips would leave the
   # requirement permanently unsatisfied and block unrelated PRs.
   pull_request:
     branches: [master]
@@ -28,56 +43,33 @@ permissions:
 
 jobs:
   mutation:
-    # One package per runner. Previously all packages ran sequentially in a single
-    # job and the runner was OOM-killed on internal/adapters/telemetry: gremlins
-    # recompiles the package once per mutant, that package pulls the whole
-    # OpenTelemetry SDK, and the Go toolchain was measured locally peaking at
-    # ~6.1 GB RSS against a 7 GB ubuntu-latest runner. It surfaced as "the runner
-    # has received a shutdown signal" / exit 143 after 2-3 min against a 60 min
-    # timeout -- which reads like a flake and is not one. A matrix gives each
-    # package its own fresh 7 GB and runs them in parallel.
+    # One package per runner (matrix), each on its own fresh 7 GB, in parallel.
+    # LIGHT tier: every package here completes well within RAM, so the per-PR
+    # gate is deterministic and all legs block. No continue-on-error anywhere —
+    # if a leg is red here, it is a real mutation regression.
     name: gremlins (${{ matrix.pkg }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    # internal/adapters/telemetry reports but does not block (continue-on-error).
-    # gremlins recompiles the package per mutant and this one pulls the whole
-    # OpenTelemetry SDK, which blows the 7 GB ubuntu-latest ceiling: "the runner
-    # has received a shutdown signal" / exit 143. Dropping the make() capacity
-    # hint that used to be the worst offender (now `make(map[string]string)` in
-    # RingLog.Handle) did NOT clear it — PR #33's CI reproduced the OOM at ~2 min
-    # even without that mutant, so the cause is the per-mutant recompilation of
-    # the SDK, not one allocation. The real fix is a larger runner
-    # (ubuntu-latest-4-core or similar); none is configured for this repo, so
-    # telemetry stays non-blocking. It is NOT unverified: locally it now runs to
-    # completion at 100 % efficacy (56 killed / 0 lived / 0 not covered). See
-    # docs/explanation/known-gaps.md.
-    continue-on-error: ${{ matrix.pkg == './internal/adapters/telemetry' }}
     strategy:
       fail-fast: false
       matrix:
         pkg:
           - ./internal/config
           - ./internal/httperr
-          - ./internal/adapters/telemetry
           - ./internal/adapters/http
           - ./internal/app
           - ./internal/adapters/mcp
           - ./cmd/hostus
-          # The three packages that carry the actual domain logic. They were
-          # missing until SP6 Task 4, which meant `make mutation`'s
-          # `Not covered = 0` gate never ran on any of the code it was added
-          # for: the hoisted conditions in internal/domain/synonym.go
-          # (ClassifyNomStatus/judgeSynonym) sit in ./internal/domain, and
-          # `make verify` does not call `mutation` at all. Measured runtime
-          # locally: domain 30 s, application 62 s, sqlite 154 s — under the
-          # matrix these run in parallel on their own runners instead of
-          # adding four minutes to a sequential loop.
+          # The domain-logic packages. They were missing until SP6 Task 4, which
+          # meant `make mutation`'s `Not covered = 0` gate never ran on any of
+          # the code it was added for; `make verify` does not call `mutation` at
+          # all. Measured runtime locally: domain 30 s, application 62 s — under
+          # the matrix they run in parallel on their own runners.
           - ./internal/domain
           - ./internal/application
-          - ./internal/adapters/sqlite
-          # SP9 Task 1's new reader package. Added with the package itself:
-          # a package that is not in this matrix has no `Not covered = 0`
-          # gate in CI at all, no matter how green it is locally.
+          # SP9 Task 1's reader package. A package not in this matrix has no
+          # `Not covered = 0` gate in CI at all, no matter how green it is
+          # locally.
           - ./internal/adapters/namelist
     steps:
       - uses: actions/checkout@v7
@@ -95,23 +87,12 @@ jobs:
       # fail-fast: false keeps the other matrix legs running, so one failing
       # package still yields a report for every other one.
       - name: Run mutation testing
-        # GOFLAGS/GOMEMLIMIT cap the Go toolchain's memory. gremlins recompiles the
-        # package once per mutant, and internal/adapters/telemetry pulls the whole
-        # OpenTelemetry SDK (otelmux, otlptrace/otlpmetric): measured locally, the
-        # toolchain peaks at ~6.1 GB RSS on that package. A standard ubuntu-latest
-        # runner has 7 GB, so the job was OOM-killed mid-run — twice, both times
-        # surfacing as "the runner has received a shutdown signal" / exit 143 after
-        # ~2 min against a 60 min timeout, which reads like a flake and is not one.
-        # -p=1 serialises compile actions; GOMEMLIMIT makes the GC work harder
-        # before the kernel decides for us.
+        # -p=1 serialises the Go compile actions; GOMEMLIMIT keeps gremlins' own
+        # GC honest. The light packages fit comfortably; these caps are cheap
+        # insurance, not the thing that makes them fit.
         env:
           GOFLAGS: -p=1
           GOMEMLIMIT: 4GiB
-          # gremlins defaults its worker count to the CPU count, and each worker
-          # holds its own recompilation of the package in memory. One worker is
-          # what finally fits internal/adapters/telemetry (OTel SDK) into a 7 GB
-          # runner; the matrix already restored the wall-clock the serialisation
-          # costs by running all matrix packages in parallel.
           MUTATION_WORKERS: '1'
         run: |
           set -uo pipefail
@@ -138,5 +119,98 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: mutation-report-${{ strategy.job-index }}
+          path: mutation.log
+          if-no-files-found: ignore
+
+  mutation-heavy:
+    # HEAVY tier: the two packages that cannot run to a reliable conclusion on a
+    # 7 GB runner (see the top-of-file note). Gated OFF the PR path — this job is
+    # SKIPPED on pull_request and only runs on the weekly cron / manual dispatch,
+    # so a per-mutant OOM can never flake a PR. On the cron a red result is an
+    # informative heads-up, not a merge blocker. The local `make mutation
+    # PKG=...` gate is what actually guards these two before merge.
+    if: github.event_name != 'pull_request'
+    name: gremlins-heavy (${{ matrix.pkg }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # BOTH heavy legs are report-only (continue-on-error), because neither runs
+    # to a reliable, timely conclusion on a 7 GB runner — validated on PR #35:
+    # telemetry is OOM-killed even with 12 GB swap (its OTel-SDK compile peak is
+    # active working set the killer hits before swap can absorb it), and sqlite
+    # thrashes on swap far past its ~154 s local runtime (a workflow_dispatch
+    # measurement showed it still running at 15 min+). A red result here would
+    # therefore usually mean "thrashed/timed out", not "real regression", so
+    # gating on it would just be perpetual-red alert fatigue. The REAL gate for
+    # these two is local `make mutation PKG=...` (runs to completion); this job's
+    # value is periodic best-effort coverage plus the uploaded mutation.log
+    # artifact to inspect when a leg does finish. The clean fix is a larger
+    # runner (ubuntu-latest-4-core / 16 GB): then both fold back into the
+    # blocking per-PR matrix and this whole tier goes away.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg:
+          - ./internal/adapters/telemetry
+          - ./internal/adapters/sqlite
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install gremlins
+        run: go install github.com/go-gremlins/gremlins/cmd/gremlins@${{ env.GREMLINS_VERSION }}
+
+      # Swap gives the per-mutant `go build` RSS peak some headroom. It is not a
+      # cure (telemetry still OOMs; see this job's continue-on-error note), but
+      # off the PR path it lets sqlite reach a conclusion within the timeout.
+      # If the org enables larger runners, `runs-on: ubuntu-latest-4-core`
+      # (16 GB) is the simpler successor and this whole heavy tier can fold back
+      # into the light matrix.
+      - name: Add swap headroom
+        run: |
+          set -eux
+          sudo swapoff -a || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 12G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=12288
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+          swapon --show
+
+      - name: Run mutation testing
+        env:
+          GOFLAGS: -p=1
+          GOMEMLIMIT: 4GiB
+          MUTATION_WORKERS: '1'
+        run: |
+          set -uo pipefail
+          pkg='${{ matrix.pkg }}'
+          echo "===== gremlins: $pkg =====" | tee -a mutation.log
+          if ! make mutation PKG="$pkg" 2>&1 | tee -a mutation.log; then
+            echo "::error::Mutation gate FAILED for $pkg — score below the .gremlins.yaml baseline, or the mutation gate in the Makefile tripped (uncovered mutants / no results). Add tests that kill the LIVED mutants in mutation.log, or (last resort) adjust the baseline in .gremlins.yaml with justification."
+            exit 1
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          summary=$(grep -iE 'gremlins:|Killed:|Test efficacy:|Mutator coverage:|LIVED|NOT COVERED' mutation.log 2>/dev/null | tail -60)
+          {
+            echo "### Mutation testing (gremlins, heavy) — ${{ matrix.pkg }}"
+            echo '```'
+            echo "${summary:-no summary captured}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation-report-heavy-${{ strategy.job-index }}
           path: mutation.log
           if-no-files-found: ignore

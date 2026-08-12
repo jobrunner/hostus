@@ -57,11 +57,17 @@ eine `aggregate_policy` und eine `esy_diagnostic_relevance`. Auf `master` waren
    außerhalb dieser Aufgabe, weil der Crosswalk mit dem SP3-Trait-Ingest
    geteilt ist ([Messung](floraveg-namespace.md)).
 
-3. **`esy_diagnostic_relevance` bleibt eine Datenlücke.** Das ESy-Regelwerk
-   ist nicht ingestiert — siehe [Bekannte Lücken](../explanation/known-gaps.md).
-   Ohne es kann hostus „nicht entscheidbar" nicht von „Habitat nicht erfüllt"
-   trennen; die Feldform (immer present, sprechender Sentinel) sorgt lediglich
-   dafür, dass niemand diese Lücke als negative Antwort missversteht.
+3. **`esy_diagnostic_relevance` bleibt eine Datenlücke — Beschaffung nun aber
+   sondiert.** Das ESy-Regelwerk ist nicht ingestiert; ohne es kann hostus
+   „nicht entscheidbar" nicht von „Habitat nicht erfüllt" trennen, und die
+   Feldform (immer present, sprechender Sentinel) sorgt lediglich dafür, dass
+   niemand diese Lücke als negative Antwort missversteht. Der
+   [ESy-Spike](sp9-esy-spike.md) (2026-08-12) hat die Beschaffungs- und
+   Machbarkeitsfrage geklärt: das Regelwerk ist CC-BY-4.0 auf Zenodo, maschinell
+   parsbar, und 66,4 % seiner Art-Namen liegen bereits im FloraVeg-Namensraum —
+   mit einem konkreten Umsetzungspfad und der Scope-Grenze, dass die volle
+   Plot-Klassifikation außerhalb eines Namensdienstes liegt. Siehe auch
+   [Bekannte Lücken](../explanation/known-gaps.md).
 
 ## Fazit
 

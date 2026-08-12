@@ -7,6 +7,18 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Changed (Doku — ESy-Regelwerk-Sondierung, SP9)
+- **Spike `docs/research/sp9-esy-spike.md`**: das EUNIS-ESy-Regelwerk ist
+  beschaffbar (Zenodo DOI 10.5281/zenodo.3841729, **CC BY 4.0**, ein 1,6-MB-
+  Textfile), maschinell parsbar (formale Grammatik, 169 Artengruppen /
+  304 Habitat-Regeln, R-Referenzparser Bruelheide et al. 2021), und **66,4 %**
+  seiner Art-Namen liegen verbatim im ingestierten FloraVeg-Namensraum. Klare
+  Scope-Grenze: volle Plot-Klassifikation braucht Deckungs-/Standortdaten und
+  liegt außerhalb eines Namensdienstes; die beantwortbare Frage „ist dieser
+  Name eine diagnostische Art?" hängt allein am Regelwerk. known-gaps- und
+  SP9/UC4-Verdikt-Dokument entsprechend aktualisiert; `esy_diagnostic_relevance`
+  bleibt bis zum Ingest-SP korrekt `not_determinable`.
+
 ### Added (`GET /v1/sec` — verfügbare `sec.`-Referenzräume auflisten, SP8)
 - **Neuer Endpunkt `GET /v1/sec`** liefert alle ingestierten `sec.`-Räume als
   `{"sec_references":[{"id","title"}]}` (id-sortiert; leere Liste als `[]`,

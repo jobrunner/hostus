@@ -5,13 +5,15 @@
 # hostus's SP0 state.
 #
 # ortus embeds its OpenAPI spec in the Go binary (internal/adapters/http/
-# openapi.yaml) and diffs it against the api/ copy, plus a routes<->spec
-# contract test. hostus has neither yet: the only spec is the hand-written
-# baseline at api/openapi/openapi.yaml (added in S14), and there is no
-# code-generated/embedded copy or contract test to compare it against —
-# both are an SP1+ concern once the real taxonomy endpoints and
-# code-generation exist. Checks 1 and 3 below are therefore soft no-ops
-# until that lands (see the comment at each check); checks 2 (spec parses)
+# openapi.yaml) and diffs it against the api/ copy. hostus does NOT embed or
+# code-generate the spec: the only spec is the hand-written baseline at
+# api/openapi/openapi.yaml (added in S14), a deliberate deferral of the
+# "code-generated" project rule under the no-heavy-deps constraint (see
+# docs/explanation/known-gaps.md). Check 1 (embedded/api-copy sync) therefore
+# stays a no-op. What DOES guard the hand-written spec is check 3, the
+# routes<->spec contract test (TestRoutesMatchOpenAPISpec): it pins every
+# mounted route to an OpenAPI path+method in both directions, so the spec
+# cannot silently drift from the router. Checks 2 (spec parses), 3 (contract)
 # and 5 (mkdocs --strict) are fully functional today.
 #
 # Usage:
@@ -85,16 +87,18 @@ if [ "$FAST" = 1 ]; then
 fi
 
 # --- 3. routes <-> spec contract test ---------------------------------------
-# No-op until a TestRoutesMatchOpenAPISpec-style contract test exists
-# (SP1+, once the spec is code-generated from the handlers).
-if [ -f "$EMBEDDED" ] && command -v go >/dev/null 2>&1; then
+# TestRoutesMatchOpenAPISpec (internal/adapters/http) reads the hand-written
+# api/openapi/openapi.yaml directly and asserts it matches the router's mounted
+# routes both ways — no embedded/code-generated copy required, so this is gated
+# on the API spec + go, not on an embedded spec.
+if [ -f "$API_COPY" ] && command -v go >/dev/null 2>&1; then
   if go test ./internal/adapters/http/ -run TestRoutesMatchOpenAPISpec -count=1 >/tmp/doc-drift-contract.log 2>&1; then
     ok "routes <-> spec contract test passes"
   else
     bad "routes <-> spec contract test FAILED:"; sed 's/^/      /' /tmp/doc-drift-contract.log >&2
   fi
 else
-  skip "routes <-> spec contract test" "no contract test yet (SP1+)"
+  skip "routes <-> spec contract test" "api/openapi/openapi.yaml or go not available"
 fi
 
 # --- 4. oasdiff: no breaking (ERR) changes vs origin/master -----------------

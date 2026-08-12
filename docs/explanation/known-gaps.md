@@ -9,17 +9,26 @@ wirklich schließen würde, nicht nur die Notiz, dass es sie gibt.
 Behobene Punkte werden hier gelöscht, nicht abgehakt; der Verlauf steht im
 `CHANGELOG.md`.
 
-## 316 Zeilen handgepflegtes OpenAPI ohne Drift-Prüfung (SP6)
+## OpenAPI wird handgepflegt statt codegeneriert (SP6)
 
-`make doc-drift` prüft die OpenAPI-Baseline gegen die Doku, überspringt
-aber genau die neu hinzugekommenen Pfade (`skip`-Zweige in
-`scripts/doc-drift-check.sh`, solange es keine eingebettete Spec und keinen
-Routen-Contract-Test gibt). Der Endpunktvertrag von SP5/SP6 ist damit
-Handarbeit ohne Netz — die Projektregel „OpenAPI muss codegeneriert sein"
-ist an dieser Stelle nicht eingelöst.
+**Drift-Risiko: geschlossen (2026-08-12).** Der Routen-Contract-Test
+`TestRoutesMatchOpenAPISpec` (`internal/adapters/http`) gleicht jede vom Router
+gemountete Route beidseitig gegen einen Pfad+Methode in
+`api/openapi/openapi.yaml` ab — eine neue Route ohne Spec-Eintrag (oder
+umgekehrt) lässt CI rot werden. `scripts/doc-drift-check.sh` führt ihn als
+Check 3 aus (der frühere `skip`-Zweig ist entfallen). Die handgepflegte Spec
+kann damit **nicht mehr still von den Routen driften**.
 
-*Nächster Schritt:* Routen-Contract-Test aktivieren (Router-Routen gegen
-die Spec-Pfade), damit die `skip`-Zweige entfallen.
+**Weiter offen (bewusst zurückgestellt):** die Projektregel „OpenAPI muss
+codegeneriert sein" ist damit nicht *wörtlich* eingelöst — die Spec wird
+weiterhin von Hand geschrieben, nur jetzt verifiziert. Volle Codegenerierung
+(Spec aus Routen/Handlern) hätte entweder einen bespoke Generator oder eine
+zusätzliche Abhängigkeit gebraucht, was mit der „keine schweren Deps"-Regel
+kollidiert. Der Contract-Test schließt das eigentliche Risiko (stiller Drift);
+die Vollgenerierung bliebe ein eigener SP, falls sie über die
+Drift-Sicherung hinaus gewünscht wird. Offen bleibt auch der Schema-*Inhalt*
+(Request/Response-Bodies): der Contract-Test prüft Pfad+Methode, nicht, ob die
+dokumentierten Schemas den tatsächlichen DTOs entsprechen.
 
 ## `telemetry`- und `sqlite`-Mutation laufen nicht im Per-PR-Gate (7-GB-Runner-OOM)
 

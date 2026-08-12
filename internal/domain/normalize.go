@@ -352,20 +352,6 @@ var sensuQualifiers = map[string]bool{
 // that is additionally qualified sensu lato — and each layer removed is a
 // separate lookup worth trying, because a backbone might carry the
 // aggregate under the shorter marker.
-// StripAggregateMarkers returns canon with every trailing aggregate marker
-// (agg./aggr./s.l./s. l./s.lat./sl.) removed — the fully-stripped base, i.e. the
-// last element of AggregateBases — or canon unchanged when it carries none. It
-// reuses AggregateBases so the marker set stays defined in exactly one place.
-// Used by suggest to make the marker SPELLING irrelevant: "X agg.", "X aggr."
-// and "X s.l." all search the same base.
-func StripAggregateMarkers(canon string) string {
-	bases := AggregateBases(canon)
-	if len(bases) == 0 {
-		return canon
-	}
-	return bases[len(bases)-1]
-}
-
 func AggregateBases(canon string) []string {
 	fields := strings.Fields(canon)
 	var bases []string
@@ -387,6 +373,20 @@ func AggregateBases(canon string) []string {
 		}
 		return bases
 	}
+}
+
+// StripAggregateMarkers returns canon with every trailing aggregate marker
+// (agg./aggr./s.l./s. l./s.lat./sl.) removed — the fully-stripped base, i.e. the
+// last element of AggregateBases — or canon unchanged when it carries none. It
+// reuses AggregateBases so the marker set stays defined in exactly one place.
+// Used by suggest to make the marker SPELLING irrelevant: "X agg.", "X aggr."
+// and "X s.l." all search the same base.
+func StripAggregateMarkers(canon string) string {
+	bases := AggregateBases(canon)
+	if len(bases) == 0 {
+		return canon
+	}
+	return bases[len(bases)-1]
 }
 
 // infraspecificMarkers are the rank markers AutonymBase recognizes between

@@ -70,6 +70,20 @@ func TestAddNameSpaceEntry_IndexesAggregateAliasesIntoFTS(t *testing.T) {
 		t.Fatalf("is_aggregate=1 alias count = %d, want 2", n)
 	}
 
+	// The non-aggregate entry (5647 "Festuca ovina") is NOT indexed: this
+	// seed's concept has no own-name FTS row (seed.sql builds none), so any
+	// is_aggregate=0 alias for it could only come from a wrongly-indexed
+	// non-aggregate name-space entry. There must be none.
+	var nonAgg int
+	if err := db.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM fts_name_map WHERE concept_id = ? AND is_aggregate = 0`,
+		corynephorusID).Scan(&nonAgg); err != nil {
+		t.Fatalf("counting non-aggregate aliases: %v", err)
+	}
+	if nonAgg != 0 {
+		t.Errorf("is_aggregate=0 alias count = %d, want 0 (non-aggregate entries must not be indexed)", nonAgg)
+	}
+
 	// fts_name is contentless, so verify searchability the only way that
 	// works: a MATCH on the aggregate spelling resolves to an is_aggregate=1
 	// row for the concept.

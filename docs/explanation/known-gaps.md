@@ -50,8 +50,12 @@ sqlite thrasht auf Swap 15–60 min statt der ~154 s lokal. Deshalb sind beide
 Pakete aus dem **Per-PR-Job** entfernt und laufen in einem separaten
 `mutation-heavy`-Job **nur** auf wöchentlichem Cron/`workflow_dispatch` — so ist
 das Per-PR-Gate schnell, deterministisch und vollständig blockierend, und kein
-OOM kann je einen PR flaky machen. Auf dem Cron behält telemetry
-`continue-on-error` (OOMt dort weiterhin), sqlite bekommt Swap + vollen Timeout.
+OOM kann je einen PR flaky machen. Auf dem Cron sind **beide** schweren Beine
+report-only (`continue-on-error`): ein `workflow_dispatch`-Messlauf zeigte
+sqlite mit Swap noch bei 15 min+ laufen, telemetry OOMt weiterhin — ein rotes
+Ergebnis dort hieße „thrashte/Timeout", nicht „echte Regression", also wäre
+Gating nur Alert-Fatigue. Das hochgeladene `mutation.log`-Artefakt trägt das
+Ergebnis, wenn ein Bein doch durchläuft.
 
 **Was es wirklich lösen würde:** ein Runner mit mehr RAM
 (`ubuntu-latest-4-core`, 16 GB). Dann fielen beide Pakete zurück in die

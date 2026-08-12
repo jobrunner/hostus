@@ -133,12 +133,20 @@ jobs:
     name: gremlins-heavy (${{ matrix.pkg }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    # telemetry OOMs even with swap (its OTel-SDK compile peak is active working
-    # set the OOM-killer hits before swap can absorb it — validated on PR #35),
-    # so it reports but does not block even here; the real fix is a larger runner
-    # (ubuntu-latest-4-core / 16 GB), which the org has not enabled. sqlite gets
-    # the swap headroom below and a full timeout, off the PR path.
-    continue-on-error: ${{ matrix.pkg == './internal/adapters/telemetry' }}
+    # BOTH heavy legs are report-only (continue-on-error), because neither runs
+    # to a reliable, timely conclusion on a 7 GB runner — validated on PR #35:
+    # telemetry is OOM-killed even with 12 GB swap (its OTel-SDK compile peak is
+    # active working set the killer hits before swap can absorb it), and sqlite
+    # thrashes on swap far past its ~154 s local runtime (a workflow_dispatch
+    # measurement showed it still running at 15 min+). A red result here would
+    # therefore usually mean "thrashed/timed out", not "real regression", so
+    # gating on it would just be perpetual-red alert fatigue. The REAL gate for
+    # these two is local `make mutation PKG=...` (runs to completion); this job's
+    # value is periodic best-effort coverage plus the uploaded mutation.log
+    # artifact to inspect when a leg does finish. The clean fix is a larger
+    # runner (ubuntu-latest-4-core / 16 GB): then both fold back into the
+    # blocking per-PR matrix and this whole tier goes away.
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:

@@ -58,30 +58,6 @@ Trennung als runnerneutrale Lösung.
 dort vollständig durch) — das ist das eigentliche Entwickler-Gate für diese
 beiden Pakete.
 
-## Kein Endpunkt listet die verfügbaren `sec.`-Referenzräume (SP8)
-
-**Stand:** 2026-08-04 · **Betrifft:** `POST /v1/translate`,
-`internal/adapters/http/assets/index.html`
-
-**Befund.** `POST /v1/translate` verlangt ein `target_space`, aber keine API
-sagt, welche Räume es gibt: `sec_reference` ist nirgends abfragbar. In der
-Testkonsole ist das Feld deshalb ein **Freitextfeld** — man muss den Namen
-kennen oder raten.
-
-**Auswirkung.** Ein geratener Raum ist von einem leeren Ergebnis nicht zu
-unterscheiden, ohne die Antwort genau zu lesen: ein unbekannter Zielraum
-liefert `404 NOT_FOUND`, ein bekannter ohne Relation
-`200 no_relation_recorded`. Beides ist für sich korrekt, aber wer den
-Raumnamen nicht kennt, kann den Endpunkt praktisch nicht bedienen.
-
-**Was es lösen würde:** ein `GET /v1/sec` (id + title, wie
-`/v1/translate` das Feld bereits führt), oder `sec_reference` in der
-Manifest-Antwort. Dann kann die Konsole eine Auswahlliste statt eines
-Freitextfelds anbieten.
-
-**Bis dahin:** die Räume aus dem Index lesen
-(`select id, title from sec_reference`) und den gewünschten Wert eintippen.
-
 ## Das ESy-Regelwerk ist nicht geerntet — `esy_diagnostic_relevance` bleibt unentscheidbar (SP9)
 
 **Stand:** 2026-08-05 · **Betrifft:** `POST /v1/match` mit `target_space`

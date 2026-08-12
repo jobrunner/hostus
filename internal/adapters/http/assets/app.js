@@ -615,4 +615,24 @@
       renderTranslate(target, res);
     });
   });
+
+  /* Ziel-sec.-Räume aus GET /v1/sec in die datalist füllen, damit
+     target_space eine Auswahl statt eines Freitext-Ratens bietet: ein
+     geratener Raum ist sonst von einem leeren Ergebnis nicht zu
+     unterscheiden. Kein Blocker — schlägt der Aufruf fehl, bleibt das Feld
+     ein normales Freitextfeld. */
+  (function loadSecSpaces() {
+    var list = byId("sec-spaces");
+    if (!list) { return; }
+    api("/v1/sec").then(function (res) {
+      if (!res.ok || !res.body || !Array.isArray(res.body.sec_references)) { return; }
+      var opts = res.body.sec_references.map(function (s) {
+        var o = el("option");
+        o.value = s.id;
+        if (s.title) { o.label = s.title; }
+        return o;
+      });
+      list.replaceChildren.apply(list, opts);
+    });
+  }());
 }());

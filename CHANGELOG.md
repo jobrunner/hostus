@@ -7,6 +7,18 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (`GET /v1/sec` — verfügbare `sec.`-Referenzräume auflisten, SP8)
+- **Neuer Endpunkt `GET /v1/sec`** liefert alle ingestierten `sec.`-Räume als
+  `{"sec_references":[{"id","title"}]}` (id-sortiert; leere Liste als `[]`,
+  nie `null`). Schließt den known-gaps-Befund „kein Endpunkt listet die
+  `sec.`-Räume": ein für `POST /v1/translate`/`POST /v1/match` geratenes
+  `target_space`/`entry_sec` war von einem leeren Ergebnis nicht zu
+  unterscheiden. Der Datenpfad (`repo.SecReferences`) existierte bereits; neu
+  sind Handler + Route. Gemessen an Realdaten: 119 Räume.
+- **Testkonsole bietet eine Auswahlliste statt Freitext.** Das
+  `target_space`-Feld ist jetzt an eine `<datalist>` gebunden, die beim Laden
+  aus `GET /v1/sec` gefüllt wird (fällt bei Fehler auf Freitext zurück).
+
 ### Changed (Doku — Offline-Bundle-Größe real nachgemessen)
 - **`docs/how-to/offline-bundle.md` mit gemessener aktueller GER-Bundle-Größe.**
   Frischer WCVP-+-Trait-Ingest, `--area GER`: **89,2 MiB (93,5 MB)** (11.583

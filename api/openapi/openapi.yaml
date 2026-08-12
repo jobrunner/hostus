@@ -515,6 +515,37 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /v1/sec:
+    get:
+      operationId: getSecReferences
+      summary: Verfügbare `sec.`-Referenzräume auflisten
+      description: >-
+        Listet jeden ingestierten `sec.`-Referenzraum als `{id, title}`,
+        id-sortiert. Damit kann ein Client (etwa das `target_space`-/
+        `entry_sec`-Feld) eine Auswahl anbieten, statt einen Raumnamen zu
+        raten — ein geratener Raum ist von einem leeren Ergebnis sonst nicht
+        zu unterscheiden. Ein leerer Index liefert `[]` (nie `null`).
+      tags: [taxa]
+      responses:
+        '200':
+          description: Liste aller `sec.`-Referenzräume.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sec_references]
+                properties:
+                  sec_references:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SecReference'
+        '500':
+          description: Interner Fehler (INTERNAL_ERROR).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 tags:
   - name: health
     description: Liveness- und Readiness-Probes für Orchestratoren.

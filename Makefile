@@ -241,10 +241,20 @@ check: fmt vet lint test ## Alle Qualitätsprüfungen (vor Commit)
 # der Compiler entscheidet. Gleiche Schritte wie die CI.
 # Bewusst KEIN Aufruf des `build`-Targets (das schreibt ./hostus); stattdessen
 # ein binärloser Compile-Check via `go build ./...`.
-verify: fmt-check vet lint test arch debt-guard ## Maßgebliche Grün-Prüfung (gofmt-check+vet+compile+test+lint+arch+debt)
+verify: fmt-check vet lint test arch debt-guard poc-check ## Maßgebliche Grün-Prüfung (gofmt-check+vet+compile+test+lint+arch+debt+poc)
 	@echo "Compile-Check (go build ./...)…"
 	@$(GO) build ./...
-	@echo "\n✅ verify bestanden — Compile/Test/Lint/Format/Arch/Debt grün."
+	@echo "\n✅ verify bestanden — Compile/Test/Lint/Format/Arch/Debt/poc grün."
+
+# poc/ ist ein eigenes Go-Modul (github.com/jobrunner/hostus-poc) mit den
+# Messharnessen, die die Zahlen in docs/research/ erzeugen. verify hat es bisher
+# NICHT abgedeckt (eigenes Modul, kein go.work; debt-guard nimmt ./poc aus), also
+# konnte ein Build-/vet-Bruch dort unbemerkt bleiben (SP7 fand genau so toten
+# Tiebreak-Code). poc-check kompiliert und vettet es — bewusst OHNE die
+# Hexagon-Lint-Regeln, die nur fuer den Laufzeit-Code gelten.
+poc-check: ## poc/ (eigenes Modul) kompiliert + vet-sauber (keine Hexagon-Lints)
+	@echo "poc-check (cd poc && go build ./... && go vet ./...)…"
+	@cd poc && $(GO) build ./... && $(GO) vet ./...
 
 # Schulden-Harness: hält technische Schuld niedrig per Ratchet (siehe docs).
 # `debt-guard` ist schnell (grep-basiert) und in `verify` eingebunden; `debt-coverage`

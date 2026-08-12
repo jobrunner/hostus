@@ -541,6 +541,9 @@ func copyConceptScopedTables(ctx context.Context, src, bundle *DB, idsJSON strin
 		return err
 	}
 
+	if err := copyAreas(ctx, src, bundle, idsJSON, areaScope); err != nil {
+		return err
+	}
 	if err := copyDistribution(ctx, src, bundle, idsJSON, areaScope); err != nil {
 		return err
 	}
@@ -678,6 +681,34 @@ func copyDistribution(ctx context.Context, src, bundle *DB, idsJSON string, area
 		   AND area_scheme = 'wgsrpd_l3' AND area_code IN (SELECT value FROM json_each(?))`,
 		[]any{idsJSON, areaScopeJSON},
 		`INSERT INTO distribution (concept_id, area_scheme, area_code) VALUES (?,?,?)`)
+}
+
+// copyAreas carries the area-name lookup for exactly the (scheme, code) pairs
+// that survive in the bundle's distribution, so an offline bundle's
+// GET /v1/areas still offers "Germany (GER)" instead of a bare code — the whole
+// point of the picker in the offline field-use scenario the bundle serves.
+// Scoping mirrors copyDistribution: whole-DB export copies the names of every
+// area the bundled concepts occur in; an area-scoped export copies only the
+// requested codes' names.
+func copyAreas(ctx context.Context, src, bundle *DB, idsJSON string, areaScope []string) error {
+	if len(areaScope) == 0 {
+		return copyRows(ctx, src, bundle,
+			`SELECT scheme, code, name FROM area
+			 WHERE (scheme, code) IN (
+			   SELECT DISTINCT area_scheme, area_code FROM distribution
+			   WHERE concept_id IN (SELECT value FROM json_each(?)))`,
+			[]any{idsJSON},
+			`INSERT INTO area (scheme, code, name) VALUES (?,?,?)`)
+	}
+	areaScopeJSON, err := marshalIDs(areaScope)
+	if err != nil {
+		return err
+	}
+	return copyRows(ctx, src, bundle,
+		`SELECT scheme, code, name FROM area
+		 WHERE scheme = 'wgsrpd_l3' AND code IN (SELECT value FROM json_each(?))`,
+		[]any{areaScopeJSON},
+		`INSERT INTO area (scheme, code, name) VALUES (?,?,?)`)
 }
 
 // backboneVersionScopeQuery finds every backbone_version referenced by the

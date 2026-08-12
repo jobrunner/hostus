@@ -2,10 +2,52 @@ package sqlite
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/jobrunner/hostus/internal/domain"
 )
+
+// TestExportBundle_CarriesAreaNames pins that an offline bundle keeps the area
+// names, so its GET /v1/areas still offers "Germany (GER)" — the picker's whole
+// point in the offline field-use scenario. Without copyAreas the bundle's area
+// table would be empty and every code would show up nameless.
+func TestExportBundle_CarriesAreaNames(t *testing.T) {
+	src := openSeededDB(t) // corynephorus distributed to GER + FRA (no names yet)
+	ctx := context.Background()
+
+	tx, err := src.BeginIngest(ctx, seedBackboneVersion)
+	if err != nil {
+		t.Fatalf("BeginIngest: %v", err)
+	}
+	if err := tx.UpsertArea(domain.Area{Scheme: "wgsrpd_l3", Code: "GER", Name: "Germany"}); err != nil {
+		t.Fatalf("UpsertArea: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	out := filepath.Join(t.TempDir(), "bundle-areas.sqlite")
+	if _, err := ExportBundle(ctx, src, out, BundleOpts{Area: "GER", AllowRestricted: true}); err != nil {
+		t.Fatalf("ExportBundle: %v", err)
+	}
+
+	bundle, err := Open(out)
+	if err != nil {
+		t.Fatalf("Open(bundle): %v", err)
+	}
+	defer func() { _ = bundle.Close() }()
+
+	areas, err := bundle.Areas(ctx)
+	if err != nil {
+		t.Fatalf("bundle.Areas: %v", err)
+	}
+	// Area-scoped to GER: the bundle's distribution (and thus Areas) is GER-only.
+	want := []domain.Area{{Scheme: "wgsrpd_l3", Code: "GER", Name: "Germany"}}
+	if len(areas) != len(want) || areas[0] != want[0] {
+		t.Errorf("bundle.Areas = %+v, want %+v (name must survive export)", areas, want)
+	}
+}
 
 // TestAreas_ListsCodesWithDataAndNames exercises Areas + UpsertArea directly
 // (the application-package ingest test covers the wiring; this covers the

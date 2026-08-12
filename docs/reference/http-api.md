@@ -952,6 +952,36 @@ Ein unbekannter `target_space` ist ausdrücklich ein `404` und keine leere
 Antwort: ein Tippfehler im Zielraum darf nicht wie „keine Relation erfasst"
 aussehen.
 
+## `sec.`-Endpunkt
+
+### `GET /v1/sec`
+
+Listet jeden ingestierten `sec.`-Referenzraum als `{id, title}`, id-sortiert.
+Der Endpunkt existiert, damit `target_space` (`POST /v1/translate`) und
+`entry_sec` (`POST /v1/match`) nicht geraten werden müssen: ohne diese Liste
+ist ein falsch getippter Raum von einem leeren Ergebnis nicht zu
+unterscheiden. Die Testkonsole füllt daraus die Auswahlliste des
+`target_space`-Felds.
+
+```
+GET /v1/sec
+```
+
+```json
+{
+  "sec_references": [
+    { "id": "060afae5-76ef-44a7-921f-1202685ef351", "title": "Wisskirchen & Haeupler 1998: Standardliste der Farn- und Blütenpflanzen Deutschlands" },
+    { "id": "0d1e…", "title": "auct." }
+  ]
+}
+```
+
+`sec_references` ist immer ein Array — ein Index ohne `sec.`-Räume liefert
+`[]`, nie `null`. `title` wird ausgelassen, wenn die `sec_reference`-Zeile
+keine Zitation trägt. Keine Parameter, keine Fehlerantwort außer
+`500 INTERNAL_ERROR`: die Frage „gibt es diesen Raum?" wird durch seine
+**Abwesenheit** aus der Liste beantwortet.
+
 ## Fehlerformat
 
 Alle Fach-Endpunkte liefern Fehler einheitlich als JSON:

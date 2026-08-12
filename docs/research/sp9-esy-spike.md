@@ -75,14 +75,32 @@ FloraVeg-Namensraum (`pipelines/floraveg/output/floraveg-canonical.csv`):
 | FloraVeg-Namen (Art-Ebene) | 15.677 |
 | **verbatim in FloraVeg vorhanden (Art-Ebene)** | **7.865 = 66,4 %** |
 
-Die ~34 % Nicht-Treffer sind überwiegend **kein Nomenklaturbruch, sondern
-Scope**: Moose/Flechten (`Abietinella abietina`, `Absconditella sphagnorum` —
-FloraVegs `Life_form.xlsx` ist Gefäßpflanzen), Platzhalter-Aggregate (`Abies
-species`), außereuropäische Ziergehölze (`Abelia coreana`, `Acacia karoo`) und
-Schreibvarianten (`venestum`/`venustum`), die derselbe SP3-Crosswalk auffinge,
-der FloraVeg schon zu 85,7 % auf WCVP abbildet. ESy und der ingestierte
-FloraVeg-Namensraum stammen beide aus dem floraveg.eu-Ökosystem; sie teilen die
-Nomenklatur, nicht nur zufällig.
+Zwei Einschränkungen dieser Zahl, damit sie nicht überlesen wird:
+
+- **Es ist ein exakter Verbatim-Vergleich und damit ein *Untergrenze*.** Groß-/
+  Kleinschreibung, Hybrid-Marker (`×`), `aggr.`/`s.l.`-Zusätze und einseitig auf
+  die Art zusammengezogene Unterarten zählen hier als Nicht-Treffer, obwohl sie
+  taxonomisch dieselbe Art meinen. Die *echte* nomenklatorische Überlappung
+  liegt höher; um wie viel, ist nicht gemessen.
+- **FloraVeg-Name ≠ hostus-Konzept.** Die 66,4 % sind Überlappung mit dem
+  FloraVeg-*Namensraum*, nicht mit auflösbaren Backbone-Konzepten. FloraVeg
+  selbst bildet nur 85,7 % seiner Namen auf ein WCVP-Konzept ab
+  ([Messung](floraveg-namespace.md)); die End-to-End-Kette ESy-Name → verbatim
+  FloraVeg → WCVP-Konzept liegt also bei ≈ 0,664 × 0,857 ≈ **57 %** (ebenfalls
+  ein Boden). Die tatsächliche Zahl misst erst der Ingest-SP über den vollen
+  SP3-Crosswalk.
+
+Die ~34 % Verbatim-Nicht-Treffer sind **nicht klassifiziert** — der exakte
+Vergleich sagt nichts über ihre Zusammensetzung. Qualitativ (Stichprobe, keine
+Auszählung) enthalten sie Moose/Flechten (`Abietinella abietina`,
+`Absconditella sphagnorum` — FloraVegs `Life_form.xlsx` ist Gefäßpflanzen),
+Platzhalter-Aggregate (`Abies species`), außereuropäische Ziergehölze (`Abelia
+coreana`, `Acacia karoo`) und Schreibvarianten (`venestum`/`venustum`). Wie
+viele davon der SP3-Crosswalk auffinge, ist **ungetestet** und gehört in den
+Ingest-SP gemessen, nicht hier geschätzt. Belegt ist nur: ESy und der
+FloraVeg-Namensraum stammen beide aus dem floraveg.eu-Ökosystem und teilen die
+Binomial-Nomenklatur (schlichte Namen ohne Autorschaft), weshalb der
+Crosswalk-Pfad derselbe ist wie bei FloraVeg — nicht, mit welcher Trefferquote.
 
 ## Die Scope-Grenze (der eigentliche Ertrag der Sondierung)
 
@@ -117,10 +135,19 @@ dieser Spike):
 3. Je ESy-Art über den bestehenden SP3-Crosswalk auf hostus-Konzepte abbilden;
    die 66,4 % verbatim + Crosswalk-Rest messen (wie beim FloraVeg-Ingest).
 4. `esy_diagnostic_relevance` als **dreiwertig** definieren, spiegelbildlich zu
-   `aggregate_policy`: `diagnostic` (Name ist Spezifizierer in ≥1 regelbenutzter
-   Gruppe), `not_diagnostic` (im Regelwerk, aber in keiner benutzten Gruppe),
-   `not_determinable` (Name nicht auf eine ESy-Art abbildbar) — und die volle
-   Plot-Klassifikation bewusst **außerhalb** des Namensdienstes lassen.
+   `aggregate_policy`:
+   - `diagnostic` — der Name ist in ≥1 Habitat-Regel (SECTION 3) ein
+     Spezifizierer, **direkt** genannt ODER über eine von einer Regel benutzte
+     Artengruppe (SECTION 2). Beide Pfade zählen — Regeln referenzieren teils
+     Gruppen (`#TC …`), teils Arten direkt (`<Ulex europaeus GR 25>`).
+   - `not_diagnostic` — der Name ist auf eine ESy-Art abbildbar, taucht aber in
+     **keiner** Habitat-Regel als Spezifizierer auf (weder direkt noch via
+     Gruppe).
+   - `not_determinable` — der Name lässt sich nicht auf eine ESy-Art abbilden
+     (nicht im Crosswalk).
+
+   Die volle Plot-Klassifikation bleibt bewusst **außerhalb** des
+   Namensdienstes.
 
 Bis dieser SP läuft, bleibt das Feld korrekt `not_determinable` (siehe
 [SP9/UC4-Verdikt](sp9-uc4-verdict.md)).
@@ -130,9 +157,22 @@ Bis dieser SP läuft, bleibt das Feld korrekt `not_determinable` (siehe
 ```bash
 curl -sSL -A "<honest-ua>" \
   https://zenodo.org/records/3841729/files/EUNIS-ESy-2020-06-08.txt -o esy.txt
-# Abschnitte: grep -n '^SECTION' esy.txt
-# Art-Namen (Section 1+2) extrahieren, gegen floraveg-canonical.csv (Feld 1) schneiden.
-# Gemessen 2026-08-12: 7.865/11.850 = 66,4 % Art-Ebene verbatim.
+# Abschnitte: grep -n '^SECTION' esy.txt  (Section 1+2 = Zeilen 1..39980)
+
+# ESy-Namen aus Section 1+2: trailing "- N"/Zahl entfernen, trimmen,
+# nur Binomial-artige Zeilen, SECTION/### ausschließen.
+awk 'NR<=39980' esy.txt \
+  | sed -E 's/[[:space:]]*-?[[:space:]]*[0-9]+[[:space:]]*$//' \
+  | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
+  | grep -E '^[A-Z][a-z]+ [a-z]' | grep -vE '^SECTION|^###' | sort -u > esy-names.txt
+
+# Auf Art-Ebene (genau 2 Token) beschränken, beide Seiten gleich:
+awk 'NF==2 && $2 ~ /^[a-z][a-z-]+$/' esy-names.txt | sort -u > esy-species.txt
+tail -n +2 pipelines/floraveg/output/floraveg-canonical.csv \
+  | cut -d'|' -f1 | awk 'NF==2 && $2 ~ /^[a-z][a-z-]+$/' | sort -u > fv-species.txt
+
+comm -12 esy-species.txt fv-species.txt | wc -l   # -> 7865
+# 7865 / 11850 (wc -l esy-species.txt) = 66,4 %  (Stand 2026-08-12)
 ```
 (Die Regeldatei wird **nicht** ins Repo eingecheckt — sie ist eine externe,
 per DOI gepinnte Quelle, kein Repo-Artefakt.)

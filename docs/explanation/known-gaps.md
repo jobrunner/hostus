@@ -58,18 +58,19 @@ Trennung als runnerneutrale Lösung.
 dort vollständig durch) — das ist das eigentliche Entwickler-Gate für diese
 beiden Pakete.
 
-## Das ESy-Regelwerk ist nicht geerntet — `esy_diagnostic_relevance` bleibt unentscheidbar (SP9)
+## Das ESy-Regelwerk ist nicht ingestiert — `esy_diagnostic_relevance` bleibt `not_determinable` (SP9)
 
-**Stand:** 2026-08-05 · **Betrifft:** `POST /v1/match` mit `target_space`
-(UC4), `esy_diagnostic_relevance`
+**Stand:** 2026-08-05, Sondierung 2026-08-12 · **Betrifft:** `POST /v1/match`
+mit `target_space` (UC4), `esy_diagnostic_relevance`
 
 **Befund.** UC4 verlangt pro Treffer eine ESy-diagnostische Relevanz. hostus
 kann sie nicht bestimmen: Die FloraVeg-Pipeline hat nur eine **Namensliste**
 aus `Life_form.xlsx` geerntet, nicht das **ESy-Expertensystem** selbst (das
 Regelwerk, das entscheidet, welche Art in welcher Regel differenzierend ist).
-SP3 hatte das Regelwerk bereits explizit ausgeklammert. Ohne die Regeln ist
-„ist dieser Name in einer Regel differenzierend?" schlicht nicht
-beantwortbar.
+SP3 hatte das Regelwerk bereits explizit ausgeklammert. **Ohne die ingestierten
+Regeln** ist „ist dieser Name in einer Regel differenzierend?" nicht
+beantwortbar — mit ihnen ist es das (siehe Sondierung unten); es fehlt der
+Ingest, nicht die grundsätzliche Beantwortbarkeit.
 
 **Auswirkung.** Das Feld ist auf dem `target_space`-Pfad **immer present** mit
 dem Sentinel `not_determinable` — bewusst kein `null` und nicht fehlend, damit
@@ -89,8 +90,10 @@ Punkte beantwortet — das war der Blocker, nicht das Feature selbst:
   (169 Artengruppen, 304 Habitat-Regeln), mit R-Referenzparser (Bruelheide et
   al. 2021) — ein Parser-Task, kein Reverse-Engineering.
 - **Namensraum:** schlichte Binomiale, **66,4 % der ESy-Art-Namen liegen
-  verbatim** im ingestierten FloraVeg-Namensraum; der Rest überwiegend
-  Moose/Flechten (Scope) und Schreibvarianten (SP3-Crosswalk).
+  verbatim** im ingestierten FloraVeg-Namensraum (exakter Vergleich, also ein
+  Boden; End-to-End bis zum WCVP-Konzept ≈ 57 %). Die nicht getroffenen ~34 %
+  sind qualitativ Moose/Flechten (Scope) und Schreibvarianten; wie viele der
+  SP3-Crosswalk auffinge, ist ungetestet und Sache des Ingest-SP.
 
 **Wichtige Scope-Grenze aus dem Spike:** eine volle ESy-Klassifikation
 (Aufnahme → Habitat) ist für einen Namensdienst **systembedingt unmöglich** —

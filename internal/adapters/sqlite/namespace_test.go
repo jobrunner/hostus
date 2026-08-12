@@ -48,6 +48,46 @@ func seedFloraVegEntries(t *testing.T, db *DB) {
 	}
 }
 
+// TestAddNameSpaceEntry_IndexesAggregateAliasesIntoFTS pins that a RESOLVED
+// aggregate name-space spelling is indexed into fts_name as an alias for its
+// concept, flagged is_aggregate=1, so suggest can find (and badge) the
+// aggregate spelling. The non-aggregate spelling ("Festuca ovina", 5647) is
+// NOT indexed — only aggregate-marked entries become aliases.
+func TestAddNameSpaceEntry_IndexesAggregateAliasesIntoFTS(t *testing.T) {
+	db := openSeededDB(t)
+	seedFloraVegEntries(t, db)
+	ctx := context.Background()
+
+	// Both aggregate spellings (5648, 5649) are indexed as is_aggregate=1
+	// aliases for the concept; the non-aggregate 5647 is not.
+	var n int
+	if err := db.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM fts_name_map WHERE concept_id = ? AND is_aggregate = 1`,
+		corynephorusID).Scan(&n); err != nil {
+		t.Fatalf("counting aggregate aliases: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("is_aggregate=1 alias count = %d, want 2", n)
+	}
+
+	// fts_name is contentless, so verify searchability the only way that
+	// works: a MATCH on the aggregate spelling resolves to an is_aggregate=1
+	// row for the concept.
+	var conceptID string
+	var isAgg int
+	err := db.sql.QueryRowContext(ctx, `
+		SELECT m.concept_id, m.is_aggregate
+		FROM fts_name_map m
+		WHERE m.rowid IN (SELECT rowid FROM fts_name WHERE fts_name MATCH ?)
+		  AND m.is_aggregate = 1`, `"festuca ovina aggr"*`).Scan(&conceptID, &isAgg)
+	if err != nil {
+		t.Fatalf("MATCH on aggregate spelling found no is_aggregate alias: %v", err)
+	}
+	if conceptID != corynephorusID || isAgg != 1 {
+		t.Errorf("aggregate MATCH resolved to (%q, is_aggregate=%d), want (%q, 1)", conceptID, isAgg, corynephorusID)
+	}
+}
+
 // TestNameSpaceEntries_RoundTripsEverySpellingOfOneConcept pins the whole
 // write→read path, including the two fields the ordinary case makes
 // invisible: the verbatim name (never folded to the match key) and the

@@ -350,8 +350,12 @@ CREATE INDEX IF NOT EXISTS idx_concept_relation_to_concept ON concept_relation(t
 -- suggest/autocomplete use case); the table exists so the schema is
 -- complete and the mapping is exercised by tests here.
 CREATE TABLE IF NOT EXISTS fts_name_map (
-  rowid       INTEGER PRIMARY KEY,
-  concept_id  TEXT NOT NULL REFERENCES taxon_concept(id)
+  rowid        INTEGER PRIMARY KEY,
+  concept_id   TEXT NOT NULL REFERENCES taxon_concept(id),
+  -- 1 when this fts_name row is an AGGREGATE name-space alias (e.g. FloraVeg's
+  -- "Achillea millefolium aggr.") rather than a backbone name. Suggest surfaces
+  -- MAX(is_aggregate) per concept so a hit can be badged as an aggregate.
+  is_aggregate INTEGER NOT NULL DEFAULT 0
 );
 
 -- rowid IS the table's own INTEGER PRIMARY KEY, but concept_id is a

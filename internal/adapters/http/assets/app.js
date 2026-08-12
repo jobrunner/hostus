@@ -97,6 +97,46 @@
 
   var qInput = byId("suggest-q");
   var areaInput = byId("suggest-area");
+
+  /* Gebiets-Lookup aus GET /v1/areas: füllt die Datalist mit "Germany (GER)"
+     (value = Code) und eine Name->Code-Map, damit man im Feld sowohl "Germany"
+     als auch "GER" tippen kann. Kein Blocker — schlägt der Aufruf fehl, bleibt
+     das Feld ein normales Code-Freitextfeld. */
+  var areaNameToCode = {}; // lowercased name AND "name (code)" -> code
+  var areaCodes = {};      // lowercased code -> canonical code
+  (function loadAreas() {
+    var list = byId("areas");
+    api("/v1/areas").then(function (res) {
+      if (!res.ok || !res.body || !Array.isArray(res.body.areas)) { return; }
+      var opts = [];
+      res.body.areas.forEach(function (a) {
+        areaCodes[a.code.toLowerCase()] = a.code;
+        var label = a.name ? a.name + " (" + a.code + ")" : a.code;
+        if (a.name) {
+          areaNameToCode[a.name.toLowerCase()] = a.code;
+          areaNameToCode[label.toLowerCase()] = a.code;
+        }
+        if (list) {
+          var o = el("option");
+          o.value = a.code;
+          o.label = label;
+          opts.push(o);
+        }
+      });
+      if (list) { list.replaceChildren.apply(list, opts); }
+    });
+  }());
+
+  /* Löst eine Eingabe auf einen Gebietscode auf: ein bekannter Code bleibt (in
+     kanonischer Schreibweise), ein bekannter Name (oder "Name (CODE)") wird zum
+     Code; alles andere bleibt unverändert und geht so an den Server (der die
+     Aliase DE/AT/CH und rohe Codes selbst auflöst). */
+  function resolveArea(input) {
+    var key = input.toLowerCase();
+    if (areaCodes[key]) { return areaCodes[key]; }
+    if (areaNameToCode[key]) { return areaNameToCode[key]; }
+    return input;
+  }
   var limitInput = byId("suggest-limit");
   var suggestURL = byId("suggest-url");
   var suggestSummary = byId("suggest-summary");
@@ -208,7 +248,7 @@
     }
     var params = new URLSearchParams();
     params.set("q", q);
-    var area = areaInput.value.trim();
+    var area = resolveArea(areaInput.value.trim());
     if (area !== "") { params.set("area", area); }
     var limit = limitInput.value.trim();
     if (limit !== "") { params.set("limit", limit); }

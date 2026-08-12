@@ -73,6 +73,7 @@ func (t *fakeCDMTx) AddConceptRelation(from, to string, rel domain.Relation, sou
 
 func (t *fakeCDMTx) AddXref(string, domain.Xref, string) error         { return nil }
 func (t *fakeCDMTx) AddDistribution(string, domain.Distribution) error { return nil }
+func (t *fakeCDMTx) UpsertArea(domain.Area) error                      { return nil }
 func (t *fakeCDMTx) AddTraitValue(string, domain.TraitValue) error     { return nil }
 func (t *fakeCDMTx) UpsertTraitVocabulary(domain.TraitVocabMeta) error { return nil }
 func (t *fakeCDMTx) UpsertXrefSource(domain.XrefSourceMeta) error      { return nil }
@@ -129,6 +130,8 @@ func (r *fakeCDMRepo) ExistingConceptIDs(_ context.Context, ids []string) (map[s
 func (r *fakeCDMRepo) SynonymCandidates(context.Context, string) ([]domain.SynonymCandidate, error) {
 	return nil, nil
 }
+
+func (r *fakeCDMRepo) Areas(context.Context) ([]domain.Area, error) { return nil, nil }
 
 func (r *fakeCDMRepo) SecReferences(context.Context) ([]domain.SecReference, error) {
 	return nil, nil

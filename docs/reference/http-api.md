@@ -990,6 +990,38 @@ keine Zitation trägt. Keine Parameter, keine Fehlerantwort außer
 `500 INTERNAL_ERROR`: die Frage „gibt es diesen Raum?" wird durch seine
 **Abwesenheit** aus der Liste beantwortet.
 
+## Gebiets-Endpunkt
+
+### `GET /v1/areas`
+
+Listet jedes Verbreitungsgebiet, das im Index Daten trägt (ein DISTINCT
+`area_scheme`/`area_code` aus der Distribution), je mit seinem ausgeschriebenen
+Namen. Der Name wird beim Ingest aus der `Locality`-Spalte des
+WCVP-Distributionsdumps selbst beschafft. Der Endpunkt existiert, damit ein
+Client (die Testkonsole füllt daraus die Gebiets-Auswahlliste) „Germany (GER)"
+anbieten kann statt des bloßen WGSRPD-Codes — die Codes sind **WGSRPD, nicht
+ISO** (`GER`, nicht `DE`) und werden selten erinnert.
+
+```
+GET /v1/areas
+```
+
+```json
+{
+  "areas": [
+    { "code": "FRA", "name": "France", "scheme": "wgsrpd_l3" },
+    { "code": "GER", "name": "Germany", "scheme": "wgsrpd_l3" }
+  ]
+}
+```
+
+`areas` ist immer ein Array (`[]`, nie `null`). Es werden **nur Gebiete mit
+Daten** gelistet, sortiert nach (`scheme`, `code`); `name` wird ausgelassen,
+wenn die Quelle keinen lieferte. Keine Parameter, keine Fehlerantwort außer
+`500 INTERNAL_ERROR`. Der `?area=`-Parameter von `GET /v1/suggest` bleibt
+code-basiert (plus die Aliase `DE/AT/CH`); die Auflösung „Germany"→`GER` ist
+eine Konsolen-Bequemlichkeit auf Basis dieser Liste.
+
 ## Fehlerformat
 
 Alle Fach-Endpunkte liefern Fehler einheitlich als JSON:

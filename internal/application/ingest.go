@@ -80,6 +80,10 @@ type TaxonRow struct {
 type DistributionRow struct {
 	TaxonID  string
 	AreaCode string
+	// AreaName is the area's human-readable name (WCVP Locality), or "" if the
+	// source carried none. Captured once per area into the area lookup table so
+	// GET /v1/areas can offer "Germany (GER)".
+	AreaName string
 }
 
 // RowSource streams one backbone's rows for Ingest. The caller adapts a
@@ -293,8 +297,14 @@ func ingestBackbone(ctx context.Context, b Backbone, manifestSHA string, rs RowS
 	}
 
 	distByTaxon := make(map[string][]DistributionRow)
+	areaNames := make(map[string]string) // code -> first non-empty name
 	for _, d := range rs.Distributions() {
 		distByTaxon[d.TaxonID] = append(distByTaxon[d.TaxonID], d)
+		if d.AreaName != "" {
+			if _, ok := areaNames[d.AreaCode]; !ok {
+				areaNames[d.AreaCode] = d.AreaName
+			}
+		}
 	}
 
 	taxa := rs.Taxa()
@@ -318,6 +328,15 @@ func ingestBackbone(ctx context.Context, b Backbone, manifestSHA string, rs RowS
 		return report, err
 	}
 	st.finalizeOtherRanksReport(&report)
+	// Record each distribution area's name once (INSERT OR IGNORE) so
+	// GET /v1/areas can offer "Germany (GER)". Scheme matches AddDistribution's
+	// "wgsrpd_l3" — the same scheme these codes were written under.
+	for code, name := range areaNames {
+		if err := tx.UpsertArea(domain.Area{Scheme: "wgsrpd_l3", Code: code, Name: name}); err != nil {
+			_ = tx.Rollback()
+			return report, fmt.Errorf("application: recording area %q for backbone %q: %w", code, b.ID, err)
+		}
+	}
 	if err := tx.Finalize(); err != nil {
 		_ = tx.Rollback()
 		return report, fmt.Errorf("application: finalizing FTS index for backbone %q: %w", b.ID, err)

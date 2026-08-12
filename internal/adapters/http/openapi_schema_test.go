@@ -45,6 +45,8 @@ func TestOpenAPISchemasMatchDTOs(t *testing.T) {
 		"TranslateRequest":       reflect.TypeOf(translateRequestDTO{}),
 		"SecReference":           reflect.TypeOf(secReferenceDTO{}),
 		"SecListResponse":        reflect.TypeOf(secListResponseDTO{}),
+		"Area":                   reflect.TypeOf(areaDTO{}),
+		"AreaListResponse":       reflect.TypeOf(areaListResponseDTO{}),
 		"TranslateSource":        reflect.TypeOf(translateSourceDTO{}),
 		"TranslateEntry":         reflect.TypeOf(translateEntryDTO{}),
 		"RelationStatement":      reflect.TypeOf(relationStatementDTO{}),

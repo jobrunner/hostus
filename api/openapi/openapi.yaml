@@ -540,6 +540,32 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /v1/areas:
+    get:
+      operationId: getAreas
+      summary: Verfügbare Verbreitungsgebiete auflisten
+      description: >-
+        Listet jedes Verbreitungsgebiet, das Daten trägt (ein DISTINCT
+        area_scheme/area_code aus der Distribution), je mit seinem
+        ausgeschriebenen Namen (leer, wenn die Quelle keinen lieferte),
+        sortiert nach (scheme, code). Damit kann ein Client eine Auswahl
+        „Germany (GER)" anbieten, statt den bloßen WGSRPD-Code (nicht ISO!) zu
+        erwarten. Ein leerer Index liefert `[]` (nie `null`).
+      tags: [taxa]
+      responses:
+        '200':
+          description: Liste der Verbreitungsgebiete mit Daten.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AreaListResponse'
+        '500':
+          description: Interner Fehler (INTERNAL_ERROR).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 tags:
   - name: health
     description: Liveness- und Readiness-Probes für Orchestratoren.
@@ -942,6 +968,28 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/SecReference'
+    Area:
+      type: object
+      required: [code, scheme]
+      properties:
+        code:
+          type: string
+          example: GER
+        name:
+          type: string
+          description: Ausgeschriebener Name, sofern beim Ingest vorhanden.
+          example: Germany
+        scheme:
+          type: string
+          example: wgsrpd_l3
+    AreaListResponse:
+      type: object
+      required: [areas]
+      properties:
+        areas:
+          type: array
+          items:
+            $ref: '#/components/schemas/Area'
     TranslateSource:
       type: object
       required: [concept_id, canonical, rank, sec]

@@ -181,6 +181,17 @@ CREATE TABLE IF NOT EXISTS distribution (
   PRIMARY KEY (concept_id, area_scheme, area_code)
 );
 
+-- Human-readable name per (scheme, code), self-sourced from the WCVP
+-- distribution dump's Locality column at ingest. Lets GET /v1/areas offer
+-- "Germany (GER)" instead of a bare WGSRPD code. Keyed by (scheme, code), NOT
+-- per concept — one row per area, first non-empty name wins (INSERT OR IGNORE).
+CREATE TABLE IF NOT EXISTS area (
+  scheme  TEXT NOT NULL,
+  code    TEXT NOT NULL,
+  name    TEXT NOT NULL,
+  PRIMARY KEY (scheme, code)
+);
+
 -- Indicator/trait values (pointer to concept + vocabulary version, not the
 -- numbers as ground truth). value is always present (domain.TraitValue.Value
 -- is a plain float64, never a pointer); niche_width/n_systems are nullable

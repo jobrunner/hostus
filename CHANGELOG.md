@@ -7,6 +7,17 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (OpenAPI — Routen↔Spec-Contract-Test schließt das Drift-Risiko)
+- **`TestRoutesMatchOpenAPISpec`** (`internal/adapters/http`) gleicht jede vom
+  Router gemountete Route beidseitig gegen Pfad+Methode in
+  `api/openapi/openapi.yaml` ab (mux-`Walk` gegen einen dependency-freien
+  Spec-Scanner). Eine undokumentierte neue Route — oder ein Spec-Pfad ohne
+  Route — lässt CI rot werden. `scripts/doc-drift-check.sh` führt ihn als
+  Check 3 aus; der frühere `skip`-Zweig entfällt. Die handgepflegte Spec kann
+  damit **nicht mehr still driften**. Die wörtliche „codegeneriert"-Regel
+  bleibt bewusst zurückgestellt (keine schweren Deps); der Contract-Test
+  schließt das eigentliche Risiko. Siehe known-gaps.
+
 ### Changed (Doku — ESy-Regelwerk-Sondierung, SP9)
 - **Spike `docs/research/sp9-esy-spike.md`**: das EUNIS-ESy-Regelwerk ist
   beschaffbar (Zenodo DOI 10.5281/zenodo.3841729, **CC BY 4.0**, ein 1,6-MB-

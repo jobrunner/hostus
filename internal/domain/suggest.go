@@ -21,6 +21,12 @@ type SuggestItem struct {
 	InArea       bool
 	PrefixHit    bool
 	Score        float64
+	// Aggregate is true when this concept was reached via an AGGREGATE
+	// name-space alias (e.g. FloraVeg's "Achillea millefolium aggr."), so a
+	// client can badge the hit as an aggregate. It is MAX(is_aggregate) over
+	// the matched names for the concept: a query that matched only the
+	// concept's own (non-aggregate) name leaves it false.
+	Aggregate bool
 	// SecReference is the concept's sec. reference space id, or "" for a
 	// concept with none (WCVP). Its presence lets a caller tell two same-name
 	// CDM concepts apart (SP5); the HTTP layer resolves the title from it.

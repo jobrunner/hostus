@@ -1318,6 +1318,12 @@ components:
           description: >-
             Roher SQLite-FTS5-`bm25()`-Wert des Treffers. Niedriger bedeutet
             relevanter (bm25 ist ein Distanzmaß, keine Ähnlichkeit).
+        aggregate:
+          type: boolean
+          description: >-
+            `true`, wenn das Concept über eine Aggregat-Namensraum-Schreibweise
+            (z. B. „Achillea millefolium aggr.") getroffen wurde. Fehlt bei
+            einem gewöhnlichen Treffer.
         sec:
           allOf:
             - $ref: '#/components/schemas/SecReference'

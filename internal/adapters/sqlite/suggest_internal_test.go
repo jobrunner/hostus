@@ -59,6 +59,63 @@ func TestFtsPrefixToken_TwoRuneBoundary(t *testing.T) {
 	}
 }
 
+// TestFtsPrefixToken_StripsAggregateMarker pins that the FTS query is
+// marker-insensitive: an aggregate spelling produces the same prefix token as
+// the bare base, so "Achillea millefolium agg./aggr./s.l." all search the base.
+func TestFtsPrefixToken_StripsAggregateMarker(t *testing.T) {
+	base := ftsPrefixToken("Achillea millefolium")
+	for _, q := range []string{
+		"Achillea millefolium agg.",
+		"Achillea millefolium aggr.",
+		"Achillea millefolium s. l.",
+	} {
+		if got := ftsPrefixToken(q); got != base {
+			t.Errorf("ftsPrefixToken(%q) = %q, want %q (same as the bare base)", q, got, base)
+		}
+	}
+}
+
+// TestSuggest_AggregateSpellingFindsConceptAndFlagsIt pins the two halves of
+// marker-insensitive aggregate suggest end to end: an aggregate spelling
+// (marker-stripped in the query) reaches the concept via its indexed aggregate
+// alias and the result carries Aggregate=true; a query matching only the
+// concept's own (non-aggregate) name carries Aggregate=false.
+func TestSuggest_AggregateSpellingFindsConceptAndFlagsIt(t *testing.T) {
+	db := openTestDB(t)
+	seedCorynephorusConcept(t, db) // c-corynephorus-canescens WITH its own name in FTS (is_aggregate=0)
+	seedFloraVegEntries(t, db)     // attaches "Festuca ovina aggr./s. l." aggregate aliases to it
+	ctx := context.Background()
+
+	find := func(q string) (domain.SuggestItem, bool) {
+		items, err := db.Suggest(ctx, q, output.SuggestOpts{Limit: 10})
+		if err != nil {
+			t.Fatalf("Suggest(%q): %v", q, err)
+		}
+		for _, it := range items {
+			if it.ConceptID == corynephorusID {
+				return it, true
+			}
+		}
+		return domain.SuggestItem{}, false
+	}
+
+	agg, ok := find("Festuca ovina agg.")
+	if !ok {
+		t.Fatal(`Suggest("Festuca ovina agg.") did not reach the concept via its aggregate alias`)
+	}
+	if !agg.Aggregate {
+		t.Error("Aggregate = false, want true (matched via an aggregate alias)")
+	}
+
+	own, ok := find("Corynephorus can")
+	if !ok {
+		t.Fatal(`Suggest("Corynephorus can") did not reach the concept via its own name`)
+	}
+	if own.Aggregate {
+		t.Error("Aggregate = true, want false (matched the concept's own non-aggregate name)")
+	}
+}
+
 // seedCorynephorusConcept ingests one accepted concept ("Corynephorus
 // canescens") with one synonym ("Weingaertneria canescens") and calls
 // Finalize, so tests can assert directly on fts_name/fts_name_map row

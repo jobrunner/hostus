@@ -85,7 +85,11 @@ func fetchBudget(limit int) int {
 // form). Returns "" if the canonicalized query is shorter than
 // minQueryRunes, signaling Suggest to skip the query entirely.
 func ftsPrefixToken(q string) string {
-	token := domain.Canonicalize(q)
+	// Strip any trailing aggregate marker so the marker SPELLING is irrelevant:
+	// "X agg.", "X aggr." and "X s.l." all search the base X (see
+	// domain.StripAggregateMarkers). Combined with the aggregate name-space
+	// aliases indexed at ingest, an aggregate query reliably reaches its taxon.
+	token := domain.StripAggregateMarkers(domain.Canonicalize(q))
 	if len([]rune(token)) < minQueryRunes {
 		return ""
 	}
@@ -153,7 +157,7 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 			FROM fts_name
 			WHERE fts_name MATCH ?
 		)
-		SELECT tc.id, an.canonical, an.rank, tc.status, MIN(m.score) AS score, ` + inAreaExpr + ` AS in_area, COALESCE(tc.sec_reference, '') AS sec_reference
+		SELECT tc.id, an.canonical, an.rank, tc.status, MIN(m.score) AS score, ` + inAreaExpr + ` AS in_area, COALESCE(tc.sec_reference, '') AS sec_reference, MAX(fnm.is_aggregate) AS aggregate
 		FROM matches m
 		JOIN fts_name_map fnm ON fnm.rowid = m.rowid
 		JOIN taxon_concept tc ON tc.id = fnm.concept_id
@@ -189,8 +193,8 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 func scanSuggestItem(scan func(dest ...any) error) (domain.SuggestItem, error) {
 	var item domain.SuggestItem
 	var rank, status string
-	var inArea int
-	if err := scan(&item.ConceptID, &item.Canonical, &rank, &status, &item.Score, &inArea, &item.SecReference); err != nil {
+	var inArea, aggregate int
+	if err := scan(&item.ConceptID, &item.Canonical, &rank, &status, &item.Score, &inArea, &item.SecReference, &aggregate); err != nil {
 		return domain.SuggestItem{}, err
 	}
 	r, err := domain.ParseRank(rank)
@@ -201,6 +205,7 @@ func scanSuggestItem(scan func(dest ...any) error) (domain.SuggestItem, error) {
 	item.Status = domain.ParseStatus(status)
 	item.Display = item.Canonical
 	item.InArea = inArea != 0
+	item.Aggregate = aggregate != 0
 	item.PrefixHit = true
 	return item, nil
 }

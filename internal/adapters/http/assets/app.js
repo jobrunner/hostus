@@ -167,7 +167,12 @@
       var isPrefix = fold(item.canonical).indexOf(needle) === 0;
       var tr = el("tr", "hit" + (isPrefix ? "" : " noprefix"));
       tr.appendChild(cell("td", i + 1, "num"));
-      tr.appendChild(cell("td", item.display || item.canonical, "name"));
+      var nameCell = cell("td", item.display || item.canonical, "name");
+      if (item.aggregate) {
+        nameCell.appendChild(document.createTextNode(" "));
+        nameCell.appendChild(badge("agg.", "neutral"));
+      }
+      tr.appendChild(nameCell);
       tr.appendChild(cell("td", item.rank));
 
       var acc = el("td");

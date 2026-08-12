@@ -39,6 +39,28 @@ func (t *ingestTx) AddNameSpaceEntry(conceptID string, e domain.NameSpaceEntry) 
 	if err != nil {
 		return fmt.Errorf("sqlite: adding name space entry %s:%s for concept %q: %w", e.Space, e.ExtID, conceptID, err)
 	}
+
+	// Index a RESOLVED aggregate spelling as an fts_name alias for its concept,
+	// flagged is_aggregate=1, so suggest finds the aggregate form and can badge
+	// the hit. Only aggregate-marked, resolved entries — an unresolved one has
+	// no concept to point at, and non-aggregate spellings are not suggest
+	// aliases here.
+	if e.Aggregate && conceptID != "" {
+		res, err := t.tx.ExecContext(t.ctx,
+			`INSERT INTO fts_name_map (concept_id, is_aggregate) VALUES (?, 1)`, conceptID)
+		if err != nil {
+			return fmt.Errorf("sqlite: indexing aggregate alias %s:%s: %w", e.Space, e.ExtID, err)
+		}
+		rowID, err := res.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("sqlite: reading aggregate alias rowid %s:%s: %w", e.Space, e.ExtID, err)
+		}
+		if _, err := t.tx.ExecContext(t.ctx,
+			`INSERT INTO fts_name (rowid, canonical, vernacular_de) VALUES (?, ?, '')`,
+			rowID, domain.Canonicalize(e.Name)); err != nil {
+			return fmt.Errorf("sqlite: indexing aggregate alias fts_name %s:%s: %w", e.Space, e.ExtID, err)
+		}
+	}
 	return nil
 }
 

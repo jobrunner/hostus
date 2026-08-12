@@ -127,6 +127,7 @@ func printIngestReport(w io.Writer, report application.IngestReport) {
 		_, _ = fmt.Fprintf(w, "  %s: names=%d concepts=%d synonyms=%d orphaned=%d\n",
 			b.ID, b.Names, b.Concepts, b.Synonyms, b.Orphaned)
 		printOtherRanksNotice(w, b)
+		printNomStatusNotice(w, b)
 		printRedistributionNotice(w, b.ID, b.Redistribution)
 	}
 }
@@ -139,6 +140,34 @@ func printIngestReport(w io.Writer, report application.IngestReport) {
 // mirroring printTraitReports' "unmatched sample" line below.
 func printOtherRanksNotice(w io.Writer, b application.BackboneReport) {
 	printOtherRanksLine(w, b.OtherRanks, b.OtherRankSample)
+}
+
+// printNomStatusNotice prints one "nom_status: ..." line carrying the four
+// publication-judgement totals (domain.ClassifyNomStatus over every synonym
+// row) plus a most-frequent-first sample of the values that fell through to
+// `unclassified`. It is the DRIFT SIGNAL from docs/explanation/known-gaps.md:
+// a WCVP bump that introduces a new status spelling shows up here as a rising
+// unclassified count instead of silently landing in `unclassified` and being
+// withheld unnoticed. Skipped for a backbone with no synonym rows at all
+// (total == 0), mirroring printOtherRanksLine's "other == 0" gate.
+func printNomStatusNotice(w io.Writer, b application.BackboneReport) {
+	total := b.NomStatusAbsent + b.NomStatusAcceptable + b.NomStatusDisqualifying + b.NomStatusUnclassified
+	if total == 0 {
+		return
+	}
+	line := fmt.Sprintf("    nom_status: absent=%d acceptable=%d disqualifying=%d unclassified=%d",
+		b.NomStatusAbsent, b.NomStatusAcceptable, b.NomStatusDisqualifying, b.NomStatusUnclassified)
+	if len(b.UnclassifiedNomStatusSample) > 0 {
+		// An unclassified verdict always normalizes to a non-empty value
+		// (an empty one is Absent), so — unlike printOtherRanksLine — no
+		// "(empty)" placeholder is needed here.
+		parts := make([]string, len(b.UnclassifiedNomStatusSample))
+		for i, rc := range b.UnclassifiedNomStatusSample {
+			parts[i] = fmt.Sprintf("%s %d", rc.Verbatim, rc.Count)
+		}
+		line += fmt.Sprintf(" (%s)", strings.Join(parts, ", "))
+	}
+	_, _ = fmt.Fprintln(w, line)
 }
 
 // printRedistributionNotice prints one "hinweis:" line for id if

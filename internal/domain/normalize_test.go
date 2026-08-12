@@ -196,6 +196,28 @@ func TestAddHybridMarker(t *testing.T) {
 	}
 }
 
+func TestStripAggregateMarkers(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "single marker stripped to base", in: "achillea millefolium aggr.", want: "achillea millefolium"},
+		{name: "agg. spelling stripped too", in: "achillea millefolium agg.", want: "achillea millefolium"},
+		{name: "spaced sensu lato stripped", in: "festuca ovina s. l.", want: "festuca ovina"},
+		{name: "stacked markers fully stripped", in: "agrostis capillaris aggr. s. l.", want: "agrostis capillaris"},
+		{name: "no marker is unchanged", in: "achillea millefolium", want: "achillea millefolium"},
+		{name: "sensu stricto is not a marker, unchanged", in: "festuca ovina s. str.", want: "festuca ovina s. str."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := domain.StripAggregateMarkers(tt.in); got != tt.want {
+				t.Errorf("StripAggregateMarkers(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAggregateBases(t *testing.T) {
 	tests := []struct {
 		name string

@@ -79,15 +79,33 @@ liefern: Ruht eine Regel auf einer im Feld nicht bestimmbaren Kleinart, ist die
 richtige Antwort **„nicht entscheidbar", nicht „Habitat nicht erfüllt"** — und
 genau diese Unterscheidung fällt derzeit aus.
 
-**Was es lösen würde:** das ESy-Regelwerk beschaffen und ingestieren. Es liegt
-auf **Zenodo unter CC BY 4.0** und ist damit — anders als die
-floraveg.eu-Downloads — lizenzrechtlich unproblematisch. Zu prüfen wäre, ob es
-maschinell in einen Regelvertrag überführbar ist (analog zur P8-Sondierung für
-Wisskirchen), inklusive der Frage, gegen welchen Namensraum die Regeln
-geschlüsselt sind und ob dieser mit dem hier ingestierten FloraVeg-Namensraum
-zusammenfällt.
+**Beschaffungs-/Machbarkeitsfrage: sondiert und geklärt (2026-08-12).** Die
+Sondierung [SP9-ESy-Spike](../research/sp9-esy-spike.md) hat alle drei offenen
+Punkte beantwortet — das war der Blocker, nicht das Feature selbst:
+- **Beschaffbar & Lizenz:** ein einzelner 1,6-MB-Textfile
+  (`EUNIS-ESy-2020-06-08.txt`) auf **Zenodo, DOI 10.5281/zenodo.3841729,
+  CC BY 4.0** — redistribuierbar, direkt per HTTP ladbar.
+- **Maschinell parsbar:** eine formale Grammatik in vier Abschnitten
+  (169 Artengruppen, 304 Habitat-Regeln), mit R-Referenzparser (Bruelheide et
+  al. 2021) — ein Parser-Task, kein Reverse-Engineering.
+- **Namensraum:** schlichte Binomiale, **66,4 % der ESy-Art-Namen liegen
+  verbatim** im ingestierten FloraVeg-Namensraum; der Rest überwiegend
+  Moose/Flechten (Scope) und Schreibvarianten (SP3-Crosswalk).
 
-**Bis dahin:** `esy_diagnostic_relevance` als „hier nicht entscheidbar"
-behandeln, nicht als negatives Urteil. `aggregate_policy` (baubar und
-gemessen) ist die verwertbare Hälfte von UC4 — siehe
+**Wichtige Scope-Grenze aus dem Spike:** eine volle ESy-Klassifikation
+(Aufnahme → Habitat) ist für einen Namensdienst **systembedingt unmöglich** —
+alle 304 Regeln brauchen Deckungswerte, 168 zusätzlich Standortdaten, die
+hostus (kennt einen Namen, keine Aufnahme) nicht hat. Die *beantwortbare*
+Frage „ist dieser Name im Regelwerk eine diagnostische Art?" hängt aber allein
+am Regelwerk.
+
+**Was es jetzt noch lösen würde (eigener SP, nicht mehr Sondierung):** die
+Datei als CC-BY-4.0-Quelle pinnen, SECTION 1–3 parsen, ESy-Arten per
+SP3-Crosswalk auf Konzepte abbilden und `esy_diagnostic_relevance` dreiwertig
+machen (`diagnostic`/`not_diagnostic`/`not_determinable`) — Umsetzungspfad im
+Spike-Dokument.
+
+**Bis dahin:** `esy_diagnostic_relevance` bleibt korrekt `not_determinable`
+(nicht „Habitat nicht erfüllt"). `aggregate_policy` (baubar und gemessen) ist
+die verwertbare Hälfte von UC4 — siehe
 [SP9-Verdikt](../research/sp9-uc4-verdict.md).

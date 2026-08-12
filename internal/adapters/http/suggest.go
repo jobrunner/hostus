@@ -30,6 +30,11 @@ type suggestItemDTO struct {
 	Status       string  `json:"status"`
 	InArea       bool    `json:"in_area"`
 	Score        float64 `json:"score"`
+	// Aggregate is true when the concept was reached via an aggregate
+	// name-space spelling (e.g. "Achillea millefolium aggr."); the console
+	// badges such hits. Omitted when false — the SP1/SP2 shape is unchanged
+	// for a plain hit.
+	Aggregate bool `json:"aggregate,omitempty"`
 	// Sec names the candidate's sec. reference space (id + title), present
 	// only for a sec-bearing (CDM) concept. Since CDM holds many concepts of
 	// the SAME name — one per reference work, all otherwise identical here
@@ -59,6 +64,7 @@ func suggestResponseToDTO(resp application.SuggestResponse) suggestResponseDTO {
 			Status:       string(item.Status),
 			InArea:       item.InArea,
 			Score:        item.Score,
+			Aggregate:    item.Aggregate,
 		}
 	}
 	return suggestResponseDTO{

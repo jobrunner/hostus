@@ -347,6 +347,14 @@ GET /v1/suggest?q=coryn&area=AUT
 `vernacular_de` ist Teil der DTO, wird aber nur ausgeliefert, wenn ein
 deutscher Trivialname für das Concept ingestiert wurde (`omitempty`).
 
+`aggregate` ist `true`, wenn das Concept über eine Aggregat-Namensraum-
+Schreibweise (z. B. „Achillea millefolium aggr.") getroffen wurde — der
+FTS-Query streift den Aggregat-Marker ab (`agg./aggr./s.l.` sind gleichwertig),
+und aufgelöste Aggregat-Schreibweisen sind als Aliase indexiert. Bei einem
+gewöhnlichen Treffer fehlt das Feld (`omitempty`). Da ein FloraVeg-Aggregat auf
+die Nominatart zeigt, ist der Treffer die Nominatart mit gesetztem `aggregate`,
+kein separater Aggregat-Eintrag.
+
 ## Trait-Endpunkt
 
 ### `GET /v1/concept/{id}/traits?vocab={vocab}`

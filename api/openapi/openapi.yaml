@@ -532,13 +532,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [sec_references]
-                properties:
-                  sec_references:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/SecReference'
+                $ref: '#/components/schemas/SecListResponse'
         '500':
           description: Interner Fehler (INTERNAL_ERROR).
           content:
@@ -940,6 +934,14 @@ components:
         title:
           type: string
           description: Zitation, sofern eine `sec_reference`-Zeile existiert.
+    SecListResponse:
+      type: object
+      required: [sec_references]
+      properties:
+        sec_references:
+          type: array
+          items:
+            $ref: '#/components/schemas/SecReference'
     TranslateSource:
       type: object
       required: [concept_id, canonical, rank, sec]

@@ -9,7 +9,7 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Added (OpenAPI — deterministischer Schema-Inhalt-Check)
 - **`TestOpenAPISchemasMatchDTOs`** (`internal/adapters/http`) reflektiert über
-  jeden Request/Response-DTO und gleicht **rekursiv** jedes der 27
+  jeden Request/Response-DTO und gleicht **rekursiv** jedes der 28
   Component-Schemas ab: Property-Namen, required-Status (`omitempty` ⇔
   `required`), Skalartypen, Array-Element-/Map-Wert-Typen und die
   `$ref`/Inline-Objekt-Verschachtelung. Damit ist neben Pfad+Methode nun auch

@@ -34,8 +34,10 @@ verifiziert. Volle Codegenerierung (Spec aus Routen/Handlern) hätte einen
 bespoke Generator oder eine zusätzliche Abhängigkeit gebraucht, was mit der
 „keine schweren Deps"-Regel kollidiert; sie bliebe ein eigener SP, falls über
 die Drift-Sicherung hinaus gewünscht. Nicht geprüft (bewusst, kein Struktur-
-Drift): Enum-Wertlisten, Descriptions/Examples und Format-Hinweise — Prosa, kein
-Vertrag.
+Drift): Enum-Wertlisten, `nullable`, Descriptions/Examples und Format-Hinweise —
+`nullable` fällt zudem mit der `omitempty`⇔required-Regel zusammen (ein
+`*string` ohne `omitempty` bleibt JSON-`string`). Prosa/Feinheiten, kein
+Struktur-Vertrag.
 
 ## `telemetry`- und `sqlite`-Mutation laufen nicht im Per-PR-Gate (7-GB-Runner-OOM)
 

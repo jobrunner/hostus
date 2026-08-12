@@ -44,6 +44,7 @@ func TestOpenAPISchemasMatchDTOs(t *testing.T) {
 		"SynonymsResponse":       reflect.TypeOf(synonymsResponseDTO{}),
 		"TranslateRequest":       reflect.TypeOf(translateRequestDTO{}),
 		"SecReference":           reflect.TypeOf(secReferenceDTO{}),
+		"SecListResponse":        reflect.TypeOf(secListResponseDTO{}),
 		"TranslateSource":        reflect.TypeOf(translateSourceDTO{}),
 		"TranslateEntry":         reflect.TypeOf(translateEntryDTO{}),
 		"RelationStatement":      reflect.TypeOf(relationStatementDTO{}),
@@ -132,6 +133,13 @@ func compareStructToSchema(t *testing.T, path string, goType reflect.Type, s *js
 	goType = deref(goType)
 	if goType.Kind() != reflect.Struct {
 		t.Errorf("%s: OpenAPI says object but the Go type is %s", path, goType.Kind())
+		return
+	}
+	// An object schema must actually declare type: object (or leave it implicit
+	// via properties). A schema mistyped as array/string while carrying
+	// properties would otherwise be compared as a struct and pass.
+	if s.Type != "" && s.Type != "object" {
+		t.Errorf("%s: mapped to a struct but schema declares type %q, not object", path, s.Type)
 		return
 	}
 

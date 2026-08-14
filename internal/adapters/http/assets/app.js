@@ -75,12 +75,25 @@
     return s.length > n ? s.slice(0, n - 1) + "\u2026" : s;
   }
 
-  /* Eine Tabellenzelle fuer einen sec.-Raum: gekuerzter Titel, voller Titel als
-     Tooltip; \u201e\u2013\u201c fuer ein Konzept ohne sec.-Raum (WCVP). */
-  function secTd(sec) {
-    var td = cell("td", sec ? truncate(sec.title, 28) : "\u2013", "sec");
-    if (sec) { td.title = sec.title; }
-    return td;
+  /* Herkunft eines Konzepts OHNE sec.-Raum, aus der concept_id abgeleitet:
+     ein WCVP-Backbone-Konzept oder ein CDM-Konzept, dem der sec fehlt. */
+  function secSource(conceptId) {
+    var pfx = String(conceptId || "").split(":")[0];
+    if (pfx === "wcvp") { return "WCVP"; }
+    if (pfx === "cdm") { return "CDM (ohne sec.)"; }
+    return "\u2013";
+  }
+
+  /* Eine Tabellenzelle fuer einen sec.-Raum: gekuerzter Titel (voller Titel als
+     Tooltip). Fehlt der sec.-Raum, wird stattdessen die Herkunft benannt (WCVP
+     bzw. \u201eCDM (ohne sec.)\u201c), damit klar ist, welches Konzept gemeint ist. */
+  function secTd(sec, conceptId) {
+    if (sec) {
+      var td = cell("td", truncate(sec.title, 28), "sec");
+      td.title = sec.title;
+      return td;
+    }
+    return cell("td", secSource(conceptId), "sec source");
   }
 
   /* ---------- Feld-Erlaeuterungen (eine Textquelle fuer Tooltip UND Legende) ---------- */
@@ -93,7 +106,7 @@
     score: "Roher SQLite-FTS5-bm25()-Wert des Treffers. Niedriger = relevanter (ein Distanzmass, keine Aehnlichkeit).",
     prefix: "Ob der ANGEZEIGTE (akzeptierte) Name mit deiner Eingabe BEGINNT (links-verankert, normalisiert). \u201enein\u201c = der Treffer kam ueber einen anderen indexierten Namen: ein Synonym, eine Aggregat-Schreibweise oder einen spaeteren Token.",
     aggregate: "Das Konzept wurde ueber eine Aggregat-Schreibweise (agg./aggr./s.l.) getroffen. Da FloraVeg-Aggregate auf die Nominatart zeigen, wird die Nominatart mit diesem Badge angezeigt.",
-    sec: "sec.-Referenzraum (\u201esecundum\u201c): die Flora/Checkliste, deren Umschreibung dieses Konzept meint. Unterscheidet gleichnamige CDM-Konzepte (Common Data Model, die Cybertaxonomy-/EDIT-Plattform mit den Wisskirchen-Konzeptbeziehungen) voneinander; bei WCVP (World Checklist of Vascular Plants) leer.",
+    sec: "sec.-Referenzraum (\u201esecundum\u201c): die Flora/Checkliste, deren Umschreibung dieses Konzept meint. Unterscheidet gleichnamige CDM-Konzepte (Common Data Model, die Cybertaxonomy-/EDIT-Plattform mit den Wisskirchen-Konzeptbeziehungen) voneinander. Hat ein Konzept keinen sec.-Raum, steht dort die Herkunft: WCVP (World Checklist of Vascular Plants) als Backbone-Konzept, oder CDM (ohne sec.) bei den seltenen CDM-Konzepten ohne sec.",
     // Panel 2 \u2013 Konzept & Synonyme
     publishable: "Darf dieser Synonym-Name in einer veroeffentlichten Synonymliste des Taxons stehen? ja = nomenklatorisch unbedenklich (kein disqualifizierender Status, Rang nicht ausgeschlossen); nein = zurueckgehalten \u2014 Grund in nom_status/Begruendung.",
     nom_status: "Nomenklatorischer Status aus der Quelle (z. B. nom. illeg., not validly publ., superfl., nom. nud.). Grundlage der Publikationsrelevanz.",
@@ -310,7 +323,7 @@
         nameCell.appendChild(badge("agg.", "neutral"));
       }
       tr.appendChild(nameCell);
-      tr.appendChild(secTd(item.sec));
+      tr.appendChild(secTd(item.sec, item.concept_id));
       tr.appendChild(cell("td", item.rank));
 
       var acc = el("td");
@@ -567,7 +580,7 @@
         ["Kanonisch", c.canonical],
         ["Rang", c.rank + (c.rank_verbatim ? " (verbatim: " + c.rank_verbatim + ")" : ""), "rank"],
         ["Status", c.status],
-        ["sec.", c.sec ? c.sec.title : null, "sec"],
+        ["sec.", c.sec ? c.sec.title : secSource(c.concept_id), "sec"],
         ["Backbone", c.backbone ? c.backbone.id + " @ " + c.backbone.version : "", "backbone"]
       ]));
       out.appendChild(renderClassification(c.classification));
@@ -672,7 +685,7 @@
     cands.forEach(function (c) {
       var tr = el("tr");
       tr.appendChild(cell("td", c.canonical + (c.authorship ? " " + c.authorship : ""), "name"));
-      tr.appendChild(secTd(c.sec));
+      tr.appendChild(secTd(c.sec, c.concept_id));
       tr.appendChild(cell("td", c.stored_relation));
       tr.appendChild(cell("td", c.direction));
       var rel = el("td");
@@ -729,7 +742,7 @@
       names.forEach(function (n) {
         var tr = el("tr");
         tr.appendChild(cell("td", n.canonical + (n.authorship ? " " + n.authorship : ""), "name"));
-        tr.appendChild(secTd(n.sec));
+        tr.appendChild(secTd(n.sec, n.concept_id));
         tr.appendChild(cell("td", n.rank));
         tbody.appendChild(tr);
       });

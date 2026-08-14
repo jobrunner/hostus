@@ -142,3 +142,6 @@ th .info, dt .info { font-weight: normal; }
 
 /* sec.-Spalte in Panel 1: gekürzt, voller Titel als Tooltip (title-Attribut) */
 td.sec { max-width: 15rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+
+/* Herkunfts-Fallback in der sec.-Spalte (WCVP / CDM ohne sec.) kursiv */
+td.sec.source { font-style: italic; }

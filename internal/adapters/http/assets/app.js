@@ -75,6 +75,14 @@
     return s.length > n ? s.slice(0, n - 1) + "\u2026" : s;
   }
 
+  /* Eine Tabellenzelle fuer einen sec.-Raum: gekuerzter Titel, voller Titel als
+     Tooltip; \u201e\u2013\u201c fuer ein Konzept ohne sec.-Raum (WCVP). */
+  function secTd(sec) {
+    var td = cell("td", sec ? truncate(sec.title, 28) : "\u2013", "sec");
+    if (sec) { td.title = sec.title; }
+    return td;
+  }
+
   /* ---------- Feld-Erlaeuterungen (eine Textquelle fuer Tooltip UND Legende) ---------- */
 
   var FIELD_DOCS = {
@@ -301,9 +309,7 @@
         nameCell.appendChild(badge("agg.", "neutral"));
       }
       tr.appendChild(nameCell);
-      var secCell = cell("td", item.sec ? truncate(item.sec.title, 28) : "–", "sec");
-      if (item.sec) { secCell.title = item.sec.title; } // voller Titel beim Hovern
-      tr.appendChild(secCell);
+      tr.appendChild(secTd(item.sec));
       tr.appendChild(cell("td", item.rank));
 
       var acc = el("td");
@@ -660,12 +666,12 @@
   }
 
   function renderCandidates(cands) {
-    var t = table(["Name", "sec.", "gespeicherte Relation", "Richtung", "aus Quellsicht", "Aussage", "Gleichheit", "Hops"]);
+    var t = table(["Name", ["sec.", "sec"], "gespeicherte Relation", "Richtung", "aus Quellsicht", "Aussage", "Gleichheit", "Hops"]);
     var tbody = t.tBodies[0];
     cands.forEach(function (c) {
       var tr = el("tr");
       tr.appendChild(cell("td", c.canonical + (c.authorship ? " " + c.authorship : ""), "name"));
-      tr.appendChild(cell("td", c.sec ? c.sec.id : "–"));
+      tr.appendChild(secTd(c.sec));
       tr.appendChild(cell("td", c.stored_relation));
       tr.appendChild(cell("td", c.direction));
       var rel = el("td");
@@ -696,7 +702,7 @@
     var body = res.body || {};
     var head = el("div");
     head.appendChild(el("p", null,
-      "Zielraum " + (body.target_space ? body.target_space.id : target) +
+      "Zielraum " + (body.target_space ? (body.target_space.title || body.target_space.id) : target) +
       "  ·  max_hops " + body.max_hops +
       "  ·  " + (body.requires_review ? "Prüfung nötig" : "keine Prüfung nötig")));
     translateOut.appendChild(head);
@@ -717,12 +723,12 @@
       translateOut.appendChild(el("h3", null, "Namensgleiche Konzepte — NICHT relational"));
       translateOut.appendChild(el("p", "hint",
         "Nur zur Sichtprüfung: gleicher Name im Zielraum, ohne erfasste Relation. Keine Übersetzung."));
-      var t = table(["Name", "sec.", "Rang"]);
+      var t = table(["Name", ["sec.", "sec"], ["Rang", "rank"]]);
       var tbody = t.tBodies[0];
       names.forEach(function (n) {
         var tr = el("tr");
         tr.appendChild(cell("td", n.canonical + (n.authorship ? " " + n.authorship : ""), "name"));
-        tr.appendChild(cell("td", n.sec ? n.sec.id : "–"));
+        tr.appendChild(secTd(n.sec));
         tr.appendChild(cell("td", n.rank));
         tbody.appendChild(tr);
       });

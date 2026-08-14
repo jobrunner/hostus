@@ -7,6 +7,22 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Fixed (Dev-Umgebung: lokales `make mutation` bricht nicht mehr ab)
+- **Go im Flake auf 1.26.6 gepinnt + `GOTOOLCHAIN=local`.** nixpkgs' `go_1_26`
+  liefert 1.26.3; die go.mod-Direktive `toolchain go1.26.6` ließ jeden
+  go-Aufruf per `GOTOOLCHAIN=auto` das 1.26.6-Toolchain nachladen und in einen
+  re-exec'ten Prozess springen. Dieser Kindprozess erbt `GOPATH`/`GOMODCACHE`
+  **nicht** und legt einen **read-only** Modul-Cache unter `$PWD/.go` an.
+  gremlins (mutation testing) kopiert pro Mutant das komplette Modulverzeichnis
+  — inklusive `.go` — in ein temporäres Workdir; die read-only Verzeichnisse
+  brechen den Kopiervorgang mit `permission denied` ab (`gremlins@v0.5.1`
+  `workdir.go`, `os.Mkdir(dst, mode)`), sodass `make mutation` lokal panickte.
+  Das Flake pinnt go nun via `overrideAttrs` direkt auf 1.26.6 (kein Re-Exec
+  nötig, lokal dieselbe Version wie CI) und setzt `GOTOOLCHAIN=local`, sodass
+  `$PWD/.go` gar nicht mehr entsteht. Verifiziert: `make mutation
+  PKG=./internal/adapters/sqlite` läuft grün (`Not covered = 0`, 319 Mutanten).
+  CI ist unberührt (nutzt `setup-go`/`go-version-file`, nicht das Flake).
+
 ### Security (Go-Toolchain 1.26.5 → 1.26.6)
 - **`toolchain go1.26.6` in `go.mod`** behebt sechs von govulncheck gemeldete
   Standardbibliothek-Schwachstellen, alle in go1.26.6 gefixt: GO-2026-6218

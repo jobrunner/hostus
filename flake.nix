@@ -11,8 +11,22 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
-        # Go Version (aktuell stabil)
-        go = pkgs.go_1_26;
+        # Go Version. nixpkgs' go_1_26 hinkt der oberen Patch-Version hinterher
+        # (aktuell 1.26.3); go.mod verlangt via `toolchain go1.26.6` aber 1.26.6
+        # (CVE-Fixes, siehe CHANGELOG). Ohne Override würde `GOTOOLCHAIN=auto`
+        # bei jedem go-Aufruf das 1.26.6-Toolchain nachladen und dabei einen
+        # read-only Modul-Cache unter `$PWD/.go` anlegen — den gremlins
+        # (mutation testing) pro Mutant mitkopiert, was den Kopiervorgang mit
+        # „permission denied" abbricht. Wir pinnen daher go direkt auf 1.26.6:
+        # kein Toolchain-Re-Exec, kein `$PWD/.go`, und lokal dieselbe Version
+        # wie in CI (setup-go via go.mod).
+        go = pkgs.go_1_26.overrideAttrs (old: {
+          version = "1.26.6";
+          src = pkgs.fetchurl {
+            url = "https://go.dev/dl/go1.26.6.src.tar.gz";
+            hash = "sha256-oHIcVMaIkBRI13rZs+x+p8R0cwdV/4kTgukuy5P/LLE=";
+          };
+        });
 
         # Entwicklungswerkzeuge
         devTools = with pkgs; [
@@ -60,6 +74,17 @@
             # read-only (Modus 0444); eine Kopie davon innerhalb des Repos brach
             # diesen Kopiervorgang. Ablage unter XDG_CACHE_HOME entspricht zudem
             # dem üblichen Go-Setup.
+            # GOTOOLCHAIN=local: den mit dem Flake gepinnten go (1.26.6, s.o.)
+            # verwenden und NIEMALS ein Toolchain per go.mod-`toolchain`-Direktive
+            # nachladen/hineinspringen. Der Re-Exec in ein heruntergeladenes
+            # Toolchain erbt GOPATH/GOMODCACHE NICHT und legt einen read-only
+            # Modul-Cache unter `$PWD/.go` an — genau der Baum, den gremlins pro
+            # Mutant mitkopiert und an dem der Kopiervorgang mit „permission
+            # denied" scheitert. Mit `local` bleibt der Cache extern (s.u.), und
+            # `$PWD/.go` entsteht gar nicht erst. Verlangt go.mod je ein neueres
+            # Toolchain als das gepinnte, bricht go bewusst ab (Signal: Flake-Pin
+            # anheben) statt still ein In-Tree-Cache-Verzeichnis anzulegen.
+            export GOTOOLCHAIN=local
             export GOPATH="''${XDG_CACHE_HOME:-$HOME/.cache}/hostus/go"
             export GOBIN="$GOPATH/bin"
             export PATH="$GOBIN:$PATH"

@@ -113,18 +113,40 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 	// LIMIT budget.
 	args := []any{match}
 
+	// in_area is a POSITIVE presence test (distribution is presence data): the
+	// concept's own distribution intersects the area, OR — for a concept with
+	// no distribution of its own (the CDM sec. concepts) — the SAME accepted
+	// name occurs (accepted or as a synonym) on a WCVP concept that is in the
+	// area. A false result means "no positive evidence", never "absent". The
+	// codes are bound twice (own EXISTS, then the name fallback). Built inline
+	// with a literal-format Sprintf so gosec sees the SQL is not tainted.
 	codes := areaCodes(opts.Area)
 	inAreaExpr := "0"
 	if len(codes) != 0 {
-		placeholders := make([]string, len(codes))
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(codes)), ",")
+		codeArgs := make([]any, len(codes))
 		for i, c := range codes {
-			placeholders[i] = "?"
-			args = append(args, c)
+			codeArgs[i] = c
 		}
-		inAreaExpr = fmt.Sprintf(`EXISTS (
-			SELECT 1 FROM distribution d
-			WHERE d.concept_id = tc.id AND d.area_scheme = 'wgsrpd_l3' AND d.area_code IN (%s)
-		)`, strings.Join(placeholders, ","))
+		args = append(args, codeArgs...)
+		args = append(args, codeArgs...)
+		inAreaExpr = fmt.Sprintf(`(
+			EXISTS (
+				SELECT 1 FROM distribution d
+				WHERE d.concept_id = tc.id AND d.area_scheme = 'wgsrpd_l3' AND d.area_code IN (%s)
+			)
+			OR (
+				NOT EXISTS (SELECT 1 FROM distribution d0 WHERE d0.concept_id = tc.id)
+				AND EXISTS (
+					SELECT 1 FROM name wn
+					JOIN concept_name wcn ON wcn.name_id = wn.id
+					JOIN taxon_concept wtc ON wtc.id = wcn.concept_id AND wtc.backbone_id = 'wcvp'
+					JOIN distribution wd ON wd.concept_id = wtc.id
+					WHERE wn.canonical_fold = an.canonical_fold
+					  AND wd.area_scheme = 'wgsrpd_l3' AND wd.area_code IN (%s)
+				)
+			)
+		)`, ph, ph)
 	}
 
 	rankFilter := ""

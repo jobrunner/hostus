@@ -309,6 +309,14 @@ leer (auch nur Leerzeichen), liefert der Endpunkt `400 INVALID_QUERY`.
   liefern `400 INVALID_QUERY`; ein leerer oder `<= 0` Wert verwendet den
   serverseitigen Standardwert.
 
+`in_area` ist ein **positiver** Verbreitungsbeleg, kein Ja/Nein: `true`, wenn
+das Concept selbst im Gebiet verbreitet ist ODER — bei Concepts ohne eigene
+Distribution (die CDM-`sec.`-Concepts) — derselbe akzeptierte Name bei WCVP
+(akzeptiert oder als Synonym) im Gebiet vorkommt. `false` bedeutet **nicht**
+„kommt dort nicht vor", sondern nur „kein positiver Beleg" — Distribution ist
+Präsenz-Daten, ein fehlender Eintrag ist keine belegte Abwesenheit. Die
+Testkonsole zeigt `false` deshalb als „keine Angabe", nie als „nein".
+
 Die Priorisierung folgt §B.1: Präfix-Treffer vor Nicht-Treffer, im
 angefragten Gebiet vor nicht im Gebiet, akzeptiert vor Synonym, breitere vor
 feineren Rängen (FAMILY/GENUS vor SPECIES vor SUBSPECIES/VARIETY/FORM),

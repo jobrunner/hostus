@@ -23,7 +23,7 @@
     </div>
     <div class="field">
       <label for="suggest-area">Gebiet (Name oder Code)</label>
-      <input id="suggest-area" type="text" list="areas" spellcheck="false" autocomplete="off" placeholder="z. B. Germany oder GER">
+      <input id="suggest-area" type="search" list="areas" spellcheck="false" autocomplete="off" placeholder="z. B. Germany oder GER">
       <datalist id="areas"></datalist>
     </div>
     <div class="field">
@@ -36,7 +36,7 @@
   <div class="summary" id="suggest-summary"></div>
   <div class="scroll"><table id="suggest-table">
     <thead><tr>
-      <th>#</th><th>Name</th><th>Rang</th><th>Akzeptiert</th><th>im Gebiet</th><th>Score</th><th>Pr&auml;fix</th>
+      <th>#</th><th>Name</th><th data-doc="sec">sec.</th><th data-doc="rank">Rang</th><th data-doc="accepted">Akzeptiert</th><th data-doc="in_area">im Gebiet</th><th data-doc="score">Score</th><th data-doc="prefix">Pr&auml;fix</th>
     </tr></thead>
     <tbody id="suggest-body"></tbody>
   </table></div>
@@ -65,7 +65,7 @@
   <div class="controls">
     <div class="field grow">
       <label for="translate-target">Ziel-<em>sec.</em>-Raum (target_space)</label>
-      <input id="translate-target" type="text" list="sec-spaces" spellcheck="false" autocomplete="off" placeholder="sec.-Raum wählen oder id eintippen">
+      <input id="translate-target" type="search" list="sec-spaces" spellcheck="false" autocomplete="off" placeholder="sec.-Raum wählen oder id eintippen">
       <datalist id="sec-spaces"></datalist>
     </div>
     <div class="field">

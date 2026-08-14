@@ -19,11 +19,17 @@
     return node;
   }
 
+  // A header entry is either a plain string, or [label, docKey] to attach a
+  // hover explanation (ⓘ) — see FIELD_DOCS.
   function table(headers) {
     var t = el("table");
     var thead = el("thead");
     var tr = el("tr");
-    headers.forEach(function (h) { tr.appendChild(cell("th", h)); });
+    headers.forEach(function (h) {
+      var th = el("th");
+      if (Array.isArray(h)) { withDoc(th, h[0], h[1]); } else { th.textContent = h; }
+      tr.appendChild(th);
+    });
     thead.appendChild(tr);
     t.appendChild(thead);
     t.appendChild(el("tbody"));
@@ -40,12 +46,15 @@
     return el("span", "badge " + kind, text);
   }
 
+  // A pair is [label, value] or [label, value, docKey] for a hover explanation.
   function dl(pairs) {
     var d = el("dl", "kv");
     pairs.forEach(function (p) {
       if (p[1] === undefined || p[1] === null || p[1] === "") { return; }
       var row = el("div");
-      row.appendChild(cell("dt", p[0]));
+      var dt = el("dt");
+      if (p[2]) { withDoc(dt, p[0], p[2]); } else { dt.textContent = p[0]; }
+      row.appendChild(dt);
       row.appendChild(cell("dd", p[1]));
       d.appendChild(row);
     });
@@ -59,6 +68,110 @@
   /* Diakritika-tolerante Kleinschreibung fuer den Praefixvergleich. */
   function fold(s) {
     return String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  }
+
+  function truncate(s, n) {
+    s = String(s || "");
+    return s.length > n ? s.slice(0, n - 1) + "\u2026" : s;
+  }
+
+  /* Herkunft eines Konzepts OHNE sec.-Raum, aus der concept_id abgeleitet:
+     ein WCVP-Backbone-Konzept oder ein CDM-Konzept, dem der sec fehlt. */
+  function secSource(conceptId) {
+    var pfx = String(conceptId || "").split(":")[0];
+    if (pfx === "wcvp") { return "WCVP"; }
+    if (pfx === "cdm") { return "CDM (ohne sec.)"; }
+    return "\u2013";
+  }
+
+  /* Eine Tabellenzelle fuer einen sec.-Raum: gekuerzter Titel (voller Titel als
+     Tooltip). Fehlt der sec.-Raum, wird stattdessen die Herkunft benannt (WCVP
+     bzw. \u201eCDM (ohne sec.)\u201c), damit klar ist, welches Konzept gemeint ist. */
+  function secTd(sec, conceptId) {
+    // A missing OR empty-title sec falls back to the concept origin. Translate's
+    // DTOs carry sec as a non-omitempty value object, so `sec` is truthy even
+    // when the concept has no sec space; only a non-empty title is a real sec.
+    if (sec && sec.title) {
+      var td = cell("td", truncate(sec.title, 28), "sec");
+      td.title = sec.title;
+      return td;
+    }
+    return cell("td", secSource(conceptId), "sec source");
+  }
+
+  /* ---------- Feld-Erlaeuterungen (eine Textquelle fuer Tooltip UND Legende) ---------- */
+
+  var FIELD_DOCS = {
+    // Panel 1 \u2013 Suggest
+    rank: "Taxonomischer Rang des Treffers (FAMILY/GENUS/SPECIES/SUBSPECIES; sonst OTHER, dann steht die Rohschreibweise als rank_verbatim daneben).",
+    accepted: "Ob das Konzept selbst der akzeptierte Name ist (ja) oder ein Synonym, das auf ein akzeptiertes Konzept aufgeloest wurde.",
+    in_area: "Positiver Verbreitungsbeleg fuers Gebiet: „ja“, wenn das Konzept selbst dort verbreitet ist ODER derselbe Name bei WCVP (der Verbreitungs-Autoritaet, akzeptiert oder Synonym) dort vorkommt. Sonst „keine Angabe“ — Verbreitung ist Praesenz-Daten, ein fehlender Eintrag ist keine belegte Abwesenheit (deshalb nie „nein“). Ohne area-Parameter immer „keine Angabe“.",
+    score: "Roher SQLite-FTS5-bm25()-Wert des Treffers. Niedriger = relevanter (ein Distanzmass, keine Aehnlichkeit).",
+    prefix: "Ob der ANGEZEIGTE (akzeptierte) Name mit deiner Eingabe BEGINNT (links-verankert, normalisiert). \u201enein\u201c = der Treffer kam ueber einen anderen indexierten Namen: ein Synonym, eine Aggregat-Schreibweise oder einen spaeteren Token.",
+    aggregate: "Das Konzept wurde ueber eine Aggregat-Schreibweise (agg./aggr./s.l.) getroffen. Da FloraVeg-Aggregate auf die Nominatart zeigen, wird die Nominatart mit diesem Badge angezeigt.",
+    sec: "sec.-Referenzraum (\u201esecundum\u201c): die Flora/Checkliste, deren Umschreibung dieses Konzept meint. Unterscheidet gleichnamige CDM-Konzepte (Common Data Model, die Cybertaxonomy-/EDIT-Plattform mit den Wisskirchen-Konzeptbeziehungen) voneinander. Hat ein Konzept keinen sec.-Raum, steht dort die Herkunft: WCVP (World Checklist of Vascular Plants) als Backbone-Konzept, oder CDM (ohne sec.) bei den seltenen CDM-Konzepten ohne sec.",
+    // Panel 2 \u2013 Konzept & Synonyme
+    publishable: "Darf dieser Synonym-Name in einer veroeffentlichten Synonymliste des Taxons stehen? ja = nomenklatorisch unbedenklich (kein disqualifizierender Status, Rang nicht ausgeschlossen); nein = zurueckgehalten \u2014 Grund in nom_status/Begruendung.",
+    nom_status: "Nomenklatorischer Status aus der Quelle (z. B. nom. illeg., not validly publ., superfl., nom. nud.). Grundlage der Publikationsrelevanz.",
+    typification: "Art der Synonymie: homotypisch (gleicher nomenklatorischer Typus \u2014 objektiv) oder heterotypisch (anderer Typus \u2014 ein taxonomisches Urteil).",
+    basionym: "Ob der Name das Basionym ist: der zuerst gueltig veroeffentlichte Name, auf dem spaetere Umkombinationen beruhen.",
+    reason: "Nachvollziehbare Begruendung, warum ein Synonym publizierbar ist oder zurueckgehalten wurde.",
+    backbone: "Herkunfts-Backbone des Konzepts und dessen Version. wcvp = World Checklist of Vascular Plants (Kew); cdm = Common Data Model (Cybertaxonomy-/EDIT-Plattform, hier die Wisskirchen-Konzeptbeziehungen).",
+    // Panel 3 \u2013 Match
+    match_type: "Wie der verbatim-Name aufgeloest wurde: exact, exact_author, aggregate_alias oder fuzzy \u2014 oder unresolvable, wenn keine Zuordnung moeglich war.",
+    confidence: "Konfidenz der Aufloesung (0\u20131). Hoeher = sicherer.",
+    requires_review: "Ob die Aufloesung eine manuelle Pruefung braucht (etwa bei fuzzy oder Mehrdeutigkeit)."
+  };
+
+  /* Haengt an ein Label-Element (th/dt) einen dezenten Hinweis mit Tooltip. */
+  function withDoc(node, labelText, docKey) {
+    node.appendChild(document.createTextNode(labelText));
+    var doc = FIELD_DOCS[docKey];
+    if (doc) {
+      var info = el("span", "info", "\u24d8");
+      info.title = doc;
+      node.appendChild(document.createTextNode(" "));
+      node.appendChild(info);
+    }
+    return node;
+  }
+
+  /* Reichert statische [data-doc]-Ueberschriften (index.html) mit dem Hinweis an. */
+  function enhanceDocs(root) {
+    var nodes = root.querySelectorAll("[data-doc]");
+    Array.prototype.forEach.call(nodes, function (n) {
+      if (n.querySelector(".info")) { return; } // schon angereichert
+      var label = n.textContent;
+      n.textContent = "";
+      withDoc(n, label, n.getAttribute("data-doc"));
+    });
+  }
+
+  // Welche Felder je Panel in der Legende erklaert werden.
+  var PANEL_LEGENDS = {
+    "panel-suggest": ["prefix", "aggregate", "sec", "rank", "accepted", "in_area", "score"],
+    "panel-concept": ["sec", "backbone", "publishable", "nom_status", "typification", "basionym", "reason"],
+    "panel-match": ["match_type", "confidence", "requires_review"]
+  };
+
+  /* Haengt je Panel eine aufklappbare \u201eFelder erklaert\u201c-Liste ans Section-Ende. */
+  function buildLegends() {
+    Object.keys(PANEL_LEGENDS).forEach(function (pid) {
+      var section = byId(pid);
+      if (!section || section.querySelector(".legend")) { return; }
+      var det = el("details", "legend");
+      det.appendChild(el("summary", null, "Felder erkl\u00e4rt"));
+      var d = el("dl", "kv");
+      PANEL_LEGENDS[pid].forEach(function (k) {
+        if (!FIELD_DOCS[k]) { return; }
+        var row = el("div");
+        row.appendChild(cell("dt", k));
+        row.appendChild(cell("dd", FIELD_DOCS[k]));
+        d.appendChild(row);
+      });
+      det.appendChild(d);
+      section.appendChild(det);
+    });
   }
 
   /* ---------- API ---------- */
@@ -213,6 +326,7 @@
         nameCell.appendChild(badge("agg.", "neutral"));
       }
       tr.appendChild(nameCell);
+      tr.appendChild(secTd(item.sec, item.concept_id));
       tr.appendChild(cell("td", item.rank));
 
       var acc = el("td");
@@ -220,7 +334,7 @@
       tr.appendChild(acc);
 
       var area = el("td");
-      area.appendChild(item.in_area ? badge("ja", "ok") : badge("nein", "neutral"));
+      area.appendChild(item.in_area ? badge("ja", "ok") : badge("keine Angabe", "neutral"));
       tr.appendChild(area);
 
       tr.appendChild(cell("td", num(item.score, 3), "num"));
@@ -417,7 +531,7 @@
       box.appendChild(el("p", "empty", "Keine publikationsrelevanten Synonyme."));
       return box;
     }
-    var t = table(["#", "Name", "Autor", "Rang", "Typisierung", "Basionym", "publizierbar", "nom_status", "Begründung"]);
+    var t = table(["#", "Name", "Autor", ["Rang", "rank"], ["Typisierung", "typification"], ["Basionym", "basionym"], ["publizierbar", "publishable"], ["nom_status", "nom_status"], ["Begründung", "reason"]]);
     var tbody = t.tBodies[0];
     syns.forEach(function (d) {
       var tr = el("tr");
@@ -467,9 +581,10 @@
         ["concept_id", c.concept_id],
         ["Anzeige", c.display],
         ["Kanonisch", c.canonical],
-        ["Rang", c.rank + (c.rank_verbatim ? " (verbatim: " + c.rank_verbatim + ")" : "")],
+        ["Rang", c.rank + (c.rank_verbatim ? " (verbatim: " + c.rank_verbatim + ")" : ""), "rank"],
         ["Status", c.status],
-        ["Backbone", c.backbone ? c.backbone.id + " @ " + c.backbone.version : ""]
+        ["sec.", c.sec && c.sec.title ? c.sec.title : secSource(c.concept_id), "sec"],
+        ["Backbone", c.backbone ? c.backbone.id + " @ " + c.backbone.version : "", "backbone"]
       ]));
       out.appendChild(renderClassification(c.classification));
       out.appendChild(renderXrefs(c.xrefs));
@@ -494,7 +609,7 @@
       return;
     }
     var results = (res.body && res.body.results) || [];
-    var t = table(["#", "Verbatim", "Einstufung", "Konfidenz", "Prüfung", "concept_id", "Kandidaten", "Notiz"]);
+    var t = table(["#", "Verbatim", ["Einstufung", "match_type"], ["Konfidenz", "confidence"], ["Prüfung", "requires_review"], "concept_id", "Kandidaten", "Notiz"]);
     var tbody = t.tBodies[0];
     results.forEach(function (r, i) {
       var tr = el("tr");
@@ -568,12 +683,12 @@
   }
 
   function renderCandidates(cands) {
-    var t = table(["Name", "sec.", "gespeicherte Relation", "Richtung", "aus Quellsicht", "Aussage", "Gleichheit", "Hops"]);
+    var t = table(["Name", ["sec.", "sec"], "gespeicherte Relation", "Richtung", "aus Quellsicht", "Aussage", "Gleichheit", "Hops"]);
     var tbody = t.tBodies[0];
     cands.forEach(function (c) {
       var tr = el("tr");
       tr.appendChild(cell("td", c.canonical + (c.authorship ? " " + c.authorship : ""), "name"));
-      tr.appendChild(cell("td", c.sec ? c.sec.id : "–"));
+      tr.appendChild(secTd(c.sec, c.concept_id));
       tr.appendChild(cell("td", c.stored_relation));
       tr.appendChild(cell("td", c.direction));
       var rel = el("td");
@@ -604,7 +719,7 @@
     var body = res.body || {};
     var head = el("div");
     head.appendChild(el("p", null,
-      "Zielraum " + (body.target_space ? body.target_space.id : target) +
+      "Zielraum " + (body.target_space ? (body.target_space.title || body.target_space.id) : target) +
       "  ·  max_hops " + body.max_hops +
       "  ·  " + (body.requires_review ? "Prüfung nötig" : "keine Prüfung nötig")));
     translateOut.appendChild(head);
@@ -625,12 +740,12 @@
       translateOut.appendChild(el("h3", null, "Namensgleiche Konzepte — NICHT relational"));
       translateOut.appendChild(el("p", "hint",
         "Nur zur Sichtprüfung: gleicher Name im Zielraum, ohne erfasste Relation. Keine Übersetzung."));
-      var t = table(["Name", "sec.", "Rang"]);
+      var t = table(["Name", ["sec.", "sec"], ["Rang", "rank"]]);
       var tbody = t.tBodies[0];
       names.forEach(function (n) {
         var tr = el("tr");
         tr.appendChild(cell("td", n.canonical + (n.authorship ? " " + n.authorship : ""), "name"));
-        tr.appendChild(cell("td", n.sec ? n.sec.id : "–"));
+        tr.appendChild(secTd(n.sec, n.concept_id));
         tr.appendChild(cell("td", n.rank));
         tbody.appendChild(tr);
       });
@@ -680,4 +795,8 @@
       list.replaceChildren.apply(list, opts);
     });
   }());
+
+  // Feld-Hinweise (Tooltip am ⓘ) und aufklappbare Legenden aufbauen.
+  enhanceDocs(document);
+  buildLegends();
 }());

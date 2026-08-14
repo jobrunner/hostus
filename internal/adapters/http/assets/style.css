@@ -131,3 +131,17 @@ tr.noprefix td { background: var(--bad-bg); }
 .kv dd { margin: 0; overflow-wrap: anywhere; }
 
 .busy { color: var(--muted); }
+
+/* Feld-Hinweis (ⓘ am Spaltenkopf / Feldlabel) + aufklappbare Legende */
+.info { color: var(--muted); cursor: help; font-size: .78em; vertical-align: super; user-select: none; }
+th .info, dt .info { font-weight: normal; }
+.legend { margin-top: .8rem; font-size: .8rem; }
+.legend > summary { cursor: pointer; color: var(--muted); }
+.legend[open] > summary { margin-bottom: .4rem; }
+.legend .kv dt { flex: 0 0 10rem; color: var(--fg); font-variant: small-caps; }
+
+/* sec.-Spalte in Panel 1: gekürzt, voller Titel als Tooltip (title-Attribut) */
+td.sec { max-width: 15rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+
+/* Herkunfts-Fallback in der sec.-Spalte (WCVP / CDM ohne sec.) kursiv */
+td.sec.source { font-style: italic; }

@@ -17,6 +17,28 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   `setup-go`/`go-version-file: go.mod`; lokal zieht `GOTOOLCHAIN=auto` das
   1.26.6-Toolchain nach. `govulncheck ./...` ist danach clean.
 
+### Added (Testkonsole — sec.-Referenz, Feld-Erläuterungen; `in_area` als Präsenzbeleg)
+- **sec.-Referenz in den Panels.** Suggest (Panel 1) und Match (Panel 2) zeigen
+  jetzt eine eigene **sec.-Spalte**: den Titel der Konzept-Referenz (`sec.`),
+  sonst die Herkunft (`WCVP` bzw. `CDM (ohne sec.)`) statt eines nackten „–";
+  Panel 4 (Translate) zeigt den Referenz-**Namen** statt der UUID. Voller Titel
+  im `title`-Tooltip, wenn die Zelle kürzt.
+- **Feld-Erläuterungen.** Jede Tabellen-/Detail-Überschrift trägt einen
+  ⓘ-Tooltip, und je Panel klappt eine „Felder erklärt"-Legende auf (beides aus
+  einer Quelle `FIELD_DOCS`); CDM und WCVP werden ausgeschrieben (Common Data
+  Model / Cybertaxonomy-EDIT bzw. World Checklist of Vascular Plants, Kew).
+- **Kombobox-Löschen.** Alle Komboboxen (Suchbegriff, Gebiet, Translate-Ziel)
+  sind `type="search"` und lassen sich per nativem „X" leeren (kein DEL nötig).
+- **`in_area` ist ein positiver Präsenzbeleg, nie ein falsches „nein".**
+  Verbreitung ist Präsenz-Datum, ein fehlender Datensatz belegt keine
+  Abwesenheit. `in_area` ist jetzt „ja", wenn das Konzept selbst im Gebiet
+  verbreitet ist **oder** — für ein Konzept ohne eigene Verbreitung (die CDM
+  sec.-Konzepte) — derselbe akzeptierte Name (akzeptiert oder als Synonym) auf
+  einem WCVP-Konzept im Gebiet vorkommt; sonst „keine Angabe" (nie „nein").
+  OpenAPI (`SuggestItem.in_area`) + `http-api.md` beschreiben die
+  Präsenz-Semantik. Gemessen an Realdaten: alle CDM-„Inula hirta"-Konzepte
+  melden GER=ja über WCVPs *Pentanema hirtum/britannica*.
+
 ### Added (`GET /v1/areas` — Region-Kombobox mit Namen + Codes)
 - **Neuer Endpunkt `GET /v1/areas`** listet jedes Verbreitungsgebiet mit Daten
   als `{code, name, scheme}` (id-sortiert, `[]` nie `null`, `500` bei

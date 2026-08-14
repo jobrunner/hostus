@@ -18,10 +18,15 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   brechen den Kopiervorgang mit `permission denied` ab (`gremlins@v0.5.1`
   `workdir.go`, `os.Mkdir(dst, mode)`), sodass `make mutation` lokal panickte.
   Das Flake pinnt go nun via `overrideAttrs` direkt auf 1.26.6 (kein Re-Exec
-  nötig, lokal dieselbe Version wie CI) und setzt `GOTOOLCHAIN=local`, sodass
-  `$PWD/.go` gar nicht mehr entsteht. Verifiziert: `make mutation
-  PKG=./internal/adapters/sqlite` läuft grün (`Not covered = 0`, 319 Mutanten).
-  CI ist unberührt (nutzt `setup-go`/`go-version-file`, nicht das Flake).
+  nötig, lokal dieselbe Version wie CI) und setzt `GOTOOLCHAIN=local`, was die
+  Re-Exec — die häufigste `$PWD/.go`-Quelle (jeder `go build`/`test`) —
+  eliminiert. Der devShell-Eintritt selbst kann `$PWD/.go` weiterhin einmalig
+  anlegen; damit `make mutation` unabhängig davon zuverlässig läuft, entfernt
+  das `mutation`-Target `$PWD/.go` unmittelbar vor gremlins (No-op in CI, wo es
+  nicht existiert). Verifiziert: plain `nix develop -c make mutation
+  PKG=./internal/adapters/sqlite` läuft grün (`Killed 314, Not covered 0`, 319
+  Mutanten). CI ist unberührt (nutzt `setup-go`/`go-version-file`, nicht das
+  Flake).
 
 ### Security (Go-Toolchain 1.26.5 → 1.26.6)
 - **`toolchain go1.26.6` in `go.mod`** behebt sechs von govulncheck gemeldete

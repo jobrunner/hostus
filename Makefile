@@ -115,7 +115,9 @@ mutation: ## Mutation-Testing (gremlins) — package-scoped, `Not covered`=0 + M
 	@# der devShell-Eintritt bei manchen Setups read-only anlegt (siehe flake.nix,
 	@# GOTOOLCHAIN) — wird dabei mitkopiert und bricht mit „permission denied" ab.
 	@# Vor dem Lauf entfernen; No-op in CI (dort existiert `.go` nicht).
-	@if [ -d .go ]; then chmod -R u+w .go 2>/dev/null || true; rm -rf .go; fi
+	@# Symlink separat behandeln: bei `.go` als Symlink würde `chmod -R` dem Link
+	@# folgen und Rechte AUSSERHALB des Repos ändern — nur den Link entfernen.
+	@if [ -L .go ]; then rm -f .go; elif [ -d .go ]; then chmod -R u+w .go 2>/dev/null || true; rm -rf .go; fi
 	@command -v gremlins >/dev/null 2>&1 || $(GO) install github.com/go-gremlins/gremlins/cmd/gremlins@v0.5.1
 	@out=$$(mktemp); rc=$$(mktemp); \
 	{ gremlins unleash --dry-run=false $(if $(MUTATION_WORKERS),--workers $(MUTATION_WORKERS),) $(if $(PKG),$(PKG),./...); echo $$? >"$$rc"; } | tee "$$out"; \

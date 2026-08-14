@@ -7,6 +7,16 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Security (Go-Toolchain 1.26.5 → 1.26.6)
+- **`toolchain go1.26.6` in `go.mod`** behebt sechs von govulncheck gemeldete
+  Standardbibliothek-Schwachstellen, alle in go1.26.6 gefixt: GO-2026-6218
+  (`net/url`), GO-2026-6091 (`html/template`), GO-2026-6090 (`crypto/tls`),
+  GO-2026-6089 + GO-2026-5026 (`net/http`), GO-2026-5972 (`encoding/asn1`).
+  Kein Code-Change nötig — die betroffenen Pfade (`net/http`-Serve,
+  `crypto/tls`, `html/template`) sind Standardbibliothek. CI baut über
+  `setup-go`/`go-version-file: go.mod`; lokal zieht `GOTOOLCHAIN=auto` das
+  1.26.6-Toolchain nach. `govulncheck ./...` ist danach clean.
+
 ### Added (`GET /v1/areas` — Region-Kombobox mit Namen + Codes)
 - **Neuer Endpunkt `GET /v1/areas`** listet jedes Verbreitungsgebiet mit Daten
   als `{code, name, scheme}` (id-sortiert, `[]` nie `null`, `500` bei

@@ -102,7 +102,7 @@
     // Panel 1 \u2013 Suggest
     rank: "Taxonomischer Rang des Treffers (FAMILY/GENUS/SPECIES/SUBSPECIES; sonst OTHER, dann steht die Rohschreibweise als rank_verbatim daneben).",
     accepted: "Ob das Konzept selbst der akzeptierte Name ist (ja) oder ein Synonym, das auf ein akzeptiertes Konzept aufgeloest wurde.",
-    in_area: "Ob das Konzept eine Verbreitung im angefragten Gebiet (area) hat. Ohne area-Parameter immer nein.",
+    in_area: "Positiver Verbreitungsbeleg fuers Gebiet: „ja“, wenn das Konzept selbst dort verbreitet ist ODER derselbe Name bei WCVP (der Verbreitungs-Autoritaet, akzeptiert oder Synonym) dort vorkommt. Sonst „keine Angabe“ — Verbreitung ist Praesenz-Daten, ein fehlender Eintrag ist keine belegte Abwesenheit (deshalb nie „nein“). Ohne area-Parameter immer „keine Angabe“.",
     score: "Roher SQLite-FTS5-bm25()-Wert des Treffers. Niedriger = relevanter (ein Distanzmass, keine Aehnlichkeit).",
     prefix: "Ob der ANGEZEIGTE (akzeptierte) Name mit deiner Eingabe BEGINNT (links-verankert, normalisiert). \u201enein\u201c = der Treffer kam ueber einen anderen indexierten Namen: ein Synonym, eine Aggregat-Schreibweise oder einen spaeteren Token.",
     aggregate: "Das Konzept wurde ueber eine Aggregat-Schreibweise (agg./aggr./s.l.) getroffen. Da FloraVeg-Aggregate auf die Nominatart zeigen, wird die Nominatart mit diesem Badge angezeigt.",
@@ -331,7 +331,7 @@
       tr.appendChild(acc);
 
       var area = el("td");
-      area.appendChild(item.in_area ? badge("ja", "ok") : badge("nein", "neutral"));
+      area.appendChild(item.in_area ? badge("ja", "ok") : badge("keine Angabe", "neutral"));
       tr.appendChild(area);
 
       tr.appendChild(cell("td", num(item.score, 3), "num"));

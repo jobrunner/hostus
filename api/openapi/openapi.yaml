@@ -1357,9 +1357,13 @@ components:
         in_area:
           type: boolean
           description: >-
-            `true`, wenn das Concept eine Distribution im angefragten
-            `area` besitzt. Immer `false`, wenn kein `area`-Parameter
-            angegeben wurde.
+            Positiver Verbreitungsbeleg fürs `area`: `true`, wenn das Concept
+            selbst eine Distribution im Gebiet hat ODER — falls es keine eigene
+            Distribution trägt (CDM-`sec.`-Konzepte) — derselbe akzeptierte Name
+            bei WCVP (akzeptiert oder als Synonym) im Gebiet vorkommt. `false`
+            heißt NICHT „kommt dort nicht vor“, sondern nur „kein positiver
+            Beleg“ (Distribution ist Präsenz-Daten; die Konsole zeigt dafür
+            „keine Angabe“). Immer `false` ohne `area`-Parameter.
         score:
           type: number
           format: double

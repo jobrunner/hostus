@@ -302,6 +302,14 @@ leer (auch nur Leerzeichen), liefert der Endpunkt `400 INVALID_QUERY`.
 - `area` (optional): WGSRPD-L3-Referenzgebietscode (z. B. `AUT`) oder eine
   dokumentierte Kurzform (z. B. `DE`). Leer bedeutet kein Gebietsfilter —
   `in_area` ist dann bei jedem Ergebnis `false`.
+
+`in_area` ist ein **positiver** Verbreitungsbeleg, kein Ja/Nein: `true`, wenn
+das Concept selbst im Gebiet verbreitet ist ODER — bei Concepts ohne eigene
+Distribution (die CDM-`sec.`-Concepts) — derselbe akzeptierte Name bei WCVP
+(akzeptiert oder als Synonym) im Gebiet vorkommt. `false` bedeutet **nicht**
+„kommt dort nicht vor", sondern nur „kein positiver Beleg" — Distribution ist
+Präsenz-Daten, ein fehlender Eintrag ist keine belegte Abwesenheit. Die
+Testkonsole zeigt `false` deshalb als „keine Angabe", nie als „nein".
 - `rank` (optional): kommagetrennte Liste von Rängen, z. B.
   `species,subspecies`. Ein unbekannter Rang-Token liefert `400
   INVALID_QUERY`.

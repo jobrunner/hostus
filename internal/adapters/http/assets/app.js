@@ -19,11 +19,17 @@
     return node;
   }
 
+  // A header entry is either a plain string, or [label, docKey] to attach a
+  // hover explanation (ⓘ) — see FIELD_DOCS.
   function table(headers) {
     var t = el("table");
     var thead = el("thead");
     var tr = el("tr");
-    headers.forEach(function (h) { tr.appendChild(cell("th", h)); });
+    headers.forEach(function (h) {
+      var th = el("th");
+      if (Array.isArray(h)) { withDoc(th, h[0], h[1]); } else { th.textContent = h; }
+      tr.appendChild(th);
+    });
     thead.appendChild(tr);
     t.appendChild(thead);
     t.appendChild(el("tbody"));
@@ -40,12 +46,15 @@
     return el("span", "badge " + kind, text);
   }
 
+  // A pair is [label, value] or [label, value, docKey] for a hover explanation.
   function dl(pairs) {
     var d = el("dl", "kv");
     pairs.forEach(function (p) {
       if (p[1] === undefined || p[1] === null || p[1] === "") { return; }
       var row = el("div");
-      row.appendChild(cell("dt", p[0]));
+      var dt = el("dt");
+      if (p[2]) { withDoc(dt, p[0], p[2]); } else { dt.textContent = p[0]; }
+      row.appendChild(dt);
       row.appendChild(cell("dd", p[1]));
       d.appendChild(row);
     });
@@ -59,6 +68,85 @@
   /* Diakritika-tolerante Kleinschreibung fuer den Praefixvergleich. */
   function fold(s) {
     return String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  }
+
+  function truncate(s, n) {
+    s = String(s || "");
+    return s.length > n ? s.slice(0, n - 1) + "\u2026" : s;
+  }
+
+  /* ---------- Feld-Erlaeuterungen (eine Textquelle fuer Tooltip UND Legende) ---------- */
+
+  var FIELD_DOCS = {
+    // Panel 1 \u2013 Suggest
+    rank: "Taxonomischer Rang des Treffers (FAMILY/GENUS/SPECIES/SUBSPECIES; sonst OTHER, dann steht die Rohschreibweise als rank_verbatim daneben).",
+    accepted: "Ob das Konzept selbst der akzeptierte Name ist (ja) oder ein Synonym, das auf ein akzeptiertes Konzept aufgeloest wurde.",
+    in_area: "Ob das Konzept eine Verbreitung im angefragten Gebiet (area) hat. Ohne area-Parameter immer nein.",
+    score: "Roher SQLite-FTS5-bm25()-Wert des Treffers. Niedriger = relevanter (ein Distanzmass, keine Aehnlichkeit).",
+    prefix: "Ob der ANGEZEIGTE (akzeptierte) Name mit deiner Eingabe BEGINNT (links-verankert, normalisiert). \u201enein\u201c = der Treffer kam ueber einen anderen indexierten Namen: ein Synonym, eine Aggregat-Schreibweise oder einen spaeteren Token.",
+    aggregate: "Das Konzept wurde ueber eine Aggregat-Schreibweise (agg./aggr./s.l.) getroffen. Da FloraVeg-Aggregate auf die Nominatart zeigen, wird die Nominatart mit diesem Badge angezeigt.",
+    sec: "sec.-Referenzraum (\u201esecundum\u201c): die Flora/Checkliste, deren Umschreibung dieses Konzept meint. Unterscheidet gleichnamige CDM-Konzepte voneinander; bei WCVP leer.",
+    // Panel 2 \u2013 Konzept & Synonyme
+    publishable: "Darf dieser Synonym-Name in einer veroeffentlichten Synonymliste des Taxons stehen? ja = nomenklatorisch unbedenklich (kein disqualifizierender Status, Rang nicht ausgeschlossen); nein = zurueckgehalten \u2014 Grund in nom_status/Begruendung.",
+    nom_status: "Nomenklatorischer Status aus der Quelle (z. B. nom. illeg., not validly publ., superfl., nom. nud.). Grundlage der Publikationsrelevanz.",
+    typification: "Art der Synonymie: homotypisch (gleicher nomenklatorischer Typus \u2014 objektiv) oder heterotypisch (anderer Typus \u2014 ein taxonomisches Urteil).",
+    basionym: "Ob der Name das Basionym ist: der zuerst gueltig veroeffentlichte Name, auf dem spaetere Umkombinationen beruhen.",
+    reason: "Nachvollziehbare Begruendung, warum ein Synonym publizierbar ist oder zurueckgehalten wurde.",
+    // Panel 3 \u2013 Match
+    match_type: "Wie der verbatim-Name aufgeloest wurde: exact, exact_author, aggregate_alias oder fuzzy \u2014 oder unresolvable, wenn keine Zuordnung moeglich war.",
+    confidence: "Konfidenz der Aufloesung (0\u20131). Hoeher = sicherer.",
+    requires_review: "Ob die Aufloesung eine manuelle Pruefung braucht (etwa bei fuzzy oder Mehrdeutigkeit)."
+  };
+
+  /* Haengt an ein Label-Element (th/dt) einen dezenten Hinweis mit Tooltip. */
+  function withDoc(node, labelText, docKey) {
+    node.appendChild(document.createTextNode(labelText));
+    var doc = FIELD_DOCS[docKey];
+    if (doc) {
+      var info = el("span", "info", "\u24d8");
+      info.title = doc;
+      node.appendChild(document.createTextNode(" "));
+      node.appendChild(info);
+    }
+    return node;
+  }
+
+  /* Reichert statische [data-doc]-Ueberschriften (index.html) mit dem Hinweis an. */
+  function enhanceDocs(root) {
+    var nodes = root.querySelectorAll("[data-doc]");
+    Array.prototype.forEach.call(nodes, function (n) {
+      if (n.querySelector(".info")) { return; } // schon angereichert
+      var label = n.textContent;
+      n.textContent = "";
+      withDoc(n, label, n.getAttribute("data-doc"));
+    });
+  }
+
+  // Welche Felder je Panel in der Legende erklaert werden.
+  var PANEL_LEGENDS = {
+    "panel-suggest": ["prefix", "aggregate", "sec", "rank", "accepted", "in_area", "score"],
+    "panel-concept": ["sec", "publishable", "nom_status", "typification", "basionym", "reason"],
+    "panel-match": ["match_type", "confidence", "requires_review"]
+  };
+
+  /* Haengt je Panel eine aufklappbare \u201eFelder erklaert\u201c-Liste ans Section-Ende. */
+  function buildLegends() {
+    Object.keys(PANEL_LEGENDS).forEach(function (pid) {
+      var section = byId(pid);
+      if (!section || section.querySelector(".legend")) { return; }
+      var det = el("details", "legend");
+      det.appendChild(el("summary", null, "Felder erkl\u00e4rt"));
+      var d = el("dl", "kv");
+      PANEL_LEGENDS[pid].forEach(function (k) {
+        if (!FIELD_DOCS[k]) { return; }
+        var row = el("div");
+        row.appendChild(cell("dt", k));
+        row.appendChild(cell("dd", FIELD_DOCS[k]));
+        d.appendChild(row);
+      });
+      det.appendChild(d);
+      section.appendChild(det);
+    });
   }
 
   /* ---------- API ---------- */
@@ -213,6 +301,9 @@
         nameCell.appendChild(badge("agg.", "neutral"));
       }
       tr.appendChild(nameCell);
+      var secCell = cell("td", item.sec ? truncate(item.sec.title, 28) : "–", "sec");
+      if (item.sec) { secCell.title = item.sec.title; } // voller Titel beim Hovern
+      tr.appendChild(secCell);
       tr.appendChild(cell("td", item.rank));
 
       var acc = el("td");
@@ -417,7 +508,7 @@
       box.appendChild(el("p", "empty", "Keine publikationsrelevanten Synonyme."));
       return box;
     }
-    var t = table(["#", "Name", "Autor", "Rang", "Typisierung", "Basionym", "publizierbar", "nom_status", "Begründung"]);
+    var t = table(["#", "Name", "Autor", ["Rang", "rank"], ["Typisierung", "typification"], ["Basionym", "basionym"], ["publizierbar", "publishable"], ["nom_status", "nom_status"], ["Begründung", "reason"]]);
     var tbody = t.tBodies[0];
     syns.forEach(function (d) {
       var tr = el("tr");
@@ -467,8 +558,9 @@
         ["concept_id", c.concept_id],
         ["Anzeige", c.display],
         ["Kanonisch", c.canonical],
-        ["Rang", c.rank + (c.rank_verbatim ? " (verbatim: " + c.rank_verbatim + ")" : "")],
+        ["Rang", c.rank + (c.rank_verbatim ? " (verbatim: " + c.rank_verbatim + ")" : ""), "rank"],
         ["Status", c.status],
+        ["sec.", c.sec ? c.sec.title : null, "sec"],
         ["Backbone", c.backbone ? c.backbone.id + " @ " + c.backbone.version : ""]
       ]));
       out.appendChild(renderClassification(c.classification));
@@ -494,7 +586,7 @@
       return;
     }
     var results = (res.body && res.body.results) || [];
-    var t = table(["#", "Verbatim", "Einstufung", "Konfidenz", "Prüfung", "concept_id", "Kandidaten", "Notiz"]);
+    var t = table(["#", "Verbatim", ["Einstufung", "match_type"], ["Konfidenz", "confidence"], ["Prüfung", "requires_review"], "concept_id", "Kandidaten", "Notiz"]);
     var tbody = t.tBodies[0];
     results.forEach(function (r, i) {
       var tr = el("tr");
@@ -680,4 +772,8 @@
       list.replaceChildren.apply(list, opts);
     });
   }());
+
+  // Feld-Hinweise (Tooltip am ⓘ) und aufklappbare Legenden aufbauen.
+  enhanceDocs(document);
+  buildLegends();
 }());

@@ -93,13 +93,14 @@
     score: "Roher SQLite-FTS5-bm25()-Wert des Treffers. Niedriger = relevanter (ein Distanzmass, keine Aehnlichkeit).",
     prefix: "Ob der ANGEZEIGTE (akzeptierte) Name mit deiner Eingabe BEGINNT (links-verankert, normalisiert). \u201enein\u201c = der Treffer kam ueber einen anderen indexierten Namen: ein Synonym, eine Aggregat-Schreibweise oder einen spaeteren Token.",
     aggregate: "Das Konzept wurde ueber eine Aggregat-Schreibweise (agg./aggr./s.l.) getroffen. Da FloraVeg-Aggregate auf die Nominatart zeigen, wird die Nominatart mit diesem Badge angezeigt.",
-    sec: "sec.-Referenzraum (\u201esecundum\u201c): die Flora/Checkliste, deren Umschreibung dieses Konzept meint. Unterscheidet gleichnamige CDM-Konzepte voneinander; bei WCVP leer.",
+    sec: "sec.-Referenzraum (\u201esecundum\u201c): die Flora/Checkliste, deren Umschreibung dieses Konzept meint. Unterscheidet gleichnamige CDM-Konzepte (Common Data Model, die Cybertaxonomy-/EDIT-Plattform mit den Wisskirchen-Konzeptbeziehungen) voneinander; bei WCVP (World Checklist of Vascular Plants) leer.",
     // Panel 2 \u2013 Konzept & Synonyme
     publishable: "Darf dieser Synonym-Name in einer veroeffentlichten Synonymliste des Taxons stehen? ja = nomenklatorisch unbedenklich (kein disqualifizierender Status, Rang nicht ausgeschlossen); nein = zurueckgehalten \u2014 Grund in nom_status/Begruendung.",
     nom_status: "Nomenklatorischer Status aus der Quelle (z. B. nom. illeg., not validly publ., superfl., nom. nud.). Grundlage der Publikationsrelevanz.",
     typification: "Art der Synonymie: homotypisch (gleicher nomenklatorischer Typus \u2014 objektiv) oder heterotypisch (anderer Typus \u2014 ein taxonomisches Urteil).",
     basionym: "Ob der Name das Basionym ist: der zuerst gueltig veroeffentlichte Name, auf dem spaetere Umkombinationen beruhen.",
     reason: "Nachvollziehbare Begruendung, warum ein Synonym publizierbar ist oder zurueckgehalten wurde.",
+    backbone: "Herkunfts-Backbone des Konzepts und dessen Version. wcvp = World Checklist of Vascular Plants (Kew); cdm = Common Data Model (Cybertaxonomy-/EDIT-Plattform, hier die Wisskirchen-Konzeptbeziehungen).",
     // Panel 3 \u2013 Match
     match_type: "Wie der verbatim-Name aufgeloest wurde: exact, exact_author, aggregate_alias oder fuzzy \u2014 oder unresolvable, wenn keine Zuordnung moeglich war.",
     confidence: "Konfidenz der Aufloesung (0\u20131). Hoeher = sicherer.",
@@ -133,7 +134,7 @@
   // Welche Felder je Panel in der Legende erklaert werden.
   var PANEL_LEGENDS = {
     "panel-suggest": ["prefix", "aggregate", "sec", "rank", "accepted", "in_area", "score"],
-    "panel-concept": ["sec", "publishable", "nom_status", "typification", "basionym", "reason"],
+    "panel-concept": ["sec", "backbone", "publishable", "nom_status", "typification", "basionym", "reason"],
     "panel-match": ["match_type", "confidence", "requires_review"]
   };
 
@@ -567,7 +568,7 @@
         ["Rang", c.rank + (c.rank_verbatim ? " (verbatim: " + c.rank_verbatim + ")" : ""), "rank"],
         ["Status", c.status],
         ["sec.", c.sec ? c.sec.title : null, "sec"],
-        ["Backbone", c.backbone ? c.backbone.id + " @ " + c.backbone.version : ""]
+        ["Backbone", c.backbone ? c.backbone.id + " @ " + c.backbone.version : "", "backbone"]
       ]));
       out.appendChild(renderClassification(c.classification));
       out.appendChild(renderXrefs(c.xrefs));

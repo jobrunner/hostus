@@ -88,7 +88,10 @@
      Tooltip). Fehlt der sec.-Raum, wird stattdessen die Herkunft benannt (WCVP
      bzw. \u201eCDM (ohne sec.)\u201c), damit klar ist, welches Konzept gemeint ist. */
   function secTd(sec, conceptId) {
-    if (sec) {
+    // A missing OR empty-title sec falls back to the concept origin. Translate's
+    // DTOs carry sec as a non-omitempty value object, so `sec` is truthy even
+    // when the concept has no sec space; only a non-empty title is a real sec.
+    if (sec && sec.title) {
       var td = cell("td", truncate(sec.title, 28), "sec");
       td.title = sec.title;
       return td;
@@ -580,7 +583,7 @@
         ["Kanonisch", c.canonical],
         ["Rang", c.rank + (c.rank_verbatim ? " (verbatim: " + c.rank_verbatim + ")" : ""), "rank"],
         ["Status", c.status],
-        ["sec.", c.sec ? c.sec.title : secSource(c.concept_id), "sec"],
+        ["sec.", c.sec && c.sec.title ? c.sec.title : secSource(c.concept_id), "sec"],
         ["Backbone", c.backbone ? c.backbone.id + " @ " + c.backbone.version : "", "backbone"]
       ]));
       out.appendChild(renderClassification(c.classification));

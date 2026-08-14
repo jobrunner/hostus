@@ -46,14 +46,18 @@ func seedWCVPInulaHirta(t *testing.T, db *DB) {
 	})
 }
 
-// seedCDMInulaHirta writes a CDM "Inula hirta" sec. concept (no distribution)
-// plus a control concept whose name WCVP does not carry.
+// seedCDMInulaHirta writes CDM "Inula hirta" sec. concepts plus a control:
+//   - inula-hirta: no distribution of its own -> in_area decided by WCVP name.
+//   - inula-hirta-fra: has its OWN distribution (FRA, not GER) -> the NOT EXISTS
+//     guard must keep it out of GER even though the WCVP name twin IS in GER.
+//   - zzz-nowcvp: a name WCVP does not carry -> no positive evidence.
 func seedCDMInulaHirta(t *testing.T, db *DB) {
 	bv := domain.BackboneVersion{ID: "cdm", Version: "v1", IngestedAt: "2026-08-14T00:00:00Z", ManifestSHA: "x"}
 	ingestVia(t, db, bv, func(tx output.IngestTx) {
 		mustTx(t, tx.UpsertSecReference(domain.SecReference{ID: "sec-x", Title: "Fl. X"}))
 		want := []domain.Concept{
 			{ID: "cdm:concept:inula-hirta", AcceptedName: species("n-inula-hirta-cdm", "Inula hirta")},
+			{ID: "cdm:concept:inula-hirta-fra", AcceptedName: species("n-inula-hirta-fra", "Inula hirta")},
 			{ID: "cdm:concept:zzz-nowcvp", AcceptedName: species("n-zzz-nowcvp", "Zzz nowcvp")},
 		}
 		for _, c := range want {
@@ -62,6 +66,7 @@ func seedCDMInulaHirta(t *testing.T, db *DB) {
 			mustTx(t, tx.UpsertConcept(c))
 			mustTx(t, tx.LinkName(c.ID, c.AcceptedName.ID, "accepted", nil))
 		}
+		mustTx(t, tx.AddDistribution("cdm:concept:inula-hirta-fra", domain.Distribution{AreaScheme: "wgsrpd_l3", AreaCode: "FRA"}))
 	})
 }
 
@@ -95,6 +100,9 @@ func TestSuggest_InArea_DerivedFromWCVPNameForSecConcept(t *testing.T) {
 	}
 	if !suggestInArea(t, db, "Inula hirta", "cdm:concept:inula-hirta") {
 		t.Error("CDM Inula hirta: in_area=false, want true (via WCVP name)")
+	}
+	if suggestInArea(t, db, "Inula hirta", "cdm:concept:inula-hirta-fra") {
+		t.Error("CDM Inula hirta (own FRA distribution): in_area=true for GER, want false — own distribution guards against the WCVP-name fallback")
 	}
 	if suggestInArea(t, db, "Zzz nowcvp", "cdm:concept:zzz-nowcvp") {
 		t.Error("CDM Zzz nowcvp: in_area=true, want false (no WCVP twin -> keine Angabe)")

@@ -7,6 +7,19 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Fixed (Suggest `area=…` ~30 s → ~0,2 s; Ursache von 502ern)
+- **`in_area`-Namens-Ableitung trieb über den falschen Index.** Die bei
+  gesetztem `area` aktive korrelierte Subquery (derselbe Name bei WCVP im
+  Gebiet?) wurde von SQLite über `idx_taxon_concept_backbone_id`
+  (`backbone_id='wcvp'`) getrieben — ein nahezu die ganze `taxon_concept`-Tabelle
+  treffender Filter — und scannte so das komplette WCVP-Backbone **pro
+  Kandidatenzeile** (~30 s auf dem vollen Index). Hinter einem Reverse-Proxy
+  wurde daraus ein **502/504**; ein Remote-Call findet im Serve-Pfad nicht statt.
+  Ein `wtc.backbone_id || ''` (wert-erhaltende Konkatenation → Ausdruck statt Spalte) neutralisiert diesen Index, sodass der
+  Planner über den selektiven `idx_name_canonical_fold`-Einstieg geht. Ergebnisse
+  identisch. Gemessen an Realdaten: `suggest?...&area=GER` fällt von ~30 s
+  (Timeout) auf 0,04–0,38 s.
+
 ### Fixed (Dev-Umgebung: lokales `make mutation` bricht nicht mehr ab)
 - **Go im Flake auf 1.26.6 gepinnt + `GOTOOLCHAIN=local`.** nixpkgs' `go_1_26`
   liefert 1.26.3; die go.mod-Direktive `toolchain go1.26.6` ließ jeden

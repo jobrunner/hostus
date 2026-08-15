@@ -189,6 +189,22 @@ CREATE TABLE IF NOT EXISTS distribution (
 -- table scan.
 CREATE INDEX IF NOT EXISTS idx_distribution_area ON distribution(area_scheme, area_code);
 
+-- Derived: the EFFECTIVE distribution per concept = own distribution, OR — for a
+-- concept with none of its own (CDM sec. concepts) — the areas of any WCVP
+-- concept sharing its accepted canonical_fold (the in_area name fallback,
+-- precomputed). Lets Suggest resolve in_area as an indexed point lookup instead
+-- of a per-row correlated name-fallback. Rebuilt by BuildDistributionClosure
+-- (ingest finalize + Open self-heal); never written directly.
+CREATE TABLE IF NOT EXISTS distribution_effective (
+  concept_id  TEXT NOT NULL REFERENCES taxon_concept(id),
+  area_scheme TEXT NOT NULL,
+  area_code   TEXT NOT NULL,
+  origin      TEXT NOT NULL,          -- 'own' | 'name'
+  PRIMARY KEY (concept_id, area_scheme, area_code)
+);
+CREATE INDEX IF NOT EXISTS idx_distribution_effective_area
+  ON distribution_effective(area_scheme, area_code);
+
 -- Human-readable name per (scheme, code), self-sourced from the WCVP
 -- distribution dump's Locality column at ingest. Lets GET /v1/areas offer
 -- "Germany (GER)" instead of a bare WGSRPD code. Keyed by (scheme, code), NOT

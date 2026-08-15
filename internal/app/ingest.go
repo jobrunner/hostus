@@ -401,5 +401,12 @@ func Ingest(ctx context.Context, manifestPath, dbPath string) (Reports, error) {
 		reports.NameSpaces = append(reports.NameSpaces, nr)
 	}
 
+	// BuildDistributionClosure runs once ALL backbones (incl. CDM) are
+	// ingested — it resolves CDM concepts' in_area name fallback against WCVP
+	// twins, which must already be present by this point.
+	if err := repo.BuildDistributionClosure(ctx); err != nil {
+		return reports, fmt.Errorf("app: building distribution closure: %w", err)
+	}
+
 	return reports, nil
 }

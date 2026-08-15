@@ -15,7 +15,7 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   treffender Filter — und scannte so das komplette WCVP-Backbone **pro
   Kandidatenzeile** (~30 s auf dem vollen Index). Hinter einem Reverse-Proxy
   wurde daraus ein **502/504**; ein Remote-Call findet im Serve-Pfad nicht statt.
-  Ein unäres `+` vor `wtc.backbone_id` neutralisiert diesen Index, sodass der
+  Ein `wtc.backbone_id || ''` (wert-erhaltende Konkatenation → Ausdruck statt Spalte) neutralisiert diesen Index, sodass der
   Planner über den selektiven `idx_name_canonical_fold`-Einstieg geht. Ergebnisse
   identisch. Gemessen an Realdaten: `suggest?...&area=GER` fällt von ~30 s
   (Timeout) auf 0,04–0,38 s.

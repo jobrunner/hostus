@@ -139,20 +139,24 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 				NOT EXISTS (SELECT 1 FROM distribution d0 WHERE d0.concept_id = tc.id)
 				AND an.canonical_fold <> ''
 				AND EXISTS (
-					-- The unary + on backbone_id is load-bearing, not decoration:
-					-- it DENIES the planner idx_taxon_concept_backbone_id as this
-					-- subquery's driver. backbone_id='wcvp' matches nearly the whole
-					-- taxon_concept table, so driving from it scans the entire WCVP
-					-- backbone once PER candidate row (~30s on the full index). With
-					-- that index out, the only selective entry left is
-					-- idx_name_canonical_fold (wn.canonical_fold = an.canonical_fold),
-					-- which is the whole point of the correlation (~0.2s). Do NOT
-					-- remove the +. (The outer an.canonical_fold <> '' guard keeps
-					-- an accidental empty fold -- schema default is '' and folding is
-					-- a manual ingest step -- from matching every empty-fold WCVP row.)
+					-- The || '' on backbone_id is load-bearing, not decoration:
+					-- concatenating the empty string yields the identical TEXT value
+					-- (verified: typeof unchanged, same row set, no numeric coercion --
+					-- unlike some SQL dialects, this is a value-preserving no-op) but
+					-- turns the term into an EXPRESSION, which DENIES the planner
+					-- idx_taxon_concept_backbone_id as this subquery's driver.
+					-- backbone_id='wcvp' matches nearly the whole taxon_concept table,
+					-- so driving from that index scans the entire WCVP backbone once
+					-- PER candidate row (~30s on the full index). With it out, the only
+					-- selective entry left is idx_name_canonical_fold
+					-- (wn.canonical_fold = an.canonical_fold), which is the whole point
+					-- of the correlation (~0.2s). Do NOT simplify back to a bare
+					-- backbone_id = 'wcvp'. (The outer an.canonical_fold <> '' guard
+					-- keeps an accidental empty fold -- schema default is '' and folding
+					-- is a manual ingest step -- from matching every empty-fold WCVP row.)
 					SELECT 1 FROM name wn
 					JOIN concept_name wcn ON wcn.name_id = wn.id
-					JOIN taxon_concept wtc ON wtc.id = wcn.concept_id AND +wtc.backbone_id = 'wcvp'
+					JOIN taxon_concept wtc ON wtc.id = wcn.concept_id AND wtc.backbone_id || '' = 'wcvp'
 					JOIN distribution wd ON wd.concept_id = wtc.id
 					WHERE wn.canonical_fold = an.canonical_fold
 					  AND wd.area_scheme = 'wgsrpd_l3' AND wd.area_code IN (%s)

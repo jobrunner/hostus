@@ -147,12 +147,12 @@ serve: Suggest(area) ── pool(bm25) ∪ (distribution_effective∩matches) �
   oder Recall-Lücke (bm25-Pool) — der Trade-off, den dieses Design auflöst.
 - **Voller Recall via Laufzeit-Union** (own + fallback): 4–8 s — unbrauchbar.
 
-## Offene Punkte (für Review)
+## Entscheidungen (Review 2026-08-16)
 
-1. Closure **beim Ingest-Finalize**, **beim Open** oder **beidem** (Ingest baut,
-   Open heilt bestehende DBs)? Vorschlag: beidem.
-2. Spalte `origin` behalten (nützlich für Debug/`/v1/concept` später) oder
-   weglassen (schlanker)? Vorschlag: behalten.
-3. `suggestMatchPool` = 5000 beibehalten? Da Recall jetzt garantiert per Union
-   kommt, steuert der Pool nur noch die Nicht-in-area-Relevanz-Füllung und
-   könnte kleiner sein — separater, späterer Tuning-Schritt.
+1. Closure **beim Ingest-Finalize UND beim Open** (Ingest baut; Open heilt
+   bestehende DBs idempotent, wenn `distribution_effective` leer ist). ✔
+2. Spalte `origin` **behalten** (Debug/spätere `/v1/concept`-Nutzung). ✔
+3. `suggestMatchPool`-Tuning **als Folge-Schritt** nach diesem Umbau: sobald der
+   Recall per Closure-Union garantiert ist, steuert der Pool nur noch die
+   Nicht-in-area-Relevanz-Füllung und kann verkleinert werden. Eigener,
+   nachgelagerter Schritt (eigene Messung/PR). ✔

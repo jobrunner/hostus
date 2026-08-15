@@ -8,19 +8,28 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ## [Unreleased]
 
 ### Changed (Suggest: breite Kurz-Präfixe drastisch schneller)
-- **Relevanz-Pool in der FTS-`matches`-CTE.** Ein 2-Zeichen-Präfix wie „ca"
-  matcht am vollen Index ~104k Namen; das Joinen, Gruppieren und `in_area`-
-  Berechnen über *alle* kostete ~1,8 s (der FTS-Präfix-Scan selbst ist mit
-  ~12 ms billig — die Kosten stecken im Downstream pro Treffer-Zeile). Die
-  `matches`-CTE behält jetzt nur die Top-`suggestMatchPool` (5000) Treffer nach
-  bm25-Relevanz, bevor diese Arbeit läuft. **No-op für jede Query mit weniger
-  Treffern als der Pool** (Poa ~3,8k, care ~11k, praktisch alle nicht-
-  pathologischen Queries) — die bleiben bit-identisch. Gekappt wird nur der
-  irrelevante Tail, der es ohnehin nie in die Top-`limit` schafft. Gemessen an
-  Realdaten: `suggest?q=ca&area=GER` fällt von ~1,8 s auf ~0,16 s (warm), und
-  die Top-80-Kandidaten sind **identisch** zur ungekappten Variante
-  (top20 sogar gleich geordnet). Reine Query-Optimierung, kein Schema-Change/
-  Re-Ingest. „ca" (und jedes andere Kurz-Präfix) bleibt erlaubt.
+- **bm25-Relevanz-Pool + in-area-Union in der FTS-`matches`-CTE.** Ein
+  2-Zeichen-Präfix wie „ca" matcht am vollen Index ~104k Namen; das Joinen,
+  Gruppieren und `in_area`-Berechnen über *alle* kostete ~1,8 s (der FTS-Scan
+  selbst ist mit ~12 ms billig — die Kosten stecken im Downstream pro Zeile).
+  Die `matches`-CTE behält jetzt nur die Top-`suggestMatchPool` (5000) Treffer
+  nach bm25-Relevanz. Für Queries mit weniger Treffern als der Pool (Poa ~3,8k,
+  care ~11k, praktisch alle normalen Queries) ist das ein **No-op** — bit-
+  identisch. **Bei gesetztem `area`** würde ein reiner bm25-Pool jedoch in-area-
+  Treffer mit schwacher Relevanz fallen lassen — und `in_area` ist der *primäre*
+  Sortier-Schlüssel, sodass in einem **sparse Gebiet** (weniger in-area-Konzepte
+  als eine Ergebnisseite) solche Treffer von Seite 1 verschwänden. Deshalb wird
+  der Pool mit `in_area_rows` **vereinigt**: alle Präfix-Treffer, deren Konzept
+  eigene Verbreitung im Gebiet hat — billig über den neuen Index
+  `idx_distribution_area(area_scheme, area_code)` plus eine bm25-freie
+  Mitgliedschafts-Menge (`match_rows`), ohne zweiten Ranking-Durchlauf.
+  Gemessen an Realdaten: `ca&area=GER` ~1,8 s → ~0,4 s (warm), sparse Gebiete
+  (`ca&area=PHX`) ~0,35 s **mit vollem Recall** (50/50 in-area statt vorher 20),
+  normale Queries unverändert (Poa 0,03 s). Der Index wird beim Öffnen
+  idempotent angelegt (`CREATE INDEX IF NOT EXISTS`) — kein Re-Ingest. „ca"
+  (und jedes andere Kurz-Präfix) bleibt erlaubt. Hinweis: der cache-kalte
+  Erstlauf eines breiten Präfixes liegt bei ~1,5 s (zwei FTS-Scans kalt), warm
+  danach im 0,3–0,4-s-Bereich.
 
 ### Fixed (Suggest `area=…` ~30 s → ~0,2 s; Ursache von 502ern)
 - **`in_area`-Namens-Ableitung trieb über den falschen Index.** Die bei

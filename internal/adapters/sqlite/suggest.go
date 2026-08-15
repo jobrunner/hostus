@@ -120,20 +120,37 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 	}
 
 	// args must be built in the same left-to-right order the placeholders
-	// appear in the final query text below: match then the pool cap (both
-	// inside the "matches" CTE, textually first), then the in_area EXISTS
-	// codes (in the SELECT list), then the rank-filter codes (in the WHERE
-	// clause), then the LIMIT budget.
+	// appear in the final query text below: match + pool cap (pool CTE), then
+	// — only with an area — match again (match_rows CTE) and the area codes
+	// (in_area_rows CTE), then the in_area EXISTS codes (SELECT list, twice:
+	// own then name fallback), then the rank-filter codes (WHERE), then the
+	// LIMIT budget.
 	args := []any{match, suggestMatchPool}
+
+	codes := areaCodes(opts.Area)
+
+	// cteClause feeds the final SELECT's `matches` source. Without an area it is
+	// just the bm25 relevance pool (top suggestMatchPool matches). With an area
+	// the pool alone would silently drop in-area concepts whose prefix relevance
+	// is poor — and in_area is the PRIMARY rank key, so in a SPARSE area (fewer
+	// in-area concepts than a result page) those would vanish from page 1. So we
+	// UNION the pool with in_area_rows: every prefix match whose concept has own
+	// distribution in the area, found cheaply via idx_distribution_area joined to
+	// the bm25-free match_rows membership set (no second full ranking pass).
+	// Union-only rows carry a sentinel score so they sort after real pool hits
+	// but, being in_area, still ahead of every not-in-area concept.
+	cteClause := `matches AS MATERIALIZED (
+			SELECT rowid, bm25(fts_name) AS score
+			FROM fts_name WHERE fts_name MATCH ? ORDER BY score LIMIT ?
+		)`
 
 	// in_area is a POSITIVE presence test (distribution is presence data): the
 	// concept's own distribution intersects the area, OR — for a concept with
 	// no distribution of its own (the CDM sec. concepts) — the SAME accepted
 	// name occurs (accepted or as a synonym) on a WCVP concept that is in the
 	// area. A false result means "no positive evidence", never "absent". The
-	// codes are bound twice (own EXISTS, then the name fallback). Built inline
-	// with a literal-format Sprintf so gosec sees the SQL is not tainted.
-	codes := areaCodes(opts.Area)
+	// codes are bound three times with an area (in_area_rows, own EXISTS, name
+	// fallback). Built with literal-format Sprintf so gosec sees untainted SQL.
 	inAreaExpr := "0"
 	if len(codes) != 0 {
 		ph := strings.TrimSuffix(strings.Repeat("?,", len(codes)), ",")
@@ -141,8 +158,33 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 		for i, c := range codes {
 			codeArgs[i] = c
 		}
-		args = append(args, codeArgs...)
-		args = append(args, codeArgs...)
+		args = append(args, match)       // match_rows MATCH ?
+		args = append(args, codeArgs...) // in_area_rows area codes
+		args = append(args, codeArgs...) // in_area own EXISTS codes
+		args = append(args, codeArgs...) // in_area name-fallback codes
+
+		// match_rows is the FULL prefix match set as bare rowids (no bm25, so
+		// cheap ~12ms) purely to test membership; the bm25 ranking still only
+		// happens on the bounded pool. in_area_rows recovers own-distribution
+		// in-area matches that the pool dropped.
+		cteClause = fmt.Sprintf(`pool AS MATERIALIZED (
+			SELECT rowid, bm25(fts_name) AS score
+			FROM fts_name WHERE fts_name MATCH ? ORDER BY score LIMIT ?
+		),
+		match_rows AS MATERIALIZED (SELECT rowid FROM fts_name WHERE fts_name MATCH ?),
+		in_area_rows AS (
+			SELECT DISTINCT fnm.rowid
+			FROM distribution d
+			JOIN fts_name_map fnm ON fnm.concept_id = d.concept_id
+			WHERE d.area_scheme = 'wgsrpd_l3' AND d.area_code IN (%s)
+			  AND fnm.rowid IN (SELECT rowid FROM match_rows)
+		),
+		matches AS (
+			SELECT rowid, score FROM pool
+			UNION
+			SELECT rowid, 1e18 FROM in_area_rows WHERE rowid NOT IN (SELECT rowid FROM pool)
+		)`, ph)
+
 		inAreaExpr = fmt.Sprintf(`(
 			EXISTS (
 				SELECT 1 FROM distribution d
@@ -171,8 +213,15 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 					JOIN concept_name wcn ON wcn.name_id = wn.id
 					JOIN taxon_concept wtc ON wtc.id = wcn.concept_id AND wtc.backbone_id || '' = 'wcvp'
 					JOIN distribution wd ON wd.concept_id = wtc.id
+					-- wd.area_scheme || '' (not a bare =) for the SAME reason as
+					-- backbone_id above: idx_distribution_area(area_scheme, area_code)
+					-- exists for in_area_rows below, and without this it lures the
+					-- planner into driving THIS correlated subquery from that index
+					-- (scan every in-area distribution row PER candidate, ~20s) instead
+					-- of the selective idx_name_canonical_fold. Keep wd a residual
+					-- lookup by wd.concept_id. Do NOT drop the || ''.
 					WHERE wn.canonical_fold = an.canonical_fold
-					  AND wd.area_scheme = 'wgsrpd_l3' AND wd.area_code IN (%s)
+					  AND wd.area_scheme || '' = 'wgsrpd_l3' AND wd.area_code IN (%s)
 				)
 			)
 		)`, ph, ph)
@@ -202,14 +251,7 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 	// the outer query then aggregates the already-materialized score
 	// column (MIN(m.score), not MIN(bm25(...))) when collapsing a
 	// concept's several matching names (accepted + synonyms) into one row.
-	query := `
-		WITH matches AS MATERIALIZED (
-			SELECT rowid, bm25(fts_name) AS score
-			FROM fts_name
-			WHERE fts_name MATCH ?
-			ORDER BY score
-			LIMIT ?
-		)
+	query := `WITH ` + cteClause + `
 		SELECT tc.id, an.canonical, an.rank, tc.status, MIN(m.score) AS score, ` + inAreaExpr + ` AS in_area, COALESCE(tc.sec_reference, '') AS sec_reference, MAX(fnm.is_aggregate) AS aggregate
 		FROM matches m
 		JOIN fts_name_map fnm ON fnm.rowid = m.rowid

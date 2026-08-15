@@ -181,6 +181,14 @@ CREATE TABLE IF NOT EXISTS distribution (
   PRIMARY KEY (concept_id, area_scheme, area_code)
 );
 
+-- The PK indexes distribution by concept_id first, so "is THIS concept in area
+-- X" is a point lookup. Suggest's area path needs the other direction — "which
+-- concepts are in area X" — to keep in-area hits in the candidate pool without
+-- ranking every prefix match (see internal/adapters/sqlite/suggest.go). This
+-- index serves that scheme+code lookup; without it that direction is a full
+-- table scan.
+CREATE INDEX IF NOT EXISTS idx_distribution_area ON distribution(area_scheme, area_code);
+
 -- Human-readable name per (scheme, code), self-sourced from the WCVP
 -- distribution dump's Locality column at ingest. Lets GET /v1/areas offer
 -- "Germany (GER)" instead of a bare WGSRPD code. Keyed by (scheme, code), NOT

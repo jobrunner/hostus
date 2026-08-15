@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -26,6 +27,26 @@ func TestBuildDistributionClosure(t *testing.T) {
 	// CDM concept whose name WCVP does not carry -> no rows.
 	if got := effRows(t, db, "cdm:concept:zzz-nowcvp"); got != "" {
 		t.Errorf("cdm zzz-nowcvp: got %q, want none", got)
+	}
+}
+
+func TestOpenSelfHealsDistributionClosure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "heal.sqlite")
+	db := openTestDBAt(t, path)
+	seedWCVPInulaHirta(t, db)
+	seedCDMInulaHirta(t, db)
+	// Simulate a pre-C2 DB: distribution present, closure empty.
+	if _, err := db.sql.ExecContext(context.Background(), `DELETE FROM distribution_effective`); err != nil {
+		t.Fatal(err)
+	}
+	mustTx(t, db.Close())
+
+	// Re-open: self-heal must build the closure.
+	db2, err := Open(path)
+	mustTx(t, err)
+	t.Cleanup(func() { _ = db2.Close() })
+	if got := effRows(t, db2, "cdm:concept:inula-hirta"); got != "GER:name" {
+		t.Errorf("after self-heal: got %q, want GER:name", got)
 	}
 }
 

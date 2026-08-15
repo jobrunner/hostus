@@ -89,6 +89,13 @@ func seededRepo(t *testing.T) *sqlite.DB {
 	if _, err := application.Ingest(context.Background(), ds, wcvpReaderFor, db); err != nil {
 		t.Fatalf("application.Ingest: unexpected error: %v", err)
 	}
+	// application.Ingest does not build distribution_effective itself (the
+	// production CLI wiring in internal/app/ingest.go does, once, after all
+	// backbones are ingested); Suggest's in_area now reads that closure
+	// table, so this shared fixture must build it explicitly.
+	if err := db.BuildDistributionClosure(context.Background()); err != nil {
+		t.Fatalf("BuildDistributionClosure: unexpected error: %v", err)
+	}
 	return db
 }
 

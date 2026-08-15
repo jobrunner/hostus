@@ -84,6 +84,7 @@ func suggestInAreaCount(t *testing.T, db *DB, q, area string) int {
 func TestSuggest_MatchPoolKeepsInAreaBeyondPool(t *testing.T) {
 	db := openTestDB(t)
 	seedTwoInAreaOneOut(t, db)
+	mustTx(t, db.BuildDistributionClosure(context.Background()))
 
 	orig := suggestMatchPool
 	t.Cleanup(func() { suggestMatchPool = orig })

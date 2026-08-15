@@ -273,6 +273,9 @@ func seedFetchBudgetOverflowFixture(t *testing.T, db *DB, noiseCount int, areaCo
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
+	if err := db.BuildDistributionClosure(ctx); err != nil {
+		t.Fatalf("BuildDistributionClosure: %v", err)
+	}
 	return targetConceptID
 }
 

@@ -199,6 +199,13 @@ func TestSuggest_WCVPFixture_AreaRankedAndTruncated(t *testing.T) {
 	if _, err := application.Ingest(ctx, ds, wcvpReaderFor, repo); err != nil {
 		t.Fatalf("Ingest: unexpected error: %v", err)
 	}
+	// application.Ingest does not build distribution_effective itself (the
+	// production CLI wiring in internal/app/ingest.go does, once, after all
+	// backbones are ingested); Suggest's in_area now reads that closure
+	// table, so this direct-Ingest fixture must build it explicitly.
+	if err := repo.BuildDistributionClosure(ctx); err != nil {
+		t.Fatalf("BuildDistributionClosure: unexpected error: %v", err)
+	}
 
 	resp, err := application.Suggest(ctx, repo, application.SuggestRequest{Q: "coryn", Area: "AUT", Limit: 5})
 	if err != nil {

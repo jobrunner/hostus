@@ -7,6 +7,21 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Changed (Suggest: breite Kurz-Präfixe drastisch schneller)
+- **Relevanz-Pool in der FTS-`matches`-CTE.** Ein 2-Zeichen-Präfix wie „ca"
+  matcht am vollen Index ~104k Namen; das Joinen, Gruppieren und `in_area`-
+  Berechnen über *alle* kostete ~1,8 s (der FTS-Präfix-Scan selbst ist mit
+  ~12 ms billig — die Kosten stecken im Downstream pro Treffer-Zeile). Die
+  `matches`-CTE behält jetzt nur die Top-`suggestMatchPool` (5000) Treffer nach
+  bm25-Relevanz, bevor diese Arbeit läuft. **No-op für jede Query mit weniger
+  Treffern als der Pool** (Poa ~3,8k, care ~11k, praktisch alle nicht-
+  pathologischen Queries) — die bleiben bit-identisch. Gekappt wird nur der
+  irrelevante Tail, der es ohnehin nie in die Top-`limit` schafft. Gemessen an
+  Realdaten: `suggest?q=ca&area=GER` fällt von ~1,8 s auf ~0,16 s (warm), und
+  die Top-80-Kandidaten sind **identisch** zur ungekappten Variante
+  (top20 sogar gleich geordnet). Reine Query-Optimierung, kein Schema-Change/
+  Re-Ingest. „ca" (und jedes andere Kurz-Präfix) bleibt erlaubt.
+
 ### Fixed (Suggest `area=…` ~30 s → ~0,2 s; Ursache von 502ern)
 - **`in_area`-Namens-Ableitung trieb über den falschen Index.** Die bei
   gesetztem `area` aktive korrelierte Subquery (derselbe Name bei WCVP im

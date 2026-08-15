@@ -73,6 +73,19 @@ func fetchBudget(limit int) int {
 	return suggestFetchFloor
 }
 
+// suggestMatchPool caps how many FTS prefix matches Suggest ranks and groups.
+// A 2-rune prefix like "ca" matches ~100k names on the full index; joining,
+// grouping and computing in_area over all of them costs ~1.8s (and behind a
+// proxy shows up as a 502/504). The FTS prefix scan itself is cheap (~12ms) —
+// the cost is the downstream work per matched row. So the matches CTE keeps
+// only the top suggestMatchPool rows by bm25 relevance before that work; the
+// dropped tail is the least-relevant matches, which never survive
+// domain.RankSuggestions into the caller's (much smaller) limit anyway. This
+// is a NO-OP for any query matching fewer than suggestMatchPool names (Poa,
+// care, essentially every non-pathological query) — those are unchanged bit
+// for bit. It is a package var, not a const, only so tests can shrink it.
+var suggestMatchPool = 5000
+
 // ftsPrefixToken turns q into a SQLite FTS5 MATCH query string performing a
 // left-anchored prefix search over q's canonical form. It is
 // injection-safe against FTS5's query syntax (which gives special meaning
@@ -107,11 +120,11 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 	}
 
 	// args must be built in the same left-to-right order the placeholders
-	// appear in the final query text below: match (inside the "matches"
-	// CTE, textually first), then the in_area EXISTS codes (in the SELECT
-	// list), then the rank-filter codes (in the WHERE clause), then the
-	// LIMIT budget.
-	args := []any{match}
+	// appear in the final query text below: match then the pool cap (both
+	// inside the "matches" CTE, textually first), then the in_area EXISTS
+	// codes (in the SELECT list), then the rank-filter codes (in the WHERE
+	// clause), then the LIMIT budget.
+	args := []any{match, suggestMatchPool}
 
 	// in_area is a POSITIVE presence test (distribution is presence data): the
 	// concept's own distribution intersects the area, OR — for a concept with
@@ -194,6 +207,8 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 			SELECT rowid, bm25(fts_name) AS score
 			FROM fts_name
 			WHERE fts_name MATCH ?
+			ORDER BY score
+			LIMIT ?
 		)
 		SELECT tc.id, an.canonical, an.rank, tc.status, MIN(m.score) AS score, ` + inAreaExpr + ` AS in_area, COALESCE(tc.sec_reference, '') AS sec_reference, MAX(fnm.is_aggregate) AS aggregate
 		FROM matches m

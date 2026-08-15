@@ -165,6 +165,10 @@ func (r *fakeCDMRepo) BackboneVersions(context.Context) ([]domain.BackboneVersio
 	return nil, nil
 }
 
+func (r *fakeCDMRepo) BuildDistributionClosure(context.Context) error {
+	return nil
+}
+
 func (r *fakeCDMRepo) Traits(context.Context, string, []domain.TraitVocab) ([]domain.TraitSet, error) {
 	return nil, nil
 }

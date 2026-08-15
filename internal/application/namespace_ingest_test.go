@@ -569,6 +569,9 @@ func (r *fakeNameSpaceRepo) MatchFuzzyCandidates(context.Context, string, int, s
 func (r *fakeNameSpaceRepo) BackboneVersions(context.Context) ([]domain.BackboneVersion, error) {
 	return nil, nil
 }
+func (r *fakeNameSpaceRepo) BuildDistributionClosure(context.Context) error {
+	return nil
+}
 func (r *fakeNameSpaceRepo) Traits(context.Context, string, []domain.TraitVocab) ([]domain.TraitSet, error) {
 	return nil, nil
 }

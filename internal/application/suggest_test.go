@@ -42,6 +42,10 @@ func (f *fakeSuggestRepo) BackboneVersions(context.Context) ([]domain.BackboneVe
 	return f.versions, f.versionsErr
 }
 
+func (f *fakeSuggestRepo) BuildDistributionClosure(context.Context) error {
+	return nil
+}
+
 func TestSuggest_EmptyQueryReturnsErrEmptyQuery(t *testing.T) {
 	cases := []string{"", "   ", "\t\n"}
 	for _, q := range cases {

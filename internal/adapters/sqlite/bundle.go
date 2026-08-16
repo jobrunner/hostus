@@ -328,6 +328,15 @@ func ExportBundle(ctx context.Context, src *DB, out string, opts BundleOpts) (Bu
 	if err != nil {
 		return BundleReport{}, err
 	}
+	// Build distribution_effective INTO the bundle. It is a derived artifact
+	// (own ∪ resolved WCVP-name-fallback) that Suggest's in_area reads, and it
+	// is never built on the serve/Open path (that would block/OOM startup — see
+	// db.go's Open note). The offline bundle is a build step, so it must ship
+	// the closure ready-made, scoped to the bundle's own (area-filtered)
+	// distribution + names. Without this a served bundle reports in_area=false.
+	if err := bundle.BuildDistributionClosure(ctx); err != nil {
+		return BundleReport{}, fmt.Errorf("sqlite: bundle: building distribution closure: %w", err)
+	}
 	report.Path = out
 	return report, nil
 }

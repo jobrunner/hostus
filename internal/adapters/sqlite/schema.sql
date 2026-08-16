@@ -195,7 +195,8 @@ CREATE INDEX IF NOT EXISTS idx_distribution_area ON distribution(area_scheme, ar
 -- concept sharing its accepted canonical_fold (the in_area name fallback,
 -- precomputed). Lets Suggest resolve in_area as an indexed point lookup instead
 -- of a per-row correlated name-fallback. Rebuilt by BuildDistributionClosure
--- (ingest finalize + Open self-heal); never written directly.
+-- at ingest time only (never on the serve/Open path — that would block/OOM
+-- serve startup); never written directly.
 CREATE TABLE IF NOT EXISTS distribution_effective (
   concept_id  TEXT NOT NULL REFERENCES taxon_concept(id),
   area_scheme TEXT NOT NULL,

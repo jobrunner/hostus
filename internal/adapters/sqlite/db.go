@@ -73,17 +73,17 @@ func Open(path string) (*DB, error) {
 		_ = sqlDB.Close()
 		return nil, err
 	}
-	db := &DB{sql: sqlDB}
-	if empty, err := distributionClosureEmpty(context.Background(), sqlDB); err != nil {
-		_ = sqlDB.Close()
-		return nil, err
-	} else if empty {
-		if err := db.BuildDistributionClosure(context.Background()); err != nil {
-			_ = sqlDB.Close()
-			return nil, err
-		}
-	}
-	return db, nil
+	// NOTE: Open must NOT build distribution_effective here. `hostus serve`
+	// calls Open on startup BEFORE binding the HTTP listener (see
+	// app.openRepo), so any heavy work here blocks — and, for the closure's
+	// multi-million-row join+insert, can OOM-kill — the container before it
+	// ever listens or logs a line (the reverse proxy then sees no upstream).
+	// The closure is a build artifact: it is (re)built at ingest time by
+	// application/app.Ingest via BuildDistributionClosure, never on the serve
+	// path. A DB opened without a closure simply reports in_area=false until
+	// it is re-ingested (fail-safe), which is vastly preferable to a serve
+	// that will not start.
+	return &DB{sql: sqlDB}, nil
 }
 
 // verifySchemaColumns fails Open if any table in the just-opened database is

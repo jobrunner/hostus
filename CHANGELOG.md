@@ -5,6 +5,14 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [2.1.1-alpha.0](https://github.com/jobrunner/hostus/compare/v2.1.0-alpha.0...v2.1.1-alpha.0) (2026-08-16)
+
+
+### Bug Fixes
+
+* **serve:** never build distribution_effective on the Open/serve path ([6ba2cce](https://github.com/jobrunner/hostus/commit/6ba2cce3a5ac121a1e774e67f9750a70c71e6132))
+* **serve:** never build distribution_effective on the Open/serve path (startup outage) ([322a10b](https://github.com/jobrunner/hostus/commit/322a10bd280c2949f86a31b2a6a8743a0220768a))
+
 ## [2.1.0-alpha.0](https://github.com/jobrunner/hostus/compare/v2.0.0-alpha.0...v2.1.0-alpha.0) (2026-08-16)
 
 

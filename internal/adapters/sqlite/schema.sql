@@ -182,11 +182,12 @@ CREATE TABLE IF NOT EXISTS distribution (
 );
 
 -- The PK indexes distribution by concept_id first, so "is THIS concept in area
--- X" is a point lookup. Suggest's area path needs the other direction — "which
--- concepts are in area X" — to keep in-area hits in the candidate pool without
--- ranking every prefix match (see internal/adapters/sqlite/suggest.go). This
--- index serves that scheme+code lookup; without it that direction is a full
--- table scan.
+-- X" is a point lookup. The other direction — "which concepts are in area X" —
+-- needs this (scheme, code) index; without it that direction is a full table
+-- scan. Used by GET /v1/areas (area.go) and the offline bundle's area scoping
+-- (bundle.go). NOTE: Suggest's area path no longer reads this table — it reads
+-- the precomputed distribution_effective (below) via
+-- idx_distribution_effective_area; keep this index for the two callers above.
 CREATE INDEX IF NOT EXISTS idx_distribution_area ON distribution(area_scheme, area_code);
 
 -- Derived: the EFFECTIVE distribution per concept = own distribution, OR — for a

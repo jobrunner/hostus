@@ -129,6 +129,12 @@ type Repository interface {
 	// BackboneVersions lists every ingested backbone artifact.
 	BackboneVersions(ctx context.Context) ([]domain.BackboneVersion, error)
 
+	// BuildDistributionClosure (re)builds the derived distribution_effective
+	// table. Call once after ALL backbones (incl. CDM) are ingested — it
+	// resolves CDM concepts' in_area name fallback against WCVP twins, which
+	// must already be present.
+	BuildDistributionClosure(ctx context.Context) error
+
 	// Traits returns every domain.TraitSet hostus holds for conceptID,
 	// grouped PER VOCABULARY — TraitSets are never merged across
 	// vocabularies, since PoC P10 found their Taxonomy namespaces genuinely

@@ -42,6 +42,10 @@ func (f *fakeSuggestRepo) BackboneVersions(context.Context) ([]domain.BackboneVe
 	return f.versions, f.versionsErr
 }
 
+func (f *fakeSuggestRepo) BuildDistributionClosure(context.Context) error {
+	return nil
+}
+
 func TestSuggest_EmptyQueryReturnsErrEmptyQuery(t *testing.T) {
 	cases := []string{"", "   ", "\t\n"}
 	for _, q := range cases {
@@ -194,6 +198,13 @@ func TestSuggest_WCVPFixture_AreaRankedAndTruncated(t *testing.T) {
 	ctx := context.Background()
 	if _, err := application.Ingest(ctx, ds, wcvpReaderFor, repo); err != nil {
 		t.Fatalf("Ingest: unexpected error: %v", err)
+	}
+	// application.Ingest does not build distribution_effective itself (the
+	// production CLI wiring in internal/app/ingest.go does, once, after all
+	// backbones are ingested); Suggest's in_area now reads that closure
+	// table, so this direct-Ingest fixture must build it explicitly.
+	if err := repo.BuildDistributionClosure(ctx); err != nil {
+		t.Fatalf("BuildDistributionClosure: unexpected error: %v", err)
 	}
 
 	resp, err := application.Suggest(ctx, repo, application.SuggestRequest{Q: "coryn", Area: "AUT", Limit: 5})

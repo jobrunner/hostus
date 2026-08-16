@@ -106,6 +106,13 @@ func ingestWCVPInto(t *testing.T, db *sqlite.DB) {
 	if _, err := application.Ingest(ctx, appDS, wcvpReaderFor, db); err != nil {
 		t.Fatalf("application.Ingest: unexpected error: %v", err)
 	}
+	// application.Ingest (unlike the production CLI wiring in
+	// internal/app/ingest.go) does not build distribution_effective itself;
+	// Suggest's in_area now reads that closure table, so tests using this
+	// real-ingest fixture must build it explicitly.
+	if err := db.BuildDistributionClosure(ctx); err != nil {
+		t.Fatalf("BuildDistributionClosure: unexpected error: %v", err)
+	}
 }
 
 func conceptIDs(items []domain.SuggestItem) map[string]domain.SuggestItem {

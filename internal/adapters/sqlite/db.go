@@ -73,7 +73,17 @@ func Open(path string) (*DB, error) {
 		_ = sqlDB.Close()
 		return nil, err
 	}
-	return &DB{sql: sqlDB}, nil
+	db := &DB{sql: sqlDB}
+	if empty, err := distributionClosureEmpty(context.Background(), sqlDB); err != nil {
+		_ = sqlDB.Close()
+		return nil, err
+	} else if empty {
+		if err := db.BuildDistributionClosure(context.Background()); err != nil {
+			_ = sqlDB.Close()
+			return nil, err
+		}
+	}
+	return db, nil
 }
 
 // verifySchemaColumns fails Open if any table in the just-opened database is

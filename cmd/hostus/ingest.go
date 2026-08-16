@@ -66,6 +66,10 @@ func runIngest(cmd *cobra.Command, _ []string) error {
 	printXrefReports(cmd.OutOrStdout(), reports.Xrefs)
 	printConceptSourceReports(cmd.OutOrStdout(), reports.ConceptSources)
 	printNameSpaceReports(cmd.OutOrStdout(), reports.NameSpaces)
+	// app.Ingest already (re)built distribution_effective as its final step
+	// (after all backbones, incl. CDM, are in) — this just confirms it to
+	// whoever ran "hostus ingest".
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "distribution closure rebuilt")
 	return nil
 }
 

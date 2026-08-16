@@ -94,6 +94,7 @@ func TestSuggest_InArea_DerivedFromWCVPNameForSecConcept(t *testing.T) {
 	db := openTestDB(t)
 	seedWCVPInulaHirta(t, db)
 	seedCDMInulaHirta(t, db)
+	mustTx(t, db.BuildDistributionClosure(context.Background()))
 
 	if !suggestInArea(t, db, "Inula hirta", "wcvp:concept:pentanema-hirtum") {
 		t.Error("WCVP Pentanema hirtum: in_area=false, want true (own GER distribution)")
@@ -107,4 +108,58 @@ func TestSuggest_InArea_DerivedFromWCVPNameForSecConcept(t *testing.T) {
 	if suggestInArea(t, db, "Zzz nowcvp", "cdm:concept:zzz-nowcvp") {
 		t.Error("CDM Zzz nowcvp: in_area=true, want false (no WCVP twin -> keine Angabe)")
 	}
+}
+
+// seedSparseCDMTwin writes a WCVP "Foo bar" with own distribution in the
+// sparse area "ZZ" plus a CDM "Foo bar" sec. concept with no distribution of
+// its own — mirrors seedTwoInAreaOneOut but for the CDM name-fallback (now
+// closure "name" origin) case.
+func seedSparseCDMTwin(t *testing.T, db *DB) {
+	bv := domain.BackboneVersion{ID: "wcvp", Version: "v1", IngestedAt: "2026-08-16T00:00:00Z", ManifestSHA: "x"}
+	ingestVia(t, db, bv, func(tx output.IngestTx) {
+		n := species("n-wcvp-foo-bar", "Foo bar")
+		mustTx(t, tx.UpsertName(n))
+		c := domain.Concept{ID: "wcvp:concept:foo-bar", BackboneID: "wcvp", AcceptedName: n, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+		mustTx(t, tx.UpsertConcept(c))
+		mustTx(t, tx.LinkName(c.ID, n.ID, "accepted", nil))
+		mustTx(t, tx.AddDistribution(c.ID, domain.Distribution{AreaScheme: "wgsrpd_l3", AreaCode: "ZZ"}))
+	})
+
+	bvCDM := domain.BackboneVersion{ID: "cdm", Version: "v1", IngestedAt: "2026-08-16T00:00:00Z", ManifestSHA: "x"}
+	ingestVia(t, db, bvCDM, func(tx output.IngestTx) {
+		mustTx(t, tx.UpsertSecReference(domain.SecReference{ID: "sec-foo", Title: "Fl. Foo"}))
+		n := species("n-cdm-foo-bar", "Foo bar")
+		mustTx(t, tx.UpsertName(n))
+		c := domain.Concept{ID: "cdm:concept:foo-bar", BackboneID: "cdm", AcceptedName: n, Rank: domain.RankSpecies, Status: domain.StatusAccepted, SecReference: "sec-foo"}
+		mustTx(t, tx.UpsertConcept(c))
+		mustTx(t, tx.LinkName(c.ID, n.ID, "accepted", nil))
+	})
+}
+
+// TestSuggest_InAreaCDMTwinInSparseArea pins the closure recall union for a
+// CDM concept: with no own distribution, its in-area evidence comes ONLY from
+// distribution_effective's "name" origin row (its WCVP name twin's area). Even
+// under a pool of 1 (poor bm25 rank), the in-area union must still surface it
+// — the old own-distribution-only in_area_rows union could not, because a CDM
+// concept never has a row in `distribution` to be recovered by.
+func TestSuggest_InAreaCDMTwinInSparseArea(t *testing.T) {
+	db := openTestDB(t)
+	seedSparseCDMTwin(t, db)
+	mustTx(t, db.BuildDistributionClosure(context.Background()))
+
+	orig := suggestMatchPool
+	t.Cleanup(func() { suggestMatchPool = orig })
+	suggestMatchPool = 1
+
+	items, err := db.Suggest(context.Background(), "Foo", output.SuggestOpts{Area: "ZZ", Limit: 20})
+	mustTx(t, err)
+	for _, it := range items {
+		if it.ConceptID == "cdm:concept:foo-bar" {
+			if !it.InArea {
+				t.Error("CDM Foo bar in ZZ via twin: in_area=false under pool=1 — closure recall union broken")
+			}
+			return
+		}
+	}
+	t.Fatalf("Suggest(%q) returned no item for %q (got %d items)", "Foo", "cdm:concept:foo-bar", len(items))
 }

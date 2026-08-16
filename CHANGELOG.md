@@ -7,6 +7,35 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Changed (Suggest: breite Kurz-Präfixe schnell UND für alle Gebiete korrekt)
+- **`in_area` als vorberechnete Verbreitungs-Closure (`distribution_effective`)
+  + bm25-Pool.** Ein 2-Zeichen-Präfix wie „ca" matcht am vollen Index ~104k
+  Namen; das Joinen, Gruppieren und `in_area`-Berechnen über *alle* kostete
+  ~1,8 s (der FTS-Scan selbst ist mit ~12 ms billig — die Kosten stecken im
+  Downstream pro Zeile). Zwei zusammenwirkende Änderungen:
+  - Die FTS-`matches`-CTE behält nur die Top-`suggestMatchPool` (5000) Treffer
+    nach bm25-Relevanz. Für Queries unter der Pool-Größe (Poa, care, praktisch
+    alle normalen Queries) ist das ein **No-op**. Damit bei gesetztem `area`
+    kein in-area-Treffer mit schwacher Relevanz von Seite 1 fällt (`in_area` ist
+    der *primäre* Sortier-Schlüssel; kritisch in **sparse Gebieten**), wird der
+    Pool mit allen in-area-Präfix-Treffern **vereinigt**.
+  - Der zuvor teure Laufzeit-`in_area`-Namens-Fallback (CDM-Konzepte ohne eigene
+    Verbreitung → gleichnamiger WCVP-Zwilling) ist **deterministisch** und wird
+    jetzt **einmal beim Ingest** (und selbstheilend beim `Open`) in die
+    abgeleitete Tabelle `distribution_effective` (eigene ∪ aufgelöste Zwillings-
+    Gebiete, mit `origin`) vorberechnet. `in_area` ist damit zur Laufzeit ein
+    indizierter Punktlookup; die ~30-s-Subquery und die beiden `|| ''`-
+    Planner-Hacks aus `suggest.go` entfallen. Die Union deckt so **eigene *und*
+    CDM**-in-area-Treffer ab.
+  Gemessen an Realdaten (`full.sqlite`, `distribution_effective` = 1,98 M `own`
+  + 2,80 M `name`): `ca&area=GER` ~1,8 s → **~0,43 s** warm; sparse Gebiete voll
+  korrekt — `pa&area=PHX` **50/50 in-area** (vorher 40, die 10 CDM-Taxa wie
+  *Panicum dactylon* wieder da), `ca&area=PHX` voll; normale Queries unverändert
+  (Poa 0,02 s). „ca" (und jedes Kurz-Präfix) bleibt erlaubt. Der Closure-Build
+  läuft einmalig (~55 s auf `full.sqlite`) beim ersten `Open`/Ingest; bestehende
+  DBs heilen sich selbst, kein Re-Ingest nötig. (Folge-Schritt: `suggestMatchPool`
+  verkleinern, da der Recall nun durch die Closure-Union garantiert ist.)
+
 ### Fixed (Suggest `area=…` ~30 s → ~0,2 s; Ursache von 502ern)
 - **`in_area`-Namens-Ableitung trieb über den falschen Index.** Die bei
   gesetztem `area` aktive korrelierte Subquery (derselbe Name bei WCVP im

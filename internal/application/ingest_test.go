@@ -893,6 +893,9 @@ func (f *fakeCapturingRepo) MatchFuzzyCandidates(context.Context, string, int, s
 func (f *fakeCapturingRepo) BackboneVersions(context.Context) ([]domain.BackboneVersion, error) {
 	panic("not needed by Ingest")
 }
+func (f *fakeCapturingRepo) BuildDistributionClosure(context.Context) error {
+	panic("not needed by Ingest")
+}
 func (f *fakeCapturingRepo) Traits(context.Context, string, []domain.TraitVocab) ([]domain.TraitSet, error) {
 	panic("not needed by Ingest")
 }

@@ -5,6 +5,73 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [2.1.0-alpha.0](https://github.com/jobrunner/hostus/compare/v2.0.0-alpha.0...v2.1.0-alpha.0) (2026-08-16)
+
+
+### Features
+
+* **areas:** GET /v1/areas + region combobox (name + code) ([7a0a2e0](https://github.com/jobrunner/hostus/commit/7a0a2e002ec32bebc683c7bc2e44dc3789b77c11))
+* **areas:** GET /v1/areas with self-sourced names + console combobox ([54833bf](https://github.com/jobrunner/hostus/commit/54833bf87e48c4350ddb8cea5b33d0bd4918d09e))
+* **concept:** emit sec {id,title} for sec-bearing concepts ([2194b55](https://github.com/jobrunner/hostus/commit/2194b558254fac1fa6d1380d76ba66092dbbde27))
+* **config:** ui.enabled toggle, default on ([b32e26d](https://github.com/jobrunner/hostus/commit/b32e26d0ead523e49dd4ba03d635511eee37f22c))
+* **console:** name the source in the sec column + clearable comboboxes ([6eb48ac](https://github.com/jobrunner/hostus/commit/6eb48ac50aad25e6a545f2b56a566af0cd97486a))
+* **console:** sec. reference + field help; in_area as positive presence evidence ([57768b9](https://github.com/jobrunner/hostus/commit/57768b9ffbde4702b1d6bf19020e63cb422ac787))
+* **console:** show sec reference in Panels 1+2 and add field explanations ([9725e97](https://github.com/jobrunner/hostus/commit/9725e97cadba470c4ecee883f385c76d7dd6f961))
+* **console:** show sec reference title in Panel 4 (Translate) too ([2ff0321](https://github.com/jobrunner/hostus/commit/2ff03211e7d1a1885b0fe305ace9f7803846a492))
+* **domain:** StripAggregateMarkers reusing the aggregate marker set ([927369a](https://github.com/jobrunner/hostus/commit/927369ad59fc7ed29590f884d37923fde30c7a68))
+* **floraveg:** ingest the FloraVeg name space ([f1c0d2a](https://github.com/jobrunner/hostus/commit/f1c0d2ab2fbc3113dc003e4d437c530e1cf1a466))
+* **http:** expose SuggestItem.aggregate + console badge ([ebd573f](https://github.com/jobrunner/hostus/commit/ebd573f6afa49eccf1c0640a995583c2bf61db6d))
+* **ingest:** nom_status drift signal + TaxonRow mapper guard ([f962f0b](https://github.com/jobrunner/hostus/commit/f962f0b56fcbf7b76f91c8ee37db515b5e79c958))
+* **ingest:** nom_status drift signal + TaxonRow mapper guard (debt batch 2) ([bf74acc](https://github.com/jobrunner/hostus/commit/bf74acc760d3084b3ff17e0c69b677162cb1d239))
+* **ingest:** rebuild distribution closure after all backbones ([41ab355](https://github.com/jobrunner/hostus/commit/41ab35540a97e08fbb815dc7820bf2e5c4b6ab72))
+* **match:** entry_backbone/entry_sec resolution filter ([0364e1b](https://github.com/jobrunner/hostus/commit/0364e1be675d6f0296bb92b576fcf3407de3c2e2))
+* **match:** target_space and aggregate_policy for UC4 ([a88f55b](https://github.com/jobrunner/hostus/commit/a88f55bda9ac8dfae890c8ccff9d4c2f6eab4bf7))
+* **openapi:** deterministic schema-content check (DTOs vs component schemas) ([ec90b36](https://github.com/jobrunner/hostus/commit/ec90b36ce79d8d6b28207be89965d72425832ef2))
+* **openapi:** deterministic schema-content check (DTOs vs component schemas) ([2b83a51](https://github.com/jobrunner/hostus/commit/2b83a51739ac170c1e1af4612253b9f1d4e2ea05))
+* **openapi:** route&lt;-&gt;spec contract test closes the drift gap (SP6) ([17146e0](https://github.com/jobrunner/hostus/commit/17146e093432af393b46fe035d2ce82aaac40eef))
+* **openapi:** route&lt;-&gt;spec contract test closes the hand-maintained-spec drift gap ([5f18818](https://github.com/jobrunner/hostus/commit/5f188185acc519a018c7a84c03426626f6530feb))
+* **port:** add BuildDistributionClosure to Repository ([e16b348](https://github.com/jobrunner/hostus/commit/e16b34837444c9702fcb7fc13e1bbd58c16ccf63))
+* **sec:** add GET /v1/sec to list sec. reference spaces ([b516877](https://github.com/jobrunner/hostus/commit/b516877dc4272d4cd14caf189714e7e251b752a9))
+* **sec:** add GET /v1/sec to list sec. reference spaces (SP8) ([e3a6990](https://github.com/jobrunner/hostus/commit/e3a69909a38f9cd472f99ac2019a80f34fd26620))
+* **sp5:** sec resolution filter + sec output ([956d669](https://github.com/jobrunner/hostus/commit/956d669f6cd4c50d6de199ec1611a693e6b83c36))
+* **sp9:** UC4 target_space and aggregate_policy ([82f0243](https://github.com/jobrunner/hostus/commit/82f02436b4cbbd895e9274aa600b4996c0b19fd1))
+* **sqlite:** BuildDistributionClosure (own ∪ resolved name-fallback) ([465e892](https://github.com/jobrunner/hostus/commit/465e8927c7b16003873d9d8042a94520c4d3ad8e))
+* **sqlite:** self-heal distribution closure on Open ([0239710](https://github.com/jobrunner/hostus/commit/0239710f20ae1355e9b203b3958792ef1c49ca71))
+* **suggest:** emit sec {id,title} per candidate ([ce2b839](https://github.com/jobrunner/hostus/commit/ce2b839afcc8985c4b0d181ecd6321a3551a4a6b))
+* **suggest:** in_area as positive presence evidence (WCVP-name fallback), never a false "nein" ([a8a0800](https://github.com/jobrunner/hostus/commit/a8a0800e365648f81ebb5fb597cc5decb8c8bc35))
+* **suggest:** index aggregate name-space aliases + carry an aggregate flag ([a76ca8e](https://github.com/jobrunner/hostus/commit/a76ca8e7b16e5481826ff8a2de9595a01e3d8166))
+* **suggest:** marker-insensitive aggregate suggest with aggregate badge ([4423cf6](https://github.com/jobrunner/hostus/commit/4423cf6f1b161035817e3efb1e4ee7b8210f73a0))
+* **translate:** entry_backbone/entry_sec for the verbatim entry ([fef967e](https://github.com/jobrunner/hostus/commit/fef967ed820d4a23a6edb9071e3ccef8c18306ee))
+* **ui:** embedded single-page test console ([5b86c24](https://github.com/jobrunner/hostus/commit/5b86c24ebc43f96cd87fb4eb84abd5a20faf3a82))
+
+
+### Bug Fixes
+
+* **bundle:** carry the area name table into exported bundles ([18107af](https://github.com/jobrunner/hostus/commit/18107af611442e14b9e6ab9b702d99fcc198aa5c))
+* **console+suggest:** review findings — sec fallback on empty title, guard test, doc list ([2b9f95c](https://github.com/jobrunner/hostus/commit/2b9f95c977b0b52e3153365338e73577bc098726))
+* **dev:** guard .go cleanup against symlinks (Copilot review) ([e5f7b1d](https://github.com/jobrunner/hostus/commit/e5f7b1de2ef7b501a9d046e85330a2b52de919e5))
+* **dev:** pin Go 1.26.6 + GOTOOLCHAIN=local so local make mutation works ([9980d7b](https://github.com/jobrunner/hostus/commit/9980d7bb304f0b441ffd50bcc0db8919b52991dc))
+* **dev:** pin Go to 1.26.6 + GOTOOLCHAIN=local so local mutation testing works ([eabc378](https://github.com/jobrunner/hostus/commit/eabc37811d06f0f900f3a70733764668ef114f19))
+* **dev:** remove in-tree .go before gremlins so make mutation is robust ([bed069d](https://github.com/jobrunner/hostus/commit/bed069dcf346633064e09a586c7465d3d618474e))
+* **dev:** remove in-tree $PWD/.go before gremlins so make mutation is robust ([6198fd9](https://github.com/jobrunner/hostus/commit/6198fd982c2cf665e575710c4f05aba9c1562d03))
+* **match:** push sec filter into the fuzzy prefilter, before the LIMIT ([700270b](https://github.com/jobrunner/hostus/commit/700270b4a438a4a5f975dfbe4ecd9cdfaf2466a9))
+* **openapi:** cover /v1/sec body + assert top-level schema type ([e137a15](https://github.com/jobrunner/hostus/commit/e137a151bb1dda67b0058dec01a8d6f50ce82cfa))
+* **security:** bump Go toolchain to 1.26.6 (6 stdlib CVEs) ([96ca260](https://github.com/jobrunner/hostus/commit/96ca260f6130b6c0fba6e120b7a721ca3f0db8d3))
+* **security:** bump Go toolchain to 1.26.6 for 6 stdlib CVEs ([d6c60ac](https://github.com/jobrunner/hostus/commit/d6c60ac3c96acf6a1de43742ee7820c4b096eccf))
+* **sqlite:** fail loudly on schema drift at Open ([77443e4](https://github.com/jobrunner/hostus/commit/77443e488d731e62f732b77891bf346242798630))
+* **sqlite:** fail loudly on schema drift at Open instead of 500 per request ([1f45e14](https://github.com/jobrunner/hostus/commit/1f45e14aa391faf157b7a47756feff8e178b6453))
+* **suggest:** guard in_area name-fallback against empty canonical_fold (review) ([df6de15](https://github.com/jobrunner/hostus/commit/df6de152336befb00d1a2423f552d432ba2d4402))
+* **suggest:** in_area area= query ~30s → ~0.2s (cause of 502s) ([d5e409c](https://github.com/jobrunner/hostus/commit/d5e409cef82ad7eef78108d63e900dfefc6c01a8))
+* **suggest:** preserve in-area recall in the match pool (sparse-area fix) ([86896f3](https://github.com/jobrunner/hostus/commit/86896f3194c25078ad6e7872d9da3a502c1638a8))
+* **suggest:** stop in_area name-fallback from scanning the whole WCVP backbone ([9eb740a](https://github.com/jobrunner/hostus/commit/9eb740a160a63c52c769e53cfe20bff0ad3d816d))
+
+
+### Performance Improvements
+
+* **suggest:** bm25 relevance pool — broad short prefixes ~1.8s → ~0.16s ([da92215](https://github.com/jobrunner/hostus/commit/da92215f670241b659c03bc64aa1cbaecbd6746f))
+* **suggest:** cap FTS matches to a bm25 relevance pool for broad short prefixes ([c253a31](https://github.com/jobrunner/hostus/commit/c253a3102f4b28e2fddc6bbbabc3bbf584a53edd))
+* **suggest:** resolve in_area via distribution_effective (fast + fully correct) ([62a5c27](https://github.com/jobrunner/hostus/commit/62a5c27aa9a06e31c9dec1cf79c6b4e09e6d5500))
+
 ## [Unreleased]
 
 ### Changed (Suggest: breite Kurz-Präfixe schnell UND für alle Gebiete korrekt)

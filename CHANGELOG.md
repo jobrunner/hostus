@@ -74,6 +74,24 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Fixed (serve startet nicht mehr — Container blockiert/OOMt beim Closure-Build)
+- **`distribution_effective` wird NIE mehr auf dem serve/`Open`-Pfad gebaut.**
+  Seit v2.1.0-alpha.0 baute `sqlite.Open` die Closure selbstheilend, falls leer —
+  aber `hostus serve` ruft `Open` **vor** dem HTTP-Listener auf (`app.openRepo`).
+  Auf einer DB ohne Closure blockierte der ~55-s-Build (2,8 M-Zeilen-Join+Insert
+  in einer Transaktion) den Start, bevor eine einzige Logzeile oder ein Listener
+  entstand; in einem speicherbegrenzten Container **OOM-killte** er den Container
+  → Restart-Loop, „kommt nicht hoch", Reverse-Proxy ohne Upstream, Log-Viewer
+  zeigt „No log line". Der Build ist ein **Build-Artefakt** und läuft jetzt nur
+  noch beim **Ingest** (`app.Ingest` → `BuildDistributionClosure`). `Open` macht
+  nur noch Schema+Migrationen; serve listet sofort (~0,7 s). Eine DB ohne Closure
+  liefert `in_area=false` (fail-safe) bis zum nächsten Ingest — statt gar nicht
+  zu starten.
+- **Offline-Bundle liefert die Closure fertig mit.** `ExportBundle` baut
+  `distribution_effective` (area-gescopt) in das Bundle, da der Consumer sie
+  nicht mehr beim Open aufbaut — ein serviertes Bundle liefert so korrektes
+  `in_area` ohne Startzeit-Build.
+
 ### Changed (Suggest: breite Kurz-Präfixe schnell UND für alle Gebiete korrekt)
 - **`in_area` als vorberechnete Verbreitungs-Closure (`distribution_effective`)
   + bm25-Pool.** Ein 2-Zeichen-Präfix wie „ca" matcht am vollen Index ~104k

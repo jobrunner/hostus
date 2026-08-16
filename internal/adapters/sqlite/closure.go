@@ -2,7 +2,6 @@ package sqlite
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 )
 
@@ -10,9 +9,11 @@ import (
 // concept's own distribution (origin 'own'), plus — for a concept with NO own
 // distribution and a non-empty accepted canonical_fold — the areas of any WCVP
 // concept sharing that fold (origin 'name', the precomputed in_area name
-// fallback). Idempotent: safe to run repeatedly (ingest finalize + Open
-// self-heal). The `wtc.backbone_id = 'wcvp'` join is fine here (batch build, not
-// a per-row correlated subquery, so no adverse plan — unlike Suggest).
+// fallback). Idempotent: safe to run repeatedly. Called at ingest time only
+// (application/app.Ingest) — NEVER on the serve/Open path, whose startup must
+// not block on this multi-million-row build (see db.go's Open note). The
+// `wtc.backbone_id = 'wcvp'` join is fine here (batch build, not a per-row
+// correlated subquery, so no adverse plan — unlike Suggest).
 func (db *DB) BuildDistributionClosure(ctx context.Context) error {
 	tx, err := db.sql.BeginTx(ctx, nil)
 	if err != nil {
@@ -41,16 +42,4 @@ func (db *DB) BuildDistributionClosure(ctx context.Context) error {
 		}
 	}
 	return tx.Commit()
-}
-
-// distributionClosureEmpty reports whether distribution_effective needs a
-// self-heal build: it has no rows but distribution does.
-func distributionClosureEmpty(ctx context.Context, sqlDB *sql.DB) (bool, error) {
-	var effN, distN int
-	if err := sqlDB.QueryRowContext(ctx, `SELECT
-		(SELECT count(*) FROM distribution_effective),
-		(SELECT count(*) FROM distribution)`).Scan(&effN, &distN); err != nil {
-		return false, fmt.Errorf("sqlite: closure emptiness check: %w", err)
-	}
-	return effN == 0 && distN > 0, nil
 }

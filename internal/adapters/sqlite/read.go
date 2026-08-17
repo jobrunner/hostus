@@ -334,7 +334,7 @@ func (db *DB) MatchExact(ctx context.Context, canon string) ([]output.MatchCandi
 	want := domain.Canonicalize(canon)
 
 	rows, err := db.sql.QueryContext(ctx, `
-		SELECT cn.role,
+		SELECT cn.role, cn.homotypic,
 			n.id, n.canonical, COALESCE(n.authorship, ''), n.rank, COALESCE(n.ipni_id, ''), COALESCE(n.published_in, ''), COALESCE(n.nom_status, ''), COALESCE(n.basionym_id, ''), COALESCE(n.rank_verbatim, ''),`+
 		conceptColumns+`
 		FROM name n
@@ -433,7 +433,7 @@ func (db *DB) MatchFuzzyCandidates(ctx context.Context, canon string, limit int,
 	}
 
 	rows, err := db.sql.QueryContext(ctx, `
-		SELECT cn.role,
+		SELECT cn.role, cn.homotypic,
 			n.id, n.canonical, COALESCE(n.authorship, ''), n.rank, COALESCE(n.ipni_id, ''), COALESCE(n.published_in, ''), COALESCE(n.nom_status, ''), COALESCE(n.basionym_id, ''), COALESCE(n.rank_verbatim, ''),`+
 		conceptColumns+`
 		FROM name n
@@ -549,6 +549,7 @@ func scanMatchCandidateRows(rows *sql.Rows, op, arg string) ([]output.MatchCandi
 	var out []output.MatchCandidate
 	for rows.Next() {
 		var role string
+		var homotypic sql.NullBool
 		var matched domain.Name
 		var matchedRank, matchedRankVerbatim string
 		var c domain.Concept
@@ -556,7 +557,7 @@ func scanMatchCandidateRows(rows *sql.Rows, op, arg string) ([]output.MatchCandi
 		var an domain.Name
 		var nameRank, nameRankVerbatim string
 		if err := rows.Scan(
-			&role,
+			&role, &homotypic,
 			&matched.ID, &matched.Canonical, &matched.Authorship, &matchedRank, &matched.IPNIID, &matched.PublishedIn, &matched.NomStatus, &matched.BasionymID, &matchedRankVerbatim,
 			&c.ID, &c.BackboneID, &c.BackboneVersion, &conceptRank, &parentID, &secReference, &status, &conceptRankVerbatim,
 			&an.ID, &an.Canonical, &an.Authorship, &nameRank, &an.IPNIID, &an.PublishedIn, &an.NomStatus, &an.BasionymID, &nameRankVerbatim,
@@ -595,7 +596,12 @@ func scanMatchCandidateRows(rows *sql.Rows, op, arg string) ([]output.MatchCandi
 		}
 		c.AcceptedName = an
 
-		out = append(out, output.MatchCandidate{Concept: c, MatchedName: matched, Role: role})
+		var ht *bool
+		if homotypic.Valid {
+			b := homotypic.Bool
+			ht = &b
+		}
+		out = append(out, output.MatchCandidate{Concept: c, MatchedName: matched, Role: role, Homotypic: ht})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("sqlite: iterating %s %q rows: %w", op, arg, err)

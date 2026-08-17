@@ -82,6 +82,19 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (Match: homotype Entmehrdeutigung — Synonym-Namen lösen zum echten Namensträger auf)
+- **`/v1/match` bricht einen Namens-Tie über die Homotypie auf.** Ist ein
+  verbatim Name Synonym unter mehreren Konzepten, gewinnt jetzt das Konzept, in
+  dem er der **akzeptierte Name oder ein homotypes Synonym** ist (gleicher
+  nomenklatorischer Typus = der echte Namensträger, z. B. *Inula hirta* L. ≡
+  *Pentanema hirtum*), statt eines mehrdeutigen `unresolvable`. Zwei echte
+  Namensträger (z. B. mehrere CDM-Floren mit akzeptiertem „Inula hirta“, ohne
+  `entry_backbone`-Scope) bleiben bewusst mehrdeutig. `MatchExact` reicht dazu
+  `concept_name.homotypic` als `MatchCandidate.Homotypic` durch. Mit
+  `entry_backbone=wcvp` löst „Inula hirta“ so sauber auf *Pentanema hirtum* auf;
+  `target_space=eurosl` liefert zusätzlich den Euro+Med-Namen — der Baustein für
+  Listen → Euro+Med/ESy.
+
 ### Fixed (serve startet nicht mehr — Container blockiert/OOMt beim Closure-Build)
 - **`distribution_effective` wird NIE mehr auf dem serve/`Open`-Pfad gebaut.**
   Seit v2.1.0-alpha.0 baute `sqlite.Open` die Closure selbstheilend, falls leer —

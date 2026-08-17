@@ -549,7 +549,7 @@ func scanMatchCandidateRows(rows *sql.Rows, op, arg string) ([]output.MatchCandi
 	var out []output.MatchCandidate
 	for rows.Next() {
 		var role string
-		var homotypic sql.NullInt64
+		var homotypic sql.NullBool
 		var matched domain.Name
 		var matchedRank, matchedRankVerbatim string
 		var c domain.Concept
@@ -598,7 +598,7 @@ func scanMatchCandidateRows(rows *sql.Rows, op, arg string) ([]output.MatchCandi
 
 		var ht *bool
 		if homotypic.Valid {
-			b := homotypic.Int64 != 0
+			b := homotypic.Bool
 			ht = &b
 		}
 		out = append(out, output.MatchCandidate{Concept: c, MatchedName: matched, Role: role, Homotypic: ht})

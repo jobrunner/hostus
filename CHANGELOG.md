@@ -5,6 +5,14 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [2.2.0-alpha.0](https://github.com/jobrunner/hostus/compare/v2.1.1-alpha.0...v2.2.0-alpha.0) (2026-08-17)
+
+
+### Features
+
+* **match:** homotypic tie-break — resolve a synonym name to its genuine bearer ([f9f7888](https://github.com/jobrunner/hostus/commit/f9f7888d5d5ac5de03a7af956782adaff53f0014))
+* **match:** homotypic tie-break — resolve a synonym name to its genuine bearer ([e9c15a3](https://github.com/jobrunner/hostus/commit/e9c15a34bc06f113473be59aa56b636b7a500f9e))
+
 ## [2.1.1-alpha.0](https://github.com/jobrunner/hostus/compare/v2.1.0-alpha.0...v2.1.1-alpha.0) (2026-08-16)
 
 

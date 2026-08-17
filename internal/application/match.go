@@ -477,7 +477,7 @@ func matchAggregate(ctx context.Context, repo output.Repository, req MatchReques
 type classifiedHit struct {
 	conceptID string
 	name      string
-	role      string // accepted|synonym (empty on the fuzzy path)
+	role      string // accepted|synonym (from the exact-match candidate)
 	homotypic *bool  // for a synonym match: homotypic link (nil = unknown)
 }
 

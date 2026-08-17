@@ -80,10 +80,10 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   dem er der **akzeptierte Name oder ein homotypes Synonym** ist (gleicher
   nomenklatorischer Typus = der echte Namensträger, z. B. *Inula hirta* L. ≡
   *Pentanema hirtum*), statt eines mehrdeutigen `unresolvable`. Zwei echte
-  Namensträger (z. B. mehrere CDM-Floren mit akzeptiertem „Inula hirta", ohne
+  Namensträger (z. B. mehrere CDM-Floren mit akzeptiertem „Inula hirta“, ohne
   `entry_backbone`-Scope) bleiben bewusst mehrdeutig. `MatchExact` reicht dazu
   `concept_name.homotypic` als `MatchCandidate.Homotypic` durch. Mit
-  `entry_backbone=wcvp` löst „Inula hirta" so sauber auf *Pentanema hirtum* auf;
+  `entry_backbone=wcvp` löst „Inula hirta“ so sauber auf *Pentanema hirtum* auf;
   `target_space=eurosl` liefert zusätzlich den Euro+Med-Namen — der Baustein für
   Listen → Euro+Med/ESy.
 

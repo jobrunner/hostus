@@ -226,6 +226,14 @@ type MatchCandidate struct {
 	Concept     domain.Concept
 	MatchedName domain.Name
 	Role        string // accepted|synonym
+	// Homotypic is meaningful only for a synonym-role match: whether the
+	// concept_name link is homotypic (same nomenclatural type as the accepted
+	// name — a recombination/basionym, i.e. the genuine name-bearer). nil when
+	// unknown/unproven, exactly as concept_name.homotypic NULL means "unknown",
+	// never "known heterotypic". The match tie-break uses it to prefer, among
+	// otherwise-tied concepts, the one for which the queried name is accepted
+	// or homotypic (see internal/application/match.go's classify).
+	Homotypic *bool
 }
 
 // ConceptRelations is Repository.ConceptRelationsInSec' result: the queried

@@ -477,6 +477,8 @@ func matchAggregate(ctx context.Context, repo output.Repository, req MatchReques
 type classifiedHit struct {
 	conceptID string
 	name      string
+	role      string // accepted|synonym (empty on the fuzzy path)
+	homotypic *bool  // for a synonym match: homotypic link (nil = unknown)
 }
 
 // classify runs domain.ClassifyMatch against every candidate, preferring
@@ -517,7 +519,7 @@ func classify(req MatchRequest, queryCanon, queryAuthor string, candidates []out
 		if !ok {
 			continue
 		}
-		hit := classifiedHit{conceptID: c.Concept.ID, name: c.MatchedName.Canonical}
+		hit := classifiedHit{conceptID: c.Concept.ID, name: c.MatchedName.Canonical, role: c.Role, homotypic: c.Homotypic}
 		switch mt {
 		case domain.MatchExactAuthor:
 			exactAuthorMatches = append(exactAuthorMatches, hit)
@@ -551,6 +553,21 @@ func classify(req MatchRequest, queryCanon, queryAuthor string, candidates []out
 		distinctConcepts[w.conceptID] = true
 	}
 	if len(distinctConcepts) > 1 {
+		// Tie-break before reporting an ambiguous tie: prefer the single concept
+		// (if any) for which the queried name is the genuine name-bearer — see
+		// genuineBearerWinner.
+		if cid, ok := genuineBearerWinner(winners); ok {
+			conf := confidenceExact
+			if bestType == domain.MatchExactAuthor {
+				conf = confidenceExactAuthor
+			}
+			return MatchResult{
+				ID:         req.ID,
+				MatchType:  bestType,
+				Confidence: conf,
+				ConceptID:  cid,
+			}, false
+		}
 		tiedNames := make([]string, 0, len(winners))
 		for _, w := range winners {
 			tiedNames = append(tiedNames, w.name)
@@ -573,6 +590,33 @@ func classify(req MatchRequest, queryCanon, queryAuthor string, candidates []out
 		Confidence: conf,
 		ConceptID:  winners[0].conceptID,
 	}, false
+}
+
+// roleAccepted is the concept_name.role value for a concept's accepted name.
+const roleAccepted = "accepted"
+
+// genuineBearerWinner breaks a match tie by nomenclatural type: among tied
+// winners it keeps only concepts for which the queried name is the accepted
+// name OR a HOMOTYPIC synonym — the genuine name-bearer (a recombination/
+// basionym shares the type). It returns that concept's id iff EXACTLY one
+// qualifies, so e.g. "Inula hirta" (a WCVP synonym under both Pentanema hirtum
+// homotypically and Pentanema britannica heterotypically) resolves to Pentanema
+// hirtum, while two genuine bearers (e.g. several CDM floras' accepted "Inula
+// hirta", when the request is not scoped by entry_backbone) stay ambiguous.
+func genuineBearerWinner(winners []classifiedHit) (string, bool) {
+	bearers := make(map[string]bool, len(winners))
+	for _, w := range winners {
+		if w.role == roleAccepted || (w.homotypic != nil && *w.homotypic) {
+			bearers[w.conceptID] = true
+		}
+	}
+	if len(bearers) != 1 {
+		return "", false
+	}
+	for id := range bearers {
+		return id, true
+	}
+	return "", false
 }
 
 // isAggregate reports whether canonical's last whitespace-separated token

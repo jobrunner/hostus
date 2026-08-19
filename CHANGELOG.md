@@ -5,6 +5,15 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [2.3.1-alpha.0](https://github.com/jobrunner/hostus/compare/v2.3.0-alpha.0...v2.3.1-alpha.0) (2026-08-19)
+
+
+### Bug Fixes
+
+* **ui:** remove four measured accessibility barriers from the console ([4877a23](https://github.com/jobrunner/hostus/commit/4877a230b6e11a0ab566b9c2b7f1819dbd0a76fa))
+* **ui:** remove four measured accessibility barriers from the console ([81f3b94](https://github.com/jobrunner/hostus/commit/81f3b9452ef004d28fb3bc2657bd97bcf4fb4de3))
+* **ui:** scope the a11y fixes to the cases that actually need them ([15b35e6](https://github.com/jobrunner/hostus/commit/15b35e6a5a93360ba5aeb6d7778665173dfe027c))
+
 ## [2.3.0-alpha.0](https://github.com/jobrunner/hostus/compare/v2.2.0-alpha.0...v2.3.0-alpha.0) (2026-08-19)
 
 

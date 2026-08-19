@@ -109,3 +109,51 @@ func TestSuggest_WithoutTargetSpaceReportsNoName(t *testing.T) {
 		}
 	}
 }
+
+// TestSuggest_TargetSpaceAgreesWithTheMatchResolver pins that /v1/suggest and
+// /v1/match answer the SAME name for the same concept. They resolve through
+// different code — suggest orders in SQL, match runs domain.ResolveTargetSpace
+// in Go — so the precedence has to be stated identically in both. The case
+// that separates them: the ACCEPTED spelling is an aggregate while a plain
+// spelling is only a synonym. Aggregate is a filter, not a preference, so the
+// plain name wins; ordering by accepted first would show "…aggr." here and the
+// plain name there for one and the same concept.
+func TestSuggest_TargetSpaceAgreesWithTheMatchResolver(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	seedThreePrefixConcepts(t, db)
+
+	tx, err := db.BeginIngest(ctx, domain.BackboneVersion{ID: "fv-src", Version: "v1", IngestedAt: "2026-08-19T00:00:00Z", ManifestSHA: "x"})
+	mustTx(t, err)
+	mustTx(t, tx.UpsertNameSpace(domain.NameSpaceMeta{
+		ID: "floraveg", Version: "2023-01-03", ManifestSHA: "x", Redistribution: domain.RedistributionUnknown,
+	}))
+	entries := []domain.NameSpaceEntry{
+		{Space: "floraveg", ExtID: "1", Name: "Zzq aggregatum", Aggregate: true, Status: "accepted"},
+		{Space: "floraveg", ExtID: "2", Name: "Zzq planum", Status: "synonym"},
+	}
+	for _, e := range entries {
+		mustTx(t, tx.AddNameSpaceEntry("wcvp:concept:zzq-a", e))
+	}
+	mustTx(t, tx.Commit())
+
+	stored, err := db.NameSpaceEntries(ctx, "wcvp:concept:zzq-a", []string{"floraveg"})
+	mustTx(t, err)
+	viaMatch, _ := domain.ResolveTargetSpace(false, stored)
+
+	got, err := db.Suggest(ctx, "Zzq", output.SuggestOpts{Limit: 20, TargetSpace: "floraveg"})
+	mustTx(t, err)
+	var viaSuggest string
+	for _, it := range got {
+		if it.ConceptID == "wcvp:concept:zzq-a" {
+			viaSuggest = it.TargetSpaceName
+		}
+	}
+
+	if viaSuggest != viaMatch {
+		t.Errorf("suggest reports %q but match reports %q for the same concept", viaSuggest, viaMatch)
+	}
+	if viaSuggest != "Zzq planum" {
+		t.Errorf("name = %q, want the plain spelling: aggregate is a filter, not a preference", viaSuggest)
+	}
+}

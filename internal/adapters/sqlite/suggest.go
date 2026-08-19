@@ -300,15 +300,20 @@ func (db *DB) attachTargetSpaceNames(ctx context.Context, items []domain.Suggest
 	// space's ACCEPTED spelling is therefore the only non-arbitrary answer,
 	// and it is what a caller carrying the name downstream needs.
 	//
-	// The remaining ORDER BY terms only decide among equals: aggregate forms
-	// lose to plain ones, and ext_id makes the choice stable rather than
-	// whatever the store returns first. An index ingested before status was
-	// recorded has '' everywhere and falls back to that stable order.
+	// The ORDER BY must mirror domain.pickSpelling, which /v1/match resolves
+	// with, or the two endpoints answer differently for the same concept.
+	// There, aggregate is a FILTER and accepted only decides within it — so
+	// aggregate sorts FIRST here. Ordering accepted first instead would make a
+	// concept whose accepted spelling is an aggregate ("Festuca ovina aggr.")
+	// show that aggregate in suggest while match shows the plain name.
+	// ext_id last makes the remaining choice stable rather than whatever the
+	// store returns first; an index ingested before status was recorded has ''
+	// everywhere and falls back to exactly that stable order.
 	rows, err := db.sql.QueryContext(ctx, `
 		SELECT concept_id, name
 		FROM name_space_entry
 		WHERE space = ? AND concept_id IN (SELECT value FROM json_each(?))
-		ORDER BY (status = 'accepted') DESC, aggregate ASC, ext_id ASC`, space, idsJSON)
+		ORDER BY aggregate ASC, (status = 'accepted') DESC, ext_id ASC`, space, idsJSON)
 	if err != nil {
 		return fmt.Errorf("sqlite: suggest target space %q: %w", space, err)
 	}

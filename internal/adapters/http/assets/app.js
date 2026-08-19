@@ -36,9 +36,37 @@
     return t;
   }
 
+  // Ein waagerecht scrollbarer Container ist ohne Tastaturfokus nur mit der
+  // Maus erreichbar (WCAG 2.1.1). Er wird deshalb zum Tab-Stopp — aber NUR
+  // solange er tatsächlich überläuft: eine Tabelle, die auf breitem Schirm
+  // vollständig passt, wäre sonst ein stummer Halt in der Tab-Reihenfolge
+  // ohne jeden Zweck. Ob sie überläuft, hängt an Fenstergröße und Inhalt und
+  // kann sich jederzeit ändern, deshalb entscheidet das ein ResizeObserver
+  // fortlaufend statt einmal beim Erzeugen.
+  function syncScrollFocus(d) {
+    if (d.scrollWidth > d.clientWidth) {
+      d.tabIndex = 0;
+    } else {
+      d.removeAttribute("tabindex");
+    }
+  }
+
+  var scrollObserver = typeof ResizeObserver === "function"
+    ? new ResizeObserver(function (entries) {
+      entries.forEach(function (e) { syncScrollFocus(e.target); });
+    })
+    : null;
+
+  function watchScroller(d) {
+    // Ohne ResizeObserver lieber dauerhaft erreichbar als gar nicht: ein
+    // überflüssiger Tab-Stopp ist ein Ärgernis, ein fehlender eine Barriere.
+    if (scrollObserver) { scrollObserver.observe(d); } else { d.tabIndex = 0; }
+  }
+
   function scroller(node) {
     var d = el("div", "scroll");
     d.appendChild(node);
+    watchScroller(d);
     return d;
   }
 
@@ -200,10 +228,27 @@
     node.textContent = method + " " + path + "  ·  HTTP " + res.status + "  ·  " + res.ms + " ms";
   }
 
+  // Schreibt EINEN Satz in die Live-Region. Bewusst knapp: dieselbe Meldung
+  // wird bei einer Tipp-Suche nach jeder Eingabepause erneut vorgelesen, also
+  // ist alles ausser dem Ergebnis in einem Satz Lärm.
+  var a11yStatus = byId("a11y-status");
+
+  function announce(text) {
+    if (a11yStatus) { a11yStatus.textContent = text; }
+  }
+
+  // role="alert" macht die Fehlermeldung zu einer Statusmeldung im Sinne von
+  // WCAG 4.1.3: sie wird vorgelesen, sobald sie eingefügt wird, ohne dass sie
+  // den Fokus an sich reisst. Jeder Fehlerpfad der vier Panels läuft hier
+  // durch, deshalb genügt diese eine Stelle. Sie darf nirgends in einen
+  // Container mit eigener Live-Rolle eingehängt werden — verschachtelte
+  // Live-Regionen verhalten sich je nach Screenreader unterschiedlich.
   function errorBox(res) {
     var code = res.body && res.body.error ? res.body.error.code : "HTTP_" + res.status;
     var msg = res.body && res.body.error ? res.body.error.message : (res.raw || "keine Antwort");
-    return el("div", "error", "Fehler " + code + ": " + msg);
+    var box = el("div", "error", "Fehler " + code + ": " + msg);
+    box.setAttribute("role", "alert");
+    return box;
   }
 
   /* ---------- Panel 1: Suggest ---------- */
@@ -292,8 +337,10 @@
     var results = (res.body && res.body.results) || [];
     if (results.length === 0) {
       suggestSummary.appendChild(el("div", "line", "Keine Treffer."));
+      announce("Keine Treffer.");
       return;
     }
+    announce(results.length === 1 ? "1 Treffer." : results.length + " Treffer.");
 
     var needle = fold(q);
     var prefixHits = 0;
@@ -799,4 +846,8 @@
   // Feld-Hinweise (Tooltip am ⓘ) und aufklappbare Legenden aufbauen.
   enhanceDocs(document);
   buildLegends();
+
+  // Die im Markup fest stehenden Scroll-Container (die dynamisch erzeugten
+  // meldet scroller() selbst an).
+  Array.prototype.forEach.call(document.querySelectorAll(".scroll"), watchScroller);
 }());

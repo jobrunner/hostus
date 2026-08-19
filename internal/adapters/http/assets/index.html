@@ -7,6 +7,13 @@
 <style>/*hostus:style*/</style>
 </head>
 <body>
+<!-- Eine einzige, knappe Live-Region für das ganze Dokument (WCAG 4.1.3).
+     Sie bekommt EINEN Satz je Vorgang ("20 Treffer."), nicht die ausführliche
+     Auswertung daneben und erst recht nicht die Ergebnistabelle — beides würde
+     bei einer Tipp-Suche nach jedem Tastendruck erneut vorgelesen. Sichtbar
+     bleibt alles wie bisher; diese Zeile ist nur für Screenreader da. -->
+<p id="a11y-status" class="sr-only" role="status"></p>
+
 <header>
   <h1>hostus Testkonsole</h1>
   <p class="hint">Instrument zur Beurteilung des lokalen Index. Es wird nichts zwischengespeichert &mdash; jede Anzeige ist die Antwort, die der Dienst gerade gegeben hat.</p>

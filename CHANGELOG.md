@@ -5,6 +5,21 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [2.4.0-alpha.0](https://github.com/jobrunner/hostus/compare/v2.3.2-alpha.0...v2.4.0-alpha.0) (2026-08-19)
+
+
+### Features
+
+* **api:** catalog endpoints and a determinate target-space name ([ed0e8c8](https://github.com/jobrunner/hostus/commit/ed0e8c8dd43b4186d9d73b04036ed463a469a201))
+* selectable concept/name spaces in the console — and a determinate target-space name ([dc4239d](https://github.com/jobrunner/hostus/commit/dc4239d64e287e69f6691cef15ec0ba15f78521a))
+* **ui:** make the concept and name spaces selectable in the console ([67fd96b](https://github.com/jobrunner/hostus/commit/67fd96b56c67ae84c50a7e4d6f4ed3549c2b775f))
+
+
+### Bug Fixes
+
+* resolve suggest's target-space name through the match resolver ([ffd5254](https://github.com/jobrunner/hostus/commit/ffd5254030f475abfba7d9056f42bbd7e4fd2672))
+* **suggest:** make the target-space pick agree with the match resolver ([6ec3822](https://github.com/jobrunner/hostus/commit/6ec3822d9fe8df4f6bc8eb079014f5550bf70d14))
+
 ## [2.3.2-alpha.0](https://github.com/jobrunner/hostus/compare/v2.3.1-alpha.0...v2.3.2-alpha.0) (2026-08-19)
 
 

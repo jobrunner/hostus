@@ -5,6 +5,16 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [2.3.0-alpha.0](https://github.com/jobrunner/hostus/compare/v2.2.0-alpha.0...v2.3.0-alpha.0) (2026-08-19)
+
+
+### Features
+
+* **suggest:** entry_backbone filter, consistent with POST /v1/match ([d785de3](https://github.com/jobrunner/hostus/commit/d785de30bd2214fa1241754564e4116b3db95f12))
+* **suggest:** entry_backbone filter, consistent with POST /v1/match ([c9e8c6d](https://github.com/jobrunner/hostus/commit/c9e8c6db6a6c5dd17e94b5fa0370c8db2e39ff6d))
+* **ui:** show the running hostus version in the console footer ([3e80e5d](https://github.com/jobrunner/hostus/commit/3e80e5dcb4b941c48b932ade33dc9c69c4c40224))
+* **ui:** show the running hostus version in the console footer ([9a06dc3](https://github.com/jobrunner/hostus/commit/9a06dc30b843828ecd461692037c1dbf5fd3b9f9))
+
 ## [2.2.0-alpha.0](https://github.com/jobrunner/hostus/compare/v2.1.1-alpha.0...v2.2.0-alpha.0) (2026-08-17)
 
 

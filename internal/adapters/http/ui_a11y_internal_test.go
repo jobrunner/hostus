@@ -1,7 +1,7 @@
 package httpx
 
 import (
-	"regexp"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -12,22 +12,26 @@ import (
 // that nothing asserts is one refactor away from silently disappearing — and
 // unlike a broken feature, nobody on the team would notice.
 
-// uiScrollDiv matches a horizontally scrollable table wrapper in the markup.
-var uiScrollDiv = regexp.MustCompile(`<div class="scroll"[^>]*>`)
-
-// TestUIScrollContainersAreKeyboardFocusable pins WCAG 2.1.1: a container that
-// scrolls horizontally can only be reached with a mouse unless it is a tab
-// stop. axe reported this as a serious violation ("scrollable-region-focusable")
-// once results were rendered. The dynamic wrappers are built by scroller() in
-// app.js; the one static wrapper lives in index.html.
-func TestUIScrollContainersAreKeyboardFocusable(t *testing.T) {
-	for _, m := range uiScrollDiv.FindAllString(uiIndexHTML, -1) {
-		if !strings.Contains(m, "tabindex") {
-			t.Errorf("scroll container %q is not focusable; a keyboard user cannot scroll it", m)
-		}
+// TestUIScrollFocusFollowsActualOverflow pins WCAG 2.1.1 AND the correction the
+// review forced. A container that scrolls horizontally is unreachable without a
+// mouse unless it is a tab stop — axe reported that as serious once results
+// rendered. But making every wrapper a tab stop unconditionally was measurably
+// wrong too: on a wide screen most tables fit (measured 842/842), and each one
+// became a silent, nameless stop in the tab order. Focusability therefore has
+// to track real overflow, and overflow changes with viewport and content — so
+// it is re-decided by a ResizeObserver, not once at construction.
+func TestUIScrollFocusFollowsActualOverflow(t *testing.T) {
+	if strings.Contains(uiIndexHTML, `class="scroll" tabindex`) {
+		t.Error("a scroll container carries a hard-coded tabindex; focusability must follow measured overflow instead")
 	}
-	if !strings.Contains(uiAppJS, "tabIndex") {
-		t.Error("scroller() in app.js no longer sets tabIndex; dynamically built tables would stop being keyboard-scrollable")
+	for _, want := range []string{
+		"d.scrollWidth > d.clientWidth", // the overflow test itself
+		`d.removeAttribute("tabindex")`, // and it must be able to REVOKE the stop
+		"new ResizeObserver",            // re-decided when layout changes
+	} {
+		if !strings.Contains(uiAppJS, want) {
+			t.Errorf("app.js no longer contains %q; scroll focusability would stop tracking real overflow", want)
+		}
 	}
 }
 
@@ -41,13 +45,28 @@ func TestUIErrorsAnnounceThemselves(t *testing.T) {
 	}
 }
 
-// TestUISuggestSummaryIsAStatusRegion pins WCAG 4.1.3 for the success path.
-// The summary carries the short status text ("Keine Treffer.", the prefix
-// line). It is deliberately the live region rather than the result table,
-// which would be re-read in full on every keystroke.
-func TestUISuggestSummaryIsAStatusRegion(t *testing.T) {
-	if !strings.Contains(uiIndexHTML, `id="suggest-summary" role="status"`) {
-		t.Error(`#suggest-summary lost role="status"; result counts and "Keine Treffer." would no longer be announced`)
+// TestUILiveRegionIsSingleAndConcise pins the second correction the review
+// forced. The first attempt made #suggest-summary itself the live region, which
+// was wrong twice over: errorBox() (role="alert") is appended INTO it, nesting
+// two live roles that screen readers handle inconsistently; and the summary
+// holds a three-sentence analysis that a type-ahead search would re-read after
+// every pause in typing. There is now one short, screen-reader-only region that
+// receives a single sentence per operation.
+func TestUILiveRegionIsSingleAndConcise(t *testing.T) {
+	if strings.Contains(uiIndexHTML, `id="suggest-summary" role="status"`) {
+		t.Error(`#suggest-summary is a live region again; errorBox()'s role="alert" would nest inside it`)
+	}
+	if !strings.Contains(uiIndexHTML, `id="a11y-status" class="sr-only" role="status"`) {
+		t.Error("the dedicated status region is gone; result counts would no longer be announced")
+	}
+	if !strings.Contains(uiStyleCSS, ".sr-only") {
+		t.Error("the .sr-only rule is gone; the status region would become visible page furniture")
+	}
+	if strings.Contains(uiStyleCSS, ".sr-only") && strings.Contains(uiStyleCSS, "display: none") {
+		t.Error(".sr-only must stay in the accessibility tree; display:none would silence the announcements")
+	}
+	if !strings.Contains(uiAppJS, "function announce(") {
+		t.Error("announce() is gone; nothing writes to the status region")
 	}
 }
 
@@ -71,16 +90,56 @@ func TestUIControlsMeetContrastAndTargetSize(t *testing.T) {
 		t.Errorf("input/textarea/button no longer use --control-line:\n%s", controls)
 	}
 
-	if !strings.Contains(uiStyleCSS, `input[type="checkbox"]`) {
-		t.Error("the checkbox sizing rule is gone; the default 13px box is below the 24x24 minimum target size")
+	// Assert the measured SIZE, not merely that a rule exists: a rule that
+	// shrank back below 24px would satisfy a presence check while restoring
+	// the barrier.
+	_, cbAfter, cbFound := strings.Cut(uiStyleCSS, `input[type="checkbox"] {`)
+	if !cbFound {
+		t.Fatal("the checkbox sizing rule is gone; the default 13px box is below the 24x24 minimum target size")
 	}
+	cb, _, _ := strings.Cut(cbAfter, "}")
+	for _, prop := range []string{"width", "height"} {
+		px := cssLengthPx(cb, prop)
+		if px < 24 {
+			t.Errorf("checkbox %s resolves to %.1fpx, want >= 24 (WCAG 2.2 SC 2.5.8); rule was: %s", prop, px, cb)
+		}
+	}
+}
+
+// cssLengthPx reads "<prop>: <number><unit>" out of a declaration block and
+// returns it in CSS pixels. rem is relative to the ROOT element, which the
+// console never restyles, so 1rem is 16px here. Returns 0 when absent, so a
+// missing declaration fails the caller's >= 24 check.
+func cssLengthPx(block, prop string) float64 {
+	_, after, found := strings.Cut(block, prop+":")
+	if !found {
+		return 0
+	}
+	value, _, _ := strings.Cut(after, ";")
+	value = strings.TrimSpace(value)
+	for unit, factor := range map[string]float64{"rem": 16, "px": 1} {
+		if num, ok := strings.CutSuffix(value, unit); ok {
+			var f float64
+			if _, err := fmt.Sscanf(strings.TrimSpace(num), "%g", &f); err == nil {
+				return f * factor
+			}
+		}
+	}
+	return 0
 }
 
 // TestUIHasAVisibleFocusIndicator pins WCAG 2.4.7. It matters more since the
 // audit: the scroll containers are now tab stops, and a focus ring is the only
 // thing telling a sighted keyboard user they are on one.
 func TestUIHasAVisibleFocusIndicator(t *testing.T) {
-	if !strings.Contains(uiStyleCSS, ":focus-visible") {
-		t.Error("no :focus-visible rule; keyboard users would rely on the browser default, which is weak on the dark buttons")
+	// A rule, not a mention: ":focus-visible" inside a comment would satisfy a
+	// plain substring check while the actual outline is gone.
+	_, after, found := strings.Cut(uiStyleCSS, ":focus-visible {")
+	if !found {
+		t.Fatal("no :focus-visible rule; keyboard users would rely on the browser default, which is weak on the dark buttons")
+	}
+	rule, _, _ := strings.Cut(after, "}")
+	if !strings.Contains(rule, "outline:") {
+		t.Errorf(":focus-visible declares no outline, so it draws no indicator; rule was: %s", rule)
 	}
 }

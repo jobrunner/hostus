@@ -116,6 +116,12 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
     (`--control-line`, 3,59:1); dekorative Trennlinien dürfen zart bleiben.
   - **Die Checkbox maß 13 px** statt der geforderten 24×24 CSS-Pixel
     (WCAG 2.2 SC 2.5.8).
+  Der Tab-Stopp entsteht dabei **nur, solange eine Tabelle wirklich überläuft**
+  (per `ResizeObserver` fortlaufend entschieden) — sonst wäre jede passende
+  Tabelle ein stummer Halt in der Tab-Reihenfolge. Die Ansagen laufen über
+  **eine** knappe, nur für Screenreader sichtbare Live-Region („30 Treffer.")
+  statt über die ausführliche Auswertung: die würde eine Tipp-Suche nach jeder
+  Eingabepause komplett erneut vorlesen.
   Zusätzlich ein expliziter `:focus-visible`-Ring — der Browser-Default ist auf
   den dunklen Buttons schwach, und die Scroll-Container sind neuerdings
   Tab-Stopps. Geprüft: axe meldet 0 Verstöße im Start- **und** im interaktiven

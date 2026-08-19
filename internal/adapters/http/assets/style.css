@@ -36,6 +36,18 @@ h3 { font-size: .85rem; margin: .9rem 0 .3rem; text-transform: uppercase; letter
 header { margin-bottom: 1rem; }
 .hint { margin: 0; color: var(--muted); }
 
+/* Nur für Screenreader: aus dem Bild genommen, aber im Accessibility-Baum.
+   display:none oder visibility:hidden wären falsch — die entfernen das
+   Element auch dort und die Ansage fiele aus. */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
 footer {
   margin-top: 1.5rem;
   padding-top: .6rem;

@@ -305,6 +305,11 @@ CREATE TABLE IF NOT EXISTS name_space_entry (
   name         TEXT NOT NULL,      -- the space's spelling, VERBATIM (not folded)
   aggregate    INTEGER NOT NULL DEFAULT 0,
   resolution   TEXT,
+  -- the space's OWN status for this spelling ('accepted'|'synonym'|...),
+  -- verbatim from the source list. It is what makes a target-space name
+  -- determinate: a space maps many of its names onto ONE concept, so without
+  -- it any pick among them is arbitrary. '' = ingested before this column.
+  status       TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (space, ext_id)
 );
 

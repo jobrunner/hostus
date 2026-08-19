@@ -69,6 +69,10 @@ func Open(path string) (*DB, error) {
 		_ = sqlDB.Close()
 		return nil, err
 	}
+	if err := migrateNameSpaceEntryStatus(context.Background(), sqlDB); err != nil {
+		_ = sqlDB.Close()
+		return nil, err
+	}
 	if err := verifySchemaColumns(context.Background(), sqlDB); err != nil {
 		_ = sqlDB.Close()
 		return nil, err
@@ -502,26 +506,52 @@ func conceptRelationHasRelationInPK(ctx context.Context, sqlDB *sql.DB) (bool, e
 // keeps every xref row it had, with source NULL (correctly meaning "not
 // attributable to any ingested xref source"; see schema.sql). Running against
 // a fresh database is a no-op, since schema.sql already created the column.
-func migrateXrefSourceColumn(ctx context.Context, sqlDB *sql.DB) error {
-	rows, err := sqlDB.QueryContext(ctx, `SELECT 1 FROM pragma_table_info('xref') WHERE name = 'source'`)
+// addColumnIfMissing runs ALTER TABLE ... ADD COLUMN unless the column is
+// already there. CREATE TABLE IF NOT EXISTS adds a missing TABLE to an old
+// database but never a missing COLUMN, and verifySchemaColumns turns any such
+// gap into a startup failure — so every column added after a release needs one
+// of these to keep existing indexes openable.
+func addColumnIfMissing(ctx context.Context, sqlDB *sql.DB, table, column, definition string) error {
+	rows, err := sqlDB.QueryContext(ctx,
+		`SELECT 1 FROM pragma_table_info(?) WHERE name = ?`, table, column)
 	if err != nil {
-		return fmt.Errorf("sqlite: checking for xref.source column: %w", err)
+		return fmt.Errorf("sqlite: checking for %s.%s column: %w", table, column, err)
 	}
 	present := rows.Next()
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
-		return fmt.Errorf("sqlite: checking for xref.source column: %w", err)
+		return fmt.Errorf("sqlite: checking for %s.%s column: %w", table, column, err)
 	}
 	if err := rows.Close(); err != nil {
-		return fmt.Errorf("sqlite: checking for xref.source column: %w", err)
+		return fmt.Errorf("sqlite: checking for %s.%s column: %w", table, column, err)
 	}
 	if present {
 		return nil
 	}
-	if _, err := sqlDB.ExecContext(ctx, `ALTER TABLE xref ADD COLUMN source TEXT REFERENCES xref_source(id)`); err != nil {
-		return fmt.Errorf("sqlite: adding xref.source column: %w", err)
+	// Table, column and definition are compile-time constants from the call
+	// sites below, never caller input — ALTER TABLE takes no placeholders for
+	// identifiers, so this is the only way to express it.
+	if _, err := sqlDB.ExecContext(ctx, "ALTER TABLE "+table+" ADD COLUMN "+column+" "+definition); err != nil {
+		return fmt.Errorf("sqlite: adding %s.%s column: %w", table, column, err)
 	}
 	return nil
+}
+
+func migrateXrefSourceColumn(ctx context.Context, sqlDB *sql.DB) error {
+	return addColumnIfMissing(ctx, sqlDB, "xref", "source", "TEXT REFERENCES xref_source(id)")
+}
+
+// migrateNameSpaceEntryStatus adds name_space_entry.status to an index built
+// before it existed. Without it verifySchemaColumns would refuse to open such
+// a database at all, since the embedded schema now declares the column and
+// CREATE TABLE IF NOT EXISTS never adds a column to an existing table.
+//
+// Existing rows keep ” — "status not recorded" — which ResolveTargetSpace
+// treats as "fall back to the previous behavior", not as "not accepted". Only
+// a re-ingest fills it, and only then do target-space names become
+// determinate.
+func migrateNameSpaceEntryStatus(ctx context.Context, sqlDB *sql.DB) error {
+	return addColumnIfMissing(ctx, sqlDB, "name_space_entry", "status", "TEXT NOT NULL DEFAULT ''")
 }
 
 // Close releases the underlying database handle.

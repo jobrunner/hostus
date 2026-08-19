@@ -639,9 +639,9 @@ func copyConceptScopedTables(ctx context.Context, src, bundle *DB, idsJSON strin
 	}
 
 	if err := copyRows(ctx, src, bundle,
-		`SELECT space, ext_id, concept_id, name, aggregate, resolution FROM name_space_entry
+		`SELECT space, ext_id, concept_id, name, aggregate, resolution, status FROM name_space_entry
 		 WHERE concept_id IN (SELECT value FROM json_each(?))`, []any{idsJSON},
-		`INSERT INTO name_space_entry (space, ext_id, concept_id, name, aggregate, resolution) VALUES (?,?,?,?,?,?)`); err != nil {
+		`INSERT INTO name_space_entry (space, ext_id, concept_id, name, aggregate, resolution, status) VALUES (?,?,?,?,?,?,?)`); err != nil {
 		return err
 	}
 

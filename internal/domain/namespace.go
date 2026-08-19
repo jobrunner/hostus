@@ -70,6 +70,17 @@ type NameSpaceEntry struct {
 	// Aggregate reports whether Name denotes a collective species
 	// ("Sammelart") rather than a single taxon — see IsAggregateName.
 	Aggregate bool
+	// Status is the space's OWN nomenclatural status for this spelling,
+	// verbatim from the source list ("accepted", "synonym",
+	// "synonymobjective", ...). Empty means the ingest predates this field —
+	// see AcceptedInSpace for why that is not the same as "not accepted".
+	//
+	// It is what makes a target-space name determinate. A space maps many of
+	// its names onto ONE backbone concept (measured on the real index: 45% of
+	// concepts with a eurosl entry carry 2 to 391 spellings), so without a
+	// status any pick among them is arbitrary — and an arbitrary synonym
+	// presented as "the name in that space" is worse than none.
+	Status string
 	// Resolution records HOW the crosswalk reached the concept: empty for an
 	// exact canonical match, else the NormalizationRule that was needed.
 	// Same "absence is information" rule as TraitValue.Resolution: empty
@@ -98,6 +109,21 @@ const (
 	AggregatePolicyUnresolvable AggregatePolicy = "unresolvable"
 )
 
+// NameSpaceStatusAccepted is the status value a source uses for its own
+// accepted name. Synonym statuses vary by source ("synonym",
+// "synonymobjective", ...), so acceptance is tested positively rather than by
+// listing everything it is not.
+const NameSpaceStatusAccepted = "accepted"
+
+// AcceptedInSpace reports whether e is the space's accepted spelling.
+//
+// An entry ingested before Status existed reports false — deliberately, so a
+// stale index falls back to the old arbitrary-but-harmless behavior instead
+// of claiming a synonym is accepted. Re-ingest is what fixes it.
+func (e NameSpaceEntry) AcceptedInSpace() bool {
+	return e.Status == NameSpaceStatusAccepted
+}
+
 // ResolveTargetSpace decides, for one matched concept, the ESy-compatible name
 // the target space uses and the AggregatePolicy that applies. queryIsAggregate
 // says whether the verbatim the caller matched carried an aggregate marker
@@ -115,22 +141,43 @@ const (
 //     else the first spelling, else ""; policy is the zero value (absent).
 func ResolveTargetSpace(queryIsAggregate bool, entries []NameSpaceEntry) (string, AggregatePolicy) {
 	if queryIsAggregate {
-		for _, e := range entries {
-			if e.Aggregate {
-				return e.Name, AggregatePolicyKnown
-			}
+		if e, ok := pickSpelling(entries, true); ok {
+			return e.Name, AggregatePolicyKnown
 		}
 		return "", AggregatePolicyUnresolvable
 	}
-	for _, e := range entries {
-		if !e.Aggregate {
-			return e.Name, ""
-		}
+	if e, ok := pickSpelling(entries, false); ok {
+		return e.Name, ""
 	}
 	if len(entries) > 0 {
 		return entries[0].Name, ""
 	}
 	return "", ""
+}
+
+// pickSpelling returns the entry to report among those matching aggregate,
+// preferring the space's ACCEPTED spelling.
+//
+// The preference is the whole point: a space maps many names onto one concept,
+// so without it the answer is whichever row the store happened to return
+// first. Falling back to the first match when no entry is marked accepted
+// keeps an index ingested before Status was recorded working exactly as
+// before, rather than reporting nothing.
+func pickSpelling(entries []NameSpaceEntry, aggregate bool) (NameSpaceEntry, bool) {
+	var first NameSpaceEntry
+	found := false
+	for _, e := range entries {
+		if e.Aggregate != aggregate {
+			continue
+		}
+		if e.AcceptedInSpace() {
+			return e, true
+		}
+		if !found {
+			first, found = e, true
+		}
+	}
+	return first, found
 }
 
 // IsAggregateName reports whether a verbatim name denotes an AGGREGATE — a

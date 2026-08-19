@@ -213,6 +213,10 @@ type SuggestOpts struct {
 	// Ranks restricts results to the given domain.Rank values. Empty means
 	// no rank filter (every rank is eligible).
 	Ranks []domain.Rank
+	// TargetSpace names a name space (e.g. "eurosl"); each result then
+	// carries its spelling in that space as SuggestItem.TargetSpaceName.
+	// Empty means no space is resolved and the field stays empty.
+	TargetSpace string
 	// Backbone restricts results to concepts of that backbone (e.g. "wcvp").
 	// Empty means no backbone filter. It is applied inside the query, ahead
 	// of the limit: a caller filtering afterwards would keep almost nothing,

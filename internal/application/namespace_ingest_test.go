@@ -21,7 +21,7 @@ type nameListRowSource struct{ ds *namelist.Dataset }
 func (s nameListRowSource) Rows() []application.NameRow {
 	out := make([]application.NameRow, 0, len(s.ds.Rows))
 	for _, r := range s.ds.Rows {
-		out = append(out, application.NameRow{Taxon: r.Taxon, SourceID: r.SourceID})
+		out = append(out, application.NameRow{Taxon: r.Taxon, SourceID: r.SourceID, Status: r.Status})
 	}
 	return out
 }
@@ -71,10 +71,13 @@ func TestIngestNameSpace_RowRoundTrips(t *testing.T) {
 	// All three FloraVeg spellings of Festuca ovina land on the SAME concept
 	// under their own SeqIDs — the source document's own UC4 example, and the
 	// reason name_space_entry is keyed by ext_id rather than by concept.
+	// Status comes straight from the source list; the fixture marks all three
+	// spellings accepted. It is what lets ResolveTargetSpace pick a determinate
+	// name when a concept carries several of a space's spellings, as here.
 	want := []domain.NameSpaceEntry{
-		{Space: "floraveg", ExtID: "5647", Name: "Festuca ovina", Aggregate: false, Resolution: ""},
-		{Space: "floraveg", ExtID: "5648", Name: "Festuca ovina aggr.", Aggregate: true, Resolution: string(domain.RuleAggregateToNominate)},
-		{Space: "floraveg", ExtID: "5649", Name: "Festuca ovina s. l.", Aggregate: true, Resolution: string(domain.RuleAggregateToNominate)},
+		{Space: "floraveg", ExtID: "5647", Name: "Festuca ovina", Aggregate: false, Status: "accepted", Resolution: ""},
+		{Space: "floraveg", ExtID: "5648", Name: "Festuca ovina aggr.", Aggregate: true, Status: "accepted", Resolution: string(domain.RuleAggregateToNominate)},
+		{Space: "floraveg", ExtID: "5649", Name: "Festuca ovina s. l.", Aggregate: true, Status: "accepted", Resolution: string(domain.RuleAggregateToNominate)},
 	}
 	if len(entries) != len(want) {
 		t.Fatalf("NameSpaceEntries: got %d entries, want %d (%+v)", len(entries), len(want), entries)
@@ -586,4 +589,34 @@ func (r *fakeNameSpaceRepo) NameSpaces(context.Context) ([]domain.NameSpaceMeta,
 }
 func (r *fakeNameSpaceRepo) Suggest(context.Context, string, output.SuggestOpts) ([]domain.SuggestItem, error) {
 	return nil, nil
+}
+
+// TestIngestNameSpace_CarriesTheSourceStatus pins the wiring whose absence made
+// every target-space name arbitrary: the source list states which of its
+// spellings is accepted, and that statement has to survive the reader -> DTO ->
+// entry path. It was dropped at the DTO boundary, so a concept holding several
+// of a space's names had no way to say which one to report.
+func TestIngestNameSpace_CarriesTheSourceStatus(t *testing.T) {
+	repo := seededMatchRepo(t)
+	ctx := context.Background()
+
+	if _, err := application.IngestNameSpace(ctx, repo, loadFloraVegFixture(t), floravegMeta); err != nil {
+		t.Fatalf("IngestNameSpace: unexpected error: %v", err)
+	}
+
+	entries, err := repo.NameSpaceEntries(ctx, festucaOvinaConceptID, []string{"floraveg"})
+	if err != nil {
+		t.Fatalf("NameSpaceEntries: unexpected error: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("no floraveg entries stored for the Festuca ovina concept")
+	}
+	for _, e := range entries {
+		if e.Status != "accepted" {
+			t.Errorf("entry %s carries status %q, want %q from the source list", e.ExtID, e.Status, "accepted")
+		}
+		if !e.AcceptedInSpace() {
+			t.Errorf("entry %s does not report as accepted, so it could not win a target-space tie", e.ExtID)
+		}
+	}
 }

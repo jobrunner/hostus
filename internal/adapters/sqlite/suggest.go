@@ -269,7 +269,69 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("sqlite: iterating suggest %q rows: %w", q, err)
 	}
+
+	if err := db.attachTargetSpaceNames(ctx, out, opts.TargetSpace); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+// attachTargetSpaceNames fills TargetSpaceName on every item that has a
+// spelling in space. It runs ONE query for the whole page rather than one per
+// hit: a suggest page holds up to the fetch budget of concepts, and a
+// per-concept lookup would turn a single keystroke into dozens of round trips.
+func (db *DB) attachTargetSpaceNames(ctx context.Context, items []domain.SuggestItem, space string) error {
+	if space == "" || len(items) == 0 {
+		return nil
+	}
+
+	ids := make([]string, len(items))
+	for i, it := range items {
+		ids[i] = it.ConceptID
+	}
+	idsJSON, err := marshalIDs(ids)
+	if err != nil {
+		return err
+	}
+
+	// A concept usually holds SEVERAL spellings in one space — measured on the
+	// real index, 45% of concepts with a eurosl entry carry 2 to 391 of them,
+	// because a space maps its own synonyms onto one backbone concept. The
+	// space's ACCEPTED spelling is therefore the only non-arbitrary answer,
+	// and it is what a caller carrying the name downstream needs.
+	//
+	// The remaining ORDER BY terms only decide among equals: aggregate forms
+	// lose to plain ones, and ext_id makes the choice stable rather than
+	// whatever the store returns first. An index ingested before status was
+	// recorded has '' everywhere and falls back to that stable order.
+	rows, err := db.sql.QueryContext(ctx, `
+		SELECT concept_id, name
+		FROM name_space_entry
+		WHERE space = ? AND concept_id IN (SELECT value FROM json_each(?))
+		ORDER BY (status = 'accepted') DESC, aggregate ASC, ext_id ASC`, space, idsJSON)
+	if err != nil {
+		return fmt.Errorf("sqlite: suggest target space %q: %w", space, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	names := make(map[string]string, len(items))
+	for rows.Next() {
+		var conceptID, name string
+		if err := rows.Scan(&conceptID, &name); err != nil {
+			return fmt.Errorf("sqlite: scanning target space %q row: %w", space, err)
+		}
+		if _, seen := names[conceptID]; !seen {
+			names[conceptID] = name
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("sqlite: iterating target space %q rows: %w", space, err)
+	}
+
+	for i := range items {
+		items[i].TargetSpaceName = names[items[i].ConceptID]
+	}
+	return nil
 }
 
 // scanSuggestItem decodes one Suggest result row into a domain.SuggestItem.

@@ -36,8 +36,12 @@
     return t;
   }
 
+  // Ein waagerecht scrollbarer Container ist ohne Tastaturfokus nur mit der
+  // Maus erreichbar (WCAG 2.1.1). tabindex macht ihn zu einem Tab-Stopp, auf
+  // dem die Pfeiltasten scrollen; :focus-visible zeigt, wo man ist.
   function scroller(node) {
     var d = el("div", "scroll");
+    d.tabIndex = 0;
     d.appendChild(node);
     return d;
   }
@@ -200,10 +204,16 @@
     node.textContent = method + " " + path + "  ·  HTTP " + res.status + "  ·  " + res.ms + " ms";
   }
 
+  // role="alert" macht die Fehlermeldung zu einer Statusmeldung im Sinne von
+  // WCAG 4.1.3: sie wird vorgelesen, sobald sie eingefügt wird, ohne dass sie
+  // den Fokus an sich reisst. Jeder Fehlerpfad der vier Panels läuft hier
+  // durch, deshalb genügt diese eine Stelle.
   function errorBox(res) {
     var code = res.body && res.body.error ? res.body.error.code : "HTTP_" + res.status;
     var msg = res.body && res.body.error ? res.body.error.message : (res.raw || "keine Antwort");
-    return el("div", "error", "Fehler " + code + ": " + msg);
+    var box = el("div", "error", "Fehler " + code + ": " + msg);
+    box.setAttribute("role", "alert");
+    return box;
   }
 
   /* ---------- Panel 1: Suggest ---------- */

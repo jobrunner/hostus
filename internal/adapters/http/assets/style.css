@@ -4,6 +4,11 @@
   --bg: #ffffff;
   --panel: #f6f7f9;
   --line: #ccd2da;
+  /* Rand von Bedienelementen. Getrennt von --line, weil WCAG 1.4.11 nur die
+     Begrenzung fordert, die ein Bedienelement ERKENNBAR macht (>= 3:1);
+     dekorative Trennlinien sind ausgenommen und dürfen zart bleiben.
+     #7e8896 = 3.59:1 auf --bg, 3.35:1 auf --panel. */
+  --control-line: #7e8896;
   --bad: #a4142c;
   --bad-bg: #fdecef;
   --ok: #14603a;
@@ -64,12 +69,24 @@ section {
 input, textarea, button {
   font: inherit;
   color: inherit;
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-line);
   border-radius: 3px;
   padding: .3rem .4rem;
   background: var(--bg);
 }
 input[type="number"] { width: 5.5rem; }
+/* WCAG 2.2 SC 2.5.8: Zielfläche mindestens 24x24 CSS-Pixel. Die Standard-
+   Checkbox misst 13px; ohne feste Größe streckt der Flex-Container sie
+   ausserdem auf die Spaltenbreite. */
+input[type="checkbox"] { width: 1.5rem; height: 1.5rem; align-self: start; }
+
+/* Sichtbarer Fokus. Der Browser-Default bliebe zwar bestehen, ist auf den
+   dunklen Buttons aber schwach; ausserdem sind die scrollbaren Tabellen-
+   Container jetzt fokussierbar und brauchen eine erkennbare Markierung. */
+:focus-visible {
+  outline: 2px solid var(--fg);
+  outline-offset: 2px;
+}
 textarea { width: 100%; min-height: 6rem; resize: vertical; }
 button { cursor: pointer; background: var(--fg); color: var(--bg); border-color: var(--fg); }
 button:disabled { opacity: .45; cursor: default; }

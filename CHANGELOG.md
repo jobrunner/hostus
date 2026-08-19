@@ -100,6 +100,29 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Fixed (Testkonsole: Barrierefreiheit, WCAG 2.2 AA)
+- **Vier gemessene Barrieren in der Testkonsole beseitigt.** Audit mit dem
+  `web-accessibility-audit`-Harness (statisches Gate, axe-core im echten DOM,
+  plus die manuellen Tastatur-/Zoom-/Bewegungs-Durchgänge):
+  - **Breite Tabellen waren nur mit der Maus scrollbar** (WCAG 2.1.1; von axe
+    als `serious` gemeldet, sichtbar erst nachdem Ergebnisse geladen sind). Die
+    scrollbaren Container sind jetzt Tab-Stopps.
+  - **Fehlermeldungen erschienen lautlos** (WCAG 4.1.3). Alle vier Panels
+    melden Fehler über dieselbe Stelle, die jetzt `role="alert"` trägt; die
+    Suggest-Zusammenfassung ist `role="status"` (bewusst sie und nicht die
+    Ergebnistabelle, die sonst bei jedem Tastendruck komplett vorgelesen würde).
+  - **Der Rand von Eingabefeldern hatte 1,52:1** statt der geforderten 3:1
+    (WCAG 1.4.11). Bedienelemente nutzen jetzt ein eigenes Token
+    (`--control-line`, 3,59:1); dekorative Trennlinien dürfen zart bleiben.
+  - **Die Checkbox maß 13 px** statt der geforderten 24×24 CSS-Pixel
+    (WCAG 2.2 SC 2.5.8).
+  Zusätzlich ein expliziter `:focus-visible`-Ring — der Browser-Default ist auf
+  den dunklen Buttons schwach, und die Scroll-Container sind neuerdings
+  Tab-Stopps. Geprüft: axe meldet 0 Verstöße im Start- **und** im interaktiven
+  Zustand, kein Bedienelement unter 24×24, bei 200 % Textgröße kein
+  waagerechter Überlauf, keine Tastaturfalle. Fünf Go-Tests halten die
+  Eigenschaften fest, damit sie nicht still zurückfallen.
+
 ### Added (Testkonsole: Version im Footer)
 - **Die Testkonsole zeigt die laufende hostus-Version im Footer.** Wer zwei
   Deployments vergleicht, sieht damit auf der Seite selbst, welcher Build

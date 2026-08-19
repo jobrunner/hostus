@@ -33,8 +33,12 @@
   </div>
   <p class="hint">Hinweis: <code>?area=</code> nimmt heute <strong>einen</strong> Code. Mehrere Gebiete gibt es nur in <code>hostus bundle</code>.</p>
   <p class="url" id="suggest-url"></p>
-  <div class="summary" id="suggest-summary"></div>
-  <div class="scroll"><table id="suggest-table">
+  <!-- role="status" (WCAG 4.1.3): hier stehen die kurzen Statusmeldungen des
+       Panels ("Keine Treffer.", die Präfix-Zeile). Bewusst NICHT die
+       Ergebnistabelle darunter — die würde bei jedem Tastendruck komplett
+       vorgelesen. -->
+  <div class="summary" id="suggest-summary" role="status"></div>
+  <div class="scroll" tabindex="0"><table id="suggest-table">
     <thead><tr>
       <th>#</th><th>Name</th><th data-doc="sec">sec.</th><th data-doc="rank">Rang</th><th data-doc="accepted">Akzeptiert</th><th data-doc="in_area">im Gebiet</th><th data-doc="score">Score</th><th data-doc="prefix">Pr&auml;fix</th>
     </tr></thead>

@@ -213,6 +213,12 @@ type SuggestOpts struct {
 	// Ranks restricts results to the given domain.Rank values. Empty means
 	// no rank filter (every rank is eligible).
 	Ranks []domain.Rank
+	// Backbone restricts results to concepts of that backbone (e.g. "wcvp").
+	// Empty means no backbone filter. It is applied inside the query, ahead
+	// of the limit: a caller filtering afterwards would keep almost nothing,
+	// since one name can occur once per CDM sec. reference and crowd the
+	// single WCVP concept out of the page.
+	Backbone string
 	// Limit is the caller's target result count; Suggest may return more
 	// than Limit candidates (see the Suggest doc comment's fetch-budget
 	// note). A value <= 0 uses the adapter's default budget.

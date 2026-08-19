@@ -60,22 +60,29 @@ func (f MatchFilter) apply(cands []output.MatchCandidate) []output.MatchCandidat
 // validateFilter checks an entry_backbone/entry_sec filter against the ingested
 // backbones and sec. references BEFORE any name is resolved, so an unknown
 // value never does partial work. A zero filter is always valid.
+// validateBackbone reports ErrUnknownBackbone unless backbone names an
+// ingested backbone. An empty backbone is "no filter" and always valid.
+// Shared by the match entry_backbone filter and Suggest's, so both reject the
+// same values with the same error.
+func validateBackbone(ctx context.Context, repo output.Repository, backbone string) error {
+	if backbone == "" {
+		return nil
+	}
+	bvs, err := repo.BackboneVersions(ctx)
+	if err != nil {
+		return err
+	}
+	for _, b := range bvs {
+		if b.ID == backbone {
+			return nil
+		}
+	}
+	return ErrUnknownBackbone
+}
+
 func validateFilter(ctx context.Context, repo output.Repository, filter MatchFilter) error {
-	if filter.Backbone != "" {
-		bvs, err := repo.BackboneVersions(ctx)
-		if err != nil {
-			return err
-		}
-		found := false
-		for _, b := range bvs {
-			if b.ID == filter.Backbone {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return ErrUnknownBackbone
-		}
+	if err := validateBackbone(ctx, repo, filter.Backbone); err != nil {
+		return err
 	}
 	if filter.Sec != "" {
 		_, err := repo.SecReferenceByID(ctx, filter.Sec)

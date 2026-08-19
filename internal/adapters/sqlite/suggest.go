@@ -123,7 +123,8 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 	// appear in the final query text below: match + pool cap (pool CTE), then
 	// — only with an area — match again (match_rows CTE), the area codes for
 	// in_area_rows, and the area codes for the in_area EXISTS (SELECT list),
-	// then the rank-filter codes (WHERE), then the LIMIT budget.
+	// then the rank-filter codes (WHERE), the backbone id (WHERE), then the
+	// LIMIT budget.
 	args := []any{match, suggestMatchPool}
 
 	codes := areaCodes(opts.Area)
@@ -200,6 +201,17 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 		rankFilter = fmt.Sprintf(" AND tc.rank IN (%s)", strings.Join(placeholders, ","))
 	}
 
+	// The backbone filter sits in the WHERE clause, so SQLite applies it
+	// before GROUP BY and LIMIT. Filtering after the query would be useless
+	// for the case this exists for: "Inula" in area GER matches ~19 CDM
+	// concepts (one per German flora) and one WCVP concept, so a post-filter
+	// on a page of results keeps a single row at best.
+	backboneFilter := ""
+	if opts.Backbone != "" {
+		backboneFilter = " AND tc.backbone_id = ?"
+		args = append(args, opts.Backbone)
+	}
+
 	args = append(args, fetchBudget(opts.Limit))
 
 	// bm25(fts_name) can only be evaluated directly against fts_name's own
@@ -220,7 +232,7 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 		JOIN fts_name_map fnm ON fnm.rowid = m.rowid
 		JOIN taxon_concept tc ON tc.id = fnm.concept_id
 		JOIN name an ON an.id = tc.accepted_name
-		WHERE 1 = 1` + rankFilter + `
+		WHERE 1 = 1` + rankFilter + backboneFilter + `
 		GROUP BY tc.id
 		ORDER BY in_area DESC, score ASC
 		LIMIT ?`

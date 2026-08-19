@@ -107,6 +107,13 @@ var a11yMutants = []a11yMutant{
 		apply:    replaceCSS("--control-line: #7e8896;", "--control-line: #ccd2da;"),
 	},
 	{
+		// Review caught this as a live vacuous pass: an unparseable color was
+		// read as black, which scores 21:1 against white and sailed through.
+		name:     "control border token becomes an unparseable color",
+		caughtBy: "control-contrast-and-target-size",
+		apply:    replaceCSS("--control-line: #7e8896;", "--control-line: #zzzzzz;"),
+	},
+	{
 		name:     "checkbox shrunk back under the minimum target size",
 		caughtBy: "control-contrast-and-target-size",
 		apply:    replaceCSS(`input[type="checkbox"] { width: 1.5rem; height: 1.5rem;`, `input[type="checkbox"] { width: 13px; height: 13px;`),

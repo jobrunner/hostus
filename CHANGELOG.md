@@ -114,7 +114,7 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   (gremlins) erreicht sie nicht: es mutiert Go-Quelltext, die geprüften
   Eigenschaften stehen aber in `style.css`, `index.html` und `app.js`, die per
   `go:embed` eingebunden sind. Das Gate meldete für das http-Paket
-  „Not covered = 0", ohne je einen Mutanten für die beseitigten Barrieren zu
+  „Not covered = 0“, ohne je einen Mutanten für die beseitigten Barrieren zu
   erzeugen — die Prüfungen wurden von einem Harness benotet, das sie nie
   getestet hat. Die beim Audit von Hand zurückgenommenen Rückschritte sind
   deshalb jetzt als Code hinterlegt: **14 Mutanten**, jeder einer Prüfung

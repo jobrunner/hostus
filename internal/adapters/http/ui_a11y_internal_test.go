@@ -199,6 +199,11 @@ func cssRule(css, opener string) (string, bool) {
 // returns CSS pixels. rem is relative to the ROOT element, which the console
 // never restyles, so 1rem is 16px here. Returns 0 when absent, so a missing
 // declaration fails the caller's >= 24 check.
+//
+// Unit spellings are matched exactly and lowercase: "1.5REM", "calc(...)" or
+// an em value all read as 0 and therefore FAIL. That is the intended direction
+// — if the stylesheet starts using a form this cannot read, the gate should
+// stop and be taught the form, not quietly stop protecting the size.
 func cssLengthPx(block, prop string) float64 {
 	_, after, found := strings.Cut(block, prop+":")
 	if !found {
@@ -218,6 +223,17 @@ func cssLengthPx(block, prop string) float64 {
 }
 
 // cssHexToken reads a custom property declared as a #rrggbb literal.
+//
+// Every digit is validated, not just the length: relativeLuminance parses with
+// Sscanf and treats an unparseable pair as 0, so "#zzzzzz" would be read as
+// black and score 21:1 against white — a malformed color would PASS the
+// contrast check instead of failing it. Rejecting it here is what keeps that
+// vacuous pass out.
+//
+// Deliberately strict in the other direction too: three-digit shorthand
+// (#fff), uppercase, or a var() reference all return false, and the caller
+// turns that into a finding. For a gate protecting an accessibility property,
+// a loud false failure is the right way to be wrong.
 func cssHexToken(css, name string) (string, bool) {
 	_, after, found := strings.Cut(css, name+":")
 	if !found {
@@ -227,6 +243,11 @@ func cssHexToken(css, name string) (string, bool) {
 	value = strings.TrimSpace(value)
 	if len(value) != 7 || value[0] != '#' {
 		return "", false
+	}
+	for _, r := range value[1:] {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", r) {
+			return "", false
+		}
 	}
 	return value, true
 }

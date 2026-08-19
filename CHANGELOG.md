@@ -90,6 +90,15 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (Testkonsole: Version im Footer)
+- **Die Testkonsole zeigt die laufende hostus-Version im Footer.** Wer zwei
+  Deployments vergleicht, sieht damit auf der Seite selbst, welcher Build
+  antwortet — ohne Terminal-Zugriff auf den Host. Die Version ist dieselbe, die
+  `hostus version` meldet (per LDFLAGS gestempelt); ein ungestempelter Build
+  (`go run`, Build ohne Makefile) zeigt `dev`. Der Wert wird HTML-escaped
+  eingesetzt und fließt in den ETag der Seite ein, damit ein Browser nach einem
+  Update nicht den Footer der Vorversion weiterzeigt.
+
 ### Added (Suggest: `entry_backbone` — nur Konzepte einer Backbone vorschlagen)
 - **`GET /v1/suggest` akzeptiert `entry_backbone`** (z. B. `wcvp`) — derselbe
   Filter, den `POST /v1/match` unter diesem Namen schon anbietet. Bisher ließ

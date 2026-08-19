@@ -63,7 +63,7 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	// messages go to stderr — never stdout.
 	stderrLog := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 
-	a, err := app.New(cfg)
+	a, err := app.New(cfg, app.WithVersion(Version))
 	if err != nil {
 		return fmt.Errorf("building app: %w", err)
 	}

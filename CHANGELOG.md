@@ -90,6 +90,19 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (Suggest: `entry_backbone` — nur Konzepte einer Backbone vorschlagen)
+- **`GET /v1/suggest` akzeptiert `entry_backbone`** (z. B. `wcvp`) — derselbe
+  Filter, den `POST /v1/match` unter diesem Namen schon anbietet. Bisher ließ
+  sich Suggest nur nach Gebiet (`area`) einschränken, nicht nach Backbone; ein
+  Name kann aber je CDM-`sec.`-Referenz einmal vorkommen und verdrängt das
+  einzelne WCVP-Konzept von der Ergebnisseite. Gemessen am realen Index:
+  `q=Inula&area=GER&limit=20` lieferte **1** WCVP- und 19 CDM-Konzepte (dasselbe
+  „Inula" aus verschiedenen deutschen Floren); mit `entry_backbone=wcvp` sind es
+  **20** WCVP-Konzepte. Der Filter greift in der SQL-Abfrage, also **vor** dem
+  Limit — clientseitiges Nachfiltern behielte bestenfalls eine Zeile. Eine nicht
+  ingestierte Backbone liefert `400 INVALID_QUERY` (statt einer leeren Liste,
+  die wie „Pflanze unbekannt" aussähe), mit derselben Meldung wie bei `match`.
+
 ### Added (Match: homotype Entmehrdeutigung — Synonym-Namen lösen zum echten Namensträger auf)
 - **`/v1/match` bricht einen Namens-Tie über die Homotypie auf.** Ist ein
   verbatim Name Synonym unter mehreren Konzepten, gewinnt jetzt das Konzept, in

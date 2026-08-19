@@ -247,6 +247,18 @@ paths:
             `<= 0` verwendet den serverseitigen Standardwert.
           schema:
             type: integer
+        - name: entry_backbone
+          in: query
+          required: false
+          description: >-
+            Beschränkt die Treffer auf eine Backbone (z. B. `wcvp`) — derselbe
+            Filter, den `POST /v1/match` unter diesem Namen anbietet. Leer
+            bedeutet alle Backbones. Der Filter greift in der Abfrage, also
+            **vor** dem Limit: derselbe Name kann je CDM-`sec.`-Referenz einmal
+            vorkommen und ein einzelnes WCVP-Konzept sonst von der Ergebnisseite
+            verdrängen. Eine nicht ingestierte Backbone liefert 400.
+          schema:
+            type: string
       responses:
         '200':
           description: Priorisierte, gekürzte Liste von Autosuggest-Kandidaten.

@@ -146,14 +146,20 @@ func handleSuggest(repo output.Repository) http.HandlerFunc {
 			return
 		}
 
+		entryBackbone := query.Get("entry_backbone")
 		resp, err := application.Suggest(r.Context(), repo, application.SuggestRequest{
-			Q:     query.Get("q"),
-			Area:  query.Get("area"),
-			Ranks: ranks,
-			Limit: limit,
+			Q:             query.Get("q"),
+			Area:          query.Get("area"),
+			Ranks:         ranks,
+			Limit:         limit,
+			EntryBackbone: entryBackbone,
 		})
 		if errors.Is(err, application.ErrEmptyQuery) {
 			httperr.InvalidQueryError(w, "q query parameter is required")
+			return
+		}
+		if errors.Is(err, application.ErrUnknownBackbone) {
+			httperr.InvalidQueryError(w, "unknown entry_backbone "+strconv.Quote(entryBackbone))
 			return
 		}
 		if err != nil {

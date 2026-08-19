@@ -123,7 +123,8 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 	// appear in the final query text below: match + pool cap (pool CTE), then
 	// — only with an area — match again (match_rows CTE), the area codes for
 	// in_area_rows, and the area codes for the in_area EXISTS (SELECT list),
-	// then the rank-filter codes (WHERE), then the LIMIT budget.
+	// then the rank-filter codes (WHERE), the backbone id (WHERE), then the
+	// LIMIT budget.
 	args := []any{match, suggestMatchPool}
 
 	codes := areaCodes(opts.Area)
@@ -200,6 +201,32 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 		rankFilter = fmt.Sprintf(" AND tc.rank IN (%s)", strings.Join(placeholders, ","))
 	}
 
+	// The backbone filter sits in the WHERE clause, so SQLite applies it
+	// before GROUP BY and LIMIT. Filtering after the query would be useless
+	// for the case this exists for: "Inula" in area GER matches ~19 CDM
+	// concepts (one per German flora) and one WCVP concept, so a post-filter
+	// on a page of results keeps a single row at best.
+	//
+	// It deliberately does NOT filter the bm25 pool above. The pool is filled
+	// with no backbone awareness, so a majority backbone can crowd out a
+	// minority one: for the prefix "ca" CDM has 4345 matching names but only
+	// 292 reach the 5000-row pool. Those 292 are still CDM's MOST relevant
+	// matches, which is more than a result page needs — measured on the real
+	// index, entry_backbone=cdm&q=ca returns a full, sensible page in 0.29s.
+	// Pushing the filter into the pool was tried and rejected: it requires
+	// joining taxon_concept (a TEXT primary key) for every one of the ~104k
+	// matches BEFORE the cap applies, which measured 5-8x slower (0.29s ->
+	// 1.7-2.4s) — reintroducing exactly the 502 latency the pool prevents,
+	// for candidates domain.RankSuggestions would discard anyway.
+	// The one case where relevance-truncation is not acceptable is in_area,
+	// which outranks bm25 — and the in-area union above already recovers those
+	// rows for every backbone (pinned by TestSuggest_BackboneKeepsInAreaBeyondPool).
+	backboneFilter := ""
+	if opts.Backbone != "" {
+		backboneFilter = " AND tc.backbone_id = ?"
+		args = append(args, opts.Backbone)
+	}
+
 	args = append(args, fetchBudget(opts.Limit))
 
 	// bm25(fts_name) can only be evaluated directly against fts_name's own
@@ -220,7 +247,7 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 		JOIN fts_name_map fnm ON fnm.rowid = m.rowid
 		JOIN taxon_concept tc ON tc.id = fnm.concept_id
 		JOIN name an ON an.id = tc.accepted_name
-		WHERE 1 = 1` + rankFilter + `
+		WHERE 1 = 1` + rankFilter + backboneFilter + `
 		GROUP BY tc.id
 		ORDER BY in_area DESC, score ASC
 		LIMIT ?`

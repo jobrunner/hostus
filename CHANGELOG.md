@@ -109,6 +109,22 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (Mutationstest für die Barrierefreiheits-Prüfungen)
+- **Die a11y-Prüfungen werden jetzt selbst geprüft.** `make mutation`
+  (gremlins) erreicht sie nicht: es mutiert Go-Quelltext, die geprüften
+  Eigenschaften stehen aber in `style.css`, `index.html` und `app.js`, die per
+  `go:embed` eingebunden sind. Das Gate meldete für das http-Paket
+  „Not covered = 0“, ohne je einen Mutanten für die beseitigten Barrieren zu
+  erzeugen — die Prüfungen wurden von einem Harness benotet, das sie nie
+  getestet hat. Die beim Audit von Hand zurückgenommenen Rückschritte sind
+  deshalb jetzt als Code hinterlegt: **14 Mutanten**, jeder einer Prüfung
+  zugeordnet, die ihn melden muss. Zwei Meta-Eigenschaften sichern das Gate
+  selbst ab — eine entkernte Prüfung fliegt auf, und ein Mutant, dessen
+  Suchtext im Asset verschwindet, meldet sich als Blindgänger statt still
+  durchzurutschen. Zusätzlich wird der Kontrast des Bedienelement-Randes jetzt
+  **gerechnet** statt als Zeichenkette verglichen, sodass ein still
+  aufgehellter Farbwert auffällt.
+
 ### Fixed (Testkonsole: Barrierefreiheit, WCAG 2.2 AA)
 - **Vier gemessene Barrieren in der Testkonsole beseitigt.** Audit mit dem
   `web-accessibility-audit`-Harness (statisches Gate, axe-core im echten DOM,

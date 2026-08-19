@@ -6,6 +6,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/hex"
+	"html"
 	"net/http"
 	"path"
 	"strings"
@@ -38,9 +39,17 @@ import (
 // substituted for. They are CSS/JS comments so the raw asset stays a valid
 // document that a browser or an editor can still open.
 const (
-	uiStyleSentinel  = "/*hostus:style*/"
-	uiScriptSentinel = "/*hostus:script*/"
+	uiStyleSentinel   = "/*hostus:style*/"
+	uiScriptSentinel  = "/*hostus:script*/"
+	uiVersionSentinel = "/*hostus:version*/"
 )
+
+// uiFallbackVersion is what the footer shows when no version was injected
+// (a zero-value Deps, `go run`, or a build that skipped the Makefile's
+// LDFLAGS). It matches the placeholder cmd/hostus/version.go uses, so the
+// page and `hostus version` never disagree about what an unstamped build is
+// called.
+const uiFallbackVersion = "dev"
 
 //go:embed assets/index.html
 var uiIndexHTML string
@@ -62,16 +71,24 @@ var uiAssetContentTypes = map[string]string{
 	".js":  "text/javascript; charset=utf-8",
 }
 
-var (
-	uiDocumentOnce = sync.OnceValue(buildUIDocument)
-	uiCSPOnce      = sync.OnceValue(buildUICSP)
-	uiETagOnce     = sync.OnceValue(buildUIDocumentETag)
-)
+var uiCSPOnce = sync.OnceValue(buildUICSP)
 
-// buildUIDocument composes the one self-contained page.
-func buildUIDocument() string {
+// buildUIDocument composes the one self-contained page. The version is not
+// memoized package-wide the way the CSP is: it is per-router state, and a test
+// (or a future multi-router host) must be able to build two documents that
+// differ. NewRouter builds it once at construction, so serving stays a plain
+// byte copy.
+//
+// The version is HTML-escaped: it arrives from build-time LDFLAGS, which is a
+// trusted-enough source for content but not a structural one — escaping keeps
+// it text no matter what a build injected.
+func buildUIDocument(version string) string {
+	if version == "" {
+		version = uiFallbackVersion
+	}
 	doc := strings.Replace(uiIndexHTML, uiStyleSentinel, uiStyleCSS, 1)
-	return strings.Replace(doc, uiScriptSentinel, uiAppJS, 1)
+	doc = strings.Replace(doc, uiScriptSentinel, uiAppJS, 1)
+	return strings.Replace(doc, uiVersionSentinel, html.EscapeString(version), 1)
 }
 
 // uiHashSource renders s as a CSP hash-source expression. The hash covers
@@ -99,10 +116,6 @@ func buildUICSP() string {
 		"frame-ancestors 'none'",
 		"object-src 'none'",
 	}, "; ")
-}
-
-func buildUIDocumentETag() string {
-	return uiETagFor([]byte(uiDocumentOnce()))
 }
 
 func uiETagFor(b []byte) string {
@@ -142,12 +155,21 @@ func underAPIPrefix(p string) bool {
 	return false
 }
 
-// handleUI serves the embedded console at "/". It is a plain HTTP adapter:
-// the console talks to the same public /v1 API a browser would, so nothing
-// here reaches into the application or domain layer.
-func handleUI(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Security-Policy", uiCSPOnce())
-	serveUIBytes(w, r, "index.html", "text/html; charset=utf-8", uiETagOnce(), []byte(uiDocumentOnce()))
+// handleUI builds the console document for one version and returns the
+// handler serving it. It is a plain HTTP adapter: the console talks to the
+// same public /v1 API a browser would, so nothing here reaches into the
+// application or domain layer.
+//
+// Document and ETag are computed once here rather than per request, and the
+// ETag covers the version too — two builds must not share a cache entry, or a
+// browser would keep rendering the previous version's footer.
+func handleUI(version string) http.HandlerFunc {
+	doc := []byte(buildUIDocument(version))
+	etag := uiETagFor(doc)
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", uiCSPOnce())
+		serveUIBytes(w, r, "index.html", "text/html; charset=utf-8", etag, doc)
+	}
 }
 
 // handleUIAsset serves the individually addressable embedded assets under

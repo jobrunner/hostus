@@ -22,7 +22,7 @@ import (
 // separate requests would eat the very budget the tester is trying to
 // observe latency in. Both assets must therefore appear inlined.
 func TestUIDocumentIsSelfContained(t *testing.T) {
-	doc := buildUIDocument()
+	doc := buildUIDocument("")
 
 	if !strings.Contains(doc, uiStyleCSS) {
 		t.Error("document does not contain the stylesheet inline")
@@ -42,7 +42,7 @@ func TestUIDocumentIsSelfContained(t *testing.T) {
 var uiExternalRef = regexp.MustCompile(`(?i)(https?:)?//[a-z0-9.-]+\.[a-z]{2,}`)
 
 func TestUIDocumentReferencesNothingExternal(t *testing.T) {
-	if m := uiExternalRef.FindString(buildUIDocument()); m != "" {
+	if m := uiExternalRef.FindString(buildUIDocument("")); m != "" {
 		t.Errorf("document references an external origin: %q", m)
 	}
 }
@@ -54,7 +54,7 @@ func TestUIDocumentReferencesNothingExternal(t *testing.T) {
 var uiInlineHandler = regexp.MustCompile(`(?i)<[^>]*\son[a-z]+\s*=`)
 
 func TestUIDocumentHasNoInlineHandlersOrEval(t *testing.T) {
-	doc := buildUIDocument()
+	doc := buildUIDocument("")
 	if m := uiInlineHandler.FindString(doc); m != "" {
 		t.Errorf("document contains an inline event handler: %q", m)
 	}
@@ -104,7 +104,7 @@ func TestUICSPHashesMatchTheInlinedAssets(t *testing.T) {
 
 func TestHandleUIServesTheDocument(t *testing.T) {
 	rr := httptest.NewRecorder()
-	handleUI(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+	handleUI("")(rr, httptest.NewRequest(http.MethodGet, "/", nil))
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("GET /: got %d, want 200", rr.Code)
@@ -118,7 +118,7 @@ func TestHandleUIServesTheDocument(t *testing.T) {
 	if rr.Header().Get("ETag") == "" {
 		t.Error("no ETag: a reload would re-transfer the whole document")
 	}
-	if rr.Body.String() != buildUIDocument() {
+	if rr.Body.String() != buildUIDocument("") {
 		t.Error("body is not the composed document")
 	}
 }
@@ -127,13 +127,13 @@ func TestHandleUIServesTheDocument(t *testing.T) {
 // 304, not another full document.
 func TestHandleUIRevalidatesCheaply(t *testing.T) {
 	first := httptest.NewRecorder()
-	handleUI(first, httptest.NewRequest(http.MethodGet, "/", nil))
+	handleUI("")(first, httptest.NewRequest(http.MethodGet, "/", nil))
 	etag := first.Header().Get("ETag")
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("If-None-Match", etag)
 	second := httptest.NewRecorder()
-	handleUI(second, req)
+	handleUI("")(second, req)
 
 	if second.Code != http.StatusNotModified {
 		t.Fatalf("conditional GET /: got %d, want 304", second.Code)
@@ -187,7 +187,7 @@ func TestHandleUIAssetRejectsUnknownName(t *testing.T) {
 // panels it exists for. Without them the page is a shell and the suggest
 // rework stays unjudgeable.
 func TestUIPanelsArePresent(t *testing.T) {
-	doc := buildUIDocument()
+	doc := buildUIDocument("")
 	for _, id := range []string{"panel-suggest", "panel-concept", "panel-match", "panel-translate"} {
 		if !strings.Contains(doc, `id="`+id+`"`) {
 			t.Errorf("document lacks panel %q", id)

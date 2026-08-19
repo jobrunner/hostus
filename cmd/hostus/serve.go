@@ -62,7 +62,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("applying flag overrides: %w", err)
 	}
 
-	return app.Run(cmd.Context(), cfg)
+	return app.Run(cmd.Context(), cfg, app.WithVersion(Version))
 }
 
 // bindServeFlags binds cmd's flags into viper and re-unmarshals cfg so any

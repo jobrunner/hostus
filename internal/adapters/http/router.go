@@ -76,6 +76,13 @@ type Deps struct {
 	// deliberately not a router-level fallback: a zero-value Deps must
 	// never expose a surface its caller did not ask for.
 	UIEnabled bool
+
+	// Version is the running build's version, rendered in the console's
+	// footer so a tester can tell two deployments apart from the page
+	// itself. Empty renders as "dev", matching `hostus version`'s
+	// placeholder for an unstamped build. It is display-only: no route
+	// behavior depends on it.
+	Version string
 }
 
 // NewRouter assembles the hostus HTTP surface: the fixed middleware chain
@@ -162,7 +169,10 @@ func NewRouter(deps Deps) *mux.Router {
 	// it after the API routes also means the UI can never shadow a /v1,
 	// /health or /metrics path.
 	if deps.UIEnabled {
-		r.HandleFunc("/", handleUI).Methods(http.MethodGet, http.MethodHead)
+		// Built once here: the document embeds deps.Version, and both the "/"
+		// route and the SPA fallback must serve the very same bytes and ETag.
+		ui := handleUI(deps.Version)
+		r.HandleFunc("/", ui).Methods(http.MethodGet, http.MethodHead)
 		r.HandleFunc("/assets/{name}", handleUIAsset).Methods(http.MethodGet, http.MethodHead)
 
 		// SPA deep links. NotFoundHandler is the only hook that fires
@@ -170,7 +180,7 @@ func NewRouter(deps Deps) *mux.Router {
 		// 405 and an unknown /v1 path a 404; a catch-all PathPrefix("/")
 		// route would swallow both. It is wrapped in the same chain by
 		// hand because mux does not wrap it (see `chain` above).
-		r.NotFoundHandler = applyChain(chain, spaFallback(http.HandlerFunc(handleUI)))
+		r.NotFoundHandler = applyChain(chain, spaFallback(ui))
 	}
 
 	return r

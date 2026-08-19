@@ -70,12 +70,33 @@ type App struct {
 	closeRepo         func() error
 }
 
+// Option adjusts what New builds. Options carry things that are NOT
+// configuration — values the binary knows about itself rather than values a
+// user sets — so they stay out of config.Config and out of New's signature.
+type Option func(*options)
+
+type options struct {
+	version string
+}
+
+// WithVersion supplies the running build's version (cmd/hostus's LDFLAGS-
+// injected Version). The console renders it in its footer. Omitted, the footer
+// reads "dev", matching `hostus version` for an unstamped build.
+func WithVersion(v string) Option {
+	return func(o *options) { o.version = v }
+}
+
 // New builds an App from cfg: telemetry providers and ring buffers via
 // telemetry.Setup, a *slog.Logger backed by the telemetry ring log, and the
 // HTTP router via httpx.NewRouter with Deps populated from cfg. It does not
 // start listening; call Serve for that, or read Router/Telemetry/Logger
 // directly (as the future mcp command does).
-func New(cfg *config.Config) (*App, error) {
+func New(cfg *config.Config, opts ...Option) (*App, error) {
+	var o options
+	for _, apply := range opts {
+		apply(&o)
+	}
+
 	providers, shutdownTelemetry, err := telemetry.Setup(context.Background(), cfg)
 	if err != nil {
 		return nil, fmt.Errorf("setting up telemetry: %w", err)
@@ -96,6 +117,7 @@ func New(cfg *config.Config) (*App, error) {
 		CORSAllowedOrigins: cfg.CORS.AllowedOrigins,
 		Repo:               repo,
 		UIEnabled:          cfg.UI.Enabled,
+		Version:            o.version,
 	})
 
 	return &App{
@@ -196,8 +218,8 @@ func (a *App) Shutdown(ctx context.Context) error {
 
 // Run builds an App for cfg and serves it until ctx is done. It is the
 // entry point the `serve` command calls.
-func Run(ctx context.Context, cfg *config.Config) error {
-	a, err := New(cfg)
+func Run(ctx context.Context, cfg *config.Config, opts ...Option) error {
+	a, err := New(cfg, opts...)
 	if err != nil {
 		return err
 	}

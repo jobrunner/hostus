@@ -5,6 +5,13 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [2.3.2-alpha.0](https://github.com/jobrunner/hostus/compare/v2.3.1-alpha.0...v2.3.2-alpha.0) (2026-08-19)
+
+
+### Bug Fixes
+
+* **test:** reject malformed hex so the contrast check cannot pass vacuously ([8041f48](https://github.com/jobrunner/hostus/commit/8041f48a3e71995b3fc12beee978d3179d181d4f))
+
 ## [2.3.1-alpha.0](https://github.com/jobrunner/hostus/compare/v2.3.0-alpha.0...v2.3.1-alpha.0) (2026-08-19)
 
 

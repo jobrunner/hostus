@@ -130,12 +130,20 @@ func checkLiveRegion(a uiAssets) []string {
 func checkControls(a uiAssets) []string {
 	var out []string
 
-	controls, found := cssRule(a.css, "input, textarea, button {")
+	controls, found := cssRule(a.css, "input, textarea, select, button {")
 	if !found {
 		return []string{"the shared input/textarea/button rule is gone; control borders cannot be checked"}
 	}
 	if !strings.Contains(controls, "var(--control-line)") {
-		out = append(out, "input/textarea/button no longer use --control-line, so their border falls back to the decorative hairline")
+		out = append(out, "the shared control rule no longer uses --control-line, so borders fall back to the decorative hairline")
+	}
+	// select was omitted from that rule when the space pickers were added, and
+	// this check did not notice: the browser default renders them ~19px tall
+	// with their own border, below SC 2.5.8 and outside 1.4.11.
+	if selectRule, ok := cssRule(a.css, "select {"); !ok {
+		out = append(out, "no select rule; the pickers would render at the browser default height, under the 24x24 minimum")
+	} else if px := cssLengthPx(selectRule, "min-height"); px < 24 {
+		out = append(out, fmt.Sprintf("select min-height resolves to %.1fpx, want >= 24 (WCAG 2.2 SC 2.5.8)", px))
 	}
 
 	border, ok := cssHexToken(a.css, "--control-line")

@@ -270,7 +270,7 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 		return nil, fmt.Errorf("sqlite: iterating suggest %q rows: %w", q, err)
 	}
 
-	if err := db.attachTargetSpaceNames(ctx, out, opts.TargetSpace); err != nil {
+	if err := db.attachTargetSpaceNames(ctx, out, opts.TargetSpace, domain.IsAggregateName(q)); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -280,7 +280,7 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 // spelling in space. It runs ONE query for the whole page rather than one per
 // hit: a suggest page holds up to the fetch budget of concepts, and a
 // per-concept lookup would turn a single keystroke into dozens of round trips.
-func (db *DB) attachTargetSpaceNames(ctx context.Context, items []domain.SuggestItem, space string) error {
+func (db *DB) attachTargetSpaceNames(ctx context.Context, items []domain.SuggestItem, space string, queryIsAggregate bool) error {
 	if space == "" || len(items) == 0 {
 		return nil
 	}
@@ -300,41 +300,51 @@ func (db *DB) attachTargetSpaceNames(ctx context.Context, items []domain.Suggest
 	// space's ACCEPTED spelling is therefore the only non-arbitrary answer,
 	// and it is what a caller carrying the name downstream needs.
 	//
-	// The ORDER BY must mirror domain.pickSpelling, which /v1/match resolves
-	// with, or the two endpoints answer differently for the same concept.
-	// There, aggregate is a FILTER and accepted only decides within it — so
-	// aggregate sorts FIRST here. Ordering accepted first instead would make a
-	// concept whose accepted spelling is an aggregate ("Festuca ovina aggr.")
-	// show that aggregate in suggest while match shows the plain name.
-	// ext_id last makes the remaining choice stable rather than whatever the
-	// store returns first; an index ingested before status was recorded has ''
-	// everywhere and falls back to exactly that stable order.
+	// The rows are fetched and then resolved by domain.ResolveTargetSpace —
+	// the SAME function /v1/match resolves with. Restating the precedence as
+	// an ORDER BY was tried and rejected: it made the two endpoints answer
+	// differently for one concept, and it cannot express the rule at all,
+	// because which spelling is right depends on the HIT (was it reached via
+	// an aggregate alias?) and not only on the entries.
+	//
+	// ext_id ASC only makes the input order stable, so the resolver's own
+	// fallback ("no entry is marked accepted") is deterministic rather than
+	// whatever the store returns first.
 	rows, err := db.sql.QueryContext(ctx, `
-		SELECT concept_id, name
+		SELECT concept_id, name, aggregate, COALESCE(status, '')
 		FROM name_space_entry
 		WHERE space = ? AND concept_id IN (SELECT value FROM json_each(?))
-		ORDER BY aggregate ASC, (status = 'accepted') DESC, ext_id ASC`, space, idsJSON)
+		ORDER BY ext_id ASC`, space, idsJSON)
 	if err != nil {
 		return fmt.Errorf("sqlite: suggest target space %q: %w", space, err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	names := make(map[string]string, len(items))
+	entries := make(map[string][]domain.NameSpaceEntry, len(items))
 	for rows.Next() {
-		var conceptID, name string
-		if err := rows.Scan(&conceptID, &name); err != nil {
+		var conceptID string
+		var e domain.NameSpaceEntry
+		var aggregate int
+		if err := rows.Scan(&conceptID, &e.Name, &aggregate, &e.Status); err != nil {
 			return fmt.Errorf("sqlite: scanning target space %q row: %w", space, err)
 		}
-		if _, seen := names[conceptID]; !seen {
-			names[conceptID] = name
-		}
+		e.Space = space
+		e.Aggregate = aggregate != 0
+		entries[conceptID] = append(entries[conceptID], e)
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("sqlite: iterating target space %q rows: %w", space, err)
 	}
 
+	// queryIsAggregate comes from the QUERY, exactly as it does on the match
+	// path (isAggregate over the caller's verbatim). SuggestItem.Aggregate is
+	// a different thing and must not be used here: it is MAX(is_aggregate)
+	// over the matched names, so a concept that owns any aggregate alias
+	// carries it even when the query matched only the plain name — using it
+	// would name a plain query with the aggregate spelling.
 	for i := range items {
-		items[i].TargetSpaceName = names[items[i].ConceptID]
+		name, _ := domain.ResolveTargetSpace(queryIsAggregate, entries[items[i].ConceptID])
+		items[i].TargetSpaceName = name
 	}
 	return nil
 }

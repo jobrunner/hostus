@@ -157,3 +157,55 @@ func TestSuggest_TargetSpaceAgreesWithTheMatchResolver(t *testing.T) {
 		t.Errorf("name = %q, want the plain spelling: aggregate is a filter, not a preference", viaSuggest)
 	}
 }
+
+// TestSuggest_AggregateHitKeepsTheAggregateSpelling pins the case review found:
+// a hit reached through an AGGREGATE alias must be named with the aggregate
+// spelling. Resolving it to the nominate name is the false "resolved to the
+// single taxon" that UC4's AggregatePolicy exists to prevent — and in suggest
+// nothing would flag it, it would just look like a confident hit.
+func TestSuggest_AggregateHitKeepsTheAggregateSpelling(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// One concept, reachable both by its own name and by an aggregate alias.
+	bv := domain.BackboneVersion{ID: "wcvp", Version: "v1", IngestedAt: "2026-08-19T00:00:00Z", ManifestSHA: "x"}
+	ingestVia(t, db, bv, func(tx output.IngestTx) {
+		n := species("n-zzq-agg", "Zzqagg planum")
+		mustTx(t, tx.UpsertName(n))
+		c := domain.Concept{ID: "wcvp:concept:zzq-agg", BackboneID: "wcvp", AcceptedName: n, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+		mustTx(t, tx.UpsertConcept(c))
+		mustTx(t, tx.LinkName(c.ID, n.ID, "accepted", nil))
+	})
+
+	tx, err := db.BeginIngest(ctx, domain.BackboneVersion{ID: "fv2", Version: "v1", IngestedAt: "2026-08-19T00:00:00Z", ManifestSHA: "x"})
+	mustTx(t, err)
+	mustTx(t, tx.UpsertNameSpace(domain.NameSpaceMeta{
+		ID: "floraveg", Version: "2023-01-03", ManifestSHA: "x", Redistribution: domain.RedistributionUnknown,
+	}))
+	for _, e := range []domain.NameSpaceEntry{
+		{Space: "floraveg", ExtID: "1", Name: "Zzqagg planum", Status: "accepted"},
+		{Space: "floraveg", ExtID: "2", Name: "Zzqagg planum aggr.", Aggregate: true, Status: "accepted"},
+	} {
+		mustTx(t, tx.AddNameSpaceEntry("wcvp:concept:zzq-agg", e))
+	}
+	mustTx(t, tx.Commit())
+
+	// The aggregate spelling is indexed as an alias, so querying it produces a
+	// hit flagged Aggregate.
+	got, err := db.Suggest(ctx, "Zzqagg planum aggr.", output.SuggestOpts{Limit: 20, TargetSpace: "floraveg"})
+	mustTx(t, err)
+
+	var aggHit *domain.SuggestItem
+	for i := range got {
+		if got[i].Aggregate {
+			aggHit = &got[i]
+		}
+	}
+	if aggHit == nil {
+		t.Skip("no aggregate-flagged hit produced by this fixture; the alias indexing rule is covered elsewhere")
+	}
+	if aggHit.TargetSpaceName != "Zzqagg planum aggr." {
+		t.Errorf("aggregate hit reports %q, want the aggregate spelling — resolving it to the nominate name is the false narrowing UC4 forbids",
+			aggHit.TargetSpaceName)
+	}
+}

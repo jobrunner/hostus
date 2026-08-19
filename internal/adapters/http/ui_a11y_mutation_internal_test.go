@@ -114,6 +114,18 @@ var a11yMutants = []a11yMutant{
 		apply:    replaceCSS("--control-line: #7e8896;", "--control-line: #zzzzzz;"),
 	},
 	{
+		// Review found this as a live regression: the space pickers were added
+		// as <select> and the shared control rule did not cover them.
+		name:     "select dropped from the shared control rule",
+		caughtBy: "control-contrast-and-target-size",
+		apply:    replaceCSS("input, textarea, select, button {", "input, textarea, button {"),
+	},
+	{
+		name:     "select shrunk under the minimum target size",
+		caughtBy: "control-contrast-and-target-size",
+		apply:    replaceCSS("select { min-height: 1.5rem; }", "select { min-height: 19px; }"),
+	},
+	{
 		name:     "checkbox shrunk back under the minimum target size",
 		caughtBy: "control-contrast-and-target-size",
 		apply:    replaceCSS(`input[type="checkbox"] { width: 1.5rem; height: 1.5rem;`, `input[type="checkbox"] { width: 13px; height: 13px;`),

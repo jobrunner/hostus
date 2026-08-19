@@ -297,6 +297,8 @@
   }
   var limitInput = byId("suggest-limit");
   var suggestURL = byId("suggest-url");
+  var suggestBackbone = byId("suggest-backbone");
+  var suggestSpace = byId("suggest-space");
   var suggestSummary = byId("suggest-summary");
   var suggestBody = byId("suggest-body");
 
@@ -374,6 +376,22 @@
       }
       tr.appendChild(nameCell);
       tr.appendChild(secTd(item.sec, item.concept_id));
+
+      // Nur befüllt, wenn ein Namensraum gewählt ist. Die LEERE Zelle ist die
+      // eigentliche Aussage: dieser Kandidat lässt sich dort nicht benennen,
+      // taugt also nicht zur Weiterverarbeitung in dem Raum.
+      var spaceTd = el("td", "name");
+      if (suggestSpace && suggestSpace.value) {
+        if (item.target_space_name) {
+          spaceTd.textContent = item.target_space_name;
+        } else {
+          spaceTd.appendChild(badge("kein Name", "neutral"));
+        }
+      } else {
+        spaceTd.textContent = "";
+      }
+      tr.appendChild(spaceTd);
+
       tr.appendChild(cell("td", item.rank));
 
       var acc = el("td");
@@ -413,6 +431,8 @@
     if (area !== "") { params.set("area", area); }
     var limit = limitInput.value.trim();
     if (limit !== "") { params.set("limit", limit); }
+    if (suggestBackbone && suggestBackbone.value) { params.set("entry_backbone", suggestBackbone.value); }
+    if (suggestSpace && suggestSpace.value) { params.set("target_space", suggestSpace.value); }
 
     var path = "/v1/suggest?" + params.toString();
     var seq = suggestSeq + 1;
@@ -647,6 +667,9 @@
 
   var matchInput = byId("match-input");
   var matchURL = byId("match-url");
+  var matchBackbone = byId("match-backbone");
+  var matchSec = byId("match-sec");
+  var matchSpace = byId("match-space");
   var matchOut = byId("match-out");
 
   function renderMatch(lines, res) {
@@ -696,6 +719,10 @@
       return;
     }
     var payload = { names: lines.map(function (v, i) { return { id: String(i + 1), verbatim: v }; }) };
+    if (matchBackbone && matchBackbone.value) { payload.entry_backbone = matchBackbone.value; }
+    var msec = matchSec ? matchSec.value.trim() : "";
+    if (msec !== "") { payload.entry_sec = msec; }
+    if (matchSpace && matchSpace.value) { payload.target_space = matchSpace.value; }
     matchURL.textContent = "POST /v1/match …";
     api("/v1/match", {
       method: "POST",
@@ -840,6 +867,39 @@
         return o;
       });
       list.replaceChildren.apply(list, opts);
+    });
+  }());
+
+  // Die beiden Auswahlfelder werden aus dem Index gefüllt, nicht fest
+  // verdrahtet: welche Backbones und Namensräume vorliegen, entscheidet das
+  // Manifest des jeweiligen Deployments. Schlägt der Abruf fehl, bleibt die
+  // Auswahl bei "Alle"/"keiner" — also beim bisherigen Verhalten.
+  function fillSelect(sel, items, valueOf, labelOf) {
+    if (!sel) { return; }
+    items.forEach(function (it) {
+      var o = el("option");
+      o.value = valueOf(it);
+      o.textContent = labelOf(it);
+      sel.appendChild(o);
+    });
+  }
+
+  (function loadCatalog() {
+    api("/v1/backbones").then(function (res) {
+      if (!res.ok || !res.body || !Array.isArray(res.body.backbones)) { return; }
+      [suggestBackbone, matchBackbone].forEach(function (sel) {
+        fillSelect(sel, res.body.backbones,
+          function (b) { return b.id; },
+          function (b) { return b.id + " (" + b.version + ")"; });
+      });
+    });
+    api("/v1/spaces").then(function (res) {
+      if (!res.ok || !res.body || !Array.isArray(res.body.spaces)) { return; }
+      [suggestSpace, matchSpace].forEach(function (sel) {
+        fillSelect(sel, res.body.spaces,
+          function (sp) { return sp.id; },
+          function (sp) { return sp.id + " (" + sp.version + ")"; });
+      });
     });
   }());
 

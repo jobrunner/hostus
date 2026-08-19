@@ -161,6 +161,8 @@ func NewRouter(deps Deps) *mux.Router {
 		r.HandleFunc("/v1/translate", handleTranslate(deps.Repo)).Methods(http.MethodPost)
 		r.HandleFunc("/v1/sec", handleSec(deps.Repo)).Methods(http.MethodGet)
 		r.HandleFunc("/v1/areas", handleAreas(deps.Repo)).Methods(http.MethodGet)
+		r.HandleFunc("/v1/backbones", handleBackbones(deps.Repo)).Methods(http.MethodGet)
+		r.HandleFunc("/v1/spaces", handleSpaces(deps.Repo)).Methods(http.MethodGet)
 	}
 
 	// Registered last and inside the same middleware chain as everything

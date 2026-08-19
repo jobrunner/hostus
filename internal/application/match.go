@@ -80,6 +80,26 @@ func validateBackbone(ctx context.Context, repo output.Repository, backbone stri
 	return ErrUnknownBackbone
 }
 
+// validateTargetSpace reports ErrUnknownTargetSpace unless space names an
+// ingested name space. An empty space is "no space requested" and always
+// valid. Shared by MatchInSpace and Suggest so both reject the same values
+// with the same error.
+func validateTargetSpace(ctx context.Context, repo output.Repository, space string) error {
+	if space == "" {
+		return nil
+	}
+	spaces, err := repo.NameSpaces(ctx)
+	if err != nil {
+		return err
+	}
+	for _, s := range spaces {
+		if s.ID == space {
+			return nil
+		}
+	}
+	return ErrUnknownTargetSpace
+}
+
 func validateFilter(ctx context.Context, repo output.Repository, filter MatchFilter) error {
 	if err := validateBackbone(ctx, repo, filter.Backbone); err != nil {
 		return err
@@ -237,20 +257,8 @@ func MatchInSpace(ctx context.Context, repo output.Repository, reqs []MatchReque
 	if space == "" {
 		return matchNamesFiltered(ctx, repo, reqs, filter)
 	}
-
-	spaces, err := repo.NameSpaces(ctx)
-	if err != nil {
+	if err := validateTargetSpace(ctx, repo, space); err != nil {
 		return nil, err
-	}
-	known := false
-	for _, s := range spaces {
-		if s.ID == space {
-			known = true
-			break
-		}
-	}
-	if !known {
-		return nil, ErrUnknownTargetSpace
 	}
 
 	results, err := matchNamesFiltered(ctx, repo, reqs, filter)

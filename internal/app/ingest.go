@@ -208,7 +208,7 @@ type nameSpaceRowSource struct{ ds *namelist.Dataset }
 func (s nameSpaceRowSource) Rows() []application.NameRow {
 	out := make([]application.NameRow, 0, len(s.ds.Rows))
 	for _, r := range s.ds.Rows {
-		out = append(out, application.NameRow{Taxon: r.Taxon, SourceID: r.SourceID})
+		out = append(out, application.NameRow{Taxon: r.Taxon, SourceID: r.SourceID, Status: r.Status})
 	}
 	return out
 }

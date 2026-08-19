@@ -78,7 +78,7 @@ section {
 .field label { font-size: .75rem; color: var(--muted); }
 .grow { flex: 1 1 12rem; }
 
-input, textarea, button {
+input, textarea, select, button {
   font: inherit;
   color: inherit;
   border: 1px solid var(--control-line);
@@ -91,6 +91,9 @@ input[type="number"] { width: 5.5rem; }
    Checkbox misst 13px; ohne feste Größe streckt der Flex-Container sie
    ausserdem auf die Spaltenbreite. */
 input[type="checkbox"] { width: 1.5rem; height: 1.5rem; align-self: start; }
+/* Auswahlfelder rendern sonst ~19px hoch (unter SC 2.5.8) und mit dem
+   Browser-Standardrand statt --control-line. */
+select { min-height: 1.5rem; }
 
 /* Sichtbarer Fokus. Der Browser-Default bliebe zwar bestehen, ist auf den
    dunklen Buttons aber schwach; ausserdem sind die scrollbaren Tabellen-

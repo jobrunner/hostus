@@ -37,13 +37,28 @@
       <label for="suggest-limit">Limit</label>
       <input id="suggest-limit" type="number" min="1" max="100" value="30">
     </div>
+    <div class="field">
+      <label for="suggest-backbone">Konzeptraum (entry_backbone)</label>
+      <select id="suggest-backbone">
+        <option value="">Alle</option>
+      </select>
+    </div>
+    <div class="field">
+      <!-- Bewusst „Namensraum" und nicht „Zielraum": bei translate weiter
+           unten heißt derselbe API-Parametername etwas ANDERES (dort eine
+           sec.-Referenz, hier eine Namensliste wie eurosl). -->
+      <label for="suggest-space">Namensraum (target_space)</label>
+      <select id="suggest-space">
+        <option value="">keiner</option>
+      </select>
+    </div>
   </div>
   <p class="hint">Hinweis: <code>?area=</code> nimmt heute <strong>einen</strong> Code. Mehrere Gebiete gibt es nur in <code>hostus bundle</code>.</p>
   <p class="url" id="suggest-url"></p>
   <div class="summary" id="suggest-summary"></div>
   <div class="scroll"><table id="suggest-table">
     <thead><tr>
-      <th>#</th><th>Name</th><th data-doc="sec">sec.</th><th data-doc="rank">Rang</th><th data-doc="accepted">Akzeptiert</th><th data-doc="in_area">im Gebiet</th><th data-doc="score">Score</th><th data-doc="prefix">Pr&auml;fix</th>
+      <th>#</th><th>Name</th><th data-doc="sec">sec.</th><th>Name im Namensraum</th><th data-doc="rank">Rang</th><th data-doc="accepted">Akzeptiert</th><th data-doc="in_area">im Gebiet</th><th data-doc="score">Score</th><th data-doc="prefix">Pr&auml;fix</th>
     </tr></thead>
     <tbody id="suggest-body"></tbody>
   </table></div>
@@ -55,24 +70,17 @@
   <div id="concept-out"><p class="empty">Kein Konzept gew&auml;hlt.</p></div>
 </section>
 
-<section id="panel-match">
-  <h2>3 &middot; Match</h2>
-  <div class="field">
-    <label for="match-input">Verbatim-Namen, eine Zeile je Name</label>
-    <textarea id="match-input" spellcheck="false" placeholder="Corynephorus canescens&#10;Kunzea capitata&#10;Nicht existierender Name"></textarea>
-  </div>
-  <div class="controls"><button id="match-run" type="button">POST /v1/match</button></div>
-  <p class="url" id="match-url"></p>
-  <div id="match-out"></div>
-</section>
 
 <section id="panel-translate">
-  <h2>4 &middot; Translate</h2>
-  <p class="hint">&Uuml;bersetzt das in Panel&nbsp;2 gezeigte Konzept in einen <em>sec.</em>-Referenzraum.</p>
+  <h2>3 &middot; Translate</h2>
+  <p class="hint">Arbeitet auf dem Konzept aus Panel&nbsp;2 und &uuml;bersetzt es in eine andere
+    <strong>Flora</strong> (<em>sec.</em>-Referenz). Nicht zu verwechseln mit dem
+    <strong>Namensraum</strong> in Panel&nbsp;1 und&nbsp;4 &mdash; die API nennt beides
+    <code>target_space</code>, es sind aber verschiedene Dinge.</p>
   <div class="controls">
     <div class="field grow">
-      <label for="translate-target">Ziel-<em>sec.</em>-Raum (target_space)</label>
-      <input id="translate-target" type="search" list="sec-spaces" spellcheck="false" autocomplete="off" placeholder="sec.-Raum wählen oder id eintippen">
+      <label for="translate-target">Ziel-Flora (<em>sec.</em>-Referenz)</label>
+      <input id="translate-target" type="search" list="sec-spaces" spellcheck="false" autocomplete="off" placeholder="Flora wählen oder sec.-id eintippen">
       <datalist id="sec-spaces"></datalist>
     </div>
     <div class="field">
@@ -83,6 +91,37 @@
   </div>
   <p class="url" id="translate-url"></p>
   <div id="translate-out"><p class="empty">Kein Konzept gew&auml;hlt.</p></div>
+</section>
+
+<section id="panel-match">
+  <h2>4 &middot; Match</h2>
+  <p class="hint">Aufl&ouml;sung ganzer Namenslisten. <strong>Quellraum</strong> = worin gesucht wird,
+    <strong>Namensraum</strong> = worin das Ergebnis zus&auml;tzlich benannt wird.</p>
+  <div class="field">
+    <label for="match-input">Verbatim-Namen, eine Zeile je Name</label>
+    <textarea id="match-input" spellcheck="false" placeholder="Corynephorus canescens&#10;Kunzea capitata&#10;Nicht existierender Name"></textarea>
+  </div>
+  <div class="controls">
+    <div class="field">
+      <label for="match-backbone">Quellraum: Konzeptraum (entry_backbone)</label>
+      <select id="match-backbone">
+        <option value="">Alle</option>
+      </select>
+    </div>
+    <div class="field grow">
+      <label for="match-sec">Quellraum: Flora (entry_sec)</label>
+      <input id="match-sec" type="search" list="sec-spaces" spellcheck="false" autocomplete="off" placeholder="optional, auf eine Flora einschr&auml;nken">
+    </div>
+    <div class="field">
+      <label for="match-space">Namensraum (target_space)</label>
+      <select id="match-space">
+        <option value="">keiner</option>
+      </select>
+    </div>
+    <button id="match-run" type="button">POST /v1/match</button>
+  </div>
+  <p class="url" id="match-url"></p>
+  <div id="match-out"></div>
 </section>
 
 </main>

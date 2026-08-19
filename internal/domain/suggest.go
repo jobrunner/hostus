@@ -31,6 +31,15 @@ type SuggestItem struct {
 	// concept with none (WCVP). Its presence lets a caller tell two same-name
 	// CDM concepts apart (SP5); the HTTP layer resolves the title from it.
 	SecReference string
+	// TargetSpaceName is this concept's spelling in the requested
+	// SuggestOpts.TargetSpace, or "" when no space was requested OR the
+	// concept has no entry in it. The two are not distinguished on purpose:
+	// either way there is no name to offer, and a caller that asked for a
+	// space knows which case it is in.
+	//
+	// It answers "can I use this concept downstream in that space?" while
+	// choosing, rather than one concept at a time afterwards.
+	TargetSpaceName string
 }
 
 // rankOrder assigns the ordinal used by RankOrder/RankSuggestions priority

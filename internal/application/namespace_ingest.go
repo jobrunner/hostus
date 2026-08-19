@@ -15,15 +15,25 @@ import (
 // so application never imports internal/adapters/namelist directly
 // (depguard).
 //
-// Rank/Status/AcceptedTaxon are deliberately NOT carried. A name space
-// contributes names, not taxonomy: hostus never builds a concept, a parent
-// chain or a synonymy edge out of one, so a field this use case cannot act
-// on would be a field a reader of the DTO would reasonably expect it to act
-// on. When a space whose synonymy hostus does want lands (GermanSL), that is
-// a measured decision with its own task, not a column smuggled in here.
+// Rank/AcceptedTaxon are deliberately NOT carried. A name space contributes
+// names, not taxonomy: hostus never builds a concept, a parent chain or a
+// synonymy edge out of one, so a field this use case cannot act on would be a
+// field a reader of the DTO would reasonably expect it to act on.
+//
+// Status WAS excluded on the same grounds and is now carried, which is the
+// measured decision that exclusion invited. It is not taxonomy here: it does
+// not create an edge, it decides WHICH of a space's names to report. A space
+// maps many of its own spellings onto one backbone concept — on the real index
+// 45% of concepts holding a eurosl entry carry 2 to 391 of them, one concept
+// 391 — so without a status every target-space name was whichever row came
+// back first. Measured example: the Hyssopus concept answered "Hyssopus
+// ruber", one of 23. Downstream that is not cosmetic; it is the wrong name.
 type NameRow struct {
 	Taxon    string
 	SourceID string
+	// Status is the space's own nomenclatural status, verbatim
+	// ("accepted", "synonym", "synonymobjective", ...).
+	Status string
 }
 
 // NameRowSource streams one name space's rows for IngestNameSpace.
@@ -215,6 +225,10 @@ func writeNameSpaceRow(
 		Name:       row.Taxon,
 		Aggregate:  aggregate,
 		Resolution: resolutionFor(res.rule),
+		// The source list already carries its own status; dropping it here was
+		// what made a target-space name arbitrary for every concept a space
+		// maps several of its names onto.
+		Status: row.Status,
 	}
 	if err := tx.AddNameSpaceEntry(res.conceptID, entry); err != nil {
 		return fmt.Errorf("application: writing name space entry %s:%s for concept %q: %w", meta.ID, row.SourceID, res.conceptID, err)

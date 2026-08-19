@@ -64,6 +64,10 @@ func TestOpenAPISchemasMatchDTOs(t *testing.T) {
 		"TraitValue":             reflect.TypeOf(traitValueDTO{}),
 		"TraitSet":               reflect.TypeOf(traitSetDTO{}),
 		"TraitsResponse":         reflect.TypeOf(traitsResponseDTO{}),
+		"Backbone":               reflect.TypeOf(backboneDTO{}),
+		"BackboneListResponse":   reflect.TypeOf(backboneListResponseDTO{}),
+		"Space":                  reflect.TypeOf(spaceDTO{}),
+		"SpaceListResponse":      reflect.TypeOf(spaceListResponseDTO{}),
 	}
 
 	for name := range schemas {

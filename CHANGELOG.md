@@ -116,6 +116,36 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (Testkonsole: Konzept- und Namensräume auswählbar)
+- **Suggest und Match haben jetzt Bedienelemente für die Räume**, die die API
+  längst kann: Konzeptraum (`entry_backbone`, Auswahl inkl. „Alle"), Namensraum
+  (`target_space`) und bei Match zusätzlich die Quell-Flora (`entry_sec`). Die
+  Auswahllisten werden aus dem Index gefüllt (`GET /v1/backbones`,
+  `GET /v1/spaces`) statt fest verdrahtet — welche Räume vorliegen, entscheidet
+  das Manifest des Deployments.
+- **Suggest zeigt den Namen im gewählten Namensraum als eigene Spalte.** Damit
+  sieht man beim Tippen, welcher Kandidat sich z. B. nach `eurosl` (Euro+Med,
+  ESy-kompatibel) übertragen lässt — die leere Zelle ist dabei die eigentliche
+  Aussage.
+- **Translate steht jetzt als Panel 3 direkt hinter dem Konzept**, auf das es
+  sich bezieht. Die Beschriftungen benennen den Unterschied, den die API
+  verwischt: `target_space` meint bei Translate eine **Flora**
+  (`sec.`-Referenz), bei Suggest/Match einen **Namensraum** (`eurosl`).
+
+### Fixed (Zielraum-Name war willkürlich)
+- **Der Name im Zielraum ist jetzt bestimmt statt zufällig.** Ein Namensraum
+  bildet viele eigene Schreibweisen auf **ein** Backbone-Konzept ab; gemessen am
+  realen Euro+Med-Index hatten von 43.545 Konzepten mit eurosl-Eintrag nur
+  51,5 % genau einen Namen — der Rest zwei bis 391. Die Quelle sagt, welcher
+  akzeptiert ist, aber der Ingest verwarf dieses Feld an der DTO-Grenze. Damit
+  lieferte auch `POST /v1/match` seit SP9 einen beliebigen Namen (gemessen:
+  „Hyssopus ruber", einer von 23; Gattung *Inula* → „Codonocephalum"). Der
+  Status wird jetzt ingestiert und beide Auflösungswege bevorzugen den
+  akzeptierten Namen: **Bestimmtheit 51,5 % → 88,3 %** (16.015 zuvor
+  willkürliche Konzepte). Der Rest ist in der Quelle selbst mehrdeutig.
+  Bestehende Indizes öffnen weiter (`ALTER TABLE`-Migration) und verhalten sich
+  wie bisher, **bis neu ingestiert wird**.
+
 ### Added (Mutationstest für die Barrierefreiheits-Prüfungen)
 - **Die a11y-Prüfungen werden jetzt selbst geprüft.** `make mutation`
   (gremlins) erreicht sie nicht: es mutiert Go-Quelltext, die geprüften

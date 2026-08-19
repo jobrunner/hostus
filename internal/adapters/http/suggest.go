@@ -41,6 +41,12 @@ type suggestItemDTO struct {
 	// down to the score — this is what distinguishes them (SP5). Omitted for a
 	// concept with no sec. reference (WCVP), so the SP1/SP2 shape is unchanged.
 	Sec *secReferenceDTO `json:"sec,omitempty"`
+	// TargetSpaceName is the candidate's spelling in the requested
+	// target_space, present only when one was requested AND this concept has
+	// an entry there. Its ABSENCE is the useful half: it says this candidate
+	// cannot be carried into that space, which is what a caller picking a
+	// concept for downstream use needs to see while choosing.
+	TargetSpaceName string `json:"target_space_name,omitempty"`
 }
 
 // suggestResponseDTO is the GET /v1/suggest response envelope, per spec
@@ -65,6 +71,8 @@ func suggestResponseToDTO(resp application.SuggestResponse) suggestResponseDTO {
 			InArea:       item.InArea,
 			Score:        item.Score,
 			Aggregate:    item.Aggregate,
+
+			TargetSpaceName: item.TargetSpaceName,
 		}
 	}
 	return suggestResponseDTO{
@@ -147,12 +155,14 @@ func handleSuggest(repo output.Repository) http.HandlerFunc {
 		}
 
 		entryBackbone := query.Get("entry_backbone")
+		targetSpace := query.Get("target_space")
 		resp, err := application.Suggest(r.Context(), repo, application.SuggestRequest{
 			Q:             query.Get("q"),
 			Area:          query.Get("area"),
 			Ranks:         ranks,
 			Limit:         limit,
 			EntryBackbone: entryBackbone,
+			TargetSpace:   targetSpace,
 		})
 		if errors.Is(err, application.ErrEmptyQuery) {
 			httperr.InvalidQueryError(w, "q query parameter is required")
@@ -160,6 +170,10 @@ func handleSuggest(repo output.Repository) http.HandlerFunc {
 		}
 		if errors.Is(err, application.ErrUnknownBackbone) {
 			httperr.InvalidQueryError(w, "unknown entry_backbone "+strconv.Quote(entryBackbone))
+			return
+		}
+		if errors.Is(err, application.ErrUnknownTargetSpace) {
+			httperr.InvalidQueryError(w, "unknown target_space "+strconv.Quote(targetSpace))
 			return
 		}
 		if err != nil {

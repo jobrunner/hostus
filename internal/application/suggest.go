@@ -28,6 +28,11 @@ type SuggestRequest struct {
 	Area  string
 	Ranks []domain.Rank
 	Limit int
+	// TargetSpace names a name space (e.g. "eurosl"); every result then
+	// carries its spelling there, so a caller can see while typing which
+	// candidates are usable downstream in that space. Empty leaves the field
+	// empty. An un-ingested space is ErrUnknownTargetSpace, not silence.
+	TargetSpace string
 	// EntryBackbone restricts results to one backbone (e.g. "wcvp"), the
 	// same filter POST /v1/match offers under that name. Empty means every
 	// backbone. Naming an un-ingested backbone is ErrUnknownBackbone, not an
@@ -55,14 +60,18 @@ func Suggest(ctx context.Context, repo output.Repository, req SuggestRequest) (S
 	if err := validateBackbone(ctx, repo, req.EntryBackbone); err != nil {
 		return SuggestResponse{}, err
 	}
+	if err := validateTargetSpace(ctx, repo, req.TargetSpace); err != nil {
+		return SuggestResponse{}, err
+	}
 
 	limit := effectiveLimit(req.Limit)
 
 	items, err := repo.Suggest(ctx, req.Q, output.SuggestOpts{
-		Area:     req.Area,
-		Ranks:    req.Ranks,
-		Limit:    limit,
-		Backbone: req.EntryBackbone,
+		Area:        req.Area,
+		Ranks:       req.Ranks,
+		Limit:       limit,
+		Backbone:    req.EntryBackbone,
+		TargetSpace: req.TargetSpace,
 	})
 	if err != nil {
 		return SuggestResponse{}, err

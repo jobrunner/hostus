@@ -610,28 +610,73 @@ func classify(req MatchRequest, queryCanon, queryAuthor string, candidates []out
 // roleAccepted is the concept_name.role value for a concept's accepted name.
 const roleAccepted = "accepted"
 
-// genuineBearerWinner breaks a match tie by nomenclatural type: among tied
-// winners it keeps only concepts for which the queried name is the accepted
-// name OR a HOMOTYPIC synonym — the genuine name-bearer (a recombination/
-// basionym shares the type). It returns that concept's id iff EXACTLY one
-// qualifies, so e.g. "Inula hirta" (a WCVP synonym under both Pentanema hirtum
-// homotypically and Pentanema britannica heterotypically) resolves to Pentanema
-// hirtum, while two genuine bearers (e.g. several CDM floras' accepted "Inula
-// hirta", when the request is not scoped by entry_backbone) stay ambiguous.
+// genuineBearerWinner breaks a match tie by nomenclatural type, or reports
+// that the tie stands.
+//
+// The two claims a candidate can make are TIERED, not interchangeable:
+//
+//  1. the queried name is that concept's ACCEPTED name — the strongest claim,
+//     since that concept is what the name denotes today;
+//  2. it is a HOMOTYPIC synonym there — same nomenclatural type (a
+//     recombination/basionym), but the concept has moved the name aside.
+//
+// A tier decides as soon as it holds ANY candidate: exactly one concept -> that
+// concept, several -> the tie stands. A weaker tier never rescues an ambiguous
+// stronger one, because answering two competing accepted names with some third
+// concept's synonym would be choosing rather than resolving.
+//
+// So "Inula hirta" resolves to Pentanema hirtum via tier 2 (homotypic there,
+// heterotypic under P. britannica, accepted in neither), while several CDM
+// floras all accepting "Inula hirta" stay ambiguous at tier 1.
+//
+// Scope worth knowing: the candidates are whatever the caller's filter left in
+// play. Without entry_backbone, two backbones can each hold the name as
+// accepted and the tie legitimately stands — measured on the real index, that
+// is 983 of the 10260 names tier 1 decides within WCVP alone.
 func genuineBearerWinner(winners []classifiedHit) (string, bool) {
-	bearers := make(map[string]bool, len(winners))
-	for _, w := range winners {
-		if w.role == roleAccepted || (w.homotypic != nil && *w.homotypic) {
-			bearers[w.conceptID] = true
+	// The two claims are TIERED, not equivalent. Treating them as one set was
+	// measured wrong (issue #67): "Beckmannia eruciformis" is the accepted name
+	// of wcvp:concept:399185 and a homotypic synonym under 424915, which made
+	// two bearers and left a decidable case unresolvable.
+	//
+	// Being a concept's ACCEPTED name is the stronger claim: that concept is
+	// what the name denotes today. A homotypic synonym shares the type but the
+	// concept has moved the name aside, so it only decides when no candidate
+	// holds the name as accepted — which is the Inula hirta case the tier below
+	// exists for (homotypic under Pentanema hirtum, heterotypic under
+	// P. britannica, accepted in neither).
+	tiers := []func(classifiedHit) bool{
+		func(w classifiedHit) bool { return w.role == roleAccepted },
+		func(w classifiedHit) bool { return w.homotypic != nil && *w.homotypic },
+	}
+	for _, qualifies := range tiers {
+		id, present := soleConcept(winners, qualifies)
+		if !present {
+			continue // nothing at this tier — the next one may decide
 		}
-	}
-	if len(bearers) != 1 {
-		return "", false
-	}
-	for id := range bearers {
-		return id, true
+		// Present but not sole: the strongest claim in play is ambiguous, and a
+		// weaker tier must NOT rescue it. Two floras both accepting the name is
+		// a real ambiguity; answering with some third concept's homotypic
+		// synonym would be picking, not resolving.
+		return id, id != ""
 	}
 	return "", false
+}
+
+// soleConcept reports whether any winner qualifies (present) and, if exactly
+// one CONCEPT does, which. present with an empty id means "several qualified"
+// — the caller must treat that as ambiguous rather than looking further.
+func soleConcept(winners []classifiedHit, qualifies func(classifiedHit) bool) (id string, present bool) {
+	for _, w := range winners {
+		if !qualifies(w) {
+			continue
+		}
+		if present && id != w.conceptID {
+			return "", true
+		}
+		id, present = w.conceptID, true
+	}
+	return id, present
 }
 
 // isAggregate reports whether canonical's last whitespace-separated token

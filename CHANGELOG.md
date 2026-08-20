@@ -149,10 +149,15 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   deckt mehr ab als die Nominalart. Bewusst ein eigener Typ und nicht `exact`,
   damit ein Konsument diese Verengung nicht unmarkiert übernimmt, und bewusst
   nicht `aggregate_alias` — dort trägt der Index das Sammelart-Taxon wirklich.
-  Gemessen am realen Index: `Achillea millefolium aggr.` →
-  `wcvp:concept:2908230`, `Alchemilla vulgaris aggr.` → `2940791`,
-  `Aconitum napellus aggr.` → `2619110`. Führt der Index ein echtes
-  Sammelart-Taxon, gewinnt weiterhin `aggregate_alias`.
+  Gemessen am realen Index **mit `entry_backbone=wcvp`**:
+  `Achillea millefolium aggr.` → `wcvp:concept:2908230`,
+  `Alchemilla vulgaris aggr.` → `2940791`, `Aconitum napellus aggr.` → `2619110`.
+  **Ohne Filter greift der Rückfall bei diesen drei nicht:** CDM führt denselben
+  Aggregat-Namen unter mehreren akzeptierten Konzepten, damit ist die Anfrage
+  schon vorher mehrdeutig und bleibt es. Von 544 Aggregat-Namen mit Treffern
+  sind **263 mehrdeutig** und erreichen den Rückfall gar nicht — dort hilft nur
+  ein `entry_backbone`. Führt der Index ein echtes Sammelart-Taxon, gewinnt
+  weiterhin `aggregate_alias`.
 - **Geschichtete Marker werden endlich erkannt.** `X aggr. s. l.` (so sind 60
   EIVE-Taxa geschrieben) galt gar nicht als Sammelart: die Anwendungsschicht
   prüfte nur das *letzte* Token gegen eine eigene Marker-Liste, und die

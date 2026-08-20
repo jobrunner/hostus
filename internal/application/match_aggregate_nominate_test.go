@@ -117,3 +117,100 @@ func TestMatchNames_LayeredAggregateMarkerIsRecognized(t *testing.T) {
 		t.Errorf("MatchType = %q, want %q", r.MatchType, domain.MatchAggregateNominate)
 	}
 }
+
+// TestMatchNames_AmbiguousNominateIsNotStampedAsResolved pins the worst answer
+// this function could give, which its first version did give: classify reports
+// an ambiguous TIE as a normal result with an empty ConceptID (its second
+// return value means "no candidates at all", not "unresolved"), so the code
+// stamped MatchType=aggregate_nominate and a confidence onto a result with no
+// concept behind them. Measured live before the fix:
+//
+//	"Abies alba aggr." -> match_type=aggregate_nominate, confidence=0.75,
+//	                      concept_id="", 10 candidates
+//
+// A consumer treating "match_type is not unresolvable" as "concept_id is safe
+// to use" would break or, worse, silently misattribute data.
+func TestMatchNames_AmbiguousNominateIsNotStampedAsResolved(t *testing.T) {
+	repo := seededMatchRepo(t)
+	// Two distinct accepted concepts share "Homonymus testicus", so its
+	// nominate form is genuinely ambiguous.
+	seedHomonymPair(t, repo)
+
+	results, err := application.MatchNames(context.Background(), repo, []application.MatchRequest{
+		{ID: "1", Verbatim: "Homonymus testicus aggr."},
+	})
+	if err != nil {
+		t.Fatalf("MatchNames: unexpected error: %v", err)
+	}
+	r := results[0]
+	if r.ConceptID == "" && r.MatchType != "" {
+		t.Errorf("MatchType = %q with an empty ConceptID: a match type must never claim more than the result delivers", r.MatchType)
+	}
+	if r.ConceptID == "" && r.Confidence != 0 {
+		t.Errorf("Confidence = %v with an empty ConceptID, want 0", r.Confidence)
+	}
+	if !r.RequiresReview {
+		t.Error("RequiresReview = false for an ambiguous nominate, want true")
+	}
+}
+
+// TestMatchNames_LayeredMarkerFindingAnAggregateReportsAlias pins the second
+// lie the first version told. When only the OUTER layer is stripped and the
+// remaining spelling is itself an aggregate the index carries, that is an
+// aggregate_alias hit — nothing was narrowed. Reporting aggregate_nominate
+// there both mislabels it and states the opposite of the truth ("keine
+// Sammelart im Index"), and made one and the same concept come back with two
+// different types and confidences depending on how many marker layers the
+// caller happened to type.
+func TestMatchNames_LayeredMarkerFindingAnAggregateReportsAlias(t *testing.T) {
+	repo := seededMatchRepo(t)
+	aggConceptID := seedFestucaOvinaAggregate(t, repo)
+
+	// "Festuca ovina agg. s. l.": the outer sensu-lato layer is stripped, and
+	// the remaining "Festuca ovina agg." IS the seeded aggregate taxon.
+	results, err := application.MatchNames(context.Background(), repo, []application.MatchRequest{
+		{ID: "1", Verbatim: "Festuca ovina agg. s. l."},
+	})
+	if err != nil {
+		t.Fatalf("MatchNames: unexpected error: %v", err)
+	}
+	r := results[0]
+	if r.ConceptID != aggConceptID {
+		t.Fatalf("ConceptID = %q, want the aggregate concept %q", r.ConceptID, aggConceptID)
+	}
+	if r.MatchType != domain.MatchAggregateAlias {
+		t.Errorf("MatchType = %q, want %q — the index DOES carry this aggregate, so nothing was narrowed",
+			r.MatchType, domain.MatchAggregateAlias)
+	}
+	if r.Note == noteAggregateNominateForTest {
+		t.Error("the note claims there is no aggregate in the index, but one was found")
+	}
+}
+
+// noteAggregateNominateForTest mirrors the production note so the assertion
+// above fails loudly if the wrong one is attached.
+const noteAggregateNominateForTest = "Aggregat: keine Sammelart im Index, aufgelöst auf das Nominal-Konzept — deckt weniger ab als die Anfrage"
+
+// TestAggregateNominateConfidenceOutranksFuzzy pins the ordering the numbers
+// exist to express: this type is a CERTAIN concept, a fuzzy result is an
+// unreviewed guess whose confidence is its similarity score and therefore
+// always >= domain.FuzzyThreshold. Ranking the certainty below the guess would
+// make any uniform auto-accept threshold take the guesses and reject the
+// certainties — which the first draft (0.75) did.
+func TestAggregateNominateConfidenceOutranksFuzzy(t *testing.T) {
+	repo := seededMatchRepo(t)
+	results, err := application.MatchNames(context.Background(), repo, []application.MatchRequest{
+		{ID: "1", Verbatim: "Corynephorus canescens aggr."},
+	})
+	if err != nil {
+		t.Fatalf("MatchNames: unexpected error: %v", err)
+	}
+	got := results[0].Confidence
+	if got <= domain.FuzzyThreshold {
+		t.Errorf("confidence %v <= FuzzyThreshold %v: a certain concept must outrank an unreviewed fuzzy guess",
+			got, domain.FuzzyThreshold)
+	}
+	if got >= 0.90 {
+		t.Errorf("confidence %v >= the exact tier (0.90): the answer is still coarser than the query", got)
+	}
+}

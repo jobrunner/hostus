@@ -127,7 +127,15 @@ const (
 	// Below the exact tier on purpose: the concept is certain, the ANSWER is
 	// not what was asked. An aggregate query answered with the nominate taxon
 	// is a knowingly coarser reply, and the number has to say so.
-	confidenceAggregateNominate = 0.75
+	//
+	// It must nevertheless stay ABOVE domain.FuzzyThreshold (0.85). A fuzzy
+	// result's confidence IS its similarity score, so it is always >= that
+	// threshold AND always carries RequiresReview — an unreviewed guess. This
+	// type is a certain concept. Ranking it below fuzzy would invert the
+	// ordering the numbers exist to express: a caller auto-accepting at, say,
+	// 0.8 would take the guesses and reject the certainties. The first draft
+	// used 0.75 and did exactly that.
+	confidenceAggregateNominate = 0.88
 )
 
 // fuzzyCandidateLimit bounds how many repo.MatchFuzzyCandidates rows
@@ -494,21 +502,31 @@ func matchAggregate(ctx context.Context, repo output.Repository, req MatchReques
 	}, nil
 }
 
-// matchAggregateNominate resolves an aggregate query against the name WITHOUT
-// its marker, returning nil when that yields nothing usable so the caller can
-// carry on to fuzzy and finally to UNRESOLVABLE.
+// matchAggregateNominate retries an aggregate query against SHORTER spellings
+// of the same name, returning nil when none yields a resolved concept so the
+// caller can carry on to fuzzy and finally to UNRESOLVABLE.
 //
-// domain.AggregateBases peels the markers one LAYER at a time and the layers
-// are tried in that order, because a name can carry several ("X aggr. s. l.")
-// and a backbone may well hold the aggregate under the shorter marker. Closest
-// to what was asked wins; the bare name is the last resort.
+// domain.AggregateBases peels the markers one LAYER at a time, and the layers
+// are tried in that order because a name can carry several ("X aggr. s. l.")
+// and a backbone may well hold the aggregate under the shorter marker. So an
+// intermediate base can still BE an aggregate name ("X aggr."), and only the
+// last one is the bare nominate — which is why the result type is decided per
+// base rather than fixed up front:
+//
+//   - base still aggregate-marked and found -> MatchAggregateAlias. The index
+//     really does carry the aggregate; nothing was narrowed, and claiming
+//     otherwise would be a lie about the index's contents.
+//   - bare nominate found -> MatchAggregateNominate, the narrowing this
+//     function exists to make visible.
 //
 // Resolution goes through classify, not a hand-rolled "exactly one candidate"
-// test, so the nominate lookup inherits the same tie-break as a plain query
-// (accepted name beats homotypic synonym) instead of growing a second, subtly
-// different notion of what an ambiguous name is. An ambiguous nominate returns
-// nil rather than an ambiguity report: the caller's own path already reports
-// that, and reporting it from here would claim the aggregate had been resolved.
+// test, so it inherits the same tie-break as a plain query (accepted name beats
+// homotypic synonym) instead of growing a second, subtly different notion of
+// ambiguity. classify signals "no candidates at all" through its second return
+// value but reports an ambiguous TIE as a normal result with an empty
+// ConceptID — so a resolved concept is the condition to check. Stamping a
+// match type onto an ambiguous tie would produce the worst possible answer: a
+// confident-looking type and confidence with no concept behind them.
 func matchAggregateNominate(ctx context.Context, repo output.Repository, req MatchRequest, queryCanon string, filter MatchFilter) (*MatchResult, error) {
 	for _, base := range domain.AggregateBases(queryCanon) {
 		if base == "" {
@@ -522,9 +540,15 @@ func matchAggregateNominate(ctx context.Context, repo output.Repository, req Mat
 		if len(candidates) == 0 {
 			continue
 		}
-		res, unresolved := classify(req, base, "", candidates)
-		if unresolved {
+		res, noCandidates := classify(req, base, "", candidates)
+		if noCandidates || res.ConceptID == "" {
 			continue
+		}
+		if domain.IsAggregateName(base) {
+			res.MatchType = domain.MatchAggregateAlias
+			res.Confidence = confidenceAggregateAlias
+			res.Note = noteAggregateResolved
+			return &res, nil
 		}
 		res.MatchType = domain.MatchAggregateNominate
 		res.Confidence = confidenceAggregateNominate

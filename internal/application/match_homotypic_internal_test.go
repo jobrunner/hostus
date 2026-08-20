@@ -89,3 +89,27 @@ func TestClassify_TwoAcceptedStayAmbiguous(t *testing.T) {
 		t.Errorf("two accepted concepts must stay ambiguous; got ConceptID=%q RequiresReview=%v", res.ConceptID, res.RequiresReview)
 	}
 }
+
+// TestClassify_AcceptedTieAcrossBackbonesStaysAmbiguous is the honest version of
+// the case above. On the real index "Beckmannia eruciformis" has THREE rows, not
+// two: a CDM concept also holds it as its accepted name. So the accepted tier
+// itself is ambiguous and the tie stands — the name resolves only for a caller
+// scoping to one backbone (entry_backbone=wcvp).
+//
+// Written because the first test modeled only the two WCVP rows and so
+// "verified" a fix the unfiltered endpoint does not deliver. Measured: 983 of
+// the 10260 names the accepted tier decides within WCVP are in this situation.
+func TestClassify_AcceptedTieAcrossBackbonesStaysAmbiguous(t *testing.T) {
+	tru := true
+	cands := []output.MatchCandidate{
+		{Concept: domain.Concept{ID: "wcvp:concept:399185"}, MatchedName: domain.Name{Canonical: "Beckmannia eruciformis"}, Role: "accepted"},
+		{Concept: domain.Concept{ID: "wcvp:concept:424915"}, MatchedName: domain.Name{Canonical: "Beckmannia eruciformis"}, Role: "synonym", Homotypic: &tru},
+		{Concept: domain.Concept{ID: "cdm:concept:5ff84aea"}, MatchedName: domain.Name{Canonical: "Beckmannia eruciformis"}, Role: "accepted"},
+	}
+	res, _ := classify(MatchRequest{ID: "1", Verbatim: "Beckmannia eruciformis"},
+		domain.Canonicalize("Beckmannia eruciformis"), "", cands)
+	if res.ConceptID != "" || !res.RequiresReview {
+		t.Errorf("two backbones accepting the name must stay ambiguous; got ConceptID=%q RequiresReview=%v",
+			res.ConceptID, res.RequiresReview)
+	}
+}

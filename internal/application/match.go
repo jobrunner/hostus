@@ -610,14 +610,29 @@ func classify(req MatchRequest, queryCanon, queryAuthor string, candidates []out
 // roleAccepted is the concept_name.role value for a concept's accepted name.
 const roleAccepted = "accepted"
 
-// genuineBearerWinner breaks a match tie by nomenclatural type: among tied
-// winners it keeps only concepts for which the queried name is the accepted
-// name OR a HOMOTYPIC synonym — the genuine name-bearer (a recombination/
-// basionym shares the type). It returns that concept's id iff EXACTLY one
-// qualifies, so e.g. "Inula hirta" (a WCVP synonym under both Pentanema hirtum
-// homotypically and Pentanema britannica heterotypically) resolves to Pentanema
-// hirtum, while two genuine bearers (e.g. several CDM floras' accepted "Inula
-// hirta", when the request is not scoped by entry_backbone) stay ambiguous.
+// genuineBearerWinner breaks a match tie by nomenclatural type, or reports
+// that the tie stands.
+//
+// The two claims a candidate can make are TIERED, not interchangeable:
+//
+//  1. the queried name is that concept's ACCEPTED name — the strongest claim,
+//     since that concept is what the name denotes today;
+//  2. it is a HOMOTYPIC synonym there — same nomenclatural type (a
+//     recombination/basionym), but the concept has moved the name aside.
+//
+// A tier decides as soon as it holds ANY candidate: exactly one concept -> that
+// concept, several -> the tie stands. A weaker tier never rescues an ambiguous
+// stronger one, because answering two competing accepted names with some third
+// concept's synonym would be choosing rather than resolving.
+//
+// So "Inula hirta" resolves to Pentanema hirtum via tier 2 (homotypic there,
+// heterotypic under P. britannica, accepted in neither), while several CDM
+// floras all accepting "Inula hirta" stay ambiguous at tier 1.
+//
+// Scope worth knowing: the candidates are whatever the caller's filter left in
+// play. Without entry_backbone, two backbones can each hold the name as
+// accepted and the tie legitimately stands — measured on the real index, that
+// is 983 of the 10260 names tier 1 decides within WCVP alone.
 func genuineBearerWinner(winners []classifiedHit) (string, bool) {
 	// The two claims are TIERED, not equivalent. Treating them as one set was
 	// measured wrong (issue #67): "Beckmannia eruciformis" is the accepted name

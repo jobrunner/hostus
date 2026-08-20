@@ -139,6 +139,11 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   Gemessen an Issue #67: `Beckmannia eruciformis` ist der akzeptierte Name von
   `wcvp:concept:399185` und ein homotypes Synonym unter `424915`. Die Ansprüche
   sind jetzt **gestuft**: akzeptiert schlägt homotyp, homotyp schlägt den Rest.
+  **Wirkt innerhalb des angefragten Suchraums.** Ohne `entry_backbone` können
+  zwei Backbones denselben Namen als akzeptiert führen — dann bleibt es zu Recht
+  mehrdeutig. Genau das ist bei `Beckmannia eruciformis` der Fall (CDM führt ihn
+  ebenfalls als akzeptiert): der Name löst mit `entry_backbone=wcvp` auf, ohne
+  Filter nicht. Betrifft **983 der 10.260** Namen unten.
   Wirkung auf dem realen Index: von 35.099 in WCVP mehrdeutigen Namen lösen
   **10.260** über die akzeptiert-Stufe und 7.641 über die homotyp-Stufe; 17.198
   bleiben mehrdeutig, weil dort nur Synonyme konkurrieren (Autorschaft/Gebiet —

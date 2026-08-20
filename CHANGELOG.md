@@ -131,6 +131,22 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Fixed (Match: akzeptierter Name schlägt homotypes Synonym)
+- **Ein Name, der in einem Konzept der akzeptierte und in einem anderen ein
+  homotypes Synonym ist, löst jetzt auf** statt mehrdeutig zu bleiben. Der
+  Tie-Break aus v2.2.0-alpha.0 behandelte beide Ansprüche als *gleichwertig* —
+  damit gab es zwei „echte Namensträger" und der Fall blieb `unresolvable`.
+  Gemessen an Issue #67: `Beckmannia eruciformis` ist der akzeptierte Name von
+  `wcvp:concept:399185` und ein homotypes Synonym unter `424915`. Die Ansprüche
+  sind jetzt **gestuft**: akzeptiert schlägt homotyp, homotyp schlägt den Rest.
+  Wirkung auf dem realen Index: von 35.099 in WCVP mehrdeutigen Namen lösen
+  **10.260** über die akzeptiert-Stufe und 7.641 über die homotyp-Stufe; 17.198
+  bleiben mehrdeutig, weil dort nur Synonyme konkurrieren (Autorschaft/Gebiet —
+  siehe Issue #67, Rest von Klasse 2).
+  Wichtig: Ist die *stärkere* Stufe mehrdeutig, bleibt es mehrdeutig — eine
+  schwächere Stufe rettet das nicht. Zwei Floren, die denselben Namen als
+  akzeptiert führen, sind eine echte Mehrdeutigkeit und keine Auswahlaufgabe.
+
 ### Added (Testkonsole: Konzept- und Namensräume auswählbar)
 - **Suggest und Match haben jetzt Bedienelemente für die Räume**, die die API
   längst kann: Konzeptraum (`entry_backbone`, Auswahl inkl. „Alle"), Namensraum

@@ -619,19 +619,49 @@ const roleAccepted = "accepted"
 // hirtum, while two genuine bearers (e.g. several CDM floras' accepted "Inula
 // hirta", when the request is not scoped by entry_backbone) stay ambiguous.
 func genuineBearerWinner(winners []classifiedHit) (string, bool) {
-	bearers := make(map[string]bool, len(winners))
-	for _, w := range winners {
-		if w.role == roleAccepted || (w.homotypic != nil && *w.homotypic) {
-			bearers[w.conceptID] = true
+	// The two claims are TIERED, not equivalent. Treating them as one set was
+	// measured wrong (issue #67): "Beckmannia eruciformis" is the accepted name
+	// of wcvp:concept:399185 and a homotypic synonym under 424915, which made
+	// two bearers and left a decidable case unresolvable.
+	//
+	// Being a concept's ACCEPTED name is the stronger claim: that concept is
+	// what the name denotes today. A homotypic synonym shares the type but the
+	// concept has moved the name aside, so it only decides when no candidate
+	// holds the name as accepted — which is the Inula hirta case the tier below
+	// exists for (homotypic under Pentanema hirtum, heterotypic under
+	// P. britannica, accepted in neither).
+	tiers := []func(classifiedHit) bool{
+		func(w classifiedHit) bool { return w.role == roleAccepted },
+		func(w classifiedHit) bool { return w.homotypic != nil && *w.homotypic },
+	}
+	for _, qualifies := range tiers {
+		id, present := soleConcept(winners, qualifies)
+		if !present {
+			continue // nothing at this tier — the next one may decide
 		}
-	}
-	if len(bearers) != 1 {
-		return "", false
-	}
-	for id := range bearers {
-		return id, true
+		// Present but not sole: the strongest claim in play is ambiguous, and a
+		// weaker tier must NOT rescue it. Two floras both accepting the name is
+		// a real ambiguity; answering with some third concept's homotypic
+		// synonym would be picking, not resolving.
+		return id, id != ""
 	}
 	return "", false
+}
+
+// soleConcept reports whether any winner qualifies (present) and, if exactly
+// one CONCEPT does, which. present with an empty id means "several qualified"
+// — the caller must treat that as ambiguous rather than looking further.
+func soleConcept(winners []classifiedHit, qualifies func(classifiedHit) bool) (id string, present bool) {
+	for _, w := range winners {
+		if !qualifies(w) {
+			continue
+		}
+		if present && id != w.conceptID {
+			return "", true
+		}
+		id, present = w.conceptID, true
+	}
+	return id, present
 }
 
 // isAggregate reports whether canonical's last whitespace-separated token

@@ -12,6 +12,17 @@ const (
 	// MatchAggregateAlias: the candidate is an aggregate concept covering
 	// the query (assigned by callers; not produced by ClassifyMatch).
 	MatchAggregateAlias MatchType = "aggregate_alias"
+	// MatchAggregateNominate: the query named an AGGREGATE, the index holds
+	// no aggregate taxon for it, and the answer is the NOMINATE taxon under
+	// it. Deliberately its own type rather than MatchExact: the answer is
+	// narrower than the question — an aggregate covers more than the
+	// nominate species — and a consumer that could not tell the two apart
+	// would carry that narrowing into its own data unmarked.
+	//
+	// It is also not MatchAggregateAlias: there the index really does carry
+	// the aggregate, so nothing was narrowed. The distinction is the whole
+	// point of having two types.
+	MatchAggregateNominate MatchType = "aggregate_nominate"
 	// MatchFuzzy: no exact/exact_author/aggregate candidate was found, but a
 	// candidate's canonical is similar enough (see Similarity,
 	// FuzzyThreshold) to surface for review. Never produced by

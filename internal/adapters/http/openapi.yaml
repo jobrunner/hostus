@@ -1377,7 +1377,16 @@ components:
           description: Spiegelt die `id` aus der Anfrage.
         match_type:
           type: string
-          enum: [exact, exact_author, aggregate_alias, fuzzy, unresolvable]
+          enum: [exact, exact_author, aggregate_alias, aggregate_nominate, fuzzy, unresolvable]
+          description: >-
+            `aggregate_nominate` heißt: die Anfrage nannte eine **Sammelart**
+            (`X aggr.`, `X s.l.`, auch geschichtet `X aggr. s. l.`), der Index
+            führt dafür kein Sammelart-Taxon, und geantwortet wird mit dem
+            **Nominal-Taxon** darunter. Die Antwort ist damit **enger als die
+            Frage** — bewusst ein eigener Wert und nicht `exact`, damit ein
+            Konsument diese Verengung nicht unmarkiert in seine Daten übernimmt.
+            Abzugrenzen von `aggregate_alias`: dort trägt der Index das
+            Sammelart-Taxon wirklich, es wurde also nichts verengt.
         confidence:
           type: number
           format: double

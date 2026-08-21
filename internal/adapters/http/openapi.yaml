@@ -1401,9 +1401,23 @@ components:
         candidates:
           type: array
           description: >-
-            Kandidaten-Kanonicalnamen, die nicht eindeutig klassifiziert
-            werden konnten (`unresolvable`) oder bei `fuzzy` mit der
-            Bestwertung gleichauf lagen.
+            Kanonische Namen als Hinweis — **nie** eine Auflösung. Drei
+            verschiedene Bedeutungen, je nachdem wie das Ergebnis entstand:
+
+            1. Namen, deren Kanonical passte, die aber die Autorschaftsprüfung
+               nicht bestanden (`unresolvable`).
+            2. Die gleichstarken Namen eines mehrdeutigen Treffers — hier sagt
+               die **Anzahl** etwas, weil sie die konkurrierenden Konzepte
+               zählt; identische Namen erscheinen deshalb mehrfach
+               (`unresolvable` oder `fuzzy`).
+            3. Die nächstliegenden Namen im Index, wenn **nichts** die
+               Ähnlichkeitsschwelle erreichte (`unresolvable`): beste
+               Übereinstimmung zuerst, dublettenfrei, ab einer Ähnlichkeit von
+               0,70. Diese Liste ist zur Kuratierung gedacht — die Namen wurden
+               nicht gegen die Anfrage klassifiziert, sie liegen ihr nur nahe.
+
+            In allen drei Fällen bleiben `concept_id` leer und
+            `requires_review` gesetzt.
           items:
             type: string
         requires_review:

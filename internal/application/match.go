@@ -189,10 +189,15 @@ type MatchRequest struct {
 	Verbatim string
 }
 
-// MatchResult is the outcome of resolving one MatchRequest. A zero
-// MatchType (with RequiresReview true and ConceptID empty) means the name
-// could not be resolved (UNRESOLVABLE per §B.2) — this SP does not attempt
-// fuzzy matching, so a near-miss is reported for review rather than guessed.
+// MatchResult is the outcome of resolving one MatchRequest. A zero MatchType
+// (with RequiresReview true and ConceptID empty) means the name could not be
+// resolved (UNRESOLVABLE per §B.2).
+//
+// Such a result can still carry Candidates, and they mean different things
+// depending on how it arose: names that matched the canonical but failed author
+// verification, the several names of an ambiguous tie, or — below the
+// similarity threshold — the nearest neighbors found for curation
+// (nearMissNames). None of the three is a resolution.
 type MatchResult struct {
 	ID             string
 	MatchType      domain.MatchType
@@ -351,6 +356,12 @@ func matchOne(ctx context.Context, repo output.Repository, req MatchRequest, fil
 // name in WCVP and in a dozen CDM floras), and repeating it would push the
 // genuinely different suggestions off the end.
 func nearMissNames(candidates []output.MatchCandidate, scores []float64) []string {
+	// The caller builds both slices in lockstep, so this cannot differ today.
+	// It is a guard rather than a comment because the alternative failure mode
+	// is an index-out-of-range panic inside a request handler.
+	if len(scores) != len(candidates) {
+		return nil
+	}
 	type scored struct {
 		name  string
 		score float64
@@ -508,7 +519,21 @@ func matchFuzzy(ctx context.Context, repo output.Repository, req MatchRequest, q
 // domain.MatchAggregateAlias — RequiresReview is already unconditionally
 // true from matchFuzzy either way. Only when matchFuzzy also finds nothing
 // (nil) does this fall back to the plain noteAggregateUnresolved
-// UNRESOLVABLE result, unchanged from before fuzzy existed.
+// UNRESOLVABLE result.
+//
+// matchFuzzy can now also return an UNRESOLVED near-miss result (candidates
+// for curation, no ConceptID — see nearMissNames), and this path prefixes
+// that note too, giving "Aggregat: <near-miss note>" with candidates where it
+// previously said noteAggregateUnresolved with none.
+//
+// In practice that state is unreachable for the ordinary case, and the reason
+// is worth stating so nobody expects otherwise: matchFuzzy is called with the
+// MARKER-INCLUDED canonical, and the repository's prefilter admits candidates
+// only within fuzzyCandidateLengthWindow (3) runes of it. " aggr." adds six.
+// So a bare near neighbor — the realistic shape, since backbones carry
+// unmarked names — is always outside the window. Only a neighbor that carries
+// a marker of its own can land there. Pinned by
+// TestMatchNames_AggregateNearMissStaysUnresolvedInPractice.
 //
 // When repo.MatchExact DOES return candidates, this applies the same
 // distinct-concept guard classify and matchFuzzy apply: several candidates

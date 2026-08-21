@@ -8,7 +8,6 @@ import (
 	"github.com/jobrunner/hostus/internal/adapters/sqlite"
 	"github.com/jobrunner/hostus/internal/application"
 	"github.com/jobrunner/hostus/internal/domain"
-	"github.com/jobrunner/hostus/internal/ports/output"
 )
 
 // seedGenusSynonymyPair ingests a concept under the CURRENT genus, so a query
@@ -162,8 +161,6 @@ func seedNearMissLadder(t *testing.T, repo *sqlite.DB) {
 	}
 }
 
-var _ = output.MatchCandidate{}
-
 // TestMatchNames_NearMissTiesAreOrderedDeterministically pins the tiebreaker.
 // Candidates are collected through a map, whose iteration order Go randomizes
 // on purpose, so equally-near names would come back in a different order on
@@ -229,5 +226,41 @@ func seedEqualDistanceTrio(t *testing.T, repo *sqlite.DB) {
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("Commit: %v", err)
+	}
+}
+
+// TestMatchNames_AggregateNearMissStaysUnresolvedInPractice pins the seam the
+// review flagged: matchFuzzy is shared, so an aggregate query can now in
+// principle come back with near-miss candidates instead of the plain
+// "unresolved aggregate" note. In practice it cannot, and the arithmetic is the
+// reason: matchFuzzy is called with the MARKER-INCLUDED canonical, the
+// repository prefilter admits candidates within 3 runes of its length, and
+// " aggr." adds six. A bare near neighbor — the realistic shape, since
+// backbones carry unmarked names — is therefore always outside the window.
+//
+// Pinned rather than merely commented because it is the difference between
+// "documented limitation" and "we assumed and never checked".
+func TestMatchNames_AggregateNearMissStaysUnresolvedInPractice(t *testing.T) {
+	repo := seededMatchRepo(t)
+	// A near neighbor of the BARE name, 0.769 away — well inside the review
+	// floor, and irrelevant here because the marker pushes the query out of the
+	// prefilter's length window.
+	seedEqualDistanceTrio(t, repo)
+
+	results, err := application.MatchNames(context.Background(), repo, []application.MatchRequest{
+		{ID: "1", Verbatim: "Zzzaaa bbbccc aggr."},
+	})
+	if err != nil {
+		t.Fatalf("MatchNames: unexpected error: %v", err)
+	}
+	r := results[0]
+	if r.ConceptID != "" {
+		t.Errorf("ConceptID = %q, want empty", r.ConceptID)
+	}
+	if len(r.Candidates) != 0 {
+		t.Errorf("Candidates = %v, want none: the marker puts every bare neighbor outside the prefilter window", r.Candidates)
+	}
+	if !strings.Contains(r.Note, "Aggregat") {
+		t.Errorf("Note = %q, want it to still say this was an aggregate query", r.Note)
 	}
 }

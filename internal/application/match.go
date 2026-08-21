@@ -124,6 +124,18 @@ const (
 	confidenceExactAuthor    = 0.99
 	confidenceAggregateAlias = 0.95
 	confidenceExact          = 0.90
+	// Below the exact tier on purpose: the concept is certain, the ANSWER is
+	// not what was asked. An aggregate query answered with the nominate taxon
+	// is a knowingly coarser reply, and the number has to say so.
+	//
+	// It must nevertheless stay ABOVE domain.FuzzyThreshold (0.85). A fuzzy
+	// result's confidence IS its similarity score, so it is always >= that
+	// threshold AND always carries RequiresReview — an unreviewed guess. This
+	// type is a certain concept. Ranking it below fuzzy would invert the
+	// ordering the numbers exist to express: a caller auto-accepting at, say,
+	// 0.8 would take the guesses and reject the certainties. The first draft
+	// used 0.75 and did exactly that.
+	confidenceAggregateNominate = 0.88
 )
 
 // fuzzyCandidateLimit bounds how many repo.MatchFuzzyCandidates rows
@@ -137,6 +149,7 @@ const fuzzyCandidateLimit = 20
 const (
 	noteAggregateResolved   = "Aggregat, keine Kleinartauflösung"
 	noteAggregateUnresolved = "Aggregat ohne aufgelöstes Sammelart-Konzept"
+	noteAggregateNominate   = "Aggregat: keine Sammelart im Index, aufgelöst auf das Nominal-Konzept — deckt weniger ab als die Anfrage"
 	noteUnresolvable        = "Kein eindeutiger Treffer, keine Fuzzy-Auflösung in dieser SP"
 	noteAmbiguous           = "Mehrdeutiger Treffer: mehrere Konzepte mit gleicher Übereinstimmungsstärke, manuelle Prüfung nötig"
 	noteFuzzy               = "Fuzzy-Treffer: Ähnlichkeit über Schwellenwert, manuelle Prüfung erforderlich"
@@ -150,15 +163,6 @@ const (
 	// aggregate" field; Note is the only carrier).
 	noteAggregatePrefix = "Aggregat: "
 )
-
-// aggregateSuffixes are the trailing tokens (case-insensitive, after
-// Fields-splitting) marking a verbatim name as an aggregate/collective
-// species ("Sammelart") rather than a single microspecies, per §B.2.
-var aggregateSuffixes = map[string]bool{
-	"agg.":  true,
-	"aggr.": true,
-	"s.l.":  true,
-}
 
 // MatchRequest is one verbatim name to resolve, identified by a
 // caller-supplied ID that is echoed back on the corresponding MatchResult.
@@ -449,6 +453,18 @@ func matchAggregate(ctx context.Context, repo output.Repository, req MatchReques
 	}
 	candidates = filter.apply(candidates)
 	if len(candidates) == 0 {
+		// No aggregate taxon for the marked name. Before giving up, try the
+		// name WITHOUT the marker: a data set writing "X aggr." against a
+		// backbone that carries only X used to lose the whole row (issue #67,
+		// 96 names), even though X itself resolves exactly. The nominate
+		// concept plus a type saying it is coarser beats no answer at all.
+		nominate, err := matchAggregateNominate(ctx, repo, req, queryCanon, filter)
+		if err != nil {
+			return MatchResult{}, err
+		}
+		if nominate != nil {
+			return *nominate, nil
+		}
 		fuzzy, err := matchFuzzy(ctx, repo, req, queryCanon, filter)
 		if err != nil {
 			return MatchResult{}, err
@@ -484,6 +500,62 @@ func matchAggregate(ctx context.Context, repo output.Repository, req MatchReques
 		ConceptID:  candidates[0].Concept.ID,
 		Note:       noteAggregateResolved,
 	}, nil
+}
+
+// matchAggregateNominate retries an aggregate query against SHORTER spellings
+// of the same name, returning nil when none yields a resolved concept so the
+// caller can carry on to fuzzy and finally to UNRESOLVABLE.
+//
+// domain.AggregateBases peels the markers one LAYER at a time, and the layers
+// are tried in that order because a name can carry several ("X aggr. s. l.")
+// and a backbone may well hold the aggregate under the shorter marker. So an
+// intermediate base can still BE an aggregate name ("X aggr."), and only the
+// last one is the bare nominate — which is why the result type is decided per
+// base rather than fixed up front:
+//
+//   - base still aggregate-marked and found -> MatchAggregateAlias. The index
+//     really does carry the aggregate; nothing was narrowed, and claiming
+//     otherwise would be a lie about the index's contents.
+//   - bare nominate found -> MatchAggregateNominate, the narrowing this
+//     function exists to make visible.
+//
+// Resolution goes through classify, not a hand-rolled "exactly one candidate"
+// test, so it inherits the same tie-break as a plain query (accepted name beats
+// homotypic synonym) instead of growing a second, subtly different notion of
+// ambiguity. classify signals "no candidates at all" through its second return
+// value but reports an ambiguous TIE as a normal result with an empty
+// ConceptID — so a resolved concept is the condition to check. Stamping a
+// match type onto an ambiguous tie would produce the worst possible answer: a
+// confident-looking type and confidence with no concept behind them.
+func matchAggregateNominate(ctx context.Context, repo output.Repository, req MatchRequest, queryCanon string, filter MatchFilter) (*MatchResult, error) {
+	for _, base := range domain.AggregateBases(queryCanon) {
+		if base == "" {
+			continue
+		}
+		candidates, err := repo.MatchExact(ctx, base)
+		if err != nil {
+			return nil, err
+		}
+		candidates = filter.apply(candidates)
+		if len(candidates) == 0 {
+			continue
+		}
+		res, noCandidates := classify(req, base, "", candidates)
+		if noCandidates || res.ConceptID == "" {
+			continue
+		}
+		if domain.IsAggregateName(base) {
+			res.MatchType = domain.MatchAggregateAlias
+			res.Confidence = confidenceAggregateAlias
+			res.Note = noteAggregateResolved
+			return &res, nil
+		}
+		res.MatchType = domain.MatchAggregateNominate
+		res.Confidence = confidenceAggregateNominate
+		res.Note = noteAggregateNominate
+		return &res, nil
+	}
+	return nil, nil
 }
 
 // classifiedHit is one candidate that classified as a match, carrying just
@@ -540,10 +612,10 @@ func classify(req MatchRequest, queryCanon, queryAuthor string, candidates []out
 			exactAuthorMatches = append(exactAuthorMatches, hit)
 		case domain.MatchExact:
 			exactMatches = append(exactMatches, hit)
-		case domain.MatchAggregateAlias, domain.MatchFuzzy:
-			// ClassifyMatch never produces either of these — they are
-			// assigned by separate code paths (matchAggregate, matchFuzzy)
-			// — unreachable here.
+		case domain.MatchAggregateAlias, domain.MatchAggregateNominate, domain.MatchFuzzy:
+			// ClassifyMatch never produces any of these — they are assigned
+			// by separate code paths (matchAggregate,
+			// matchAggregateNominate, matchFuzzy) — unreachable here.
 		}
 	}
 
@@ -679,15 +751,17 @@ func soleConcept(winners []classifiedHit, qualifies func(classifiedHit) bool) (i
 	return id, present
 }
 
-// isAggregate reports whether canonical's last whitespace-separated token
-// is an aggregate/collective-species marker (agg./aggr./s.l.), matched
-// case-insensitively.
+// isAggregate reports whether canonical names an aggregate/collective species.
+//
+// It delegates to domain.IsAggregateName rather than testing the last token
+// against its own marker list, which is what it used to do. That local list
+// knew only single-token markers, so a LAYERED name ("X aggr. s. l." — 60 EIVE
+// taxa are spelled that way) was not recognized as an aggregate at all and
+// never reached the aggregate path. Two independently maintained notions of
+// "is this an aggregate" is also exactly the duplicated-mapper defect this
+// codebase has been bitten by before; the marker set belongs in one place.
 func isAggregate(canonical string) bool {
-	fields := strings.Fields(canonical)
-	if len(fields) == 0 {
-		return false
-	}
-	return aggregateSuffixes[strings.ToLower(fields[len(fields)-1])]
+	return domain.IsAggregateName(canonical)
 }
 
 // splitVerbatim splits a verbatim scientific-name string into its canonical

@@ -5,6 +5,14 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [2.6.0-alpha.0](https://github.com/jobrunner/hostus/compare/v2.5.0-alpha.0...v2.6.0-alpha.0) (2026-08-21)
+
+
+### Features
+
+* **match:** keep near-miss candidates instead of discarding them ([60d4d93](https://github.com/jobrunner/hostus/commit/60d4d93e5154db30e546369f2171ab0d67ee4433))
+* **match:** keep near-miss candidates instead of discarding them ([036cca4](https://github.com/jobrunner/hostus/commit/036cca43fad64c37577360b023d1630c41554fab)), closes [#67](https://github.com/jobrunner/hostus/issues/67)
+
 ## [2.5.0-alpha.0](https://github.com/jobrunner/hostus/compare/v2.4.1-alpha.0...v2.5.0-alpha.0) (2026-08-21)
 
 

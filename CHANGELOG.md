@@ -175,6 +175,13 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   `astragalus diphtherites` wird nie gesehen. Die Beinahe-Treffer-Liste kann
   also nur zeigen, was der Vorfilter liefert. Dessen Überarbeitung ist ein
   eigener Punkt.
+- **Für Sammelart-Anfragen greift die Liste gar nicht**, und zwar rechnerisch:
+  Fuzzy wird mit dem Namen **samt Marker** aufgerufen, der Vorfilter lässt aber
+  nur Kandidaten innerhalb von **3** Zeichen Längenunterschied zu — `" aggr."`
+  fügt **6** hinzu. Ein unmarkierter Nachbar (der Normalfall, da Backbones
+  unmarkierte Namen führen) liegt damit immer außerhalb des Fensters. Solche
+  Anfragen bleiben beim bisherigen Hinweis „Aggregat ohne aufgelöstes
+  Sammelart-Konzept".
 
 ### Added (Match: Sammelarten lösen auf das Nominal-Taxon auf)
 - **`X aggr.` löst jetzt auf, wenn der Index kein Sammelart-Taxon führt** —

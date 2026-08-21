@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 
 	"github.com/jobrunner/hostus/internal/domain"
@@ -145,12 +146,29 @@ const (
 // scoring cost bounded against a pathological backbone.
 const fuzzyCandidateLimit = 20
 
+// fuzzyReviewFloor is the similarity below which a candidate is not worth
+// showing a reviewer at all. Between it and domain.FuzzyThreshold a name is
+// not resolved but IS handed back for curation, instead of being scored and
+// then thrown away (issue #67, class 3).
+//
+// Measured against that issue's own examples, which is what fixes the number:
+// the genus-synonymy group — a segregate genus the backbone does not use —
+// lands at 0.792 ("Astracantha diphtherites" -> "Astragalus diphtherites") and
+// 0.750 ("... parnassi"), so a floor above 0.70 would drop exactly the class
+// worth reviewing. Below it lies noise: 0.545 for "Arctostaphylos alpinus" ->
+// "Arctous alpina" and 0.318 for "Bellidiastrum michelii" -> "Aster
+// bellidiastrum". Those two need synonymy knowledge, not string distance —
+// lowering the floor to reach them would bury the real near misses in
+// unrelated names rather than find them.
+const fuzzyReviewFloor = 0.70
+
 // Notes attached to results that need a human's attention.
 const (
 	noteAggregateResolved   = "Aggregat, keine Kleinartauflösung"
 	noteAggregateUnresolved = "Aggregat ohne aufgelöstes Sammelart-Konzept"
 	noteAggregateNominate   = "Aggregat: keine Sammelart im Index, aufgelöst auf das Nominal-Konzept — deckt weniger ab als die Anfrage"
 	noteUnresolvable        = "Kein eindeutiger Treffer, keine Fuzzy-Auflösung in dieser SP"
+	noteNearMiss            = "Nicht aufgelöst: kein Treffer über der Ähnlichkeitsschwelle. Die gelisteten Kandidaten sind die nächstliegenden Namen im Index, zur manuellen Prüfung — KEINE Auflösung"
 	noteAmbiguous           = "Mehrdeutiger Treffer: mehrere Konzepte mit gleicher Übereinstimmungsstärke, manuelle Prüfung nötig"
 	noteFuzzy               = "Fuzzy-Treffer: Ähnlichkeit über Schwellenwert, manuelle Prüfung erforderlich"
 	noteFuzzyAmbiguous      = "Mehrdeutiger Fuzzy-Treffer: mehrere Konzepte mit gleicher Ähnlichkeit, manuelle Prüfung nötig"
@@ -325,6 +343,48 @@ func matchOne(ctx context.Context, repo output.Repository, req MatchRequest, fil
 	return res, nil
 }
 
+// nearMissNames returns the candidate names worth a reviewer's time — those at
+// or above fuzzyReviewFloor — best score first, de-duplicated.
+//
+// Best-first because a curator reads the top of the list; de-duplicated
+// because one canonical can reach the query through several concepts (the same
+// name in WCVP and in a dozen CDM floras), and repeating it would push the
+// genuinely different suggestions off the end.
+func nearMissNames(candidates []output.MatchCandidate, scores []float64) []string {
+	type scored struct {
+		name  string
+		score float64
+	}
+	best := make(map[string]float64, len(candidates))
+	for i, c := range candidates {
+		if scores[i] < fuzzyReviewFloor {
+			continue
+		}
+		name := c.MatchedName.Canonical
+		if prev, seen := best[name]; !seen || scores[i] > prev {
+			best[name] = scores[i]
+		}
+	}
+	out := make([]scored, 0, len(best))
+	for name, score := range best {
+		out = append(out, scored{name: name, score: score})
+	}
+	// Name as the tiebreaker keeps the order deterministic — map iteration is
+	// not, and a list that reshuffles between identical requests is a poor
+	// thing to hand a reviewer.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].score != out[j].score {
+			return out[i].score > out[j].score
+		}
+		return out[i].name < out[j].name
+	})
+	names := make([]string, len(out))
+	for i, s := range out {
+		names[i] = s.name
+	}
+	return names
+}
+
 // matchFuzzy attempts a fuzzy resolution of req once matchOne has ruled out
 // every other outcome: classify's plain-UNRESOLVABLE case (not its
 // ambiguous-tie case — a tie is not a matching failure), AND MatchExact
@@ -378,6 +438,19 @@ func matchFuzzy(ctx context.Context, repo output.Repository, req MatchRequest, q
 	// TestMatchNames_FuzzyThresholdIsInclusiveAtExactBoundary, engineered to
 	// land exactly on 0.85.
 	if best < domain.FuzzyThreshold {
+		// Nothing resolves — but the candidates were just scored, and throwing
+		// them away is what made a whole row disappear over a genus rename
+		// (issue #67, class 3). Hand back the plausible ones for curation,
+		// WITHOUT a ConceptID or MatchType: this is an unresolved result that
+		// carries evidence, not a weaker kind of match.
+		if near := nearMissNames(candidates, scores); len(near) > 0 {
+			return &MatchResult{
+				ID:             req.ID,
+				RequiresReview: true,
+				Note:           noteNearMiss,
+				Candidates:     near,
+			}, nil
+		}
 		return nil, nil
 	}
 

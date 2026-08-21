@@ -152,6 +152,30 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added (Match: Beinahe-Treffer bleiben zur Prüfung erhalten)
+- **Ein nicht aufgelöster Name liefert jetzt die nächstliegenden Kandidaten mit**
+  statt einer leeren Antwort (Issue #67, Klasse 3). Die Ähnlichkeiten wurden
+  ohnehin berechnet und dann verworfen — damit verschwand eine ganze Zeile,
+  etwa bei einer Gattungsumbenennung. Gelistet wird ab einer **gemessenen**
+  Untergrenze von 0,70, bester Treffer zuerst, dublettenfrei und bei Gleichstand
+  alphabetisch (also bei identischen Anfragen reproduzierbar).
+  **Ohne Auflösung:** kein `concept_id`, kein `match_type`, `requires_review`
+  bleibt gesetzt — das sind Hinweise zur Kuratierung, kein schwächerer Treffer.
+  Die 0,70 kommen aus den Beispielen des Tickets: die Gattungs-Synonymie liegt
+  bei 0,792 (`Astracantha diphtherites` → `Astragalus diphtherites`) und 0,750,
+  darunter beginnt Rauschen (0,545 bzw. 0,318 für Fälle, die Synonymie-Wissen
+  brauchen statt Zeichenabstand).
+
+### Bekannte Einschränkung (gemessen, eigener Arbeitsauftrag)
+- **Der Fuzzy-Vorfilter erreicht die Gattungs-Synonymie gar nicht**, unabhängig
+  von der obigen Änderung: er filtert mit `GLOB '<erster Buchstabe>*'` plus
+  Längenfenster und sortiert nach Längendifferenz, dann **alphabetisch**, mit
+  `LIMIT 20`. Für `astracantha diphtherites` passen **38.852** Namen ins
+  Fenster; die 20 Plätze gehen an `aaronsohnia…`, `abacopteris…` — das gesuchte
+  `astragalus diphtherites` wird nie gesehen. Die Beinahe-Treffer-Liste kann
+  also nur zeigen, was der Vorfilter liefert. Dessen Überarbeitung ist ein
+  eigener Punkt.
+
 ### Added (Match: Sammelarten lösen auf das Nominal-Taxon auf)
 - **`X aggr.` löst jetzt auf, wenn der Index kein Sammelart-Taxon führt** —
   bisher fiel die ganze Zeile weg, obwohl derselbe Name *ohne* Marker exakt

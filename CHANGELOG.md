@@ -5,6 +5,19 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [2.5.0-alpha.0](https://github.com/jobrunner/hostus/compare/v2.4.1-alpha.0...v2.5.0-alpha.0) (2026-08-21)
+
+
+### Features
+
+* **match:** resolve an aggregate query to the nominate taxon, visibly marked ([9b309bd](https://github.com/jobrunner/hostus/commit/9b309bde90fbf11539e881b17672bfb00c2e48b1))
+* **match:** resolve an aggregate query to the nominate taxon, visibly marked ([1ce01a4](https://github.com/jobrunner/hostus/commit/1ce01a4919df4116b92c08deb394710c366dca97)), closes [#67](https://github.com/jobrunner/hostus/issues/67)
+
+
+### Bug Fixes
+
+* **match:** stop the aggregate fallback from claiming more than it delivers ([70d9185](https://github.com/jobrunner/hostus/commit/70d9185ff10e91416588a6039282cc9a8d1e4442)), closes [#67](https://github.com/jobrunner/hostus/issues/67)
+
 ## [2.4.1-alpha.0](https://github.com/jobrunner/hostus/compare/v2.4.0-alpha.0...v2.4.1-alpha.0) (2026-08-20)
 
 

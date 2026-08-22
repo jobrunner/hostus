@@ -234,3 +234,59 @@ cd poc && go build -o /tmp/fuzzyrecall ./measure/fuzzyrecall/
 /tmp/fuzzyrecall -db /tmp/hostus-fuzzy-index.db -n 1 -esy <...> \
   -only "prefix4+fts" -dump "prefix4+fts"
 ```
+
+---
+
+## Nachmessung nach der Umsetzung (2026-08-22)
+
+Umgesetzt wurden alle drei empfohlenen Änderungen plus ein vierter Guard, den
+erst diese Nachmessung sichtbar gemacht hat. Gemessen über `POST /v1/match`
+gegen dieselben Daten, also inklusive Kandidatenleiter, Autor-Abtrennung und
+Konzept-Eindeutigkeit — Dinge, die das Harness nicht modelliert.
+
+| | vorher | nachher |
+|---|---|---|
+| ESy-Namen (distinkt) | 3.587 | 3.587 |
+| davon aufgelöst | 91,7 % | **91,6 %** |
+| davon per Fuzzy | **0** | **40** |
+| Fehltreffer unter den Fuzzy-Treffern | — | **2 von 40** |
+
+Die Auflösungsquote sinkt um 0,1 Punkte, weil die Guards fünf vorher *falsche*
+Treffer entfernen — die Quote allein wäre hier die irreführende Zahl.
+
+**Das Harness hat eine Fehlerklasse nicht vorhergesagt**, und das ist der
+Grund, diese Nachmessung überhaupt zu machen: fünf ESy-Zeilen, die eine
+**Sektion** benennen (`Taraxacum sect. Alpina`), lösten auf die **Art**
+`Taraxacum sectum` auf (0,875). Sichtbar war das nur am Endpunkt, weil dort die
+Autor-Abtrennung den großgeschriebenen Sektionsnamen als Autorschaft entfernt
+— der Suchschlüssel ist `taraxacum sect.`, und der ist von `taraxacum sectum`
+zwei Zeichen entfernt. Die Gattung ist identisch, der Gattungs-Guard also
+blind. Dagegen der vierte Guard: **ein Rangkürzel auf nur einer Seite
+verhindert die Auflösung.**
+
+**Was von den 40 falsch bleibt, und warum:**
+
+- `Buellia punctata` → `Ruellia punctata` (0,938): Flechtengattung, die sich in
+  genau einem Buchstaben von einer Blütenpflanzengattung unterscheidet. Das ist
+  das im Befund 6 vorhergesagte Restleck, gegen das kein Zeichenmaß hilft.
+- `Juniperus communis subsp. communis` → `subsp. eucommunis` (0,944): andere
+  Ursache. `Juniperus communis` liegt im Index **zweimal** (accepted +
+  synonym), der Autonym-Schlüssel ist damit mehrdeutig, die Kandidatenleiter
+  fällt auf Fuzzy durch, und Fuzzy landet auf einer anderen Unterart. Ein
+  mehrdeutiger Exact-Treffer ist aussagekräftiger als ein Fuzzy-Treffer auf ein
+  anderes Taxon — ob die Leiter das so behandeln soll, ist eine offene
+  Entscheidung, kein Vorfilterproblem.
+
+**Korrektur an Befund 3:** die `top`-Spalte des Harness überschätzt, was der
+Endpunkt tatsächlich auflöst. Der Endpunkt verlangt zusätzlich ein
+**eindeutiges Konzept**; wo derselbe Name mehrfach im Index liegt, kommt trotz
+bestem Score `unresolvable` zurück (`Arctostaphylos alpinus` → zwei Konzepte
+mit `Arctostaphylos alpina`, beide `synonym`; `Artemisia lercheana` → drei
+Konzepte, eines davon `accepted`). Letzteres zeigt eine eigene Lücke: der
+`role=accepted`-Vorrang aus Issue #67 Klasse 2 existiert nur auf dem
+Exact-Pfad, nicht auf dem Fuzzy-Pfad.
+
+**Latenzen am Endpunkt** (Einzelmessungen, als Größenordnung zu lesen):
+0,003 s für einen Exact-Treffer, 0,016–0,18 s für einen Fuzzy-Treffer,
+0,32–0,37 s im schlechtesten beobachteten Fall — gegenüber 0,65–1,2 s p95 für
+den alten, ergebnislosen Vorfilter.

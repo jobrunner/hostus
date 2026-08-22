@@ -203,6 +203,12 @@ func TestMatchNames_NearMissTiesAreOrderedDeterministically(t *testing.T) {
 
 // seedEqualDistanceTrio ingests three names at the SAME measured distance
 // (0.769231) from "Zzzaaa bbbccc", so only the tiebreaker decides their order.
+//
+// All three share the query's first four runes on purpose. That is not
+// cosmetic: the prefilter pins a 4-rune prefix, so a name agreeing with the
+// query in only three ("Zzzxxx bbbccc", which this fixture used to carry) is
+// legitimately no longer a candidate at all — and the trio would silently
+// become a pair, testing the tiebreaker on fewer ties than it claims.
 func seedEqualDistanceTrio(t *testing.T, repo *sqlite.DB) {
 	t.Helper()
 	ctx := context.Background()
@@ -210,7 +216,7 @@ func seedEqualDistanceTrio(t *testing.T, repo *sqlite.DB) {
 	if err != nil {
 		t.Fatalf("BeginIngest: unexpected error: %v", err)
 	}
-	for i, canonical := range []string{"Zzzxxx bbbccc", "Zzzaaa bbbxyz", "Zzzaaa bbbxxx"} {
+	for i, canonical := range []string{"Zzzaaa xxxccc", "Zzzaaa bbbxyz", "Zzzaaa bbbxxx"} {
 		id := string(rune('a' + i))
 		name := domain.Name{ID: "test-tie:name:" + id, Canonical: canonical, Rank: domain.RankSpecies}
 		concept := domain.Concept{ID: "test-tie:concept:" + id, BackboneID: "test-tie", AcceptedName: name, Rank: domain.RankSpecies, Status: domain.StatusAccepted}

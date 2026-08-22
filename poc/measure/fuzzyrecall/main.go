@@ -54,6 +54,7 @@ type result struct {
 	top      int // target is the best-scoring candidate AND >= threshold
 	resolved int // ANY candidate >= threshold (for unknown-target cases)
 	pool     int // total candidates returned, summed
+	maxPool  int // largest single candidate set — what a safety cap must clear
 	cases    int
 	durs     []time.Duration
 }
@@ -151,6 +152,9 @@ func main() {
 			r := results[s.name][tc.class]
 			r.cases++
 			r.pool += len(cands)
+			if len(cands) > r.maxPool {
+				r.maxPool = len(cands)
+			}
 			r.durs = append(r.durs, dur)
 
 			bestSim, bestFold := 0.0, ""
@@ -187,19 +191,20 @@ func main() {
 func report(strategies []strategy, classes []string, results map[string]map[string]*result) {
 	for _, cl := range classes {
 		fmt.Printf("\n=== class: %s\n", cl)
-		fmt.Printf("%-42s %7s %7s %7s %9s %9s %9s\n",
-			"strategy", "cases", "found", "top", "resolved", "avgPool", "p95")
+		fmt.Printf("%-42s %7s %7s %7s %9s %9s %9s %9s\n",
+			"strategy", "cases", "found", "top", "resolved", "avgPool", "maxPool", "p95")
 		for _, s := range strategies {
 			r := results[s.name][cl]
 			if r.cases == 0 {
 				continue
 			}
-			fmt.Printf("%-42s %7d %6.1f%% %6.1f%% %8.1f%% %9.0f %9s\n",
+			fmt.Printf("%-42s %7d %6.1f%% %6.1f%% %8.1f%% %9.0f %9d %9s\n",
 				s.name, r.cases,
 				100*float64(r.found)/float64(r.cases),
 				100*float64(r.top)/float64(r.cases),
 				100*float64(r.resolved)/float64(r.cases),
 				float64(r.pool)/float64(r.cases),
+				r.maxPool,
 				p95(r.durs))
 		}
 	}

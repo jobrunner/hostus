@@ -130,3 +130,46 @@ Spike-Dokument.
 (nicht „Habitat nicht erfüllt"). `aggregate_policy` (baubar und gemessen) ist
 die verwertbare Hälfte von UC4 — siehe
 [SP9-Verdikt](../research/sp9-uc4-verdict.md).
+
+## Gattungs-Synonymie löst nicht auf — und kann es per Zeichenabstand nicht
+
+Der Fuzzy-Vorfilter ist überarbeitet und liefert den gesuchten Namen jetzt
+(vorher: in 0,0 % der Fälle, [Messung](../research/fuzzy-prefilter.md)). Was
+damit **nicht** gelöst ist: die größte Klasse-3-Untergruppe aus
+[Issue #67](https://github.com/jobrunner/hostus/issues/67), Namen unter einer
+abgetrennten Gattung.
+
+Der Grund liegt jetzt nicht mehr im Vorfilter, und das ist der Unterschied zu
+vorher: über die Epitheton-Route liegt das Ziel in **100 %** der Fälle in der
+Kandidatenmenge — es ist nur in **0 %** der Fälle der beste Kandidat, weil ein
+Gattungstausch die Ähnlichkeit unter die Schwelle drückt:
+
+| Abfrage | Ziel | Similarity |
+|---|---|---|
+| `astracantha diphtherites` | `astragalus diphtherites` | 0,792 |
+| `arctostaphylos alpinus` | `arctous alpina` | 0,545 |
+| `bellidiastrum michelii` | `aster bellidiastrum` | 0,318 |
+
+Die Schwelle zu senken ist kein Ausweg: nötig wären 0,79, und was dabei
+hereinkommt, ist gemessen — 30,6 % Fehltreffer, bevor der Gattungs-Guard sie
+entfernte. Was fehlt, sind **Gattungs-Synonym-Daten**, kein weiterer
+String-Trick. Die Namen erscheinen bis dahin korrekt als Beinahe-Treffer zur
+manuellen Prüfung, nicht als Auflösung.
+
+**Zwei kleinere, gemessene Reste in derselben Ecke:**
+
+- Auf dem Fuzzy-Pfad fehlt der `role=accepted`-Vorrang, den Klasse 2 für den
+  Exact-Pfad brachte. `Artemisia lercheana` liegt dreifach im Index, davon
+  einmal als `accepted`, und kommt trotzdem als mehrdeutig zurück.
+- Ein **mehrdeutiger** Treffer auf einem normalisierten Schlüssel fällt auf
+  Fuzzy durch, und Fuzzy kann dann eine schlechtere Antwort geben als die
+  Mehrdeutigkeit selbst: `Juniperus communis subsp. communis` → der
+  Autonym-Schlüssel `juniperus communis` ist mehrdeutig (accepted + synonym),
+  also greift Fuzzy und landet auf `subsp. eucommunis`. Ob ein mehrdeutiger
+  Exact-Treffer den Fuzzy-Pfad sperren soll, ist eine offene
+  Kontrollfluss-Entscheidung.
+
+Ebenfalls bekannt und nicht behebbar: eine Flechten- oder Moosgattung, die
+sich von einer Blütenpflanzengattung in genau **einem** Buchstaben
+unterscheidet, passiert den Gattungs-Guard (`Buellia punctata` →
+`Ruellia punctata`) — 1 von 19 gemessenen Fällen.

@@ -1,5 +1,7 @@
 package domain
 
+import "strings"
+
 // MatchType classifies how a query name matched a candidate name.
 type MatchType string
 
@@ -157,4 +159,110 @@ func ClassifyMatch(queryCanon, queryAuthor, candCanon, candAuthor string) (Match
 		return MatchExactAuthor, true
 	}
 	return "", false
+}
+
+// FuzzyResolves reports whether candCanon is close enough to queryCanon to be
+// RESOLVED to — as opposed to merely listed as a near miss. Both inputs are
+// expected to be canonicalized already (Similarity does no normalization).
+//
+// Two conditions, both required:
+//
+//  1. the whole strings are within FuzzyThreshold, as before; and
+//  2. their GENUS tokens are too.
+//
+// Condition 2 exists because condition 1 alone is measurably not enough. An
+// epithet is the LONGER half of a binomial, so an identical epithet can drag
+// two entirely unrelated genera over the threshold: "sphagnum platyphyllum"
+// vs "solanum platyphyllum" scores 0.857. Measured against a real index
+// (docs/research/fuzzy-prefilter.md), 19 of the 62 ESy names that cleared
+// the threshold were wrong in exactly this way — 30.6 % — and every one of
+// them was a bryophyte or lichen genus that the vascular-plant backbone does
+// not carry at all, matched onto an unrelated flowering plant. Resolving
+// those is worse for a consumer than returning nothing.
+//
+// The genus check uses the SAME FuzzyThreshold rather than a second, separate
+// knob: 0.85 is where the measurement puts the split (a misspelled genus
+// stays at 0.900-1.000 — "cochleria"/"cochlearia" = 0.900 — while a confused
+// one falls to 0.625-0.778), and an independently tunable second threshold
+// would be a number nothing measured.
+//
+// It is a guard on RESOLUTION only. The application layer still lists
+// guard-rejected candidates as near misses: "sphagnum platyphyllum ->
+// solanum platyphyllum" is useful evidence for whoever curates the row, as
+// long as it is not handed back as an answer.
+//
+// Known residue, not fixable by any string measure: a genus that differs from
+// an unrelated one in a single letter passes ("buellia punctata" vs "ruellia
+// punctata", genus 0.857) — 1 of the measured 19.
+func FuzzyResolves(queryCanon, candCanon string) bool {
+	if Similarity(queryCanon, candCanon) < FuzzyThreshold {
+		return false
+	}
+	if hasRankMarker(queryCanon) != hasRankMarker(candCanon) {
+		return false
+	}
+	return Similarity(genusToken(queryCanon), genusToken(candCanon)) >= FuzzyThreshold
+}
+
+// The infrageneric markers below are not decoration. Measured end-to-end
+// against a real index, five ESy rows naming a section ("Taraxacum sect.
+// Alpina", whose capitalized section name the author-splitting step takes off,
+// leaving "taraxacum sect.") resolved onto the SPECIES "Taraxacum sectum" at
+// 0.875 — same genus, so the genus guard cannot see it, and two edits apart,
+// so the whole-string threshold cannot either.
+// infragenericMarkers are the rank abbreviations ABOVE species level. They
+// are kept apart from normalize.go's infraspecificMarkers rather than merged
+// into it because AutonymBase reads that set to decide what an autonym is,
+// and a section is not an infraspecific rank — widening it there would change
+// what AutonymBase collapses.
+var infragenericMarkers = map[string]bool{
+	"sect.":    true,
+	"subsect.": true,
+	"ser.":     true,
+	"subser.":  true,
+	"subg.":    true,
+	"subgen.":  true,
+}
+
+// hasRankMarker reports whether a canonicalized name carries a rank
+// abbreviation. FuzzyResolves compares the two sides' answers rather than
+// either one alone: a marker on both sides is the ordinary infraspecific case
+// fuzzy matching exists for ("... subsp. calabricus" -> "... subsp.
+// calabrica"), and it is only the MISMATCH that says the two names denote
+// different kinds of thing.
+func hasRankMarker(canon string) bool {
+	for _, f := range strings.Fields(canon) {
+		// Composed from the two sets rather than a third hand-written list:
+		// a marker added to one place and forgotten here would silently make
+		// this guard blind to it.
+		if infraspecificMarkers[f] || infragenericMarkers[f] {
+			return true
+		}
+	}
+	return false
+}
+
+// genusToken returns the token a canonicalized name's genus lives in: the
+// first one, skipping a leading hybrid marker.
+//
+// Skipping the marker is not a taxonomic judgement (NormalizeHybridMarker
+// deliberately refuses to read a LEADING standalone "x" as a nothogenus
+// marker, and this does not change that) — it only decides which WORDS get
+// compared against each other. It is required for correctness: the two
+// spellings of the marker share no character, so comparing "x" against "×"
+// as though it were the genus scores 0.0 and would reject a measured true
+// positive ("x ammocalamagrostis baltica" -> "× ammocalamagrostis baltica",
+// whole-string 0.963). No genus is one character long, so nothing else can
+// be swallowed by this.
+//
+// An empty name yields "", which Similarity handles (both empty -> 1.0, one
+// empty -> 0.0); a name that is NOTHING but a marker likewise yields "".
+func genusToken(canon string) string {
+	for _, f := range strings.Fields(canon) {
+		if f == hybridMarker || f == "x" {
+			continue
+		}
+		return f
+	}
+	return ""
 }

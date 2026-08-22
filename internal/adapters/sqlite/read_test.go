@@ -520,19 +520,43 @@ func equalStrings(a, b []string) bool {
 // three metacharacters must come back wrapped in a single-character bracket
 // set (GLOB has no backslash escape), everything else untouched. ']' is
 // only special INSIDE a bracket set, so it passes through unchanged.
-func TestGlobEscape(t *testing.T) {
+func TestGlobPrefix_EscapesMetacharacters(t *testing.T) {
 	cases := map[string]string{
-		"f": "f",
-		"*": "[*]",
-		"?": "[?]",
-		"[": "[[]",
-		"]": "]",
-		"ä": "ä",
-		"":  "",
+		"f": "f*",
+		"*": "[*]*",
+		"?": "[?]*",
+		"[": "[[]*",
+		"]": "]*",
+		"ä": "ä*",
+		"":  "*",
 	}
 	for in, want := range cases {
-		if got := globEscape(in); got != want {
-			t.Errorf("globEscape(%q) = %q, want %q", in, got, want)
+		if got := globPrefix(in, 1); got != want {
+			t.Errorf("globPrefix(%q, 1) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestGlobPrefix_TakesNRunesAndClampsToTheInput covers the prefix width
+// itself: n runes of the query, counted in RUNES not bytes (a multi-byte
+// prefix cut mid-rune would produce an invalid pattern), and never more than
+// the query has.
+func TestGlobPrefix_TakesNRunesAndClampsToTheInput(t *testing.T) {
+	cases := []struct {
+		in   string
+		n    int
+		want string
+	}{
+		{"festuca ovina", 4, "fest*"},
+		{"festuca ovina", 1, "f*"},
+		{"ab", 4, "ab*"},
+		{"", 4, "*"},
+		{"ähre", 2, "äh*"},
+		{"fe*tuca", 4, "fe[*]t*"},
+	}
+	for _, c := range cases {
+		if got := globPrefix(c.in, c.n); got != c.want {
+			t.Errorf("globPrefix(%q, %d) = %q, want %q", c.in, c.n, got, c.want)
 		}
 	}
 }

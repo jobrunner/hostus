@@ -1410,11 +1410,16 @@ components:
                die **Anzahl** etwas, weil sie die konkurrierenden Konzepte
                zählt; identische Namen erscheinen deshalb mehrfach
                (`unresolvable` oder `fuzzy`).
-            3. Die nächstliegenden Namen im Index, wenn **nichts** die
-               Ähnlichkeitsschwelle erreichte (`unresolvable`): beste
-               Übereinstimmung zuerst, dublettenfrei, ab einer Ähnlichkeit von
-               0,70. Diese Liste ist zur Kuratierung gedacht — die Namen wurden
-               nicht gegen die Anfrage klassifiziert, sie liegen ihr nur nahe.
+            3. Die nächstliegenden Namen im Index, wenn nichts aufgelöst wurde
+               (`unresolvable`): beste Übereinstimmung zuerst, dublettenfrei,
+               ab einer Ähnlichkeit von 0,70. Diese Liste ist zur Kuratierung
+               gedacht — die Namen wurden nicht gegen die Anfrage
+               klassifiziert, sie liegen ihr nur nahe. Sie erscheint in zwei
+               Fällen, und `note` sagt in welchem: entweder erreichte nichts
+               die Ähnlichkeitsschwelle, oder ein Kandidat erreichte sie und
+               wurde zurückgewiesen, weil seine **Gattung** eine andere ist
+               (ein geteiltes Epitheton bei nicht verwandten Pflanzen) oder
+               weil ein **Rangkürzel** nur auf einer Seite steht.
 
             In allen drei Fällen bleiben `concept_id` leer und
             `requires_review` gesetzt.

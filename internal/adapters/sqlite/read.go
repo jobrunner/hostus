@@ -538,6 +538,10 @@ func (db *DB) MatchFuzzyCandidates(ctx context.Context, canon string, limit int,
 // whole-table scan the prefilter exists to avoid.
 func globPrefix(want string, n int) string {
 	runes := []rune(want)
+	// n >= len(runes) is a genuinely equivalent mutant at
+	// CONDITIONALS_BOUNDARY: at n == len(runes) the assignment sets n to the
+	// value it already holds, so no test can observe which way the comparison
+	// went (same reasoning as the documented equivalents in domain.Similarity).
 	if n > len(runes) {
 		n = len(runes)
 	}
@@ -645,6 +649,9 @@ func fuzzyEpithetNameIDs(ctx context.Context, db *sql.DB, want string, limit int
 // first list's order — the prefix route's candidates stay first, since it is
 // the narrower and more precise of the two.
 func mergeIDs(a, b []string) []string {
+	// The two len() sums are capacity HINTS only — an ARITHMETIC_BASE mutant
+	// here (len(a)-len(b)) changes how often the map and slice grow, never
+	// what they end up containing, so it is equivalent by construction.
 	seen := make(map[string]bool, len(a)+len(b))
 	out := make([]string, 0, len(a)+len(b))
 	for _, id := range append(a, b...) {

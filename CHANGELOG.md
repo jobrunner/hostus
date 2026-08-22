@@ -174,6 +174,27 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   darunter beginnt Rauschen (0,545 bzw. 0,318 für Fälle, die Synonymie-Wissen
   brauchen statt Zeichenabstand).
 
+### Gemessen (Fuzzy-Vorfilter: Recall am echten Index)
+- **Der Fuzzy-Vorfilter liefert in keiner Fehlerklasse einen Treffer — auch nicht
+  bei einem einzigen vertauschten Buchstaben**, und braucht dafür 0,65–1,2 s p95.
+  Gemessen gegen einen vollständigen Index mit `poc/measure/fuzzyrecall`, gegen
+  synthetisch mutierte echte Namen (Ziel per Konstruktion bekannt) und gegen die
+  418 ESy-Namen ohne Exact-Match. Befund in `docs/research/fuzzy-prefilter.md`.
+- **Das `LIMIT 20` ist die Ursache, nicht die Prefixlänge.** Prefix auf 4 Runen
+  verengen *und* das LIMIT streichen: Recall 0 → 96,6–100 %, p95 auf 14–20 ms
+  (der zu sortierende Pool fällt von ~41.000 auf ~600 Zeilen). Eine frühere
+  Sondierung hatte den 4-Zeichen-Prefix verworfen — sie hatte ihn **mit** dem
+  LIMIT gemessen.
+- **Der Fix darf nicht ohne einen Guard kommen:** an den echten ESy-Namen
+  erreichen 62 den Schwellwert, davon sind **19 = 30,6 % nachweislich falsch** —
+  Moos-/Flechtengattungen, die WCVP nicht führt, deren Epitheton aber auf eine
+  Blütenpflanze passt (`sphagnum platyphyllum` → `solanum platyphyllum`). Eine
+  zusätzliche Schwelle auf das **Gattungs-Token allein** entfernt 18 der 19 und
+  kostet 1 von 43 richtigen Treffern.
+- **Gattungs-Synonymie bleibt unlösbar per Zeichenabstand**: das Ziel liegt über
+  eine FTS-Route auf dem Epitheton in 100 % der Fälle in der Kandidatenmenge und
+  ist in 0 % der beste Kandidat. Das braucht Synonymie-Daten, keinen Vorfilter.
+
 ### Bekannte Einschränkung (gemessen, eigener Arbeitsauftrag)
 - **Der Fuzzy-Vorfilter erreicht die Gattungs-Synonymie gar nicht**, unabhängig
   von der obigen Änderung: er filtert mit `GLOB '<erster Buchstabe>*'` plus

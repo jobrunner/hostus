@@ -197,8 +197,15 @@ func printTraitReports(w io.Writer, reports []application.TraitIngestReport) {
 	}
 	_, _ = fmt.Fprintln(w, "Trait vocabularies:")
 	for _, r := range reports {
-		_, _ = fmt.Fprintf(w, "  %s: rows=%d matched=%d unmatched=%d ambiguous=%d\n",
-			r.Vocab, r.Rows, r.Matched, r.Unmatched, r.Ambiguous)
+		// tiebroken is appended only when it fired: a "tiebroken=0" on every
+		// vocabulary is noise, and noise on a line that reports a judgement
+		// call is worse than silence.
+		tiebroken := ""
+		if r.TieBroken > 0 {
+			tiebroken = fmt.Sprintf(" tiebroken=%d", r.TieBroken)
+		}
+		_, _ = fmt.Fprintf(w, "  %s: rows=%d matched=%d unmatched=%d ambiguous=%d%s\n",
+			r.Vocab, r.Rows, r.Matched, r.Unmatched, r.Ambiguous, tiebroken)
 		for _, n := range r.Normalized {
 			flag := ""
 			if n.Flagged {

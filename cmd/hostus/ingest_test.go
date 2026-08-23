@@ -464,3 +464,21 @@ func TestIngestCommand_NameSpace_PrintsReport(t *testing.T) {
 		}
 	}
 }
+
+// TestPrintTraitReports_TieBrokenIsVisibleOnlyWhenItFired: the tie-break is
+// the one place the trait crosswalk picks among competing concepts, so an
+// operator has to be able to see that it happened. Printing it
+// unconditionally would be worse than not printing it — a "tiebroken=0" on
+// every vocabulary is noise that teaches the reader to skip the line.
+func TestPrintTraitReports_TieBrokenIsVisibleOnlyWhenItFired(t *testing.T) {
+	var fired, quiet bytes.Buffer
+	printTraitReports(&fired, []application.TraitIngestReport{{Vocab: "eive", Rows: 5, Matched: 5, TieBroken: 2}})
+	printTraitReports(&quiet, []application.TraitIngestReport{{Vocab: "eive", Rows: 5, Matched: 5}})
+
+	if !strings.Contains(fired.String(), "tiebroken=2") {
+		t.Errorf("report %q, want it to report tiebroken=2", fired.String())
+	}
+	if strings.Contains(quiet.String(), "tiebroken") {
+		t.Errorf("report %q, want no tiebroken mention when none fired", quiet.String())
+	}
+}

@@ -160,6 +160,51 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Behoben (Traits: Homonyme kosteten ein Zehntel der Zeigerwerte)
+- **Ein Vokabular-Name, den mehrere Konzepte tragen, wird jetzt aufgelöst statt
+  verworfen.** Der Trait-Crosswalk schlüsselt auf den nackten Namen ohne
+  Autorschaft (PoC P6: die Trait-Tabellen liefern keine externe Taxon-ID) und
+  behandelte „mehrere Konzepte" als unentscheidbar. Meistens ist es aber ein
+  **Homonym**: dieselbe Schreibung, zweimal veröffentlicht, verschiedene
+  Autorschaft — und nur *ein* Konzept trägt den Namen tatsächlich.
+  Anlass war `Inula hirta`: EIVE führt alle fünf Dimensionen, WCVP führt
+  `Inula hirta L.` als Synonym von *Pentanema hirtum* und `Inula hirta Pollich`
+  als Synonym von *Pentanema britannica* — die Werte landeten nirgends.
+  Dasselbe traf `Abies alba`.
+- **Angewendet wird die Regel, die der Laufzeitpfad schon hat** (`genuineBearerWinner`,
+  Issue #67 Klasse 2): erst der Träger, der den Namen als `accepted` führt, dann
+  der homotypische Träger, sonst bleibt der Gleichstand. Bewusst dieselbe
+  Funktion und keine zweite Regel — dass `/v1/match` `Inula hirta` sauber auf
+  *Pentanema hirtum* auflöste, während der Trait-Crosswalk denselben Namen
+  mehrdeutig nannte, waren zwei Politiken für eine Frage.
+- **Gemessen an einem vollständigen Index** (voller Re-Ingest):
+
+  | Vokabular | mehrdeutig vorher | nachher | per Tie-Break gelöst |
+  |---|---|---|---|
+  | eive | 8.961 | **323** | 8.638 |
+  | tichy2023 | 7.373 | **206** | 7.167 |
+  | midolo2023 | 5.930 | **170** | 5.760 |
+
+  Bezogen auf Taxa: 1.606 der 14.831 EIVE-Taxa (10,8 %) hatten deswegen keine
+  Traits, 99,4 % davon Homonyme. Die Werte sind nachgeprüft die **richtigen** —
+  `Pentanema hirtum` bekommt EIVEs `Inula hirta`-Zeile (L=6,561 M=3,076), und
+  *Pentanema britannica* behält unverändert die von `Inula britannica`.
+- **Nachgeprüft, dass beide Pfade nun übereinstimmen:** für 300 mehrdeutige
+  EIVE-Taxa liegen die Traits in **294** Fällen auf genau dem Konzept, das
+  `/v1/match` für den Namen zurückgibt, in **0** Fällen auf einem anderen; die
+  6 übrigen löst auch `/v1/match` nicht auf (echter Gleichstand, beidseitig
+  konsistent).
+- **Der Ingest-Report weist `tiebroken=N` aus** — aber nur, wenn er gefeuert
+  hat. Es ist die einzige Stelle, an der dieser Crosswalk zwischen Konzepten
+  *wählt*, und das soll sichtbar sein; ein `tiebroken=0` auf jeder Zeile wäre
+  Rauschen. `TieBroken` ist eine Teilmenge von `Matched`, die Invariante
+  `Matched+Unmatched+Ambiguous == Rows` gilt unverändert.
+- **Was bewusst weiter mehrdeutig bleibt:** trägt der Name in mehreren
+  Konzepten `accepted`, bleibt der Gleichstand — dann ist es eine echte
+  taxonomische Frage, keine Homonym-Buchführung. Das sind noch 323 / 206 / 170
+  Zeilen. Ebenfalls unverändert: die `unmatched`-Zahlen (1.445 / 526 / 285),
+  denen kein Konzept gegenübersteht.
+
 ### Added (Match: Beinahe-Treffer bleiben zur Prüfung erhalten)
 - **Ein nicht aufgelöster Name liefert jetzt die nächstliegenden Kandidaten mit**
   statt einer leeren Antwort (Issue #67, Klasse 3). Die Ähnlichkeiten wurden

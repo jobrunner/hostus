@@ -49,6 +49,15 @@ type TraitIngestReport struct {
 	Matched   int
 	Unmatched int
 	Ambiguous int
+	// TieBroken counts rows that resolved only because ONE of several
+	// candidate concepts genuinely bears the name (see genuineBearerWinner) —
+	// a SUBSET of Matched, so the Rows invariant above is unaffected.
+	//
+	// It is reported separately because it is the one place this crosswalk
+	// picks among concepts instead of refusing to. Measured against a real
+	// index it is not a corner: 1.547 of EIVE's 1.606 ambiguous taxa resolve
+	// this way, including Abies alba and Inula hirta.
+	TieBroken int
 	// UnmatchedSample holds a bounded (unmatchedSampleCap), deterministic
 	// (sorted, deduplicated) sample of the taxon names that failed to
 	// resolve, so a reviewer/operator can see WHICH taxa were lost without
@@ -100,6 +109,9 @@ type traitResolution struct {
 	conceptID string
 	matched   bool
 	ambiguous bool
+	// tieBroken records that this outcome came from genuineBearerWinner
+	// rather than from a single-candidate key, so IngestTraits can report it.
+	tieBroken bool
 	// rule is the normalisation rule whose key produced this outcome (both
 	// for matched and for ambiguous). domain.RuleExact means the plain
 	// Canonicalize key answered — the pre-normalisation behavior.
@@ -188,14 +200,11 @@ func IngestTraits(ctx context.Context, repo output.Repository, src TraitRowSourc
 	tally := newTraitTally()
 	for i, row := range rows {
 		res := resolved[domain.Canonicalize(row.Taxon)]
+		countResolution(&report, tally, row, res)
 		switch {
-		case res.ambiguous:
-			report.Ambiguous++
-		case !res.matched:
-			report.Unmatched++
-			tally.countUnmatched(row.Taxon)
+		case res.ambiguous, !res.matched:
+			continue
 		default:
-			report.Matched++
 			if !winners[i] {
 				// Another row of this same vocabulary already owns this
 				// (concept, dim) slot and outranks this one — see
@@ -301,6 +310,26 @@ var ruleRank = map[domain.NormalizationRule]int{
 // rules an unflagged (pure spelling) rule always outranks a flagged
 // (circumscription-changing) one. Only two rows resolved via the identical
 // rule fall back to row order — see ruleRank's doc comment.
+// countResolution books one row into the report's outcome tallies. Split out
+// of IngestTraits so that loop stays about WRITING values: the counters are a
+// closed set (Matched+Unmatched+Ambiguous == Rows, with TieBroken a subset of
+// Matched) and are easier to check for that invariant in one place than
+// interleaved with transaction handling.
+func countResolution(report *TraitIngestReport, tally *traitTally, row TraitRow, res traitResolution) {
+	switch {
+	case res.ambiguous:
+		report.Ambiguous++
+	case !res.matched:
+		report.Unmatched++
+		tally.countUnmatched(row.Taxon)
+	default:
+		report.Matched++
+		if res.tieBroken {
+			report.TieBroken++
+		}
+	}
+}
+
 func selectTraitWinners(rows []TraitRow, resolved map[string]traitResolution) map[int]bool {
 	best := make(map[traitSlot]int, len(rows))
 	winners := make(map[int]bool, len(rows))
@@ -529,11 +558,43 @@ func resolveTraitName(ctx context.Context, repo output.Repository, canon string)
 			distinct[c.Concept.ID] = true
 		}
 		if len(distinct) > 1 {
+			// Several concepts hold this spelling — but "several concepts" is
+			// not the same as "undecidable", and treating it as such was
+			// measured to cost 1.606 of EIVE's 14.831 taxa (10,8 %), of which
+			// 99,4 % are HOMONYMS: the same canonical published twice under
+			// different authorship, so only one concept genuinely bears the
+			// name. genuineBearerWinner is the tiered rule the serving path
+			// already applies to exactly this case (issue #67 class 2) —
+			// accepted bearer first, homotypic bearer second, tie stands
+			// otherwise. Reusing it rather than writing a second rule is the
+			// point: /v1/match resolving "Inula hirta" to Pentanema hirtum
+			// while the trait crosswalk called the same name ambiguous was two
+			// policies for one question.
+			if id, ok := genuineBearerWinner(traitBearers(candidates)); ok {
+				return traitResolution{conceptID: id, matched: true, tieBroken: true, rule: cand.Rule}, nil
+			}
 			return traitResolution{ambiguous: true, rule: cand.Rule}, nil
 		}
 		return traitResolution{conceptID: candidates[0].Concept.ID, matched: true, rule: cand.Rule}, nil
 	}
 	return traitResolution{}, nil
+}
+
+// traitBearers adapts repository candidates to what genuineBearerWinner reads.
+// Only the fields the tiers actually consult are carried over; the name is
+// passed through because a classifiedHit without one would be a half-built
+// value waiting to confuse the next reader of that type.
+func traitBearers(candidates []output.MatchCandidate) []classifiedHit {
+	hits := make([]classifiedHit, 0, len(candidates))
+	for _, c := range candidates {
+		hits = append(hits, classifiedHit{
+			conceptID: c.Concept.ID,
+			name:      c.MatchedName.Canonical,
+			role:      c.Role,
+			homotypic: c.Homotypic,
+		})
+	}
+	return hits
 }
 
 // sortedSample returns a deterministic (sorted), bounded (at most

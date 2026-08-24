@@ -5,6 +5,18 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [2.6.1-alpha.0](https://github.com/jobrunner/hostus/compare/v2.6.0-alpha.0...v2.6.1-alpha.0) (2026-08-24)
+
+
+### Bug Fixes
+
+* **match:** keep the genus guard from refusing short genera ([02af836](https://github.com/jobrunner/hostus/commit/02af836e3ddb4f940cb08e7b05623826589b1214))
+* **match:** make the fuzzy prefilter return the name it is looking for ([7edbc3a](https://github.com/jobrunner/hostus/commit/7edbc3a92eab5997bff67f129d9d7629d2f87552))
+* **match:** make the fuzzy prefilter return the name it is looking for ([39aa45e](https://github.com/jobrunner/hostus/commit/39aa45e9de86e9e2c6f5f0ba87cffbc4ae31f613))
+* **traits:** keep the homonym tie-break from reaching further than measured ([32ec15b](https://github.com/jobrunner/hostus/commit/32ec15b2fec7381b9950923e8b7a8253dbd83560))
+* **traits:** resolve a homonym instead of dropping the vocabulary row ([c7e53ca](https://github.com/jobrunner/hostus/commit/c7e53ca77e741ed512c8a2a7e51287d8f841a991))
+* **traits:** resolve a homonym instead of dropping the vocabulary row ([e2a99ec](https://github.com/jobrunner/hostus/commit/e2a99ecd7d033c9002c407ea00176d0bd1dbdd29))
+
 ## [2.6.0-alpha.0](https://github.com/jobrunner/hostus/compare/v2.5.0-alpha.0...v2.6.0-alpha.0) (2026-08-21)
 
 

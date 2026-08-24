@@ -216,6 +216,9 @@ func printTraitReports(w io.Writer, reports []application.TraitIngestReport) {
 		if len(r.FlaggedSample) > 0 {
 			_, _ = fmt.Fprintf(w, "    flagged sample: %s\n", strings.Join(r.FlaggedSample, ", "))
 		}
+		if len(r.TieBrokenSample) > 0 {
+			_, _ = fmt.Fprintf(w, "    tiebroken sample: %s\n", strings.Join(r.TieBrokenSample, ", "))
+		}
 		if len(r.UnmatchedSample) > 0 {
 			_, _ = fmt.Fprintf(w, "    unmatched sample: %s\n", strings.Join(r.UnmatchedSample, ", "))
 		}

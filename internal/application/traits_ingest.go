@@ -58,6 +58,12 @@ type TraitIngestReport struct {
 	// index it is not a corner: 1.547 of EIVE's 1.606 ambiguous taxa resolve
 	// this way, including Abies alba and Inula hirta.
 	TieBroken int
+	// TieBrokenSample names the taxa TieBroken counts, bounded and sorted like
+	// UnmatchedSample/FlaggedSample. A bare count of a judgement call is not
+	// auditable: the whole reason the other two samples exist is that an
+	// operator has to be able to check WHICH taxa a rule decided, and picking
+	// among concepts is the strongest judgement this crosswalk makes.
+	TieBrokenSample []string
 	// UnmatchedSample holds a bounded (unmatchedSampleCap), deterministic
 	// (sorted, deduplicated) sample of the taxon names that failed to
 	// resolve, so a reviewer/operator can see WHICH taxa were lost without
@@ -160,8 +166,13 @@ type traitResolution struct {
 //  3. One or more candidates that ALL resolve to the SAME concept (e.g. a
 //     synonym and its accepted name both matching) -> Matched, the value
 //     lands on that one concept.
-//  4. Candidates resolving to two or more DISTINCT concepts -> Ambiguous,
-//     skipped entirely (never guessed which concept the row meant).
+//  4. Candidates resolving to two or more DISTINCT concepts -> the tie-break
+//     runs: sec.-space candidates step aside for backbone ones, and among
+//     what is left the concept that genuinely BEARS the name wins (accepted
+//     bearer, then homotypic bearer — genuineBearerWinner, the same rule the
+//     serving path applies). Resolved that way the row is Matched and also
+//     counted in TieBroken; if no single bearer emerges the row is Ambiguous
+//     and skipped entirely (still never guessed).
 //
 // Every match that needed more than the plain exact key is counted in
 // TraitIngestReport.Normalized, and the two rules that rest on a botanical
@@ -326,8 +337,34 @@ func countResolution(report *TraitIngestReport, tally *traitTally, row TraitRow,
 		report.Matched++
 		if res.tieBroken {
 			report.TieBroken++
+			tally.countTieBroken(row.Taxon)
 		}
 	}
+}
+
+// outranks reports whether challenger should take the (concept, dim) slot from
+// incumbent. Two criteria, in order:
+//
+//  1. the normalisation rule (ruleRank): a spelling-exact key beats a key that
+//     needed a rewrite, and the two circumscription-equating rules rank last.
+//  2. among equal rules, a resolution that was NOT tie-broken beats one that
+//     was.
+//
+// Criterion 2 exists because the tie-break made a new collision possible: two
+// different vocabulary names can resolve to one concept, one of them only
+// because genuineBearerWinner picked among homonyms. Both carry
+// domain.RuleExact, so criterion 1 alone calls them equal and CSV ROW ORDER
+// decides whether the certain value or the picked one is stored — measured on
+// real data as 17 Tichý and 8 Midolo taxa. A picked resolution is the weaker
+// claim by construction and must lose to a sole-candidate one.
+func outranks(challenger, incumbent traitResolution) bool {
+	if ruleRank[challenger.rule] != ruleRank[incumbent.rule] {
+		// <= is a genuinely equivalent mutant at CONDITIONALS_BOUNDARY here:
+		// the enclosing != has already excluded equal ranks, so no input can
+		// reach this line with both sides equal.
+		return ruleRank[challenger.rule] < ruleRank[incumbent.rule]
+	}
+	return incumbent.tieBroken && !challenger.tieBroken
 }
 
 func selectTraitWinners(rows []TraitRow, resolved map[string]traitResolution) map[int]bool {
@@ -351,11 +388,10 @@ func selectTraitWinners(rows []TraitRow, resolved map[string]traitResolution) ma
 			continue
 		}
 		// A challenger displaces the incumbent only if it strictly outranks
-		// it (ruleRank); a tie (both rows resolved via the same rule) keeps
-		// the incumbent, so the first row in CSV order still wins the
-		// ordinary case of a vocabulary listing the same taxon twice.
-		prevRule := resolved[domain.Canonicalize(rows[prev].Taxon)].rule
-		if ruleRank[res.rule] < ruleRank[prevRule] {
+		// it; a tie keeps the incumbent, so the first row in CSV order still
+		// wins the ordinary case of a vocabulary listing the same taxon twice.
+		prevRes := resolved[domain.Canonicalize(rows[prev].Taxon)]
+		if outranks(res, prevRes) {
 			delete(winners, prev)
 			best[slot] = i
 			winners[i] = true
@@ -400,6 +436,7 @@ func traitValueFor(row TraitRow, meta domain.TraitVocabMeta, rule domain.Normali
 type traitTally struct {
 	unmatched map[string]bool
 	flagged   map[string]bool
+	tieBroken map[string]bool
 	ruleRows  map[domain.NormalizationRule]int
 	ruleTaxa  map[domain.NormalizationRule]map[string]bool
 }
@@ -408,12 +445,15 @@ func newTraitTally() *traitTally {
 	return &traitTally{
 		unmatched: map[string]bool{},
 		flagged:   map[string]bool{},
+		tieBroken: map[string]bool{},
 		ruleRows:  map[domain.NormalizationRule]int{},
 		ruleTaxa:  map[domain.NormalizationRule]map[string]bool{},
 	}
 }
 
 func (t *traitTally) countUnmatched(taxon string) { t.unmatched[taxon] = true }
+
+func (t *traitTally) countTieBroken(taxon string) { t.tieBroken[taxon] = true }
 
 // countMatched records one written row. Rows that resolved on the plain
 // exact key are deliberately NOT recorded: TraitIngestReport.Normalized
@@ -439,6 +479,7 @@ func (t *traitTally) countMatched(taxon string, rule domain.NormalizationRule) {
 func (t *traitTally) report(r *TraitIngestReport) {
 	r.UnmatchedSample = sortedSample(t.unmatched)
 	r.FlaggedSample = sortedSample(t.flagged)
+	r.TieBrokenSample = sortedSample(t.tieBroken)
 	r.Normalized = ruleCounts(t.ruleRows, t.ruleTaxa)
 }
 
@@ -515,7 +556,7 @@ func resolveTraitTaxa(ctx context.Context, repo output.Repository, rows []TraitR
 		if _, seen := resolved[canon]; seen {
 			continue
 		}
-		res, err := resolveTraitName(ctx, repo, canon)
+		res, err := resolveTraitName(ctx, repo, canon, policyResolveGenuineBearer)
 		if err != nil {
 			return nil, fmt.Errorf("taxon %q: %w", row.Taxon, err)
 		}
@@ -524,12 +565,38 @@ func resolveTraitTaxa(ctx context.Context, repo output.Repository, rows []TraitR
 	return resolved, nil
 }
 
+// crosswalkPolicy selects how resolveTraitName decides when a candidate key
+// answers with several distinct concepts. It is a parameter rather than one
+// behavior baked in because resolveTraitName has TWO callers with different
+// evidence behind them, and the second one inherited a change meant for the
+// first without anyone noticing.
+type crosswalkPolicy int
+
+const (
+	// policyRefuseAmbiguity is the behavior that existed before the homonym
+	// tie-break: several distinct concepts means ambiguous, full stop, and a
+	// sec.-space concept counts like any other candidate. Used by name-space
+	// ingest, deliberately — see IngestNameSpace.
+	policyRefuseAmbiguity crosswalkPolicy = iota
+	// policyResolveGenuineBearer prefers backbone concepts over sec.-space
+	// ones and resolves a homonym to the concept that genuinely bears the
+	// name. Measured for the trait vocabularies (see
+	// docs/research/reality-check.md and the CHANGELOG entry): it recovers
+	// 8.638 EIVE / 7.167 Tichý / 5.760 Midolo rows that were dropped.
+	policyResolveGenuineBearer
+)
+
 // resolveTraitName walks domain.NameCandidates' deterministic ladder for
 // the already canonicalized name canon and returns the FIRST candidate key
 // the index answers at all, classified into exactly one of: matched to a
-// single concept id, matched=false (no key answered), or ambiguous=true
-// (the answering key resolves to two or more distinct concepts). It never
-// picks a concept when ambiguous.
+// single concept id, matched=false (no key answered), or ambiguous=true.
+//
+// What counts as ambiguous depends on policy. Under policyRefuseAmbiguity any
+// key answering with two or more distinct concepts is ambiguous and no concept
+// is picked. Under policyResolveGenuineBearer the tie-break runs first (see
+// preferBackboneConcepts and genuineBearerWinner) and only a key with no
+// single genuine bearer is ambiguous — the outcome then carries tieBroken so
+// the caller can report it.
 //
 // Two properties matter and are worth stating explicitly:
 //
@@ -540,15 +607,18 @@ func resolveTraitTaxa(ctx context.Context, repo output.Repository, rows []TraitR
 //     existing hit onto a different concept.
 //   - An AMBIGUOUS key stops the walk rather than letting a later,
 //     semantically looser rule "rescue" it. A key that answers with several
-//     distinct concepts is a genuine ambiguity about which taxon the source
+//     concepts and no single bearer is a genuine ambiguity about which taxon the source
 //     meant; continuing down the ladder until some rule happens to produce
 //     a single-concept key would be guessing, which is precisely what the
 //     rest of this crosswalk refuses to do.
-func resolveTraitName(ctx context.Context, repo output.Repository, canon string) (traitResolution, error) {
+func resolveTraitName(ctx context.Context, repo output.Repository, canon string, policy crosswalkPolicy) (traitResolution, error) {
 	for _, cand := range domain.NameCandidates(canon) {
 		candidates, err := repo.MatchExact(ctx, cand.Key)
 		if err != nil {
 			return traitResolution{}, err
+		}
+		if policy == policyResolveGenuineBearer {
+			candidates = preferBackboneConcepts(candidates)
 		}
 		if len(candidates) == 0 {
 			continue
@@ -570,7 +640,7 @@ func resolveTraitName(ctx context.Context, repo output.Repository, canon string)
 			// point: /v1/match resolving "Inula hirta" to Pentanema hirtum
 			// while the trait crosswalk called the same name ambiguous was two
 			// policies for one question.
-			if id, ok := genuineBearerWinner(traitBearers(candidates)); ok {
+			if id, ok := genuineBearerWinner(traitBearers(candidates)); ok && policy == policyResolveGenuineBearer {
 				return traitResolution{conceptID: id, matched: true, tieBroken: true, rule: cand.Rule}, nil
 			}
 			return traitResolution{ambiguous: true, rule: cand.Rule}, nil
@@ -578,6 +648,36 @@ func resolveTraitName(ctx context.Context, repo output.Repository, canon string)
 		return traitResolution{conceptID: candidates[0].Concept.ID, matched: true, rule: cand.Rule}, nil
 	}
 	return traitResolution{}, nil
+}
+
+// preferBackboneConcepts drops candidates living inside a sec. reference space
+// whenever a backbone candidate exists for the same name.
+//
+// A trait value is only reachable from the concept id it was written to, so a
+// value attributed to a sec. concept is invisible to every consumer holding a
+// backbone id: GET /v1/concept/{backbone-id}/traits returns nothing while the
+// value sits elsewhere. Measured against the full name index, 194 EIVE / 99
+// Tichý / 92 Midolo taxa would be attributed that way — and the only reason
+// today's index is not affected is that the manifest happens to list
+// concept_sources AFTER trait_vocabularies, so the sec. concepts do not exist
+// yet when the crosswalk runs. That is a property of one config file, not of
+// this code, and it is not something a reader of either would notice.
+//
+// The fallback is deliberate rather than a blanket filter: a name that ONLY a
+// concept source carries keeps resolving exactly as before (single candidate ->
+// matched, several -> ambiguous). Removing that would newly drop values this
+// change is not about.
+func preferBackboneConcepts(candidates []output.MatchCandidate) []output.MatchCandidate {
+	backbone := make([]output.MatchCandidate, 0, len(candidates))
+	for _, c := range candidates {
+		if c.Concept.SecReference == "" {
+			backbone = append(backbone, c)
+		}
+	}
+	if len(backbone) == 0 {
+		return candidates
+	}
+	return backbone
 }
 
 // traitBearers adapts repository candidates to what genuineBearerWinner reads.

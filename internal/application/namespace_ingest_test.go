@@ -620,3 +620,39 @@ func TestIngestNameSpace_CarriesTheSourceStatus(t *testing.T) {
 		}
 	}
 }
+
+// TestIngestNameSpace_HomonymStaysAmbiguousHere is a boundary on a change made
+// elsewhere. The trait crosswalk resolves a homonym to its genuine bearer
+// (accepted, then homotypic) instead of dropping it — measured, and worth it
+// there. Name-space ingest shares the same resolver, so it would have inherited
+// that silently: no counter in NameSpaceIngestReport, no line in the CLI
+// report, and no measurement of what it does to the entries
+// domain.ResolveTargetSpace picks a target-space SPELLING from (a space could
+// gain a second entry for one concept, and /v1/translate would then have to
+// choose between "Inula hirta" and "Pentanema hirtum").
+//
+// So this path keeps refusing, deliberately, until someone measures it. The
+// test exists to make that a decision rather than an oversight.
+func TestIngestNameSpace_HomonymStaysAmbiguousHere(t *testing.T) {
+	repo := &fakeNameSpaceRepo{
+		matches: map[string][]output.MatchCandidate{
+			"homonymus testicus": {
+				{Concept: domain.Concept{ID: "c-bearer"}, Role: "accepted"},
+				{Concept: domain.Concept{ID: "c-other"}, Role: "synonym"},
+			},
+		},
+	}
+	src := sliceRowSource{{Taxon: "Homonymus testicus", SourceID: "1"}}
+
+	report, err := application.IngestNameSpace(context.Background(), repo, src, floravegMeta)
+	if err != nil {
+		t.Fatalf("IngestNameSpace: unexpected error: %v", err)
+	}
+	if report.Ambiguous != 1 || report.Matched != 0 {
+		t.Errorf("Ambiguous/Matched = %d/%d, want 1/0: the tie-break is the trait crosswalk's, not this path's",
+			report.Ambiguous, report.Matched)
+	}
+	if len(repo.tx.entries) != 0 {
+		t.Errorf("wrote %+v, want nothing", repo.tx.entries)
+	}
+}

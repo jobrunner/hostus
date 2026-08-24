@@ -482,3 +482,17 @@ func TestPrintTraitReports_TieBrokenIsVisibleOnlyWhenItFired(t *testing.T) {
 		t.Errorf("report %q, want no tiebroken mention when none fired", quiet.String())
 	}
 }
+
+// TestPrintTraitReports_TieBrokenSampleIsPrinted: the count says how much was
+// decided, the sample says what — and only the second one lets an operator
+// check it. Same treatment the flagged rules already get.
+func TestPrintTraitReports_TieBrokenSampleIsPrinted(t *testing.T) {
+	var buf bytes.Buffer
+	printTraitReports(&buf, []application.TraitIngestReport{{
+		Vocab: "eive", Rows: 5, Matched: 5, TieBroken: 2,
+		TieBrokenSample: []string{"Abies alba", "Inula hirta"},
+	}})
+	if got := buf.String(); !strings.Contains(got, "tiebroken sample: Abies alba, Inula hirta") {
+		t.Errorf("report %q, want it to name the tie-broken taxa", got)
+	}
+}

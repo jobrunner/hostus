@@ -208,6 +208,48 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   **Art** `Taraxacum sectum` (0,875) — gleiche Gattung, also für den ersten
   Guard unsichtbar.
 
+### Aus dem Review nachgeschärft (Fuzzy)
+- **Der Gattungs-Guard bestrafte kurze Gattungen — behoben.** Er war ein
+  *Verhältnis* auf dem Gattungs-Token, und damit lautete die faktische Regel
+  „eine Gattung muss mindestens 7 Zeichen haben, damit ein Tippfehler verziehen
+  wird": ein Buchstabe falsch ergibt 0,750 bei vier Zeichen und 0,800 bei fünf,
+  beides unter der Schwelle. `Acar campestre` → `Acer campestre` (ganz: 0,929)
+  wurde also **abgewiesen**, ebenso `Salyx alba` und `Posa canina` — und das
+  betrifft `Acer`, `Poa`, `Rosa`, `Salix`, `Carex`, `Pinus`, also einen großen
+  Teil der europäischen Flora, genau in der Klasse, für die die
+  Epitheton-Route überhaupt gebaut wurde. Die Begründung im Code („eine
+  verschriebene Gattung liegt bei 0,900–1,000") war an ausschließlich langen
+  Gattungen gemessen. Die Regel ist jetzt **höchstens eine Editieroperation
+  ODER Verhältnis über der Schwelle**: über die 62 realen ESy-Treffer messen
+  beide Hälften identisch (42 von 43 richtigen behalten, 1 von 19 Fehltreffern
+  durch), die Vereinigung kostet also nichts und wird beide Verzerrungen los.
+- **Die Notiz nennt jetzt den richtigen Grund.** Sie behauptete „gehört zu
+  einer anderen Gattung" auch dann, wenn die Gattung **identisch** war und das
+  Rangkürzel den Ausschlag gab (`Taraxacum sect.` vs `Taraxacum sectum`,
+  Gattungsähnlichkeit 1,0) — dieselbe Selbstwidersprüchlichkeit, gegen die die
+  Notiz eingeführt wurde. Der Grund wird jetzt im `domain`-Verdikt
+  mitgeliefert statt in der Anwendungsschicht erraten, und es gibt eine
+  eigene Notiz für den Rang-Fall.
+- **Die Epitheton-Route suchte bei Hybriden auf der Gattung.** Für
+  `× ammocalamagrostis baltica` ist das zweite Feld die *Gattung* — die Route
+  konnte den Gattungs-Tippfehler, für den sie existiert, dort also nicht
+  finden und zog stattdessen jeden gleichnamigen Gattungsvertreter in den
+  Pool. Sie überspringt den Hybrid-Marker jetzt wie `domain` es tut.
+- **Die Lastgrenze begrenzte nicht.** Beide Routen bekamen dasselbe `limit`,
+  eine Abfrage konnte also 2× die dokumentierte Grenze tragen — und der
+  anschließende Enrichment-Join ist pro (Name, Konzept)-Paar. Gekappt wird
+  jetzt die **vereinigte** Liste, und der Zähler zählt eine *Abfrage* statt
+  einer Route (sonst wäre die Rate bis zu doppelt so hoch, wie sie ist).
+- **Der FTS-Treffer war nicht spaltenbeschränkt** und passte damit auch auf
+  `vernacular_de`; jetzt `canonical : "…"`.
+- Drei Doc-Kommentare beschrieben noch den alten Vorfilter („erste Rune",
+  „modest built-in default", „ein Beinahe-Treffer mit falschem Anfangsbuchstaben
+  wird NICHT geliefert"). Dieser PR existiert, weil ein falscher Kommentar
+  einen Totalausfall verdeckt hat — drei weitere stehenzulassen wäre bemerkenswert.
+- Similarity wurde pro Kandidat zweimal berechnet (einmal für den Score, einmal
+  im Guard). Bei einem Budget von 20 war das gleichgültig, bei Pools von
+  Tausenden nicht.
+
 ### Gemessen (Fuzzy-Matching am echten Index, end-to-end)
 - Über `POST /v1/match` gegen die 3.587 distinkten ESy-Namen (`entry_backbone:
   wcvp`): **91,6 % aufgelöst**, davon **40 per Fuzzy** — vorher waren es 0, weil

@@ -160,3 +160,46 @@ func TestFuzzyResolves_GenusThresholdIsInclusive(t *testing.T) {
 		t.Error("FuzzyResolves with the genus at exactly FuzzyThreshold = false, want true")
 	}
 }
+
+// TestFuzzyResolves_ForgivesOneTypoInAShortGenus is the regression for a
+// length bias the first version of this guard had. A ratio threshold on the
+// genus token alone silently means "a genus must be at least 7 characters for
+// a single typo to be forgiven": one substitution in a 4-letter genus scores
+// 0.750, in a 5-letter one 0.800 — both under 0.85 — so the guard refused
+// names the whole-string threshold cleared comfortably.
+//
+// That excludes much of the European flora (Acer, Poa, Rosa, Salix, Carex,
+// Rubus, Vicia, Pinus …), and it is exactly the genus-typo class the epithet
+// prefilter route was added to reach: the candidate lands in the pool and is
+// then thrown away.
+func TestFuzzyResolves_ForgivesOneTypoInAShortGenus(t *testing.T) {
+	t.Parallel()
+	for _, p := range [][2]string{
+		{"acar campestre", "acer campestre"}, // genus ratio 0.750
+		{"salyx alba", "salix alba"},         // 0.800
+		{"posa canina", "rosa canina"},       // 0.750
+		{"pua annua", "poa annua"},           // 0.667
+	} {
+		if whole := domain.Similarity(p[0], p[1]); whole < domain.FuzzyThreshold {
+			t.Fatalf("test setup: Similarity(%q, %q) = %v, want >= %v", p[0], p[1], whole, domain.FuzzyThreshold)
+		}
+		if !domain.FuzzyResolves(p[0], p[1]) {
+			t.Errorf("FuzzyResolves(%q, %q) = false, want true (one typo in a short genus is still that genus)", p[0], p[1])
+		}
+	}
+}
+
+// TestFuzzyResolves_StillRejectsAConfusedShortGenus is the boundary the test
+// above must not break: two or more edits in the genus is a different plant,
+// however short the name. Measured false positives from the real index.
+func TestFuzzyResolves_StillRejectsAConfusedShortGenus(t *testing.T) {
+	t.Parallel()
+	for _, p := range [][2]string{
+		{"mylia anomala", "myrcia anomala"},        // 2 edits
+		{"kurzia pauciflora", "kunzea pauciflora"}, // 2 edits
+	} {
+		if domain.FuzzyResolves(p[0], p[1]) {
+			t.Errorf("FuzzyResolves(%q, %q) = true, want false (two edits in the genus is another plant)", p[0], p[1])
+		}
+	}
+}

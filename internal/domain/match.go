@@ -161,47 +161,89 @@ func ClassifyMatch(queryCanon, queryAuthor, candCanon, candAuthor string) (Match
 	return "", false
 }
 
+// FuzzyVerdict says whether a candidate may be resolved to, and when not, WHY
+// not. The reason is part of the result rather than something the caller
+// re-derives because the caller has to tell a human which of these happened —
+// a note claiming "different genus" for a rank-marker refusal is worse than no
+// note at all.
+type FuzzyVerdict int
+
+const (
+	// FuzzyResolvable: close enough on every count.
+	FuzzyResolvable FuzzyVerdict = iota
+	// FuzzyBelowThreshold: the whole strings are not similar enough.
+	FuzzyBelowThreshold
+	// FuzzyRankMarkerMismatch: similar enough, but one side carries a rank
+	// abbreviation the other does not — a section is not a species.
+	FuzzyRankMarkerMismatch
+	// FuzzyGenusMismatch: similar enough, but the genus is a different one —
+	// typically a shared epithet across unrelated plants.
+	FuzzyGenusMismatch
+)
+
 // FuzzyResolves reports whether candCanon is close enough to queryCanon to be
-// RESOLVED to — as opposed to merely listed as a near miss. Both inputs are
+// RESOLVED to, as opposed to merely listed as a near miss. Both inputs are
 // expected to be canonicalized already (Similarity does no normalization).
+// It is FuzzyClassify's yes/no form; use FuzzyClassify when the reason matters.
+func FuzzyResolves(queryCanon, candCanon string) bool {
+	return FuzzyClassify(queryCanon, candCanon) == FuzzyResolvable
+}
+
+// FuzzyClassify decides whether candCanon may be resolved to, in three steps.
 //
-// Two conditions, both required:
+//  1. the whole strings must be within FuzzyThreshold, as before;
+//  2. neither side may carry a rank abbreviation the other lacks; and
+//  3. their GENUS tokens must agree.
 //
-//  1. the whole strings are within FuzzyThreshold, as before; and
-//  2. their GENUS tokens are too.
+// Step 3 exists because step 1 alone is measurably not enough. An epithet is
+// the LONGER half of a binomial, so an identical epithet can drag two entirely
+// unrelated genera over the threshold: "sphagnum platyphyllum" vs "solanum
+// platyphyllum" scores 0.857. Measured against a real index
+// (docs/research/fuzzy-prefilter.md), 19 of the 62 ESy names that cleared the
+// threshold were wrong in exactly this way — 30.6 % — and every one of them was
+// a bryophyte or lichen genus that the vascular-plant backbone does not carry
+// at all, matched onto an unrelated flowering plant. Resolving those is worse
+// for a consumer than returning nothing.
 //
-// Condition 2 exists because condition 1 alone is measurably not enough. An
-// epithet is the LONGER half of a binomial, so an identical epithet can drag
-// two entirely unrelated genera over the threshold: "sphagnum platyphyllum"
-// vs "solanum platyphyllum" scores 0.857. Measured against a real index
-// (docs/research/fuzzy-prefilter.md), 19 of the 62 ESy names that cleared
-// the threshold were wrong in exactly this way — 30.6 % — and every one of
-// them was a bryophyte or lichen genus that the vascular-plant backbone does
-// not carry at all, matched onto an unrelated flowering plant. Resolving
-// those is worse for a consumer than returning nothing.
+// Genus agreement is "at most one edit, OR within FuzzyThreshold", and the
+// first half of that is not redundant. A ratio alone is length-biased at the
+// short end: one substitution scores 0.750 in a 4-letter genus and 0.800 in a
+// 5-letter one, so a ratio threshold silently means "a genus must be at least
+// 7 characters for a typo to be forgiven" — which would refuse Acer, Poa,
+// Rosa, Salix and much of the European flora on exactly the genus-typo class
+// the epithet prefilter route exists to reach. A distance alone is biased the
+// other way, refusing two edits in a 14-character genus that a ratio forgives.
+// Measured over the 62 real ESy hits both halves score identically (42 of 43
+// plausible hits kept, 1 of 19 false positives leaking), so the union costs
+// nothing measurable and drops both biases.
 //
-// The genus check uses the SAME FuzzyThreshold rather than a second, separate
-// knob: 0.85 is where the measurement puts the split (a misspelled genus
-// stays at 0.900-1.000 — "cochleria"/"cochlearia" = 0.900 — while a confused
-// one falls to 0.625-0.778), and an independently tunable second threshold
-// would be a number nothing measured.
-//
-// It is a guard on RESOLUTION only. The application layer still lists
-// guard-rejected candidates as near misses: "sphagnum platyphyllum ->
-// solanum platyphyllum" is useful evidence for whoever curates the row, as
-// long as it is not handed back as an answer.
+// Step 2's marker sets are the one place this looks beyond the two tokens; see
+// hasRankMarker for the five ESy rows that made it necessary.
 //
 // Known residue, not fixable by any string measure: a genus that differs from
 // an unrelated one in a single letter passes ("buellia punctata" vs "ruellia
-// punctata", genus 0.857) — 1 of the measured 19.
-func FuzzyResolves(queryCanon, candCanon string) bool {
+// punctata") — 1 of the measured 19.
+func FuzzyClassify(queryCanon, candCanon string) FuzzyVerdict {
 	if Similarity(queryCanon, candCanon) < FuzzyThreshold {
-		return false
+		return FuzzyBelowThreshold
 	}
 	if hasRankMarker(queryCanon) != hasRankMarker(candCanon) {
-		return false
+		return FuzzyRankMarkerMismatch
 	}
-	return Similarity(genusToken(queryCanon), genusToken(candCanon)) >= FuzzyThreshold
+	if !sameGenus(genusToken(queryCanon), genusToken(candCanon)) {
+		return FuzzyGenusMismatch
+	}
+	return FuzzyResolvable
+}
+
+// sameGenus reports whether two genus tokens are the same genus, spelling
+// mistakes included: at most one edit, or similar enough by ratio. See
+// FuzzyClassify for why it takes both measures rather than either one.
+func sameGenus(a, b string) bool {
+	if levenshteinDistance([]rune(a), []rune(b)) <= 1 {
+		return true
+	}
+	return Similarity(a, b) >= FuzzyThreshold
 }
 
 // The infrageneric markers below are not decoration. Measured end-to-end

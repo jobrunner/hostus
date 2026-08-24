@@ -44,6 +44,37 @@ func seedIndexedConcept(t *testing.T, repo *sqlite.DB, canonical string) string 
 	return concept.ID
 }
 
+// seedSecondIndexedConcept adds one more indexed concept under its own
+// backbone, so a test can put TWO competing candidates in front of the
+// resolver (seedIndexedConcept fixes both the backbone id and the concept id,
+// so calling it twice would collide).
+func seedSecondIndexedConcept(t *testing.T, repo *sqlite.DB, canonical string) string {
+	t.Helper()
+	ctx := context.Background()
+	const backbone = "wcvp2"
+	tx, err := repo.BeginIngest(ctx, domain.BackboneVersion{ID: backbone, Version: "v1"})
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	name := domain.Name{ID: backbone + ":name:1", Canonical: canonical, Rank: domain.RankSpecies}
+	concept := domain.Concept{ID: backbone + ":concept:1", BackboneID: backbone, AcceptedName: name, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+	for _, step := range []struct {
+		what string
+		err  error
+	}{
+		{"UpsertName", tx.UpsertName(name)},
+		{"UpsertConcept", tx.UpsertConcept(concept)},
+		{"LinkName", tx.LinkName(concept.ID, name.ID, "accepted", nil)},
+		{"Finalize", tx.Finalize()},
+		{"Commit", tx.Commit()},
+	} {
+		if step.err != nil {
+			t.Fatalf("%s: unexpected error: %v", step.what, step.err)
+		}
+	}
+	return concept.ID
+}
+
 // TestMatchNames_DoesNotResolveAcrossUnrelatedGenera is the precision half of
 // the fuzzy fix, and the reason the epithet prefilter route cannot ship on its
 // own. Reaching a name through its epithet means an IDENTICAL epithet is
@@ -170,5 +201,86 @@ func TestMatchNames_StillResolvesAMisspelledGenus(t *testing.T) {
 	}
 	if !r.RequiresReview {
 		t.Error("RequiresReview = false, want true: a fuzzy hit always needs review")
+	}
+}
+
+// TestMatchNames_RankMarkerRejectionSaysSoNotGenus: the guard refuses for two
+// different reasons, and the note has to name the right one. "Taraxacum sect."
+// against "Taraxacum sectum" has an IDENTICAL genus (similarity 1.0) — it is
+// refused because a rank abbreviation stands on only one side — so a note
+// reading "gehört aber zu einer anderen Gattung" next to that candidate is
+// plainly false. It is the same self-contradiction the near-miss note had, and
+// the OpenAPI description promises the note says which case applies.
+func TestMatchNames_RankMarkerRejectionSaysSoNotGenus(t *testing.T) {
+	repo := openMemoryRepo(t)
+	seedIndexedConcept(t, repo, "Taraxacum sectum")
+
+	results, err := application.MatchNames(context.Background(), repo, []application.MatchRequest{
+		{ID: "1", Verbatim: "Taraxacum sect."},
+	})
+	if err != nil {
+		t.Fatalf("MatchNames: unexpected error: %v", err)
+	}
+	r := results[0]
+
+	if r.ConceptID != "" {
+		t.Errorf("ConceptID = %q, want empty: a section must not resolve to a species", r.ConceptID)
+	}
+	if strings.Contains(r.Note, "Gattung") {
+		t.Errorf("Note = %q, must not blame the genus — it is identical here", r.Note)
+	}
+	if !strings.Contains(r.Note, "Rang") {
+		t.Errorf("Note = %q, want it to name the rank abbreviation as the reason", r.Note)
+	}
+}
+
+// TestMatchNames_TiedRejectionsReportTheFirstReasonDeterministically pins what
+// the note says when two refused candidates score EXACTLY the same for
+// different reasons. Any answer is defensible; an answer that varies between
+// identical requests is not, and a curator comparing two runs would see the
+// reason flip.
+//
+// Engineered to tie at 0.875: "taraxacum sectum" is refused for its rank
+// marker (identical genus), "taramacumx sect." for its genus (two edits, and
+// the marker matches). The repository returns candidates in a deterministic
+// order, so the first best one decides — which of the two that is follows from
+// that order and is pinned below rather than argued for.
+func TestMatchNames_TiedRejectionsReportTheFirstReasonDeterministically(t *testing.T) {
+	repo := openMemoryRepo(t)
+	seedIndexedConcept(t, repo, "Taraxacum sectum")
+	seedSecondIndexedConcept(t, repo, "Taramacumx sect.")
+
+	const query = "Taraxacum sect."
+	for _, cand := range []string{"taraxacum sectum", "taramacumx sect."} {
+		if got := domain.Similarity(domain.Canonicalize(query), cand); got != 0.875 {
+			t.Fatalf("test setup: Similarity(%q, %q) = %v, want the two to tie at 0.875", query, cand, got)
+		}
+	}
+
+	var first string
+	for run := range 4 {
+		results, err := application.MatchNames(context.Background(), repo, []application.MatchRequest{
+			{ID: "1", Verbatim: query},
+		})
+		if err != nil {
+			t.Fatalf("MatchNames run %d: unexpected error: %v", run, err)
+		}
+		note := results[0].Note
+		if note == "" {
+			t.Fatalf("run %d: Note empty, want one of the two refusal notes", run)
+		}
+		if run == 0 {
+			first = note
+			continue
+		}
+		if note != first {
+			t.Errorf("run %d reported %q, run 0 reported %q — identical requests must give the same reason", run, note, first)
+		}
+	}
+	// Which one it is, pinned as observed: this candidate order puts the
+	// genus refusal first. The assertion exists so a change in which
+	// tied candidate is kept cannot pass unnoticed.
+	if !strings.Contains(first, "Gattung") {
+		t.Errorf("Note = %q, want the first-best candidate's reason (the genus)", first)
 	}
 }

@@ -208,6 +208,19 @@ Datenquelle, keinen Vorfilter.
 
 ## Einschränkungen dieser Messung
 
+- **Das Harness misst nicht ganz den ausgelieferten Query.** Seine
+  FTS-Epitheton-Route hat kein `ORDER BY` und kein `LIMIT`, die ausgelieferte
+  hat beides (ein Temp-B-Tree-Sort über das FTS-Ergebnis). Die genannten
+  14–20 ms p95 sind also die Größenordnung, nicht die Zahl der Produktion.
+- **Die synthetische Stichprobe enthält nur Binomiale**
+  (`GLOB '* *' AND NOT GLOB '* * *'`). Infraspezifische und hybridmarkierte
+  Namen waren damit in keiner Recall- oder Latenzzahl — und genau diese zwei
+  Klassen haben im Review zwei Fehler zutage gebracht (die falsche Notiz bei
+  Rangkürzeln, und dass die Epitheton-Route bei einem Nothotaxon auf der
+  *Gattung* suchte). Eine Messung, die eine Namensform ausschließt, sagt über
+  sie nichts — auch nicht implizit.
+
+
 - Die 43 „plausiblen" Treffer aus Befund 5 sind eine **Handklassifikation**,
   nicht gegen eine nomenklatorische Autorität verifiziert. Die 19 falschen
   sind dagegen belastbar: WCVP führt diese Gattungen nicht, ein Treffer ist

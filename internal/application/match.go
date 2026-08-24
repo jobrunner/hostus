@@ -184,10 +184,15 @@ const (
 	// one. Saying "kein Treffer über der Ähnlichkeitsschwelle" there would be
 	// untrue, and a note that contradicts the candidate list next to it
 	// teaches the reader to ignore notes.
-	noteGenusMismatch  = "Nicht aufgelöst: der nächstliegende Name ist ähnlich genug, gehört aber zu einer anderen Gattung (häufig ein geteiltes Epitheton bei nicht verwandten Pflanzen) — zur manuellen Prüfung, KEINE Auflösung"
-	noteAmbiguous      = "Mehrdeutiger Treffer: mehrere Konzepte mit gleicher Übereinstimmungsstärke, manuelle Prüfung nötig"
-	noteFuzzy          = "Fuzzy-Treffer: Ähnlichkeit über Schwellenwert, manuelle Prüfung erforderlich"
-	noteFuzzyAmbiguous = "Mehrdeutiger Fuzzy-Treffer: mehrere Konzepte mit gleicher Ähnlichkeit, manuelle Prüfung nötig"
+	noteGenusMismatch = "Nicht aufgelöst: der nächstliegende Name ist ähnlich genug, gehört aber zu einer anderen Gattung (häufig ein geteiltes Epitheton bei nicht verwandten Pflanzen) — zur manuellen Prüfung, KEINE Auflösung"
+	// noteRankMarkerMismatch is the second refusal reason. Kept apart from
+	// noteGenusMismatch because for these the genus is usually IDENTICAL
+	// ("Taraxacum sect." vs "Taraxacum sectum"), so blaming the genus would be
+	// factually wrong in front of the candidate it names.
+	noteRankMarkerMismatch = "Nicht aufgelöst: der nächstliegende Name ist ähnlich genug, benennt aber einen anderen Rang — auf einer Seite steht ein Rangkürzel (z. B. sect., subsp.), auf der anderen nicht — zur manuellen Prüfung, KEINE Auflösung"
+	noteAmbiguous          = "Mehrdeutiger Treffer: mehrere Konzepte mit gleicher Übereinstimmungsstärke, manuelle Prüfung nötig"
+	noteFuzzy              = "Fuzzy-Treffer: Ähnlichkeit über Schwellenwert, manuelle Prüfung erforderlich"
+	noteFuzzyAmbiguous     = "Mehrdeutiger Fuzzy-Treffer: mehrere Konzepte mit gleicher Ähnlichkeit, manuelle Prüfung nötig"
 	// noteAggregatePrefix is prepended to whatever matchFuzzy's Note already
 	// says (noteFuzzy or noteFuzzyAmbiguous) when a fuzzy hit resolves an
 	// aggregate/collective-species query — see matchAggregate's fuzzy
@@ -364,18 +369,46 @@ func matchOne(ctx context.Context, repo output.Repository, req MatchRequest, fil
 	return res, nil
 }
 
-// unresolvedNote picks which of the two unresolved-with-candidates notes
-// applies: the plain near-miss one, or the genus-mismatch one for the case
-// where similarity alone WOULD have resolved and only the genus guard stopped
-// it (see domain.FuzzyResolves).
+// unresolvedNote picks the note for an unresolved result that still carries
+// candidates. Which one applies is decided by the NEAREST candidate that
+// similarity alone would have resolved — that is the name the note is talking
+// about — and by why the guard refused it:
 //
-// It reads the scores rather than taking a flag from the caller so the note
-// cannot drift out of step with the list it describes.
-func unresolvedNote(scores []float64) string {
-	for _, s := range scores {
-		if s >= domain.FuzzyThreshold {
-			return noteGenusMismatch
+//   - a different genus (the shared-epithet case), or
+//   - a rank abbreviation on only one side (a section is not a species), or
+//   - nothing reached the threshold at all.
+//
+// It reads the verdicts the scoring loop already produced rather than
+// re-deriving a reason, because a note that contradicts the candidate printed
+// next to it teaches the reader to ignore notes — which is exactly what
+// happened when this function guessed "genus" for every refusal.
+func unresolvedNote(scores []float64, verdicts []domain.FuzzyVerdict) string {
+	// The caller builds both slices in lockstep; the guard is here because the
+	// alternative failure mode is an index-out-of-range panic in a handler.
+	if len(scores) != len(verdicts) {
+		return noteNearMiss
+	}
+	best, reason := 0.0, domain.FuzzyBelowThreshold
+	for i, s := range scores {
+		if s < domain.FuzzyThreshold || s <= best {
+			continue
 		}
+		best, reason = s, verdicts[i]
+	}
+	switch reason {
+	case domain.FuzzyGenusMismatch:
+		return noteGenusMismatch
+	case domain.FuzzyRankMarkerMismatch:
+		return noteRankMarkerMismatch
+	case domain.FuzzyBelowThreshold:
+		// Nothing cleared the threshold, so no guard ever ran.
+		return noteNearMiss
+	case domain.FuzzyResolvable:
+		// Unreachable: this function is only called on the unresolved path, so
+		// a resolvable candidate would have been resolved. Listed rather than
+		// folded into a default so a NEW verdict cannot slip through silently
+		// — the exhaustive linter is the point.
+		return noteNearMiss
 	}
 	return noteNearMiss
 }
@@ -470,11 +503,24 @@ func matchFuzzy(ctx context.Context, repo output.Repository, req MatchRequest, q
 	// with the query and nothing else. See domain.FuzzyResolves for the
 	// measured 30,6 % of false positives that produces without it.
 	resolves := make([]bool, len(candidates))
+	// verdicts[i] is why candidate i was refused, so the note can name the
+	// actual reason instead of guessing one — a note reading "different genus"
+	// next to a candidate whose genus is identical is worse than no note.
+	verdicts := make([]domain.FuzzyVerdict, len(candidates))
 	for i, c := range candidates {
 		cand := domain.Canonicalize(c.MatchedName.Canonical)
 		s := domain.Similarity(queryCanon, cand)
 		scores[i] = s
-		resolves[i] = domain.FuzzyResolves(queryCanon, cand)
+		// Below the threshold the verdict is settled, and asking
+		// domain.FuzzyClassify would recompute this very Similarity — cheap at
+		// the old candidate budget of 20, no longer so now that the whole
+		// prefilter pool is scored.
+		if s < domain.FuzzyThreshold {
+			verdicts[i] = domain.FuzzyBelowThreshold
+			continue
+		}
+		verdicts[i] = domain.FuzzyClassify(queryCanon, cand)
+		resolves[i] = verdicts[i] == domain.FuzzyResolvable
 		if !resolves[i] {
 			continue
 		}
@@ -502,7 +548,7 @@ func matchFuzzy(ctx context.Context, repo output.Repository, req MatchRequest, q
 			return &MatchResult{
 				ID:             req.ID,
 				RequiresReview: true,
-				Note:           unresolvedNote(scores),
+				Note:           unresolvedNote(scores, verdicts),
 				Candidates:     near,
 			}, nil
 		}

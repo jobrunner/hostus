@@ -237,3 +237,48 @@ func TestMatchFuzzyCandidates_FindsATargetWhoseGenusIsMisspelled(t *testing.T) {
 	t.Errorf("MatchFuzzyCandidates(%q) returned %d candidates, none of them %q: a typo in the genus makes the target unreachable",
 		q, len(got), target.Canonical)
 }
+
+// TestFuzzyEpithetToken_SkipsALeadingHybridMarker: for a nothotaxon the second
+// whitespace-separated field is the GENUS, not the epithet ("× ammocalamagrostis
+// baltica"). Keying the epithet route on it means the route cannot find the
+// genus typo it exists for, and instead MATCHes every same-genus name inside
+// the length window — a bigger pool doing the wrong job. domain's genus token
+// already skips the marker; the two have to agree on where a name's words are.
+func TestFuzzyEpithetToken_SkipsALeadingHybridMarker(t *testing.T) {
+	for _, c := range []struct {
+		in, want string
+	}{
+		{"× ammocalamagrostis baltica", "baltica"},
+		{"x ammocalamagrostis baltica", "baltica"},
+		{"festuca ovina", "ovina"},
+		{"festuca", ""},
+		{"× festuca", ""},
+	} {
+		if got := fuzzyEpithetToken(c.in); got != c.want {
+			t.Errorf("fuzzyEpithetToken(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestMatchFuzzyCandidates_CapBoundsTheWholeLookupNotEachRoute: the cap is a
+// load guard, and a guard that each of two routes applies separately bounds
+// nothing at 2x. The enrichment join that follows is per (name, concept) pair,
+// so the row count it produces is larger still.
+func TestMatchFuzzyCandidates_CapBoundsTheWholeLookupNotEachRoute(t *testing.T) {
+	db := openTestDB(t)
+	ingestLargeFuzzyPool(t, db, 40)
+
+	const limit = 5
+	got, err := db.MatchFuzzyCandidates(context.Background(), "festuca ovina", limit, "", "")
+	if err != nil {
+		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
+	}
+	names := make(map[string]bool, len(got))
+	for _, c := range got {
+		names[c.MatchedName.ID] = true
+	}
+	if len(names) > limit {
+		t.Errorf("MatchFuzzyCandidates(limit=%d) returned %d distinct names: the cap must bound the lookup, not each route separately",
+			limit, len(names))
+	}
+}

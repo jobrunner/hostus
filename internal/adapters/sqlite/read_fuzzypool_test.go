@@ -282,3 +282,58 @@ func TestMatchFuzzyCandidates_CapBoundsTheWholeLookupNotEachRoute(t *testing.T) 
 			limit, len(names))
 	}
 }
+
+// TestMatchFuzzyCandidates_ExactlyAtTheCapIsNotACapHit: the counter's job is
+// to say "recall may be degraded, look again". A merged list that lands exactly
+// ON the cap lost nothing, and a counter that fires there would report a
+// problem on every well-sized lookup — which is how a signal stops being read.
+//
+// Constructed so neither route hits its own SQL LIMIT and their contributions
+// are disjoint, because a route at its limit is a separate (and real) cap hit
+// that would mask what this pins.
+func TestMatchFuzzyCandidates_ExactlyAtTheCapIsNotACapHit(t *testing.T) {
+	db := openTestDB(t)
+	ingestLargeFuzzyPool(t, db, 2) // target + 2 decoys share the "fest" prefix
+
+	// One more concept reachable ONLY through the epithet route: its genus
+	// shares no prefix with the query, but its epithet does.
+	ctx := context.Background()
+	tx, err := db.BeginIngest(ctx, domain.BackboneVersion{ID: "wcvp-ep", Version: "v1", IngestedAt: "2026-08-24T00:00:00Z", ManifestSHA: "x"})
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	n := domain.Name{ID: "n-epithet-only", Canonical: "Xestuca ovina", Rank: domain.RankSpecies}
+	c := domain.Concept{ID: "c-epithet-only", BackboneID: "wcvp-ep", AcceptedName: n, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+	if err := tx.UpsertName(n); err != nil {
+		t.Fatalf("UpsertName: unexpected error: %v", err)
+	}
+	if err := tx.UpsertConcept(c); err != nil {
+		t.Fatalf("UpsertConcept: unexpected error: %v", err)
+	}
+	if err := tx.LinkName(c.ID, n.ID, "accepted", nil); err != nil {
+		t.Fatalf("LinkName: unexpected error: %v", err)
+	}
+	if err := tx.Finalize(); err != nil {
+		t.Fatalf("Finalize: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+
+	// 3 prefix ids + 1 epithet id, cap 4: full, nothing dropped.
+	before := counterValue(t, fuzzyCandidateCapHits)
+	got, err := db.MatchFuzzyCandidates(ctx, "festuca ovina", 4, "", "")
+	if err != nil {
+		t.Fatalf("MatchFuzzyCandidates: unexpected error: %v", err)
+	}
+	ids := map[string]bool{}
+	for _, cand := range got {
+		ids[cand.MatchedName.ID] = true
+	}
+	if len(ids) != 4 {
+		t.Fatalf("returned %d distinct names, want exactly 4 — the fixture must fill the cap precisely for this to test anything", len(ids))
+	}
+	if adv := counterValue(t, fuzzyCandidateCapHits) - before; adv != 0 {
+		t.Errorf("cap-hit counter advanced by %v, want 0: a pool that fits exactly lost nothing", adv)
+	}
+}

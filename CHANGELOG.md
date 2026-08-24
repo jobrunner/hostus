@@ -160,6 +160,83 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Behoben (Traits: Homonyme kosteten ein Zehntel der Zeigerwerte)
+- **Ein Vokabular-Name, den mehrere Konzepte tragen, wird jetzt aufgelöst statt
+  verworfen.** Der Trait-Crosswalk schlüsselt auf den nackten Namen ohne
+  Autorschaft (PoC P6: die Trait-Tabellen liefern keine externe Taxon-ID) und
+  behandelte „mehrere Konzepte" als unentscheidbar. Meistens ist es aber ein
+  **Homonym**: dieselbe Schreibung, zweimal veröffentlicht, verschiedene
+  Autorschaft — und nur *ein* Konzept trägt den Namen tatsächlich.
+  Anlass war `Inula hirta`: EIVE führt alle fünf Dimensionen, WCVP führt
+  `Inula hirta L.` als Synonym von *Pentanema hirtum* und `Inula hirta Pollich`
+  als Synonym von *Pentanema britannica* — die Werte landeten nirgends.
+  Dasselbe traf `Abies alba`.
+- **Angewendet wird die Regel, die der Laufzeitpfad schon hat** (`genuineBearerWinner`,
+  Issue #67 Klasse 2): erst der Träger, der den Namen als `accepted` führt, dann
+  der homotypische Träger, sonst bleibt der Gleichstand. Bewusst dieselbe
+  Funktion und keine zweite Regel — dass `/v1/match` `Inula hirta` sauber auf
+  *Pentanema hirtum* auflöste, während der Trait-Crosswalk denselben Namen
+  mehrdeutig nannte, waren zwei Politiken für eine Frage.
+- **Gemessen an einem vollständigen Index** (voller Re-Ingest):
+
+  | Vokabular | mehrdeutig vorher | nachher | per Tie-Break gelöst |
+  |---|---|---|---|
+  | eive | 8.961 | **323** | 8.638 |
+  | tichy2023 | 7.373 | **206** | 7.167 |
+  | midolo2023 | 5.930 | **170** | 5.760 |
+
+  Bezogen auf Taxa: 1.606 der 14.831 distinkten Taxon-Namen der heutigen
+  EIVE-CSV (10,8 %) hatten deswegen keine Traits, 99,4 % davon Homonyme. (Der
+  Nenner ist bewusst genannt: `pipelines/eive/eive.summary.txt` zählt 14.835
+  und der Reality-Check von 2026-08-01 zählt 14.830 — andere Stände derselben
+  Liste.) Die Werte sind nachgeprüft die **richtigen** —
+  `Pentanema hirtum` bekommt EIVEs `Inula hirta`-Zeile (L=6,561 M=3,076), und
+  *Pentanema britannica* behält unverändert die von `Inula britannica`.
+- **Nachgeprüft, dass beide Pfade nun übereinstimmen:** für 300 mehrdeutige
+  EIVE-Taxa liegen die Traits in **294** Fällen auf genau dem Konzept, das
+  `/v1/match` für den Namen zurückgibt, in **0** Fällen auf einem anderen; die
+  6 übrigen löst auch `/v1/match` nicht auf (echter Gleichstand, beidseitig
+  konsistent).
+- **Der Ingest-Report weist `tiebroken=N` aus** — aber nur, wenn er gefeuert
+  hat. Es ist die einzige Stelle, an der dieser Crosswalk zwischen Konzepten
+  *wählt*, und das soll sichtbar sein; ein `tiebroken=0` auf jeder Zeile wäre
+  Rauschen. `TieBroken` ist eine Teilmenge von `Matched`, die Invariante
+  `Matched+Unmatched+Ambiguous == Rows` gilt unverändert.
+- **Aus dem Review nachgeschärft — drei Dinge, die der Tie-Break aufgerissen
+  hätte:**
+    - **Kein `sec.`-Konzept mehr als Ziel.** Ein Trait-Wert ist nur über die
+      Konzept-ID erreichbar, unter der er steht; landet er auf einem Konzept
+      innerhalb eines `sec.`-Referenzraums, liefert
+      `GET /v1/concept/{backbone-id}/traits` nichts, während der Wert woanders
+      liegt. Gemessen wären **194 EIVE / 99 Tichý / 92 Midolo** Taxa so
+      attribuiert worden, obwohl ein WCVP-Konzept für denselben Namen
+      existiert. Verhindert hat das bisher nur, dass das Manifest
+      `concept_sources` **nach** `trait_vocabularies` listet — eine
+      Eigenschaft einer Konfigdatei, nicht des Codes. Backbone-Kandidaten
+      haben jetzt Vorrang; trägt *nur* eine Konzeptquelle den Namen, bleibt
+      das Verhalten unverändert.
+    - **Ein geratener Wert verdrängt keinen sicheren mehr.** Zwei
+      verschiedene Vokabular-Namen können jetzt auf ein Konzept auflösen —
+      einer eindeutig, einer per Tie-Break — und konkurrierten um denselben
+      `(Konzept, Dimension)`-Slot bei gleichem Rang, sodass die **CSV-Zeilen-
+      reihenfolge** entschied. Gemessen 17 Tichý- und 8 Midolo-Taxa (plus
+      EIVE-Fälle). Eine tie-broken Auflösung rangiert nun strikt unter einer
+      Auflösung ohne Konkurrenz.
+    - **Der Namensraum-Ingest bleibt unverändert.** Er teilt denselben
+      Resolver und hätte den Tie-Break stillschweigend geerbt — ohne Zähler
+      im Report, ohne CLI-Ausgabe und ohne Messung dessen, was ein zweiter
+      Eintrag pro Konzept mit der Ziel-Raum-Schreibweise in `/v1/translate`
+      macht. Die Politik ist jetzt ein expliziter Parameter am Aufrufer, und
+      ein Test hält die Grenze fest.
+- **`tiebroken sample:` nennt die Taxa**, nicht nur ihre Anzahl — wie
+  `flagged sample` und `unmatched sample`. Ein Zähler über 8.638 Entscheidungen
+  ist nicht prüfbar.
+- **Was bewusst weiter mehrdeutig bleibt:** trägt der Name in mehreren
+  Konzepten `accepted`, bleibt der Gleichstand — dann ist es eine echte
+  taxonomische Frage, keine Homonym-Buchführung. Das sind noch 323 / 206 / 170
+  Zeilen. Ebenfalls unverändert: die `unmatched`-Zahlen (1.445 / 526 / 285),
+  denen kein Konzept gegenübersteht.
+
 ### Added (Match: Beinahe-Treffer bleiben zur Prüfung erhalten)
 - **Ein nicht aufgelöster Name liefert jetzt die nächstliegenden Kandidaten mit**
   statt einer leeren Antwort (Issue #67, Klasse 3). Die Ähnlichkeiten wurden

@@ -118,7 +118,9 @@ type NameSpaceIngestReport struct {
 //  1. the first candidate key the index answers decides the outcome;
 //  2. no key answered -> Unmatched, nothing written;
 //  3. the answering key resolves to two or more DISTINCT concepts ->
-//     Ambiguous, skipped entirely.
+//     Ambiguous, skipped entirely. This path passes policyRefuseAmbiguity, so
+//     the homonym tie-break the trait crosswalk uses does NOT apply here —
+//     see the call site for why that is deliberate.
 //
 // It is deliberately not a second name-resolution path. SP3's crosswalk only
 // reached 98,0 % after normalisation rules nobody predicted from the raw hit
@@ -263,7 +265,15 @@ func resolveNameSpaceNames(ctx context.Context, repo output.Repository, rows []N
 		if _, seen := resolved[canon]; seen {
 			continue
 		}
-		res, err := resolveTraitName(ctx, repo, canon)
+		// policyRefuseAmbiguity, explicitly: the homonym tie-break the trait
+		// crosswalk uses is measured for trait vocabularies, not for name
+		// spaces. Inheriting it here would be invisible (this report has no
+		// tiebroken counter and the CLI prints none) and it would let a space
+		// gain a SECOND entry for one concept, which is what
+		// domain.ResolveTargetSpace picks a target-space spelling from — so
+		// /v1/translate would start choosing between two spellings on evidence
+		// nobody gathered. See TestIngestNameSpace_HomonymStaysAmbiguousHere.
+		res, err := resolveTraitName(ctx, repo, canon, policyRefuseAmbiguity)
 		if err != nil {
 			return nil, fmt.Errorf("name %q: %w", row.Taxon, err)
 		}

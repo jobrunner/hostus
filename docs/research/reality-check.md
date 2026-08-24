@@ -437,6 +437,20 @@ Manifest, `poc/measure/dataset.full-real.yaml`, ein `hostus ingest`-Lauf).
 
 **Pro Vokabular, auf Zeilenebene** (aus dem Ingest-Report):
 
+!!! note "Nachtrag 2026-08-23: die `ambiguous`-Spalte ist überholt"
+
+    Die 11–18 % `ambiguous` waren zu 99,4 % **Homonyme** — dieselbe Schreibung,
+    zweimal veröffentlicht, verschiedene Autorschaft, und nur ein Konzept trägt
+    den Namen wirklich. Der Crosswalk wendet inzwischen denselben gestuften
+    Tie-Break an wie der Match-Pfad (`accepted`, dann `homotypic`).
+
+    Die Zahlen dieser Tabelle bleiben als Messprotokoll vom 2026-08-01 stehen.
+    Der Effekt ist an einem **anderen, neueren Index** gemessen (Vollbuild
+    2026-08-22, deshalb sind schon die Ausgangswerte andere als hier):
+    `ambiguous` fällt dort von 8.961 / 7.373 / 5.930 auf 323 / 206 / 170. Die
+    beiden Zahlenreihen sind also nicht direkt vergleichbar — die Größenordnung
+    des Problems ist es.
+
 | Vokabular | Zeilen | matched | unmatched | ambiguous |
 |---|---:|---:|---:|---:|
 | `eive` | 71.266 | 54.612 (**76,64 %**) | 8.830 (12,39 %) | 7.824 (10,98 %) |

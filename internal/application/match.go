@@ -139,12 +139,22 @@ const (
 	confidenceAggregateNominate = 0.88
 )
 
-// fuzzyCandidateLimit bounds how many repo.MatchFuzzyCandidates rows
-// matchFuzzy scores per query. The prefilter (same first letter + a bounded
-// length window, see the sqlite adapter) already narrows candidates to a
-// small set for any real near-miss; this cap just keeps the Similarity
-// scoring cost bounded against a pathological backbone.
-const fuzzyCandidateLimit = 20
+// fuzzyCandidateCap bounds how many repo.MatchFuzzyCandidates rows matchFuzzy
+// scores per query — as a load guard only, never as a selection rule.
+//
+// The old value was 20, and the sentence that justified it ("the prefilter
+// already narrows candidates to a small set") was measurably false: on a real
+// index the prefilter's pool was ~41.000 rows, so 20 was not a safety margin
+// but the actual selection, made in alphabetical order. Recall was 0.0 % in
+// every error class (docs/research/fuzzy-prefilter.md).
+//
+// 0 hands the decision to the repository, which is where the measurement of
+// what its own prefilter actually returns lives — and it means this constant
+// cannot silently overrule a fixed prefilter from the outside, which is
+// exactly what it did before. Scoring the resulting pool is cheap: the
+// largest one measured was 8.081 rows, and 8.081 Levenshtein comparisons do
+// not register next to the query that produced them.
+const fuzzyCandidateCap = 0
 
 // fuzzyReviewFloor is the similarity below which a candidate is not worth
 // showing a reviewer at all. Between it and domain.FuzzyThreshold a name is
@@ -169,9 +179,20 @@ const (
 	noteAggregateNominate   = "Aggregat: keine Sammelart im Index, aufgelöst auf das Nominal-Konzept — deckt weniger ab als die Anfrage"
 	noteUnresolvable        = "Kein eindeutiger Treffer, keine Fuzzy-Auflösung in dieser SP"
 	noteNearMiss            = "Nicht aufgelöst: kein Treffer über der Ähnlichkeitsschwelle. Die gelisteten Kandidaten sind die nächstliegenden Namen im Index, zur manuellen Prüfung — KEINE Auflösung"
-	noteAmbiguous           = "Mehrdeutiger Treffer: mehrere Konzepte mit gleicher Übereinstimmungsstärke, manuelle Prüfung nötig"
-	noteFuzzy               = "Fuzzy-Treffer: Ähnlichkeit über Schwellenwert, manuelle Prüfung erforderlich"
-	noteFuzzyAmbiguous      = "Mehrdeutiger Fuzzy-Treffer: mehrere Konzepte mit gleicher Ähnlichkeit, manuelle Prüfung nötig"
+	// noteGenusMismatch replaces noteNearMiss when a candidate DID clear the
+	// similarity threshold and was refused because its genus is a different
+	// one. Saying "kein Treffer über der Ähnlichkeitsschwelle" there would be
+	// untrue, and a note that contradicts the candidate list next to it
+	// teaches the reader to ignore notes.
+	noteGenusMismatch = "Nicht aufgelöst: der nächstliegende Name ist ähnlich genug, gehört aber zu einer anderen Gattung (häufig ein geteiltes Epitheton bei nicht verwandten Pflanzen) — zur manuellen Prüfung, KEINE Auflösung"
+	// noteRankMarkerMismatch is the second refusal reason. Kept apart from
+	// noteGenusMismatch because for these the genus is usually IDENTICAL
+	// ("Taraxacum sect." vs "Taraxacum sectum"), so blaming the genus would be
+	// factually wrong in front of the candidate it names.
+	noteRankMarkerMismatch = "Nicht aufgelöst: der nächstliegende Name ist ähnlich genug, benennt aber einen anderen Rang — auf einer Seite steht ein Rangkürzel (z. B. sect., subsp.), auf der anderen nicht — zur manuellen Prüfung, KEINE Auflösung"
+	noteAmbiguous          = "Mehrdeutiger Treffer: mehrere Konzepte mit gleicher Übereinstimmungsstärke, manuelle Prüfung nötig"
+	noteFuzzy              = "Fuzzy-Treffer: Ähnlichkeit über Schwellenwert, manuelle Prüfung erforderlich"
+	noteFuzzyAmbiguous     = "Mehrdeutiger Fuzzy-Treffer: mehrere Konzepte mit gleicher Ähnlichkeit, manuelle Prüfung nötig"
 	// noteAggregatePrefix is prepended to whatever matchFuzzy's Note already
 	// says (noteFuzzy or noteFuzzyAmbiguous) when a fuzzy hit resolves an
 	// aggregate/collective-species query — see matchAggregate's fuzzy
@@ -348,6 +369,50 @@ func matchOne(ctx context.Context, repo output.Repository, req MatchRequest, fil
 	return res, nil
 }
 
+// unresolvedNote picks the note for an unresolved result that still carries
+// candidates. Which one applies is decided by the NEAREST candidate that
+// similarity alone would have resolved — that is the name the note is talking
+// about — and by why the guard refused it:
+//
+//   - a different genus (the shared-epithet case), or
+//   - a rank abbreviation on only one side (a section is not a species), or
+//   - nothing reached the threshold at all.
+//
+// It reads the verdicts the scoring loop already produced rather than
+// re-deriving a reason, because a note that contradicts the candidate printed
+// next to it teaches the reader to ignore notes — which is exactly what
+// happened when this function guessed "genus" for every refusal.
+func unresolvedNote(scores []float64, verdicts []domain.FuzzyVerdict) string {
+	// The caller builds both slices in lockstep; the guard is here because the
+	// alternative failure mode is an index-out-of-range panic in a handler.
+	if len(scores) != len(verdicts) {
+		return noteNearMiss
+	}
+	best, reason := 0.0, domain.FuzzyBelowThreshold
+	for i, s := range scores {
+		if s < domain.FuzzyThreshold || s <= best {
+			continue
+		}
+		best, reason = s, verdicts[i]
+	}
+	switch reason {
+	case domain.FuzzyGenusMismatch:
+		return noteGenusMismatch
+	case domain.FuzzyRankMarkerMismatch:
+		return noteRankMarkerMismatch
+	case domain.FuzzyBelowThreshold:
+		// Nothing cleared the threshold, so no guard ever ran.
+		return noteNearMiss
+	case domain.FuzzyResolvable:
+		// Unreachable: this function is only called on the unresolved path, so
+		// a resolvable candidate would have been resolved. Listed rather than
+		// folded into a default so a NEW verdict cannot slip through silently
+		// — the exhaustive linter is the point.
+		return noteNearMiss
+	}
+	return noteNearMiss
+}
+
 // nearMissNames returns the candidate names worth a reviewer's time — those at
 // or above fuzzyReviewFloor — best score first, de-duplicated.
 //
@@ -419,7 +484,7 @@ func nearMissNames(candidates []output.MatchCandidate, scores []float64) []strin
 //     genuine ambiguity from the caller, same principle as classify's own
 //     ambiguity handling.
 func matchFuzzy(ctx context.Context, repo output.Repository, req MatchRequest, queryCanon string, filter MatchFilter) (*MatchResult, error) {
-	candidates, err := repo.MatchFuzzyCandidates(ctx, queryCanon, fuzzyCandidateLimit, filter.Backbone, filter.Sec)
+	candidates, err := repo.MatchFuzzyCandidates(ctx, queryCanon, fuzzyCandidateCap, filter.Backbone, filter.Sec)
 	if err != nil {
 		return nil, err
 	}
@@ -431,9 +496,34 @@ func matchFuzzy(ctx context.Context, repo output.Repository, req MatchRequest, q
 
 	best := 0.0
 	scores := make([]float64, len(candidates))
+	// resolves[i] is whether candidate i may be RESOLVED to, not merely
+	// listed. It is a stricter question than scores[i] >= FuzzyThreshold:
+	// domain.FuzzyResolves also requires the genus to agree, because the
+	// epithet-keyed prefilter route admits candidates that share an epithet
+	// with the query and nothing else. See domain.FuzzyResolves for the
+	// measured 30,6 % of false positives that produces without it.
+	resolves := make([]bool, len(candidates))
+	// verdicts[i] is why candidate i was refused, so the note can name the
+	// actual reason instead of guessing one — a note reading "different genus"
+	// next to a candidate whose genus is identical is worse than no note.
+	verdicts := make([]domain.FuzzyVerdict, len(candidates))
 	for i, c := range candidates {
-		s := domain.Similarity(queryCanon, domain.Canonicalize(c.MatchedName.Canonical))
+		cand := domain.Canonicalize(c.MatchedName.Canonical)
+		s := domain.Similarity(queryCanon, cand)
 		scores[i] = s
+		// Below the threshold the verdict is settled, and asking
+		// domain.FuzzyClassify would recompute this very Similarity — cheap at
+		// the old candidate budget of 20, no longer so now that the whole
+		// prefilter pool is scored.
+		if s < domain.FuzzyThreshold {
+			verdicts[i] = domain.FuzzyBelowThreshold
+			continue
+		}
+		verdicts[i] = domain.FuzzyClassify(queryCanon, cand)
+		resolves[i] = verdicts[i] == domain.FuzzyResolvable
+		if !resolves[i] {
+			continue
+		}
 		// s > best is a genuinely equivalent mutant at CONDITIONALS_BOUNDARY
 		// (>=): when s == best exactly, reassigning best to it is a no-op
 		// (same value) — the same max-selection-idiom equivalence already
@@ -458,7 +548,7 @@ func matchFuzzy(ctx context.Context, repo output.Repository, req MatchRequest, q
 			return &MatchResult{
 				ID:             req.ID,
 				RequiresReview: true,
-				Note:           noteNearMiss,
+				Note:           unresolvedNote(scores, verdicts),
 				Candidates:     near,
 			}, nil
 		}
@@ -467,7 +557,12 @@ func matchFuzzy(ctx context.Context, repo output.Repository, req MatchRequest, q
 
 	var winners []classifiedHit
 	for i, c := range candidates {
-		if scores[i] == best {
+		// resolves[i] as well as the score: a guard-rejected candidate can
+		// tie the winning score (an unrelated genus sharing an epithet scores
+		// whatever it scores), and letting it in here would hand back the
+		// very concept the guard just refused — or turn a clean hit into a
+		// false ambiguity.
+		if resolves[i] && scores[i] == best {
 			winners = append(winners, classifiedHit{conceptID: c.Concept.ID, name: c.MatchedName.Canonical})
 		}
 	}

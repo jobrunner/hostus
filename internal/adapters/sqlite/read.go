@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+
 	"github.com/jobrunner/hostus/internal/domain"
 	"github.com/jobrunner/hostus/internal/ports/output"
 )
@@ -370,15 +373,64 @@ func (db *DB) MatchExact(ctx context.Context, canon string) ([]output.MatchCandi
 // ASCII-folded, so the two coincide) from the query's, on either side.
 const fuzzyCandidateLengthWindow = 3
 
+// fuzzyCandidatePrefixRunes is how many leading runes of the query the
+// prefilter's GLOB prefix pins.
+//
+// It is 4, not 1, and the difference is the difference between a working
+// prefilter and a dead one. With one rune the pool is every name starting
+// with that letter — measured against a full index, ~41.000 rows per query
+// (docs/research/fuzzy-prefilter.md), which is more than any candidate budget
+// can carry, so the intended target was never scored: 0.0 % recall in every
+// error class. Four runes cuts the same pool to ~597 rows (largest observed:
+// 8.081) and makes scoring the WHOLE pool affordable, which is what actually
+// fixes recall — 96,6-100 % on typo classes, at 14-20 ms p95 instead of
+// 651-1195 ms.
+//
+// The cost is a typo inside the prefix itself: a name misspelled in its
+// first four runes is not in this pool (measured recall 1,2 %). That gap is
+// covered by the second, epithet-keyed prefilter route, not by shortening
+// the prefix — 3 runes leaves the same gap at position 2 while tripling the
+// pool.
+const fuzzyCandidatePrefixRunes = 4
+
+// fuzzyCandidateCap bounds how many prefilter rows a single fuzzy lookup may
+// carry, as a LOAD guard — not as a selection rule.
+//
+// That distinction is the bug this replaces. The old budget of 20 rows was
+// applied to an alphabetically ordered pool of tens of thousands, so it
+// decided WHICH candidates got scored, and it decided wrong every time. A cap
+// only earns its place by being high enough never to decide anything on real
+// data: the largest pool measured over 1.198 queries against a full index was
+// 8.081 rows (docs/research/fuzzy-prefilter.md), and 20.000 clears that by
+// ~2,5x while still bounding a pathological query.
+//
+// If it ever does bite, recall is silently degraded again — which is exactly
+// the failure this whole change exists to end. fuzzyCandidateCapHits counts
+// that, so the degradation is observable instead of invisible.
+const fuzzyCandidateCap = 20000
+
+// fuzzyCandidateCapHits counts fuzzy lookups whose candidate pool was
+// truncated by fuzzyCandidateCap.
+//
+// It exists because the failure it watches for is invisible by nature. The
+// prefilter returned the wanted name in 0.0 % of real queries for as long as
+// it existed, and nothing anywhere said so — no error, no log line, just an
+// answer that was quietly worse than it should be. A truncated pool is that
+// same state. Any value above zero here means recall is degraded and the cap
+// or the prefix needs re-measuring, not that a request failed.
+var fuzzyCandidateCapHits = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "hostus_fuzzy_prefilter_cap_hits_total",
+	Help: "Fuzzy lookups whose candidate pool hit the prefilter cap (recall may be degraded)",
+})
+
 // MatchFuzzyCandidates returns up to limit names that are cheap-to-find
 // near-misses of canon, for the application layer to score with
 // domain.Similarity. The prefilter is deliberately narrow so a fuzzy lookup
 // never scans the whole name table:
 //
-//   - same first rune of canonical_fold as canon's (a typo essentially
-//     never changes the first letter of a scientific name's genus),
-//     expressed as a GLOB prefix pattern rather than substr(...)=? or a
-//     LIKE pattern — SQLite's query planner turns a GLOB prefix into an
+//   - the same first fuzzyCandidatePrefixRunes runes of canonical_fold as
+//     canon's, expressed as a GLOB prefix pattern rather than substr(...)=? or
+//     a LIKE pattern — SQLite's query planner turns a GLOB prefix into an
 //     indexed range scan over idx_name_canonical_fold (confirmed via EXPLAIN
 //     QUERY PLAN), whereas both substr() and (the by-default
 //     case-insensitive) LIKE force a full table scan despite the index
@@ -398,23 +450,47 @@ const fuzzyCandidateLengthWindow = 3
 // that second step's cost bounded by limit regardless of which join order
 // the planner picks for it.
 //
-// Recall trade-off: a genuine near-miss whose first letter was itself
-// mistyped, or whose length differs by more than the window (e.g. a
-// dropped/added word), will NOT be returned — this is intentional; a
-// prefilter that must also catch those would have to scan every row,
-// defeating the purpose. limit <= 0 uses a modest built-in default.
+// A SECOND route runs alongside it, keyed on the EPITHET via fts_name
+// (fuzzyEpithetNameIDs), because a prefix filter cannot reach a name whose
+// GENUS is misspelled — measured recall 1,2 % on that class. The two routes'
+// ids are merged and then capped as one lookup.
+//
+// Recall trade-off, measured rather than assumed: a near-miss whose length
+// differs from the query's by more than the window (a dropped or added word)
+// is NOT returned, and neither is one misspelled inside the prefix AND in a
+// way the epithet route cannot see (both words wrong). A prefilter catching
+// those would have to scan every row, which is what this exists to avoid.
+// limit <= 0 uses fuzzyCandidateCap.
 func (db *DB) MatchFuzzyCandidates(ctx context.Context, canon string, limit int, backbone, sec string) ([]output.MatchCandidate, error) {
 	want := domain.Canonicalize(canon)
 	if want == "" {
 		return nil, nil
 	}
 	if limit <= 0 {
-		limit = 20
+		limit = fuzzyCandidateCap
 	}
 
-	ids, err := fuzzyCandidateNameIDs(ctx, db.sql, want, limit, backbone, sec)
+	ids, prefixTruncated, err := fuzzyCandidateNameIDs(ctx, db.sql, want, limit, backbone, sec)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: querying MatchFuzzyCandidates %q: %w", canon, err)
+	}
+	epithetIDs, epithetTruncated, err := fuzzyEpithetNameIDs(ctx, db.sql, want, limit, backbone, sec)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: querying MatchFuzzyCandidates %q by epithet: %w", canon, err)
+	}
+	// Cap the MERGED list, not each route: two routes each honoring `limit`
+	// bound the lookup at 2*limit, and the enrichment join below emits a row
+	// per (name, concept) pair, so the row count it produces is larger again.
+	// One cap hit is counted per LOOKUP here rather than per route (a lookup
+	// truncated on both routes is still one degraded answer, and counting it
+	// twice would inflate the rate an operator reads).
+	ids = mergeIDs(ids, epithetIDs)
+	mergeTruncated := len(ids) > limit
+	if mergeTruncated {
+		ids = ids[:limit]
+	}
+	if prefixTruncated || epithetTruncated || mergeTruncated {
+		fuzzyCandidateCapHits.Inc()
 	}
 	if len(ids) == 0 {
 		return nil, nil
@@ -449,9 +525,10 @@ func (db *DB) MatchFuzzyCandidates(ctx context.Context, canon string, limit int,
 	return scanMatchCandidateRows(rows, "MatchFuzzyCandidates", canon)
 }
 
-// fuzzyCandidateNameIDs runs MatchFuzzyCandidates' prefilter (GLOB first-rune
-// prefix + length window) against the name table ALONE, returning up to
-// limit matching name IDs. Isolating it from the enrichment join is what
+// fuzzyCandidateNameIDs runs MatchFuzzyCandidates' prefix prefilter (GLOB over
+// the query's first fuzzyCandidatePrefixRunes runes + length window) against
+// the name table ALONE, returning up to limit matching name IDs and whether
+// that limit was reached. Isolating it from the enrichment join is what
 // lets it lean on idx_name_canonical_fold — see MatchFuzzyCandidates' doc
 // comment for why the combined-query version didn't.
 //
@@ -465,21 +542,30 @@ func (db *DB) MatchFuzzyCandidates(ctx context.Context, canon string, limit int,
 // resolves via idx_name_canonical_fold, with the ordering applied as a
 // cheap temp-B-tree sort over the already-narrowed row set, not a
 // re-scan.
-// globEscape makes s a GLOB pattern matching s LITERALLY, by wrapping each
-// of GLOB's three metacharacters in a single-character bracket set — GLOB
-// has no backslash escape, but "[*]", "[?]" and "[[]" are the documented
-// literal forms (and "]" is only special INSIDE a bracket set, so it needs
-// no escaping here).
+// globPrefix returns a GLOB pattern matching every string that begins with
+// want's first n runes (fewer if want is shorter), those runes taken
+// LITERALLY: each of GLOB's three metacharacters is wrapped in a
+// single-character bracket set, since GLOB has no backslash escape but
+// "[*]", "[?]" and "[[]" are the documented literal forms ("]" is only
+// special INSIDE a bracket set, so it needs no escaping here).
 //
-// fuzzyCandidateNameIDs builds its prefix pattern from the query's first
-// rune, which is caller-controlled: an unescaped "[" would open a bracket
-// set that the appended "*" never closes (an unterminated set matches
-// nothing, silently disabling fuzzy matching), and an unescaped "*" or "?"
-// would turn the whole prefix filter into a no-op that scans the entire
-// name table — exactly the whole-table scan the prefilter exists to avoid.
-func globEscape(s string) string {
+// The escaping is not cosmetic — the prefix comes from a caller-controlled
+// query. An unescaped "[" would open a bracket set that the appended "*"
+// never closes (an unterminated set matches nothing, silently disabling
+// fuzzy matching), and an unescaped "*" or "?" would turn the whole prefix
+// filter into a no-op that scans the entire name table — exactly the
+// whole-table scan the prefilter exists to avoid.
+func globPrefix(want string, n int) string {
+	runes := []rune(want)
+	// n >= len(runes) is a genuinely equivalent mutant at
+	// CONDITIONALS_BOUNDARY: at n == len(runes) the assignment sets n to the
+	// value it already holds, so no test can observe which way the comparison
+	// went (same reasoning as the documented equivalents in domain.Similarity).
+	if n > len(runes) {
+		n = len(runes)
+	}
 	var b strings.Builder
-	for _, r := range s {
+	for _, r := range runes[:n] {
 		switch r {
 		case '*', '?', '[':
 			b.WriteByte('[')
@@ -489,11 +575,12 @@ func globEscape(s string) string {
 			b.WriteRune(r)
 		}
 	}
+	b.WriteString("*")
 	return b.String()
 }
 
 // fuzzyCandidateRows runs the near-miss prefilter SELECT: up to `limit` name
-// ids whose fold shares canon's first rune and is within the length window,
+// ids whose fold starts with the given prefix and is within the length window,
 // closest length first. It always JOINs through to taxon_concept and applies
 // the backbone/sec filter (both "" = no restriction, via the `? = ” OR …`
 // guards) BEFORE the LIMIT — so a SP5 resolution filter never loses the wanted
@@ -504,7 +591,7 @@ func globEscape(s string) string {
 // join downstream anyway, so excluding it up front only frees prefilter slots
 // for real near-misses. One FIXED query literal (never runtime-assembled SQL —
 // gosec G202, and this repo's suppression budget is zero).
-func fuzzyCandidateRows(ctx context.Context, db *sql.DB, want, firstRunePrefix string, limit int, backbone, sec string) (*sql.Rows, error) {
+func fuzzyCandidateRows(ctx context.Context, db *sql.DB, want, prefix string, limit int, backbone, sec string) (*sql.Rows, error) {
 	return db.QueryContext(ctx, `
 		SELECT DISTINCT n.id FROM name n
 		JOIN concept_name cn ON cn.name_id = n.id
@@ -514,27 +601,156 @@ func fuzzyCandidateRows(ctx context.Context, db *sql.DB, want, firstRunePrefix s
 		  AND (? = '' OR tc.backbone_id = ?)
 		  AND (? = '' OR tc.sec_reference = ?)
 		ORDER BY ABS(length(n.canonical_fold) - length(?)), n.canonical_fold
-		LIMIT ?`, firstRunePrefix, want, fuzzyCandidateLengthWindow, backbone, backbone, sec, sec, want, limit)
+		LIMIT ?`, prefix, want, fuzzyCandidateLengthWindow, backbone, backbone, sec, sec, want, limit)
 }
 
-func fuzzyCandidateNameIDs(ctx context.Context, db *sql.DB, want string, limit int, backbone, sec string) ([]string, error) {
-	firstRunePrefix := globEscape(string([]rune(want)[:1])) + "*"
-
-	rows, err := fuzzyCandidateRows(ctx, db, want, firstRunePrefix, limit, backbone, sec)
-	if err != nil {
-		return nil, err
+// fuzzyEpithetNameIDs is MatchFuzzyCandidates' SECOND prefilter route: the
+// names of every concept whose fts_name entry contains the query's epithet as
+// a token, inside the same length window and under the same backbone/sec
+// filter as the prefix route.
+//
+// It exists for one measured reason. The prefix route cannot see a name whose
+// GENUS is misspelled — recall 1,2 % on that class — because a prefix filter
+// keyed on the query can only find names the query spells the same way at the
+// start. The epithet is the part a genus typo leaves intact, and fts_name's
+// unicode61 tokenizer already indexes it as a word, so this needs no new
+// index. Together the two routes cover every measured typo class at
+// 99,4-100 %.
+//
+// Two things it deliberately does not do:
+//
+//   - It does not widen recall for a genus RENAME. The target does land in
+//     the candidate set (measured: 100 %), but a renamed genus scores below
+//     domain.FuzzyThreshold as a whole string and so is never resolved to
+//     (measured: 0 %). That is the scorer's judgement and correct — see
+//     domain.FuzzyResolves — and it is why this route needs the genus guard
+//     alongside it: an identical epithet is the longer half of a binomial and
+//     will otherwise drag unrelated genera over the threshold.
+//   - It does not reach a synonym whose epithet differs from its concept's
+//     indexed accepted canonical. fts_name is indexed per CONCEPT, on the
+//     accepted name; this returns all of that concept's names, but the token
+//     that has to match is the accepted one's.
+//
+// A single-word query has no epithet and yields nothing here, leaving the
+// prefix route alone — which is right, since there is no second word to
+// disagree about.
+func fuzzyEpithetNameIDs(ctx context.Context, db *sql.DB, want string, limit int, backbone, sec string) (ids []string, truncated bool, err error) {
+	epithet := fuzzyEpithetToken(want)
+	if epithet == "" {
+		return nil, false, nil
 	}
+	// The epithet is bound as a QUOTED FTS5 string, never bare: FTS5's query
+	// syntax would otherwise read a caller-supplied "OR", "NEAR", "*" or ":"
+	// as an operator — at best a syntax error inside a request handler, at
+	// worst a pattern matching far more than the epithet. It is also
+	// restricted to the `canonical` column: fts_name also indexes
+	// vernacular_de, and an epithet colliding with a token in a German common
+	// name would otherwise pull unrelated concepts into the pool.
+	match := `canonical : "` + strings.ReplaceAll(epithet, `"`, `""`) + `"`
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT DISTINCT n.id FROM fts_name f
+		JOIN fts_name_map m ON m.rowid = f.rowid
+		JOIN concept_name cn ON cn.concept_id = m.concept_id
+		JOIN name n ON n.id = cn.name_id
+		JOIN taxon_concept tc ON tc.id = m.concept_id
+		WHERE fts_name MATCH ?
+		  AND ABS(length(n.canonical_fold) - length(?)) <= ?
+		  AND (? = '' OR tc.backbone_id = ?)
+		  AND (? = '' OR tc.sec_reference = ?)
+		ORDER BY ABS(length(n.canonical_fold) - length(?)), n.canonical_fold
+		LIMIT ?`,
+		match, want, fuzzyCandidateLengthWindow, backbone, backbone, sec, sec, want, limit)
+	if err != nil {
+		return nil, false, err
+	}
+	return scanIDs(rows, limit)
+}
+
+// fuzzyEpithetToken returns the token holding a canonicalized name's specific
+// epithet: the second word, skipping a leading hybrid marker.
+//
+// Skipping the marker is not cosmetic. For a nothotaxon the second field is the
+// GENUS ("× ammocalamagrostis baltica"), so a route keyed on it would search
+// for the very word the query may have misspelled — the opposite of this
+// route's purpose — and would MATCH every same-genus name inside the length
+// window, enlarging the pool while doing the wrong job. domain's genus token
+// skips the marker for the same reason; the two have to agree on where a
+// name's words are. Both spellings occur (the botanical "×" and a standalone
+// ASCII "x"), and no genus or epithet is one character long, so nothing else
+// can be swallowed.
+//
+// Returns "" for a name with no epithet, which leaves the prefix route alone —
+// correct, since a single-word query has no second word to disagree about.
+func fuzzyEpithetToken(canon string) string {
+	var words []string
+	for _, f := range strings.Fields(canon) {
+		if f == "×" || f == "x" {
+			continue
+		}
+		words = append(words, f)
+	}
+	if len(words) < 2 {
+		return ""
+	}
+	return words[1]
+}
+
+// mergeIDs concatenates two id lists, dropping duplicates and preserving the
+// first list's order — the prefix route's candidates stay first, since it is
+// the narrower and more precise of the two.
+func mergeIDs(a, b []string) []string {
+	// The two len() sums are capacity HINTS only — an ARITHMETIC_BASE mutant
+	// here (len(a)-len(b)) changes how often the map and slice grow, never
+	// what they end up containing, so it is equivalent by construction.
+	seen := make(map[string]bool, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, id := range append(a, b...) {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
+func fuzzyCandidateNameIDs(ctx context.Context, db *sql.DB, want string, limit int, backbone, sec string) (ids []string, truncated bool, err error) {
+	prefix := globPrefix(want, fuzzyCandidatePrefixRunes)
+
+	rows, err := fuzzyCandidateRows(ctx, db, want, prefix, limit, backbone, sec)
+	if err != nil {
+		return nil, false, err
+	}
+	return scanIDs(rows, limit)
+}
+
+// scanIDs collects one prefilter route's name ids and reports whether that
+// route hit its SQL LIMIT, i.e. whether its pool may have held more.
+//
+// It only REPORTS; the counter is incremented once per lookup by
+// MatchFuzzyCandidates. A lookup truncated on both routes is still one degraded
+// answer, and counting it twice would inflate the rate an operator reads to
+// decide whether recall is degraded.
+//
+// Exactly `limit` rows means the LIMIT was reached. (It can also mean the pool
+// held exactly `limit` rows and nothing was lost — a false positive on a
+// counter whose whole job is to say "look again" is the harmless direction, and
+// distinguishing the two would cost a second query.)
+func scanIDs(rows *sql.Rows, limit int) (ids []string, truncated bool, err error) {
 	defer func() { _ = rows.Close() }()
 
-	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		ids = append(ids, id)
 	}
-	return ids, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	return ids, len(ids) == limit, nil
 }
 
 // scanMatchCandidateRows decodes rows shaped like MatchExact's/

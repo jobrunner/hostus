@@ -251,6 +251,128 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   darunter beginnt Rauschen (0,545 bzw. 0,318 für Fälle, die Synonymie-Wissen
   brauchen statt Zeichenabstand).
 
+### Behoben (Fuzzy-Matching greift jetzt überhaupt)
+- **Der Fuzzy-Vorfilter liefert den gesuchten Namen jetzt, statt in 0,0 % der
+  Fälle.** Er hatte nach Längendifferenz und dann **alphabetisch** sortiert und
+  bei 20 Kandidaten abgeschnitten — bei ~41.000 Namen im Fenster gingen die 20
+  Plätze also an alphabetisch frühe Namen, und das Ziel wurde nie bewertet. Das
+  betraf **jede** Fehlerklasse, auch einen einzigen vertauschten Buchstaben, und
+  kostete dabei 0,65–1,2 s p95. Zwei Änderungen: der GLOB-Prefix pinnt jetzt
+  **vier** Runen statt einer, und das LIMIT ist nur noch eine **Lastgrenze**
+  (20.000, gemessen größter realer Pool: 8.081) statt des Auswahlkriteriums.
+  Gemessen: Recall 0 → 96,6–100 %, p95 auf 14–20 ms.
+  **`hostus_fuzzy_prefilter_cap_hits_total`** zählt greifende Lastgrenzen — ein
+  stillschweigend abgeschnittener Pool ist genau der Zustand, der hier
+  jahrelang unbemerkt blieb.
+- **Ein Tippfehler in der Gattung wird jetzt auch gefunden**, über eine zweite
+  Vorfilter-Route auf dem **Epitheton** (`fts_name` ist wortweise tokenisiert,
+  das Epitheton ist also indiziert und überlebt einen Gattungs-Tippfehler).
+  Gemessen: 1,2 % → 100 % in dieser Klasse.
+- **Neuer Guard, ohne den die beiden Änderungen oben schaden würden:** ein
+  Kandidat wird nur noch aufgelöst, wenn auch die **Gattung** über der
+  Ähnlichkeitsschwelle liegt. Ein Epitheton ist die längere Hälfte eines
+  Binomens, ein identisches Epitheton zieht deshalb zwei völlig unverwandte
+  Gattungen über die Schwelle: `sphagnum platyphyllum` → `solanum
+  platyphyllum` = 0,857. Gemessen waren **19 von 62** Treffern am echten Index
+  so falsch (30,6 %), alle Moos-/Flechtengattungen, die WCVP nicht führt. Der
+  Guard entfernt 18 davon und kostet 1 von 43 richtigen Treffern.
+  Der Guard sperrt die **Auflösung**, nicht die Auflistung: abgelehnte
+  Kandidaten bleiben in der Beinahe-Treffer-Liste, mit eigener Notiz, die die
+  Gattung als Grund nennt (statt fälschlich „kein Treffer über der Schwelle").
+- **Zweiter Guard, gefunden erst durch Nachmessen am Endpunkt:** ein
+  **Rangkürzel** auf nur einer Seite verhindert die Auflösung. Fünf ESy-Zeilen,
+  die eine Sektion benennen (`Taraxacum sect. Alpina`), landeten sonst auf der
+  **Art** `Taraxacum sectum` (0,875) — gleiche Gattung, also für den ersten
+  Guard unsichtbar.
+
+### Aus dem Review nachgeschärft (Fuzzy)
+- **Der Gattungs-Guard bestrafte kurze Gattungen — behoben.** Er war ein
+  *Verhältnis* auf dem Gattungs-Token, und damit lautete die faktische Regel
+  „eine Gattung muss mindestens 7 Zeichen haben, damit ein Tippfehler verziehen
+  wird": ein Buchstabe falsch ergibt 0,750 bei vier Zeichen und 0,800 bei fünf,
+  beides unter der Schwelle. `Acar campestre` → `Acer campestre` (ganz: 0,929)
+  wurde also **abgewiesen**, ebenso `Salyx alba` und `Posa canina` — und das
+  betrifft `Acer`, `Poa`, `Rosa`, `Salix`, `Carex`, `Pinus`, also einen großen
+  Teil der europäischen Flora, genau in der Klasse, für die die
+  Epitheton-Route überhaupt gebaut wurde. Die Begründung im Code („eine
+  verschriebene Gattung liegt bei 0,900–1,000") war an ausschließlich langen
+  Gattungen gemessen. Die Regel ist jetzt **höchstens eine Editieroperation
+  ODER Verhältnis über der Schwelle**: über die 62 realen ESy-Treffer messen
+  beide Hälften identisch (42 von 43 richtigen behalten, 1 von 19 Fehltreffern
+  durch), die Vereinigung kostet also nichts und wird beide Verzerrungen los.
+- **Die Notiz nennt jetzt den richtigen Grund.** Sie behauptete „gehört zu
+  einer anderen Gattung" auch dann, wenn die Gattung **identisch** war und das
+  Rangkürzel den Ausschlag gab (`Taraxacum sect.` vs `Taraxacum sectum`,
+  Gattungsähnlichkeit 1,0) — dieselbe Selbstwidersprüchlichkeit, gegen die die
+  Notiz eingeführt wurde. Der Grund wird jetzt im `domain`-Verdikt
+  mitgeliefert statt in der Anwendungsschicht erraten, und es gibt eine
+  eigene Notiz für den Rang-Fall.
+- **Die Epitheton-Route suchte bei Hybriden auf der Gattung.** Für
+  `× ammocalamagrostis baltica` ist das zweite Feld die *Gattung* — die Route
+  konnte den Gattungs-Tippfehler, für den sie existiert, dort also nicht
+  finden und zog stattdessen jeden gleichnamigen Gattungsvertreter in den
+  Pool. Sie überspringt den Hybrid-Marker jetzt wie `domain` es tut.
+- **Die Lastgrenze begrenzte nicht.** Beide Routen bekamen dasselbe `limit`,
+  eine Abfrage konnte also 2× die dokumentierte Grenze tragen — und der
+  anschließende Enrichment-Join ist pro (Name, Konzept)-Paar. Gekappt wird
+  jetzt die **vereinigte** Liste, und der Zähler zählt eine *Abfrage* statt
+  einer Route (sonst wäre die Rate bis zu doppelt so hoch, wie sie ist).
+- **Der FTS-Treffer war nicht spaltenbeschränkt** und passte damit auch auf
+  `vernacular_de`; jetzt `canonical : "…"`.
+- Drei Doc-Kommentare beschrieben noch den alten Vorfilter („erste Rune",
+  „modest built-in default", „ein Beinahe-Treffer mit falschem Anfangsbuchstaben
+  wird NICHT geliefert"). Dieser PR existiert, weil ein falscher Kommentar
+  einen Totalausfall verdeckt hat — drei weitere stehenzulassen wäre bemerkenswert.
+- Similarity wurde pro Kandidat zweimal berechnet (einmal für den Score, einmal
+  im Guard). Bei einem Budget von 20 war das gleichgültig, bei Pools von
+  Tausenden nicht.
+
+### Gemessen (Fuzzy-Matching am echten Index, end-to-end)
+- Über `POST /v1/match` gegen die 3.587 distinkten ESy-Namen (`entry_backbone:
+  wcvp`): **91,6 % aufgelöst**, davon **40 per Fuzzy** — vorher waren es 0, weil
+  der Vorfilter nichts lieferte. Darunter fünf der im Ticket #67 genannten
+  Klasse-3-Beispiele (`Arctostaphylos alpinus`, `Astracantha diphtherites`,
+  `Bellidiastrum michelii`, `Abies borisii-regis`, `Artemisia lerchiana`).
+- **Zwei der 40 sind weiterhin falsch, beide mit bekannter Ursache:**
+  `Buellia punctata` → `Ruellia punctata` (Flechtengattung, die sich von einer
+  Blütenpflanzengattung in genau einem Buchstaben unterscheidet — dagegen hilft
+  kein Zeichenmaß) und `Juniperus communis subsp. communis` → `subsp.
+  eucommunis`. Der zweite hat eine andere Ursache: `Juniperus communis` liegt im
+  Index **zweimal** (accepted + synonym), der Autonym-Schlüssel ist damit
+  mehrdeutig, die Kandidatenleiter fällt auf Fuzzy durch und Fuzzy landet auf
+  einer anderen Unterart. Ein mehrdeutiger Exact-Treffer ist aussagekräftiger
+  als ein Fuzzy-Treffer auf ein anderes Taxon — ob die Leiter das so behandeln
+  soll, ist eine eigene Entscheidung.
+- **Gattungs-Synonymie bleibt ungelöst** und ist mit Zeichenabstand nicht
+  lösbar: über die Epitheton-Route liegt das Ziel in 100 % der Fälle in der
+  Kandidatenmenge und ist in 0 % der beste Kandidat (`astracantha
+  diphtherites` → `astragalus diphtherites` = 0,792). Das braucht
+  Synonymie-Daten.
+- **Auf dem Fuzzy-Pfad fehlt der `role=accepted`-Vorrang**, den Klasse 2 für den
+  Exact-Pfad gebracht hat: `Artemisia lercheana` liegt dreifach im Index, davon
+  einmal als `accepted` — und kommt trotzdem als mehrdeutig zurück.
+
+### Gemessen (Fuzzy-Vorfilter: Recall am echten Index)
+- **Der Fuzzy-Vorfilter liefert in keiner Fehlerklasse einen Treffer — auch nicht
+  bei einem einzigen vertauschten Buchstaben**, und braucht dafür 0,65–1,2 s p95.
+  Gemessen gegen einen vollständigen Index mit `poc/measure/fuzzyrecall`, gegen
+  synthetisch mutierte echte Namen (Ziel per Konstruktion bekannt) und gegen die
+  418 ESy-Namen ohne Exact-Match. Befund in `docs/research/fuzzy-prefilter.md`.
+- **Das `LIMIT 20` ist die Ursache, nicht die Prefixlänge.** Prefix auf 4 Runen
+  verengen *und* das LIMIT streichen: Recall 0 → 96,6–100 %, p95 auf 14–20 ms
+  (der zu sortierende Pool fällt von ~41.000 auf ~600 Zeilen). Eine frühere
+  Sondierung hatte den 4-Zeichen-Prefix verworfen — sie hatte ihn **mit** dem
+  LIMIT gemessen.
+- **Der Fix darf nicht ohne einen Guard kommen:** an den echten ESy-Namen
+  erreichen 62 den Schwellwert, davon sind **19 = 30,6 % nachweislich falsch** —
+  Moos-/Flechtengattungen, die WCVP nicht führt, deren Epitheton aber auf eine
+  Blütenpflanze passt (`sphagnum platyphyllum` → `solanum platyphyllum`). Eine
+  zusätzliche Schwelle auf das **Gattungs-Token allein** entfernt 18 der 19 und
+  kostet 1 von 43 richtigen Treffern.
+- **Gattungs-Synonymie bleibt unlösbar per Zeichenabstand**: das Ziel liegt über
+  eine FTS-Route auf dem Epitheton in 100 % der Fälle in der Kandidatenmenge und
+  ist in 0 % der beste Kandidat. Das braucht Synonymie-Daten, keinen Vorfilter.
+
 ### Bekannte Einschränkung (gemessen, eigener Arbeitsauftrag)
 - **Der Fuzzy-Vorfilter erreicht die Gattungs-Synonymie gar nicht**, unabhängig
   von der obigen Änderung: er filtert mit `GLOB '<erster Buchstabe>*'` plus
@@ -260,6 +382,14 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   `astragalus diphtherites` wird nie gesehen. Die Beinahe-Treffer-Liste kann
   also nur zeigen, was der Vorfilter liefert. Dessen Überarbeitung ist ein
   eigener Punkt.
+  **Nachtrag (erledigt, siehe „Behoben" oben):** der Vorfilter ist inzwischen
+  überarbeitet — Prefix vier Runen, LIMIT nur noch Lastgrenze, zweite Route auf
+  dem Epitheton. Die Diagnose oben stimmte, die Verallgemeinerung „erreicht die
+  Gattungs-Synonymie gar nicht" war zu eng gefasst: der Vorfilter erreichte
+  **nichts**, auch keinen Tippfehler. Die Gattungs-Synonymie selbst bleibt
+  offen, aber aus einem anderen Grund — der Kandidat wird jetzt geliefert und
+  vom Ähnlichkeitsmaß zurückgewiesen (0,792), nicht mehr vom Vorfilter
+  übersehen.
 - **Für Sammelart-Anfragen greift die Liste gar nicht**, und zwar rechnerisch:
   Fuzzy wird mit dem Namen **samt Marker** aufgerufen, der Vorfilter lässt aber
   nur Kandidaten innerhalb von **3** Zeichen Längenunterschied zu — `" aggr."`

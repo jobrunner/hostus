@@ -134,8 +134,8 @@ type conceptDTO struct {
 	// canonical Rank value alone would otherwise hide which exotic rank
 	// this concept actually carries. Omitted entirely (never an empty
 	// string) for every canonically-ranked concept, same honesty pattern
-	// as synonymDTO.Homotypic/traits' niche_width: absence means "not
-	// applicable", not "unknown".
+	// as synonymDTO.Homotypic: absence means "not applicable", not
+	// "unknown".
 	RankVerbatim string         `json:"rank_verbatim,omitempty"`
 	Status       string         `json:"status"`
 	Backbone     backboneRefDTO `json:"backbone"`
@@ -378,7 +378,7 @@ type matchResponseDTO struct {
 
 // writeJSON encodes v as a 200 OK JSON response body, setting Content-Type
 // first so it is present even if Encode fails partway through writing the
-// body. Every current success path (concept, match, suggest, traits) is a
+// body. Every current success path (concept, match, suggest, synonyms) is a
 // 200; error bodies go through httperr.Write, which owns its own status —
 // so writeJSON takes no status parameter (a hardcoded one that every caller
 // already agreed on, rather than a param unparam would flag as dead).

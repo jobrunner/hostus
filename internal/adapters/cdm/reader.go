@@ -4,8 +4,8 @@
 // each scoped by the sec. reference space it belongs to — and the typed
 // CONCEPT RELATIONS between them (UC6, SP5).
 //
-// Like internal/adapters/traits and internal/adapters/xref it stays entirely
-// string-typed: no rank, status or relation vocabulary is interpreted here.
+// Like internal/adapters/xref it stays entirely string-typed: no rank,
+// status or relation vocabulary is interpreted here.
 // That is deliberate. The relation vocabulary is exactly the thing SP1 got
 // wrong by assuming it, so the raw spelling is carried through untouched and
 // domain.ParseRelation — a strict parser that fails loudly — is the single

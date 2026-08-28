@@ -38,17 +38,14 @@ func TestIngestCommand_FixtureManifest_PrintsReport(t *testing.T) {
 		t.Errorf("report %q, want it to mention the Names count %d", got, 20)
 	}
 
-	// The fixture manifest's trait_vocabularies section (eive, tichy2023)
-	// must also print a report, including the unmatched sample — the
-	// crosswalk loss must be visible on the terminal, not just in the DB.
-	if !strings.Contains(got, "eive") {
-		t.Errorf("report %q, want it to mention trait vocabulary %q", got, "eive")
-	}
-	if !strings.Contains(got, "tichy2023") {
-		t.Errorf("report %q, want it to mention trait vocabulary %q", got, "tichy2023")
+	// The fixture manifest's name_spaces section (floraveg) must also print
+	// a report, including the unmatched sample — the crosswalk loss must be
+	// visible on the terminal, not just in the DB.
+	if !strings.Contains(got, "floraveg") {
+		t.Errorf("report %q, want it to mention name space %q", got, "floraveg")
 	}
 	if !strings.Contains(got, "unmatched sample") {
-		t.Errorf("report %q, want it to print the unmatched sample (Abies alba/Quercus robur are absent from the wcvp fixture)", got)
+		t.Errorf("report %q, want it to print the unmatched sample (Abies alba is absent from the wcvp fixture)", got)
 	}
 	if !strings.Contains(got, "Abies alba") {
 		t.Errorf("report %q, want the unmatched sample to name the specific lost taxa", got)
@@ -131,7 +128,7 @@ func TestPrintIngestReport_NomStatusNotice(t *testing.T) {
 }
 
 // TestIngestCommand_RestrictedVocabulary_PrintsRedistributionNotice drives
-// "hostus ingest" against a manifest whose eive trait vocabulary is pinned
+// "hostus ingest" against a manifest whose floraveg name space is pinned
 // redistribution: unknown (testdata/dataset-restricted.yaml) and asserts
 // the printed report includes the German "hinweis:" notice line — local
 // ingest itself must still succeed (it is never gated), but the operator
@@ -150,8 +147,8 @@ func TestIngestCommand_RestrictedVocabulary_PrintsRedistributionNotice(t *testin
 	}
 
 	got := out.String()
-	if !strings.Contains(got, "hinweis: eive (redistribution=unknown)") {
-		t.Errorf("report %q, want a hinweis line naming eive's redistribution=unknown", got)
+	if !strings.Contains(got, "hinweis: floraveg (redistribution=unknown)") {
+		t.Errorf("report %q, want a hinweis line naming floraveg's redistribution=unknown", got)
 	}
 	if !strings.Contains(got, "nicht redistribuierbar") {
 		t.Errorf("report %q, want the notice to state it is not redistributable", got)
@@ -209,54 +206,6 @@ func TestIngestCommand_RegisteredOnRoot(t *testing.T) {
 	}
 	if cmd.Use != ingestCmdName {
 		t.Fatalf("got command %q, want %q", cmd.Use, ingestCmdName)
-	}
-}
-
-// TestPrintTraitReports_NormalisationVisibleAndFlagged is Hardening Task 5's
-// "visible, not silent" requirement at the CLI layer: a normalised match
-// must be attributed to its rule, and the two rules that equate two
-// circumscriptions (aggregate-to-nominate-species, autonym-to-species) must
-// additionally be marked as flagged and name their taxa — otherwise a
-// judgement call would be indistinguishable from an exact hit in the only
-// output an operator ever sees.
-func TestPrintTraitReports_NormalisationVisibleAndFlagged(t *testing.T) {
-	reports := []application.TraitIngestReport{{
-		Vocab: "eive", Rows: 3, Matched: 3,
-		Normalized: []application.RuleCount{
-			{Rule: "aggregate_to_nominate", Rows: 2, Taxa: 1, Flagged: true},
-			{Rule: "hybrid_spacing", Rows: 1, Taxa: 1},
-		},
-		FlaggedSample: []string{"Acer opalus aggr."},
-	}}
-
-	var buf bytes.Buffer
-	printTraitReports(&buf, reports)
-	got := buf.String()
-
-	for _, want := range []string{
-		"normalized aggregate_to_nominate: rows=2 taxa=1",
-		"flagged",
-		"normalized hybrid_spacing: rows=1 taxa=1",
-		"flagged sample: Acer opalus aggr.",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("report %q, want it to contain %q", got, want)
-		}
-	}
-	// The unflagged rule's line must NOT carry the flag marker.
-	for _, line := range strings.Split(got, "\n") {
-		if strings.Contains(line, "hybrid_spacing") && strings.Contains(line, "flagged") {
-			t.Errorf("line %q marks an unflagged rule as flagged", line)
-		}
-	}
-}
-
-func TestPrintTraitReports_ExactOnlyVocabularyPrintsNoNormalisationLines(t *testing.T) {
-	var buf bytes.Buffer
-	printTraitReports(&buf, []application.TraitIngestReport{{Vocab: "eive", Rows: 1, Matched: 1}})
-	got := buf.String()
-	if strings.Contains(got, "normalized") || strings.Contains(got, "flagged") {
-		t.Errorf("report %q, want no normalisation lines when nothing was normalised", got)
 	}
 }
 
@@ -462,37 +411,5 @@ func TestIngestCommand_NameSpace_PrintsReport(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("hostus ingest output %q, want it to contain %q", out, want)
 		}
-	}
-}
-
-// TestPrintTraitReports_TieBrokenIsVisibleOnlyWhenItFired: the tie-break is
-// the one place the trait crosswalk picks among competing concepts, so an
-// operator has to be able to see that it happened. Printing it
-// unconditionally would be worse than not printing it — a "tiebroken=0" on
-// every vocabulary is noise that teaches the reader to skip the line.
-func TestPrintTraitReports_TieBrokenIsVisibleOnlyWhenItFired(t *testing.T) {
-	var fired, quiet bytes.Buffer
-	printTraitReports(&fired, []application.TraitIngestReport{{Vocab: "eive", Rows: 5, Matched: 5, TieBroken: 2}})
-	printTraitReports(&quiet, []application.TraitIngestReport{{Vocab: "eive", Rows: 5, Matched: 5}})
-
-	if !strings.Contains(fired.String(), "tiebroken=2") {
-		t.Errorf("report %q, want it to report tiebroken=2", fired.String())
-	}
-	if strings.Contains(quiet.String(), "tiebroken") {
-		t.Errorf("report %q, want no tiebroken mention when none fired", quiet.String())
-	}
-}
-
-// TestPrintTraitReports_TieBrokenSampleIsPrinted: the count says how much was
-// decided, the sample says what — and only the second one lets an operator
-// check it. Same treatment the flagged rules already get.
-func TestPrintTraitReports_TieBrokenSampleIsPrinted(t *testing.T) {
-	var buf bytes.Buffer
-	printTraitReports(&buf, []application.TraitIngestReport{{
-		Vocab: "eive", Rows: 5, Matched: 5, TieBroken: 2,
-		TieBrokenSample: []string{"Abies alba", "Inula hirta"},
-	}})
-	if got := buf.String(); !strings.Contains(got, "tiebroken sample: Abies alba, Inula hirta") {
-		t.Errorf("report %q, want it to name the tie-broken taxa", got)
 	}
 }

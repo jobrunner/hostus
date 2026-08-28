@@ -147,11 +147,10 @@ type RankVerbatimCount struct {
 }
 
 // otherRankSampleCap bounds BackboneReport.OtherRankSample the same way
-// unmatchedSampleCap bounds TraitIngestReport.UnmatchedSample (see
-// traits_ingest.go): a real WCVP ingest can carry dozens of distinct exotic
-// rank spellings (see docs/research/reality-check.md's measured
-// inventory), and the report must stay readable rather than dumping every
-// one of them.
+// unmatchedSampleCap (crosswalk.go) bounds every crosswalk report's sample
+// fields: a real WCVP ingest can carry dozens of distinct exotic rank
+// spellings (see docs/research/reality-check.md's measured inventory), and
+// the report must stay readable rather than dumping every one of them.
 const otherRankSampleCap = 20
 
 // IngestReport summarizes an Ingest run across every backbone in the dataset.
@@ -586,7 +585,7 @@ func (st *ingestState) finalizeOtherRanksReport(report *BackboneReport) {
 // counts, ordered by Count descending (most frequent exotic rank first, so
 // the report leads with what matters most) and, for equal counts, by
 // Verbatim ascending — the same "sorted for determinism, capped for size"
-// approach as traits_ingest.go's sortedSample.
+// approach as crosswalk.go's sortedSample.
 func sortedRankCounts(counts map[string]int, cap int) []RankVerbatimCount {
 	if len(counts) == 0 {
 		return nil
@@ -614,7 +613,7 @@ func sortedRankCounts(counts map[string]int, cap int) []RankVerbatimCount {
 	// CONDITIONALS_BOUNDARY: at len(all) == cap exactly, all[:cap] IS all,
 	// so both branches produce the identical slice and no test can observe
 	// the difference — the same documented-equivalence class as
-	// traits_ingest.go's sortedSample.
+	// crosswalk.go's sortedSample.
 	if len(all) > cap {
 		all = all[:cap]
 	}

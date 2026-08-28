@@ -80,7 +80,6 @@ CREATE INDEX IF NOT EXISTS idx_name_basionym_id ON name(basionym_id);
 -- reason: concept_name.concept_id (PK is (concept_id, name_id)),
 -- distribution.concept_id (PK is (concept_id, area_scheme, area_code)),
 -- vernacular.concept_id (PK is (concept_id, lang, name)),
--- trait_value.concept_id (PK is (concept_id, vocab, vocab_version, dim)),
 -- and concept_relation.from_concept (PK is
 -- (from_concept, to_concept, relation, source) since SP5 widened it — see
 -- the note on that table below; from_concept is still the LEADING column,
@@ -131,7 +130,7 @@ CREATE INDEX IF NOT EXISTS idx_concept_name_name_id ON concept_name(name_id);
 
 -- Cross-reference-source provenance metadata: one row per ingested xref
 -- source (e.g. the Wikidata bridge-hub harvest), the xref counterpart of
--- backbone_version/trait_vocabulary. It is what lets an ingested database
+-- backbone_version. It is what lets an ingested database
 -- answer "which harvest are these xrefs from?" (version + manifest_sha)
 -- and what ExportBundle's redistribution gate joins against.
 CREATE TABLE IF NOT EXISTS xref_source (
@@ -226,50 +225,6 @@ CREATE TABLE IF NOT EXISTS area (
   PRIMARY KEY (scheme, code)
 );
 
--- Indicator/trait values (pointer to concept + vocabulary version, not the
--- numbers as ground truth). value is always present (domain.TraitValue.Value
--- is a plain float64, never a pointer); niche_width/n_systems are nullable
--- because EIVE provides them and Tichý/Midolo do not — NULL there means "this
--- vocabulary does not provide this datum", never a stand-in for 0 (see
--- domain.TraitValue's doc comment).
-CREATE TABLE IF NOT EXISTS trait_value (
-  concept_id    TEXT NOT NULL REFERENCES taxon_concept(id),
-  vocab         TEXT NOT NULL,      -- eive|tichy2023|midolo2023
-  vocab_version TEXT NOT NULL,
-  dim           TEXT NOT NULL,      -- M|N|R|L|T|S
-  value         REAL NOT NULL,
-  niche_width   REAL,               -- EIVE only; NULL for Tichý/Midolo
-  n_systems     INTEGER,            -- EIVE only; NULL for Tichý/Midolo
-  -- resolution records HOW the vocabulary's taxon name was crosswalked onto
-  -- concept_id: NULL for the ordinary case (an exact canonical match), else
-  -- the name of the deterministic normalisation rule that was needed
-  -- (domain.NormalizationRule: hybrid_spacing, aggregate_to_nominate,
-  -- autonym, orthography_genitive, ...). Two of those rules equate two
-  -- circumscriptions that are NOT identical — an aggregate is wider than
-  -- its nominate species, an autonym narrower than its species — so a
-  -- consumer must be able to tell such a value apart from a directly
-  -- matched one. Same "absence is information" rule as niche_width above:
-  -- NULL means "no normalisation was needed", never "unknown".
-  -- See domain.TraitValue.Resolution / domain.NormalizationRule.Flagged.
-  resolution    TEXT,
-  PRIMARY KEY (concept_id, vocab, vocab_version, dim)
-);
-
--- Trait-vocabulary provenance metadata: one row per ingested (vocab,
--- version) pair, joined onto trait_value reads to surface VocabVersion and
--- the Taxonomy namespace (see domain.TraitSet.Taxonomy) each vocabulary's
--- values are harmonized against.
-CREATE TABLE IF NOT EXISTS trait_vocabulary (
-  vocab          TEXT NOT NULL,      -- eive|tichy2023|midolo2023
-  version        TEXT NOT NULL,
-  taxonomy       TEXT NOT NULL,      -- euromed-aligned|floraveg-eunis-aligned|...
-  license        TEXT,
-  source_url     TEXT,
-  ingested_at    TEXT NOT NULL,
-  redistribution TEXT NOT NULL DEFAULT 'unknown', -- allowed|restricted|unknown (domain.Redistribution); gates ExportBundle, never local ingest
-  PRIMARY KEY (vocab, version)
-);
-
 -- Name spaces (SP9, UC4). A name space is a checklist that contributes
 -- NAMES but no taxonomy — no synonymy graph, no parent chain, no external
 -- ids to join on. FloraVeg.EU's list (the namespace ESy's rules are written
@@ -303,9 +258,8 @@ CREATE TABLE IF NOT EXISTS name_space (
 --
 -- `aggregate` is 1 when the space's own spelling denotes a collective
 -- species rather than a single taxon (domain.IsAggregateName). `resolution`
--- follows trait_value.resolution's rule exactly: NULL for an exact canonical
--- match, else the domain.NormalizationRule that was needed — absence is
--- information, never "unknown".
+-- is NULL for an exact canonical match, else the domain.NormalizationRule
+-- that was needed — absence is information, never "unknown".
 CREATE TABLE IF NOT EXISTS name_space_entry (
   space        TEXT NOT NULL REFERENCES name_space(id),
   ext_id       TEXT NOT NULL,      -- the space's own stable id (FloraVeg SeqID)

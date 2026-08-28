@@ -52,130 +52,39 @@ func readBundleMeta(t *testing.T, path string) bundleMetaRow {
 	return got
 }
 
-// addUnknownEIVETraitValue starts a fresh ingest transaction against src and
-// records one trait_value row for conceptID under vocab=eive plus its
-// trait_vocabulary metadata with Redistribution=unknown — the shared setup
+// addUnknownNameSpaceEntry starts a fresh no-backbone ingest transaction
+// against src and attaches one name-space entry to conceptID under space
+// id "testspace" with Redistribution=unknown — the shared setup
 // TestExportBundle_RefusesByDefaultWhenSourceNotAllowed and
 // TestExportBundle_ForceIncludeRestricted_SucceedsAndRecordsSource both use
-// to make "eive" a genuinely contributing, non-allowed source for the
+// to make "testspace" a genuinely contributing, non-allowed source for the
 // AUT-scoped bundle.
-func addUnknownEIVETraitValue(t *testing.T, src *sqlite.DB, conceptID string) {
+func addUnknownNameSpaceEntry(t *testing.T, src *sqlite.DB, conceptID string) {
 	t.Helper()
 	ctx := context.Background()
-	bvs, err := src.BackboneVersions(ctx)
-	if err != nil || len(bvs) == 0 {
-		t.Fatalf("BackboneVersions: unexpected error/empty result: %v / %+v", err, bvs)
-	}
-	tx, err := src.BeginIngest(ctx, bvs[0])
+	tx, err := src.BeginTraitIngest(ctx)
 	if err != nil {
-		t.Fatalf("BeginIngest: unexpected error: %v", err)
+		t.Fatalf("BeginTraitIngest: unexpected error: %v", err)
 	}
-	if err := tx.AddTraitValue(conceptID, domain.TraitValue{
-		Vocab: domain.VocabEIVE, VocabVersion: "1.0", Dim: domain.DimM, Value: 5.5,
-	}); err != nil {
-		t.Fatalf("AddTraitValue: unexpected error: %v", err)
-	}
-	if err := tx.UpsertTraitVocabulary(domain.TraitVocabMeta{
-		Vocab: domain.VocabEIVE, Version: "1.0", Taxonomy: "euromed-aligned", License: "",
+	if err := tx.UpsertNameSpace(domain.NameSpaceMeta{
+		ID: "testspace", Version: "1.0", ManifestSHA: "x",
 		Redistribution: domain.RedistributionUnknown,
 	}); err != nil {
-		t.Fatalf("UpsertTraitVocabulary: unexpected error: %v", err)
+		t.Fatalf("UpsertNameSpace: unexpected error: %v", err)
+	}
+	if err := tx.AddNameSpaceEntry(conceptID, domain.NameSpaceEntry{
+		Space: "testspace", ExtID: "e1", Name: "Testspace spelling", Status: domain.NameSpaceStatusAccepted,
+	}); err != nil {
+		t.Fatalf("AddNameSpaceEntry: unexpected error: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("Commit: unexpected error: %v", err)
 	}
 }
 
-// addTwoEIVEVersionsWithDifferentRedistribution starts two fresh ingest
-// transactions against src and records trait_value rows for conceptID under
-// TWO versions of vocab=eive ("1.0" unknown, "2.0" restricted), each with
-// its own trait_vocabulary metadata row. This mirrors what a real re-ingest
-// at a new pinned version actually leaves behind: trait_vocabulary's
-// primary key is (vocab, version), and IngestTraits never deletes an older
-// version's row (see internal/application/traits_ingest.go), so both rows
-// — and both trait_value rows — genuinely coexist in the database. It is
-// the fixture for proving findRestrictedSources' dedup: without it, "eive"
-// would be named/recorded twice under two different redistribution values.
-func addTwoEIVEVersionsWithDifferentRedistribution(t *testing.T, src *sqlite.DB, conceptID string) {
-	t.Helper()
-	ctx := context.Background()
-	bvs, err := src.BackboneVersions(ctx)
-	if err != nil || len(bvs) == 0 {
-		t.Fatalf("BackboneVersions: unexpected error/empty result: %v / %+v", err, bvs)
-	}
-
-	versions := []struct {
-		version        string
-		redistribution domain.Redistribution
-	}{
-		{"1.0", domain.RedistributionUnknown},
-		{"2.0", domain.RedistributionRestricted},
-	}
-	for _, v := range versions {
-		tx, err := src.BeginIngest(ctx, bvs[0])
-		if err != nil {
-			t.Fatalf("BeginIngest: unexpected error: %v", err)
-		}
-		if err := tx.AddTraitValue(conceptID, domain.TraitValue{
-			Vocab: domain.VocabEIVE, VocabVersion: v.version, Dim: domain.DimM, Value: 5.5,
-		}); err != nil {
-			t.Fatalf("AddTraitValue(%s): unexpected error: %v", v.version, err)
-		}
-		if err := tx.UpsertTraitVocabulary(domain.TraitVocabMeta{
-			Vocab: domain.VocabEIVE, Version: v.version, Taxonomy: "euromed-aligned", License: "",
-			Redistribution: v.redistribution,
-		}); err != nil {
-			t.Fatalf("UpsertTraitVocabulary(%s): unexpected error: %v", v.version, err)
-		}
-		if err := tx.Commit(); err != nil {
-			t.Fatalf("Commit(%s): unexpected error: %v", v.version, err)
-		}
-	}
-}
-
-// TestExportBundle_SameVocabTwoVersionsDifferentRedistribution_NamedOnce is
-// the fix-round-1 regression: trait_vocabulary's primary key is (vocab,
-// version), so a bundle's scope can genuinely include trait_value rows from
-// TWO versions of the same vocab id (eive 1.0 unknown, eive 2.0 restricted)
-// — findRestrictedSources must still name "eive" exactly once in the
-// refusal error (with the MORE SEVERE of the two values, "restricted", not
-// silently the first-seen "unknown" — pinning dedupeRestrictedSourcesByID's
-// severity-ranking choice, not just its presence/absence), and
-// --force-include-restricted must record bundle_meta.restricted_sources as
-// exactly "eive", never "eive,eive".
-func TestExportBundle_SameVocabTwoVersionsDifferentRedistribution_NamedOnce(t *testing.T) {
-	ctx := context.Background()
-	src := ingestWCVPFixture(t)
-	const conceptID = "wcvp:concept:405825" // Corynephorus canescens, AUT scope
-	addTwoEIVEVersionsWithDifferentRedistribution(t, src, conceptID)
-
-	out := filepath.Join(t.TempDir(), "bundle-dup-refused.sqlite")
-	_, err := sqlite.ExportBundle(ctx, src, out, sqlite.BundleOpts{Area: "AUT", SnapshotVersion: "v1"})
-	if err == nil {
-		t.Fatal("ExportBundle: want an error when a vocab contributes under two non-allowed versions, got nil")
-	}
-	if got, want := strings.Count(err.Error(), "eive"), 1; got != want {
-		t.Errorf("ExportBundle error = %q, want %q to appear exactly once, appeared %d times", err, "eive", got)
-	}
-	if !strings.Contains(err.Error(), "eive (redistribution=restricted)") {
-		t.Errorf("ExportBundle error = %q, want it to report the MORE SEVERE value %q for eive, not %q", err, "restricted", "unknown")
-	}
-
-	forcedOut := filepath.Join(t.TempDir(), "bundle-dup-forced.sqlite")
-	if _, err := sqlite.ExportBundle(ctx, src, forcedOut, sqlite.BundleOpts{
-		Area: "AUT", SnapshotVersion: "v1", AllowRestricted: true,
-	}); err != nil {
-		t.Fatalf("ExportBundle(AllowRestricted): unexpected error: %v", err)
-	}
-	meta := readBundleMeta(t, forcedOut)
-	if meta.RestrictedSources != "eive" {
-		t.Errorf("bundle_meta.restricted_sources = %q, want %q (not \"eive,eive\")", meta.RestrictedSources, "eive")
-	}
-}
-
 // addRestrictedXrefSource records one xref_source row with
 // Redistribution=restricted plus one xref row attributed to it for
-// conceptID — the xref counterpart of addUnknownEIVETraitValue, making
+// conceptID — the xref counterpart of addUnknownNameSpaceEntry, making
 // "wikidata" a genuinely contributing, non-allowed source for the AUT-scoped
 // bundle.
 func addRestrictedXrefSource(t *testing.T, src *sqlite.DB, conceptID string) {
@@ -202,7 +111,7 @@ func addRestrictedXrefSource(t *testing.T, src *sqlite.DB, conceptID string) {
 
 // TestExportBundle_RefusesByDefaultWhenXrefSourceNotAllowed is the C1
 // regression: before xref provenance existed, the redistribution gate
-// queried only backbone_version and trait_vocabulary, so a whole class of
+// queried only backbone_version, so a whole class of
 // data — every cross-reference harvested from an external source — was
 // copied into bundles unconditionally, no matter what its manifest's
 // (schema-REQUIRED) redistribution value said. A restricted xref source
@@ -279,7 +188,7 @@ func TestExportBundle_ForceIncludeRestrictedXrefSource_SucceedsAndRecordsSource(
 // setBackboneRedistribution re-records src's existing "wcvp" backbone_version
 // row with redistribution set to value, via the same BeginIngest(INSERT OR
 // REPLACE) path a real re-ingest would use — so tests can make the
-// BACKBONE itself (not just a trait vocabulary) a non-allowed contributing
+// BACKBONE itself (not just some other source) a non-allowed contributing
 // source without re-ingesting the whole fixture.
 func setBackboneRedistribution(t *testing.T, src *sqlite.DB, redistribution domain.Redistribution) {
 	t.Helper()
@@ -301,28 +210,28 @@ func setBackboneRedistribution(t *testing.T, src *sqlite.DB, redistribution doma
 
 // TestExportBundle_RefusesNamingEverySourceSortedByID proves
 // findRestrictedSources' sort actually orders MULTIPLE offending sources —
-// both the backbone itself (wcvp, forced to restricted) and the eive trait
-// vocabulary (unknown) contribute to the same AUT scope here, so the error
-// must name both, alphabetically ("eive" before "wcvp").
+// both the backbone itself (wcvp, forced to restricted) and the testspace
+// name space (unknown) contribute to the same AUT scope here, so the error
+// must name both, alphabetically ("testspace" before "wcvp").
 func TestExportBundle_RefusesNamingEverySourceSortedByID(t *testing.T) {
 	ctx := context.Background()
 	src := ingestWCVPFixture(t)
 	const conceptID = "wcvp:concept:405825" // Corynephorus canescens, AUT scope
 	setBackboneRedistribution(t, src, domain.RedistributionRestricted)
-	addUnknownEIVETraitValue(t, src, conceptID)
+	addUnknownNameSpaceEntry(t, src, conceptID)
 
 	out := filepath.Join(t.TempDir(), "bundle-multi-refused.sqlite")
 	_, err := sqlite.ExportBundle(ctx, src, out, sqlite.BundleOpts{Area: "AUT", SnapshotVersion: "v1"})
 	if err == nil {
 		t.Fatal("ExportBundle: want an error when multiple contributing sources are not redistribution-allowed, got nil")
 	}
-	eiveIdx := strings.Index(err.Error(), "eive")
+	testspaceIdx := strings.Index(err.Error(), "testspace")
 	wcvpIdx := strings.Index(err.Error(), "wcvp")
-	if eiveIdx == -1 || wcvpIdx == -1 {
-		t.Fatalf("ExportBundle error = %q, want it to name both %q and %q", err, "eive", "wcvp")
+	if testspaceIdx == -1 || wcvpIdx == -1 {
+		t.Fatalf("ExportBundle error = %q, want it to name both %q and %q", err, "testspace", "wcvp")
 	}
-	if eiveIdx > wcvpIdx {
-		t.Errorf("ExportBundle error = %q, want %q to be named before %q (sorted by id)", err, "eive", "wcvp")
+	if testspaceIdx > wcvpIdx {
+		t.Errorf("ExportBundle error = %q, want %q to be named before %q (sorted by id)", err, "testspace", "wcvp")
 	}
 
 	// With --force-include-restricted, bundle_meta.restricted_sources must
@@ -334,29 +243,29 @@ func TestExportBundle_RefusesNamingEverySourceSortedByID(t *testing.T) {
 		t.Fatalf("ExportBundle(AllowRestricted): unexpected error: %v", err)
 	}
 	meta := readBundleMeta(t, forcedOut)
-	if meta.RestrictedSources != "eive,wcvp" {
-		t.Errorf("bundle_meta.restricted_sources = %q, want %q", meta.RestrictedSources, "eive,wcvp")
+	if meta.RestrictedSources != "testspace,wcvp" {
+		t.Errorf("bundle_meta.restricted_sources = %q, want %q", meta.RestrictedSources, "testspace,wcvp")
 	}
 }
 
 // TestExportBundle_RefusesByDefaultWhenSourceNotAllowed is the RED/GREEN
-// core of the redistribution gate: a bundle scope that includes trait_value
-// rows from a vocabulary whose redistribution is "unknown" (not "allowed")
-// must be refused by default, naming the offending source and its
-// redistribution value in the error — never silently exported.
+// core of the redistribution gate: a bundle scope that includes
+// name_space_entry rows from a name space whose redistribution is "unknown"
+// (not "allowed") must be refused by default, naming the offending source
+// and its redistribution value in the error — never silently exported.
 func TestExportBundle_RefusesByDefaultWhenSourceNotAllowed(t *testing.T) {
 	ctx := context.Background()
 	src := ingestWCVPFixture(t)
 	const conceptID = "wcvp:concept:405825" // Corynephorus canescens, AUT scope
-	addUnknownEIVETraitValue(t, src, conceptID)
+	addUnknownNameSpaceEntry(t, src, conceptID)
 
 	out := filepath.Join(t.TempDir(), "bundle-refused.sqlite")
 	_, err := sqlite.ExportBundle(ctx, src, out, sqlite.BundleOpts{Area: "AUT", SnapshotVersion: "v1"})
 	if err == nil {
 		t.Fatal("ExportBundle: want an error when a contributing source is not redistribution-allowed, got nil")
 	}
-	if !strings.Contains(err.Error(), "eive") {
-		t.Errorf("ExportBundle error = %q, want it to name the offending source %q", err, "eive")
+	if !strings.Contains(err.Error(), "testspace") {
+		t.Errorf("ExportBundle error = %q, want it to name the offending source %q", err, "testspace")
 	}
 	if !strings.Contains(err.Error(), "unknown") {
 		t.Errorf("ExportBundle error = %q, want it to state the redistribution value %q", err, "unknown")
@@ -376,7 +285,7 @@ func TestExportBundle_ForceIncludeRestricted_SucceedsAndRecordsSource(t *testing
 	ctx := context.Background()
 	src := ingestWCVPFixture(t)
 	const conceptID = "wcvp:concept:405825" // Corynephorus canescens, AUT scope
-	addUnknownEIVETraitValue(t, src, conceptID)
+	addUnknownNameSpaceEntry(t, src, conceptID)
 
 	out := filepath.Join(t.TempDir(), "bundle-forced.sqlite")
 	report, err := sqlite.ExportBundle(ctx, src, out, sqlite.BundleOpts{
@@ -391,8 +300,8 @@ func TestExportBundle_ForceIncludeRestricted_SucceedsAndRecordsSource(t *testing
 	}
 
 	meta := readBundleMeta(t, out)
-	if meta.RestrictedSources != "eive" {
-		t.Errorf("bundle_meta.restricted_sources = %q, want %q", meta.RestrictedSources, "eive")
+	if meta.RestrictedSources != "testspace" {
+		t.Errorf("bundle_meta.restricted_sources = %q, want %q", meta.RestrictedSources, "testspace")
 	}
 }
 
@@ -646,116 +555,6 @@ func TestExportBundle_EmptyArea_IncludesEverything(t *testing.T) {
 	}
 }
 
-// TestExportBundle_CarriesTraitValuesAndVocabularyMetadata proves the
-// offline bundle gap the Task 3 brief calls out is closed: trait_value and
-// trait_vocabulary rows survive ExportBundle, and the exported file's own
-// Traits/TraitVocabularies work against them through a fresh sqlite.Open —
-// the offline field app needs trait data, not just taxonomy.
-func TestExportBundle_CarriesTraitValuesAndVocabularyMetadata(t *testing.T) {
-	ctx := context.Background()
-	src := ingestWCVPFixture(t)
-
-	bvs, err := src.BackboneVersions(ctx)
-	if err != nil || len(bvs) == 0 {
-		t.Fatalf("BackboneVersions: unexpected error/empty result: %v / %+v", err, bvs)
-	}
-
-	const conceptID = "wcvp:concept:405825" // Corynephorus canescens, in AUT scope
-	tx, err := src.BeginIngest(ctx, bvs[0])
-	if err != nil {
-		t.Fatalf("BeginIngest: unexpected error: %v", err)
-	}
-	niche := 2.5
-	nsys := 12
-	if err := tx.AddTraitValue(conceptID, domain.TraitValue{
-		Vocab: domain.VocabEIVE, VocabVersion: "1.0", Dim: domain.DimM, Value: 5.5,
-		NicheWidth: &niche, NSystems: &nsys,
-	}); err != nil {
-		t.Fatalf("AddTraitValue: unexpected error: %v", err)
-	}
-	// A second value that reached this concept only through the flagged
-	// aggregate-to-nominate-species rule. An offline bundle is the copy a
-	// field user actually queries, so the "this was normalised, not matched
-	// exactly" signal has to survive the export — dropping it here would
-	// re-hide precisely what Hardening Task 5 made visible.
-	if err := tx.AddTraitValue(conceptID, domain.TraitValue{
-		Vocab: domain.VocabEIVE, VocabVersion: "1.0", Dim: domain.DimN, Value: 4.0,
-		Resolution: string(domain.RuleAggregateToNominate),
-	}); err != nil {
-		t.Fatalf("AddTraitValue(normalised): unexpected error: %v", err)
-	}
-	if err := tx.UpsertTraitVocabulary(domain.TraitVocabMeta{
-		Vocab: domain.VocabEIVE, Version: "1.0", Taxonomy: "euromed-aligned", License: "CC-BY-4.0",
-		Redistribution: domain.RedistributionAllowed,
-	}); err != nil {
-		t.Fatalf("UpsertTraitVocabulary: unexpected error: %v", err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatalf("Commit: unexpected error: %v", err)
-	}
-
-	out := filepath.Join(t.TempDir(), "bundle-traits.sqlite")
-	if _, err := sqlite.ExportBundle(ctx, src, out, sqlite.BundleOpts{
-		Area: "AUT", SnapshotVersion: "v1", Now: func() time.Time { return fixedBundleClock },
-	}); err != nil {
-		t.Fatalf("ExportBundle: unexpected error: %v", err)
-	}
-
-	bundle, err := sqlite.Open(out)
-	if err != nil {
-		t.Fatalf("sqlite.Open(bundle): unexpected error: %v", err)
-	}
-	defer func() { _ = bundle.Close() }()
-
-	assertBundleTraits(t, bundle, conceptID)
-	assertBundleTraitVocabularies(t, bundle)
-}
-
-func assertBundleTraits(t *testing.T, bundle *sqlite.DB, conceptID string) {
-	t.Helper()
-	sets, err := bundle.Traits(context.Background(), conceptID, nil)
-	if err != nil {
-		t.Fatalf("bundle.Traits: unexpected error: %v", err)
-	}
-	if len(sets) != 1 || sets[0].Vocab != domain.VocabEIVE || sets[0].Taxonomy != "euromed-aligned" {
-		t.Fatalf("bundle.Traits(%q) = %+v, want one eive set with Taxonomy=euromed-aligned", conceptID, sets)
-	}
-	if len(sets[0].Values) != 2 {
-		t.Fatalf("bundle.Traits(%q) values = %+v, want the M and N values", conceptID, sets[0].Values)
-	}
-	// M matched exactly (empty Resolution), N only through the flagged
-	// aggregate fallback — both must survive the export unchanged.
-	wantResolution := map[domain.TraitDim]string{
-		domain.DimM: "",
-		domain.DimN: string(domain.RuleAggregateToNominate),
-	}
-	for _, v := range sets[0].Values {
-		want, known := wantResolution[v.Dim]
-		if !known {
-			t.Errorf("unexpected dim %q in bundle traits", v.Dim)
-			continue
-		}
-		if v.Resolution != want {
-			t.Errorf("bundle %s value: Resolution = %q, want %q — the normalisation signal must survive the export",
-				v.Dim, v.Resolution, want)
-		}
-		if v.Dim == domain.DimM && (v.NicheWidth == nil || *v.NicheWidth != 2.5) {
-			t.Errorf("bundle M value = %+v, want NicheWidth=2.5", v)
-		}
-	}
-}
-
-func assertBundleTraitVocabularies(t *testing.T, bundle *sqlite.DB) {
-	t.Helper()
-	metas, err := bundle.TraitVocabularies(context.Background())
-	if err != nil {
-		t.Fatalf("bundle.TraitVocabularies: unexpected error: %v", err)
-	}
-	if len(metas) != 1 || metas[0].Vocab != domain.VocabEIVE {
-		t.Fatalf("bundle.TraitVocabularies() = %+v, want one eive entry", metas)
-	}
-}
-
 // mustBundleConcept resolves id via bundle.Concept, returning just the
 // concept and error — discarding the synonyms/xrefs/distribution results
 // this file's tests don't need — so callers can inspect the error
@@ -835,14 +634,11 @@ func TestExportBundle_AreaFilter_NullsOutOfAreaParentReference(t *testing.T) {
 		t.Errorf("taxon_concept.parent_id for %q = %q, want SQL NULL", childID, parentIDCol.String)
 	}
 
-	// The bundle must stay fully queryable (Suggest/Traits), not just
+	// The bundle must stay fully queryable (Suggest), not just
 	// FK-consistent — proving nulling the reference didn't otherwise
 	// corrupt the row.
 	if _, err := bundle.Suggest(ctx, "coryn", output.SuggestOpts{Limit: 10}); err != nil {
 		t.Errorf("bundle.Suggest after NULLing an out-of-scope parent: unexpected error: %v", err)
-	}
-	if _, err := bundle.Traits(ctx, childID, nil); err != nil {
-		t.Errorf("bundle.Traits(%q) after NULLing an out-of-scope parent: unexpected error: %v", childID, err)
 	}
 }
 

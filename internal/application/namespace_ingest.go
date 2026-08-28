@@ -115,24 +115,23 @@ type NameSpaceIngestReport struct {
 // and attaches the ones that resolve to their concept as name_space_entry
 // rows, then records meta as the space's provenance.
 //
-// It runs in two strictly separated phases — RESOLVE first, WRITE second —
-// for exactly the reason IngestTraits documents at length: the sqlite adapter
-// runs with SetMaxOpenConns(1), so a repository read issued while the ingest
-// transaction is open blocks forever waiting for a second connection. That is
-// a real deadlock in "hostus ingest", not a test artifact. Phase 1 resolves
-// every DISTINCT canonical name with no transaction open; phase 2 opens one
-// transaction and only writes.
+// It runs in two strictly separated phases — RESOLVE first, WRITE second:
+// the sqlite adapter runs with SetMaxOpenConns(1), so a repository read
+// issued while the ingest transaction is open blocks forever waiting for a
+// second connection. That is a real deadlock in "hostus ingest", not a test
+// artifact. Phase 1 resolves every DISTINCT canonical name with no
+// transaction open; phase 2 opens one transaction and only writes.
 //
-// Resolution REUSES resolveTraitName — the SP3 crosswalk ladder
-// (domain.NameCandidates: exact key first, then hybrid/genitive spelling
-// rewrites, then the two flagged circumscription judgements), with the same
-// three outcomes and the same refusal to guess:
+// Resolution REUSES resolveTraitName (crosswalk.go) — the shared crosswalk
+// ladder (domain.NameCandidates: exact key first, then hybrid/genitive
+// spelling rewrites, then the two flagged circumscription judgements), with
+// the same three outcomes and the same refusal to guess:
 //
 //  1. the first candidate key the index answers decides the outcome;
 //  2. no key answered -> Unmatched, nothing written;
 //  3. the answering key resolves to two or more DISTINCT concepts ->
 //     Ambiguous, skipped entirely. This path passes policyRefuseAmbiguity, so
-//     the homonym tie-break the trait crosswalk uses does NOT apply here —
+//     the policyResolveGenuineBearer homonym tie-break does NOT apply here —
 //     see the call site for why that is deliberate.
 //
 // It is deliberately not a second name-resolution path. SP3's crosswalk only

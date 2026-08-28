@@ -9,53 +9,13 @@ import (
 	"github.com/jobrunner/hostus/internal/domain"
 )
 
-// TestIngest_ReportsTraitVocabularies drives the REAL composition root
-// ("hostus ingest"'s entry point) against a manifest that pins a trait
-// vocabulary, on a REAL on-disk SQLite file. That combination is what makes
-// this more than a happy-path assertion: the sqlite adapter runs with
-// SetMaxOpenConns(1), so any repository read issued while the trait ingest
-// transaction is open would deadlock here rather than fail — see
-// application.IngestTraits' two-phase contract.
-func TestIngest_ReportsTraitVocabularies(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
-
-	reports, err := app.Ingest(context.Background(), "testdata/dataset.yaml", dbPath)
-	if err != nil {
-		t.Fatalf("app.Ingest: unexpected error: %v", err)
-	}
-	if len(reports.Backbone.Backbones) != 1 {
-		t.Fatalf("len(Backbones) = %d, want 1", len(reports.Backbone.Backbones))
-	}
-	if len(reports.Traits) != 1 {
-		t.Fatalf("len(reports.Traits) = %d, want 1 (the manifest pins one trait vocabulary)", len(reports.Traits))
-	}
-
-	tr := reports.Traits[0]
-	if tr.Vocab != string(domain.VocabEIVE) {
-		t.Errorf("reports.Traits[0].Vocab = %q, want %q", tr.Vocab, domain.VocabEIVE)
-	}
-	if tr.Rows == 0 {
-		t.Error("reports.Traits[0].Rows = 0, want the fixture's rows")
-	}
-	if tr.Matched == 0 {
-		t.Error("reports.Traits[0].Matched = 0, want the WCVP-resolvable fixture rows to have been written")
-	}
-	if tr.Unmatched == 0 {
-		t.Error("reports.Traits[0].Unmatched = 0, want the fixture's deliberately absent taxa to be reported as lost")
-	}
-	if got := tr.Matched + tr.Unmatched + tr.Ambiguous; got != tr.Rows {
-		t.Errorf("Matched+Unmatched+Ambiguous = %d, want %d (= Rows)", got, tr.Rows)
-	}
-	if len(tr.UnmatchedSample) == 0 {
-		t.Error("reports.Traits[0].UnmatchedSample is empty, want the lossy crosswalk to name the taxa it dropped")
-	}
-}
-
-// TestIngest_ReportsXrefSources mirrors TestIngest_ReportsTraitVocabularies
-// for the xref-ingest leg of the same manifest (testdata/dataset.yaml now
-// also pins the wikidata xref-source fixture) — same REAL on-disk SQLite
-// file, same two-phase-transaction concern (application.IngestXrefs must
-// never read the repository while its ingest transaction is open).
+// TestIngest_ReportsXrefSources drives the REAL composition root ("hostus
+// ingest"'s entry point) against a manifest that pins an xref source, on a
+// REAL on-disk SQLite file. That combination is what makes this more than a
+// happy-path assertion: the sqlite adapter runs with SetMaxOpenConns(1), so
+// any repository read issued while the xref ingest transaction is open would
+// deadlock here rather than fail — see application.IngestXrefs' two-phase
+// contract.
 func TestIngest_ReportsXrefSources(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
 
@@ -122,30 +82,14 @@ func TestIngest_BackboneIngestErrorPropagates(t *testing.T) {
 	if err == nil {
 		t.Fatal("app.Ingest: expected an error for an unreadable backbone path, got nil")
 	}
-	if reports.Traits != nil {
-		t.Errorf("reports.Traits = %v, want nil (trait ingest must not run after the backbone failed)", reports.Traits)
-	}
-}
-
-func TestIngest_TraitVocabularyReadErrorPropagates(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
-
-	if _, err := app.Ingest(context.Background(), "testdata/dataset-bad-trait-path.yaml", dbPath); err == nil {
-		t.Fatal("app.Ingest: expected an error for an unreadable trait CSV path, got nil")
-	}
-}
-
-func TestIngest_UnknownTraitVocabularyIDErrors(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
-
-	if _, err := app.Ingest(context.Background(), "testdata/dataset-unknown-trait-vocab.yaml", dbPath); err == nil {
-		t.Fatal("app.Ingest: expected an error for a manifest pinning an unknown trait vocabulary id, got nil")
+	if reports.Xrefs != nil {
+		t.Errorf("reports.Xrefs = %v, want nil (xref ingest must not run after the backbone failed)", reports.Xrefs)
 	}
 }
 
 // TestIngest_ReportsNameSpaces drives the REAL composition root against a
 // manifest that pins the FloraVeg name space, on a REAL on-disk SQLite file
-// — the same combination that makes the trait/xref tests above meaningful:
+// — the same combination that makes the xref test above meaningful:
 // application.IngestNameSpace must never read the repository while its
 // ingest transaction is open, and with SetMaxOpenConns(1) a violation
 // DEADLOCKS here rather than failing.

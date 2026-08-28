@@ -21,11 +21,23 @@ var wantTables = []string{
 	"xref_source",
 	"vernacular",
 	"distribution",
-	"trait_value",
-	"trait_vocabulary",
 	"concept_relation",
 	"fts_name_map",
 	"fts_name",
+}
+
+// seedBackboneVersion is the exact domain.BackboneVersion testdata/seed.sql
+// writes for "wcvp" via raw SQL. Tests that need to go through BeginIngest
+// (e.g. to reach other ingestTx writers) pass this so the INSERT OR REPLACE
+// it issues for backbone_version is a byte-for-byte no-op against the seeded
+// row, rather than silently mutating it.
+var seedBackboneVersion = domain.BackboneVersion{
+	ID:          "wcvp",
+	Version:     "2026-06-15",
+	License:     "CC-BY-4.0",
+	SourceURL:   "https://example.org/wcvp.zip",
+	IngestedAt:  "2026-07-31T00:00:00Z",
+	ManifestSHA: "deadbeef",
 }
 
 func openTestDB(t *testing.T) *DB {
@@ -500,49 +512,6 @@ func TestOpen_ReaderSeesCommittedRowAlongsideOpenWriter(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].ID != "wcvp" {
 		t.Fatalf("BackboneVersions() = %+v, want exactly the committed %q row (uncommitted 'wfo' must stay invisible)", got, "wcvp")
-	}
-}
-
-// TestBeginTraitIngest_WritesNoBackboneVersion pins the adapter half of the
-// trait/backbone separation: BeginIngest records its argument in
-// backbone_version, BeginTraitIngest must record nothing there — a trait
-// vocabulary is not a taxonomic backbone, and backbone_version is served as
-// API provenance and gates /health/ready.
-func TestBeginTraitIngest_WritesNoBackboneVersion(t *testing.T) {
-	db := openTestDB(t)
-	ctx := context.Background()
-
-	tx, err := db.BeginTraitIngest(ctx)
-	if err != nil {
-		t.Fatalf("BeginTraitIngest: unexpected error: %v", err)
-	}
-	meta := domain.TraitVocabMeta{Vocab: domain.VocabEIVE, Version: "1.0", Taxonomy: "euromed-via-eurosl", License: "CC-BY-4.0"}
-	if err := tx.UpsertTraitVocabulary(meta); err != nil {
-		t.Fatalf("UpsertTraitVocabulary: unexpected error: %v", err)
-	}
-	// Finalize must be a harmless no-op here: this transaction has no
-	// backbone, so there are no concepts of its own to FTS-index.
-	if err := tx.Finalize(); err != nil {
-		t.Fatalf("Finalize: unexpected error: %v", err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatalf("Commit: unexpected error: %v", err)
-	}
-
-	got, err := db.BackboneVersions(ctx)
-	if err != nil {
-		t.Fatalf("BackboneVersions: unexpected error: %v", err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("BackboneVersions() = %v, want empty after a trait-only ingest", got)
-	}
-
-	vocabs, err := db.TraitVocabularies(ctx)
-	if err != nil {
-		t.Fatalf("TraitVocabularies: unexpected error: %v", err)
-	}
-	if len(vocabs) != 1 {
-		t.Fatalf("len(TraitVocabularies) = %d, want 1 — the vocabulary itself must still be recorded", len(vocabs))
 	}
 }
 

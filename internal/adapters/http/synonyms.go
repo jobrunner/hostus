@@ -193,7 +193,7 @@ func parseSynonymMax(param string) (int, error) {
 //   - an unknown concept id reports 404 NOT_FOUND;
 //   - a known concept with no synonyms reports 200 with an empty
 //     `synonyms` array and a zeroed summary — it is not a 404, since the
-//     concept itself is real (same rule as /v1/concept/{id}/traits).
+//     concept itself is real.
 func handleSynonyms(repo output.Repository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()

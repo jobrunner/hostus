@@ -135,22 +135,6 @@ type Repository interface {
 	// must already be present.
 	BuildDistributionClosure(ctx context.Context) error
 
-	// Traits returns every domain.TraitSet hostus holds for conceptID,
-	// grouped PER VOCABULARY — TraitSets are never merged across
-	// vocabularies, since PoC P10 found their Taxonomy namespaces genuinely
-	// diverge (see domain.TraitSet's doc comment). Each returned TraitSet
-	// carries the VocabVersion/Taxonomy joined from trait_vocabulary, and
-	// its Values are ordered by Dim for a deterministic result. vocabs
-	// restricts which vocabularies are returned; nil or empty means every
-	// vocabulary the concept has values in. Returns domain.ErrNotFound
-	// (wrapped) if conceptID is unknown; a concept with no ingested trait
-	// values (but which does exist) returns an empty, non-nil-error slice —
-	// callers must not conflate the two.
-	Traits(ctx context.Context, conceptID string, vocabs []domain.TraitVocab) ([]domain.TraitSet, error)
-	// TraitVocabularies lists every ingested (vocab, version) metadata row,
-	// for API/response provenance.
-	TraitVocabularies(ctx context.Context) ([]domain.TraitVocabMeta, error)
-
 	// NameSpaceEntries returns every name-space spelling attached to
 	// conceptID (SP9/UC4 — e.g. the FloraVeg/ESy names for a WCVP concept),
 	// ordered by (space, ext_id) for a deterministic result. spaces
@@ -245,8 +229,7 @@ type Repository interface {
 	// there would tell clients a trait vocabulary is a backbone (and could
 	// make a backbone-less database report ready). The returned IngestTx
 	// therefore has no backbone: its Finalize is a no-op (there are no
-	// concepts to index), and only AddTraitValue/UpsertTraitVocabulary are
-	// meaningful on it. Callers must Commit or Rollback.
+	// concepts to index). Callers must Commit or Rollback.
 	BeginTraitIngest(ctx context.Context) (IngestTx, error)
 }
 
@@ -375,14 +358,6 @@ type IngestTx interface {
 	// by (scheme, code) — first non-empty name wins (INSERT OR IGNORE), so it
 	// is safe to call once per distinct area. Backs Repository.Areas.
 	UpsertArea(a domain.Area) error
-	// AddTraitValue writes one trait_value row for conceptID. A nil
-	// tv.NicheWidth/tv.NSystems must be persisted as SQL NULL, not as a
-	// 0/0.0 literal — see domain.TraitValue's doc comment on why nil and
-	// zero are never interchangeable here.
-	AddTraitValue(conceptID string, tv domain.TraitValue) error
-	// UpsertTraitVocabulary records one (vocab, version) metadata row,
-	// joined onto trait_value reads by Repository.Traits.
-	UpsertTraitVocabulary(meta domain.TraitVocabMeta) error
 	// UpsertSecReference records one sec. reference space (id + citation
 	// title), so a concept's taxon_concept.sec_reference id can be resolved
 	// back to the flora it names instead of staying an opaque UUID.

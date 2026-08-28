@@ -92,9 +92,10 @@ type xrefExtKey struct {
 // table (an ID-based join, never a name crosswalk) and writes the new
 // cross-references src carries, one per non-conflicting row.
 //
-// Resolution is two-phase, exactly like IngestTraits, and for the identical
-// reason (see that function's doc comment on the sqlite adapter's
-// SetMaxOpenConns(1)): phase 1 resolves every row's join key with no ingest
+// Resolution is two-phase, exactly like IngestNameSpace/IngestCDM, and for
+// the identical reason: the sqlite adapter runs with SetMaxOpenConns(1), so
+// a repository read issued while the ingest transaction is open would
+// deadlock. Phase 1 resolves every row's join key with no ingest
 // transaction open; phase 2 opens one transaction and only writes, never
 // reads the repository again.
 //

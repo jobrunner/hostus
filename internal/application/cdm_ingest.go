@@ -118,7 +118,7 @@ func cdmNameID(uuid string) string    { return "cdm:name:" + uuid }
 
 // IngestCDM writes the CDM concept graph into repo as a second backbone.
 //
-// It is STRICTLY TWO-PHASE, for the same reason IngestTraits/IngestXrefs
+// It is STRICTLY TWO-PHASE, for the same reason IngestNameSpace/IngestXrefs
 // are: the sqlite adapter pins its pool to one connection
 // (SetMaxOpenConns(1)), so any repository READ issued while the ingest
 // transaction is open deadlocks the process. Phase 1 resolves everything —

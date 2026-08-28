@@ -26,8 +26,8 @@ var cfgFile string
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   hostusCmdName,
-		Short: "hostus - local naming and trait service for vascular plants",
-		Long: `hostus serves a local, versioned multi-backbone taxonomy and trait
+		Short: "hostus - local naming service for vascular plants",
+		Long: `hostus serves a local, versioned multi-backbone taxonomy
 index (COL XR, WCVP/POWO, Euro+Med, FloraVeg.EU) for a frontend autosuggest
 field, grouping synonyms under their accepted taxa. It is backed by an
 on-disk SQLite/FTS5 index fed by pinned ingest artifacts, not a live

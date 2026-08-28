@@ -897,12 +897,6 @@ func (f *fakeCapturingRepo) BackboneVersions(context.Context) ([]domain.Backbone
 func (f *fakeCapturingRepo) BuildDistributionClosure(context.Context) error {
 	panic("not needed by Ingest")
 }
-func (f *fakeCapturingRepo) Traits(context.Context, string, []domain.TraitVocab) ([]domain.TraitSet, error) {
-	panic("not needed by Ingest")
-}
-func (f *fakeCapturingRepo) TraitVocabularies(context.Context) ([]domain.TraitVocabMeta, error) {
-	panic("not needed by Ingest")
-}
 func (f *fakeCapturingRepo) NameSpaceEntries(context.Context, string, []string) ([]domain.NameSpaceEntry, error) {
 	panic("not needed by Ingest")
 }
@@ -977,8 +971,6 @@ func (t *fakeCapturingTx) LinkName(string, string, string, *bool) error      { r
 func (t *fakeCapturingTx) AddXref(string, domain.Xref, string) error         { return nil }
 func (t *fakeCapturingTx) AddDistribution(string, domain.Distribution) error { return nil }
 func (t *fakeCapturingTx) UpsertArea(domain.Area) error                      { return nil }
-func (t *fakeCapturingTx) AddTraitValue(string, domain.TraitValue) error     { return nil }
-func (t *fakeCapturingTx) UpsertTraitVocabulary(domain.TraitVocabMeta) error { return nil }
 func (t *fakeCapturingTx) UpsertXrefSource(domain.XrefSourceMeta) error      { return nil }
 func (t *fakeCapturingTx) UpsertNameSpace(domain.NameSpaceMeta) error        { return nil }
 func (t *fakeCapturingTx) AddAggregateMember(string, string) error           { return nil }

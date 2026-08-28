@@ -519,8 +519,6 @@ func (t *fakeNameSpaceTx) LinkName(string, string, string, *bool) error      { r
 func (t *fakeNameSpaceTx) AddXref(string, domain.Xref, string) error         { return nil }
 func (t *fakeNameSpaceTx) AddDistribution(string, domain.Distribution) error { return nil }
 func (t *fakeNameSpaceTx) UpsertArea(domain.Area) error                      { return nil }
-func (t *fakeNameSpaceTx) AddTraitValue(string, domain.TraitValue) error     { return nil }
-func (t *fakeNameSpaceTx) UpsertTraitVocabulary(domain.TraitVocabMeta) error { return nil }
 func (t *fakeNameSpaceTx) UpsertSecReference(domain.SecReference) error      { return nil }
 func (t *fakeNameSpaceTx) UpsertXrefSource(domain.XrefSourceMeta) error      { return nil }
 func (t *fakeNameSpaceTx) AddConceptRelation(string, string, domain.Relation, string) error {
@@ -608,12 +606,6 @@ func (r *fakeNameSpaceRepo) BackboneVersions(context.Context) ([]domain.Backbone
 }
 func (r *fakeNameSpaceRepo) BuildDistributionClosure(context.Context) error {
 	return nil
-}
-func (r *fakeNameSpaceRepo) Traits(context.Context, string, []domain.TraitVocab) ([]domain.TraitSet, error) {
-	return nil, nil
-}
-func (r *fakeNameSpaceRepo) TraitVocabularies(context.Context) ([]domain.TraitVocabMeta, error) {
-	return nil, nil
 }
 func (r *fakeNameSpaceRepo) NameSpaceEntries(context.Context, string, []string) ([]domain.NameSpaceEntry, error) {
 	return nil, nil

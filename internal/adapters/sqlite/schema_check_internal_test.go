@@ -10,34 +10,35 @@ import (
 
 // TestOpen_RejectsSchemaDriftMissingColumn pins the fix for the SP8 known gap:
 // an index built by an older hostus that lacks a column the current schema
-// declares — here trait_value.resolution, added in SP3 — must make Open fail
-// LOUDLY, naming the table and column, instead of opening cleanly and letting
-// the first /v1/concept/{id}/traits query 500 at runtime while /health/ready
-// still reports 200. Open applies schema.sql with CREATE TABLE IF NOT EXISTS,
-// which never adds a column to an already-existing table, so this is the exact
-// drift a real legacy database is in.
+// declares — here vernacular.preferred — must make Open fail LOUDLY, naming
+// the table and column, instead of opening cleanly and letting the first
+// query selecting it 500 at runtime while /health/ready still reports 200.
+// Open applies schema.sql with CREATE TABLE IF NOT EXISTS, which never adds
+// a column to an already-existing table, so this is the exact drift a real
+// legacy database is in. vernacular is deliberately chosen because it has
+// no ad-hoc migrateXxx counterpart (unlike xref.source, concept_relation's
+// widened PK, name_space_entry.status or taxon_concept's classification
+// columns) — those columns are auto-healed on Open before this generic
+// check ever runs, so a fixture built around one of them would not exercise
+// this path.
 func TestOpen_RejectsSchemaDriftMissingColumn(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "old.sqlite")
 
-	// Pre-create trait_value in its pre-SP3 shape (no `resolution` column) on a
-	// raw connection, then close it. Open's CREATE TABLE IF NOT EXISTS will then
-	// leave this table exactly as-is, reproducing the legacy drift.
+	// Pre-create vernacular in its pre-`preferred` shape on a raw
+	// connection, then close it. Open's CREATE TABLE IF NOT EXISTS will
+	// then leave this table exactly as-is, reproducing the legacy drift.
 	raw, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatalf("sql.Open(raw): %v", err)
 	}
 	if _, err := raw.ExecContext(context.Background(), `
-		CREATE TABLE trait_value (
-			concept_id    TEXT NOT NULL,
-			vocab         TEXT NOT NULL,
-			vocab_version TEXT NOT NULL,
-			dim           TEXT NOT NULL,
-			value         TEXT NOT NULL,
-			niche_width   REAL,
-			n_systems     INTEGER
+		CREATE TABLE vernacular (
+			concept_id TEXT NOT NULL,
+			lang       TEXT NOT NULL,
+			name       TEXT NOT NULL
 		)`); err != nil {
-		t.Fatalf("creating legacy trait_value: %v", err)
+		t.Fatalf("creating legacy vernacular: %v", err)
 	}
 	if err := raw.Close(); err != nil {
 		t.Fatalf("closing raw: %v", err)
@@ -52,17 +53,17 @@ func TestOpen_RejectsSchemaDriftMissingColumn(t *testing.T) {
 	// somewhere: a check that flagged the whole table (every column "missing")
 	// would satisfy two independent Contains calls but be a different, wronger
 	// diagnosis.
-	if !strings.Contains(err.Error(), "trait_value (missing resolution)") {
-		t.Errorf("Open error = %q, want it to name %q", err.Error(), "trait_value (missing resolution)")
+	if !strings.Contains(err.Error(), "vernacular (missing preferred)") {
+		t.Errorf("Open error = %q, want it to name %q", err.Error(), "vernacular (missing preferred)")
 	}
 }
 
 // TestOpen_RejectsSchemaDriftInAnyTable proves the check is general across
-// tables, not special-cased to trait_value: dropping resolution from a
+// tables, not special-cased to taxon_concept: dropping resolution from a
 // DIFFERENT table (name_space_entry, whose column arrived in SP9) must be
-// caught and named too. Without this, a check narrowed to trait_value — or one
-// that stopped at the first table — would reopen the silent-500 bug on every
-// other table.
+// caught and named too. Without this, a check narrowed to taxon_concept — or
+// one that stopped at the first table — would reopen the silent-500 bug on
+// every other table.
 func TestOpen_RejectsSchemaDriftInAnyTable(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "old2.sqlite")
@@ -117,7 +118,7 @@ func TestOpen_ToleratesExtraColumn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sql.Open(raw): %v", err)
 	}
-	if _, err := raw.ExecContext(context.Background(), `ALTER TABLE trait_value ADD COLUMN future_col TEXT`); err != nil {
+	if _, err := raw.ExecContext(context.Background(), `ALTER TABLE taxon_concept ADD COLUMN future_col TEXT`); err != nil {
 		t.Fatalf("adding extra column: %v", err)
 	}
 	if err := raw.Close(); err != nil {

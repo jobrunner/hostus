@@ -244,24 +244,29 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 		// so its own canonical value cannot be read back outside a MATCH; the
 		// name+concept_name join is the only practical route to it.
 		//
-		// The second EXISTS arm exempts a concept reached via an AGGREGATE
-		// name-space alias (e.g. "Festuca ovina aggr."): those aliases are
-		// indexed straight into fts_name/fts_name_map (is_aggregate=1) and
-		// never gain a `name`/`concept_name` row of their own (see
-		// TestSuggest_AggregateSpellingFindsConceptAndFlagsIt), so the first
-		// EXISTS arm alone would make every aggregate-alias suggest a
-		// name_start false negative. ftsPrefixToken already quotes q's whole
-		// canonicalized, marker-stripped string as one FTS5 phrase, so an
-		// aggregate-alias hit already required the WHOLE alias phrase to
-		// match — the single-token position independence that causes the
-		// epithet false positive above does not apply here.
+		// A real aggregate name-space alias (e.g. "Corynephorus canescens
+		// agg.") is deliberately NOT given its own exemption arm here: per
+		// internal/application/namespace_ingest.go's aggregate-to-nominate
+		// rule, a resolved aggregate alias always carries the SAME genus+
+		// epithet as its concept's accepted name, only with a marker
+		// appended — so a genuine aggregate query (marker-stripped by the
+		// same domain.StripAggregateMarkers call below) already reduces to
+		// that accepted name's own prefix and is caught by the EXISTS below
+		// without any extra clause. An earlier version of this filter added
+		// a second EXISTS arm that exempted a concept from name_start
+		// whenever ANY of its is_aggregate=1 fts_name rows was among the
+		// FTS matches — that arm checked only ROW MEMBERSHIP, never whether
+		// the matched text itself started with the prefix, so a bare-
+		// epithet query (e.g. "canescens", which only ever matches the
+		// aggregate alias's EPITHET TOKEN via the same position-independent
+		// FTS5 behavior this filter exists to close) silently exempted the
+		// whole concept from name_start again — reopening the exact SP7 bug
+		// for every concept carrying an aggregate alias. See
+		// TestSuggest_NameStart_AggregateAliasDoesNotExemptBareEpithetQuery.
 		prefix := domain.StripAggregateMarkers(domain.Canonicalize(q))
 		nameStartFilter = ` AND EXISTS (
 			SELECT 1 FROM name nm JOIN concept_name cn ON cn.name_id = nm.id
 			WHERE cn.concept_id = tc.id AND nm.canonical_fold LIKE ? || '%'
-			UNION
-			SELECT 1 FROM matches mm JOIN fts_name_map fnm2 ON fnm2.rowid = mm.rowid
-			WHERE fnm2.concept_id = tc.id AND fnm2.is_aggregate = 1
 		)`
 		args = append(args, prefix)
 	}

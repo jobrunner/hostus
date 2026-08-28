@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/jobrunner/hostus/internal/adapters/sqlite"
 	"github.com/jobrunner/hostus/internal/application"
 	"github.com/jobrunner/hostus/internal/domain"
+	"github.com/jobrunner/hostus/internal/ports/output"
 
 	httpx "github.com/jobrunner/hostus/internal/adapters/http"
 )
@@ -425,4 +427,139 @@ func assertTranslateError(t *testing.T, rr *httptest.ResponseRecorder, wantStatu
 	if got.Error.Message == "" {
 		t.Errorf("error message is empty")
 	}
+}
+
+// --- Task 11: target_space as a NAME SPACE (eurosl/germansl/wcvp) ---------
+
+// stubTranslateNSRepo is a minimal output.Repository for Task 11's
+// name-space-target branch over the real HTTP surface, mirroring
+// stubSecRepo's focused-double pattern rather than a full sqlite ingest —
+// only the ConceptID entry path is exercised, so MatchNames/MatchExact are
+// never called.
+type stubTranslateNSRepo struct {
+	output.Repository
+	nameSpaces []domain.NameSpaceMeta
+	entries    map[string][]domain.NameSpaceEntry
+	concepts   map[string]domain.Concept
+}
+
+func (s stubTranslateNSRepo) NameSpaces(context.Context) ([]domain.NameSpaceMeta, error) {
+	return s.nameSpaces, nil
+}
+
+func (s stubTranslateNSRepo) NameSpaceEntries(_ context.Context, conceptID string, _ []string) ([]domain.NameSpaceEntry, error) {
+	return s.entries[conceptID], nil
+}
+
+func (s stubTranslateNSRepo) Concept(_ context.Context, id string) (*domain.Concept, []output.SynonymName, []domain.Xref, []domain.Distribution, error) {
+	c, ok := s.concepts[id]
+	if !ok {
+		return nil, nil, nil, nil, fmt.Errorf("concept %q: %w", id, domain.ErrNotFound)
+	}
+	return &c, nil, nil, nil, nil
+}
+
+func (s stubTranslateNSRepo) BackboneVersions(context.Context) ([]domain.BackboneVersion, error) {
+	return nil, nil
+}
+
+// SecReferenceByID is reached on the deliberately unresolved "wcvp from a
+// native concept" fallthrough (see application.Translate): "wcvp" is never
+// a real sec_reference row, so this always 404s, matching the pre-existing
+// "unknown target space" behavior for any unresolvable target_space.
+func (s stubTranslateNSRepo) SecReferenceByID(_ context.Context, id string) (domain.SecReference, error) {
+	return domain.SecReference{}, fmt.Errorf("sec %q: %w", id, domain.ErrNotFound)
+}
+
+func nsConcept(id, canonical string) domain.Concept {
+	return domain.Concept{
+		ID: id, BackboneID: "cdm", Rank: domain.RankSpecies, Status: domain.StatusAccepted,
+		AcceptedName: domain.Name{ID: id + ":name", Canonical: canonical, Authorship: "L.", Rank: domain.RankSpecies},
+	}
+}
+
+// TestTranslateNameSpaceTargetOverHTTP pins the wire shape of the new
+// branch: name_space_translation is populated, candidates stays an empty
+// array (never omitted, same discipline as no_relation_recorded), and
+// result names the new outcome distinctly from translated/
+// no_relation_recorded.
+func TestTranslateNameSpaceTargetOverHTTP(t *testing.T) {
+	repo := stubTranslateNSRepo{
+		nameSpaces: []domain.NameSpaceMeta{{ID: "germansl"}},
+		concepts:   map[string]domain.Concept{"cdm:concept:a": nsConcept("cdm:concept:a", "Abies alba")},
+		entries: map[string][]domain.NameSpaceEntry{
+			"cdm:concept:a": {{Space: "germansl", ExtID: "1", Name: "Weiß-Tanne", Status: domain.NameSpaceStatusAccepted}},
+		},
+	}
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	got := decodeTranslateOn(t, r, `{"concept_id":"cdm:concept:a","target_space":"germansl"}`)
+
+	if got["result"] != "name_space_translation" {
+		t.Errorf("result = %v, want %q", got["result"], "name_space_translation")
+	}
+	cands, ok := got["candidates"].([]any)
+	if !ok || len(cands) != 0 {
+		t.Errorf("candidates = %v, want an empty array", got["candidates"])
+	}
+	nst, ok := got["name_space_translation"].(map[string]any)
+	if !ok {
+		t.Fatalf("name_space_translation missing or wrong shape: %v", got["name_space_translation"])
+	}
+	if nst["name_space"] != "germansl" || nst["name"] != "Weiß-Tanne" {
+		t.Errorf("name_space_translation = %v, want {germansl, Weiß-Tanne}", nst)
+	}
+	if _, hasPolicy := nst["aggregate_policy"]; hasPolicy {
+		t.Errorf("aggregate_policy present for a plain-species query, want omitted: %v", nst)
+	}
+}
+
+// TestTranslateWCVPTrivialIdentityOverHTTP pins the "wcvp" special case for
+// a source that is already a WCVP concept.
+func TestTranslateWCVPTrivialIdentityOverHTTP(t *testing.T) {
+	repo := stubTranslateNSRepo{
+		concepts: map[string]domain.Concept{"wcvp:concept:1": nsConcept("wcvp:concept:1", "Salsola kali")},
+	}
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	got := decodeTranslateOn(t, r, `{"concept_id":"wcvp:concept:1","target_space":"wcvp"}`)
+
+	nst, ok := got["name_space_translation"].(map[string]any)
+	if !ok {
+		t.Fatalf("name_space_translation missing or wrong shape: %v", got["name_space_translation"])
+	}
+	if nst["name_space"] != "wcvp" || nst["name"] != "Salsola kali" {
+		t.Errorf("name_space_translation = %v, want {wcvp, Salsola kali}", nst)
+	}
+}
+
+// TestTranslateWCVPTargetFromNativeConceptIs404OverHTTP pins the documented
+// scope gap over the HTTP surface too: a native eurosl/germansl concept has
+// no reverse path back to "wcvp" in today's schema.
+func TestTranslateWCVPTargetFromNativeConceptIs404OverHTTP(t *testing.T) {
+	repo := stubTranslateNSRepo{
+		concepts: map[string]domain.Concept{"eurosl:concept:1": nsConcept("eurosl:concept:1", "Salsola kali aggr.")},
+	}
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/translate",
+		bytes.NewBufferString(`{"concept_id":"eurosl:concept:1","target_space":"wcvp"}`))
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 (body %s)", rr.Code, rr.Body.String())
+	}
+}
+
+// decodeTranslateOn is decodeTranslate for a caller that built its own
+// router (the sqlite-backed tests in this file share one via postTranslate,
+// but the stub-repo tests above need a router per stubTranslateNSRepo
+// value).
+func decodeTranslateOn(t *testing.T, r http.Handler, body string) map[string]any {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/v1/translate", bytes.NewBufferString(body))
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	return decodeTranslate(t, rr)
 }

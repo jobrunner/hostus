@@ -53,6 +53,7 @@ func TestOpenAPISchemasMatchDTOs(t *testing.T) {
 		"TranslateCandidate":        reflect.TypeOf(translateCandidateDTO{}),
 		"TranslateNameCandidate":    reflect.TypeOf(translateNameCandidateDTO{}),
 		"TranslateResponse":         reflect.TypeOf(translateResponseDTO{}),
+		"NameSpaceTranslation":      reflect.TypeOf(nameSpaceTranslationDTO{}),
 		"ErrorResponse":             reflect.TypeOf(httperr.Response{}),
 		"MatchNameRequest":          reflect.TypeOf(matchNameDTO{}),
 		"MatchRequest":              reflect.TypeOf(matchRequestDTO{}),

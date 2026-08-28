@@ -80,6 +80,39 @@ func TestIngestNativeSpace_SkipsSpeciesAndInfraspecificRows(t *testing.T) {
 	}
 }
 
+// TestIngestNativeSpace_OrdinaryRankGetsEmptyRankVerbatim is the fix-round-1
+// regression test: domain.Name.RankVerbatim / domain.Concept.RankVerbatim
+// are documented (internal/domain/taxon.go) as populated ONLY for
+// domain.RankOther — Rank itself already identifies the canonical spelling
+// for every other rank. A Fall-B concept with an ORDINARY rank (Family)
+// must therefore come back with RankVerbatim == "", not the raw source
+// spelling.
+func TestIngestNativeSpace_OrdinaryRankGetsEmptyRankVerbatim(t *testing.T) {
+	repo := openMemoryRepo(t)
+	src := staticNativeRows{
+		{Taxon: "Chenopodiaceae", SourceID: "fam1", Rank: "Family", Status: "accepted"},
+	}
+	bv := domain.BackboneVersion{ID: "eurosl", Version: "2026-08-27", Redistribution: domain.RedistributionUnknown}
+
+	report, err := application.IngestNativeSpace(context.Background(), repo, src, bv, domain.RankFamily)
+	if err != nil {
+		t.Fatalf("IngestNativeSpace: unexpected error: %v", err)
+	}
+	if report.Written != 1 {
+		t.Fatalf("report.Written = %d, want 1", report.Written)
+	}
+
+	var concept *domain.Concept
+	if c, _, _, _, err := repo.Concept(context.Background(), "eurosl:concept:fam1"); err != nil {
+		t.Fatalf("Concept: unexpected error: %v", err)
+	} else {
+		concept = c
+	}
+	if concept.RankVerbatim != "" {
+		t.Errorf("concept.RankVerbatim = %q, want empty (Family is not RankOther)", concept.RankVerbatim)
+	}
+}
+
 func TestIngestNativeSpace_UnknownRankFallsBackToOtherAndIsReported(t *testing.T) {
 	repo := openMemoryRepo(t)
 	src := staticNativeRows{

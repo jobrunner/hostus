@@ -90,6 +90,25 @@ func qualifiesAsFallBConcept(rank, minRank domain.Rank) bool {
 	return ri >= mi && ri < si
 }
 
+// rankVerbatimFor decides what to store in domain.Name.RankVerbatim /
+// domain.Concept.RankVerbatim for one row: verbatim ONLY when rank is
+// domain.RankOther, empty otherwise. This mirrors the documented invariant
+// on both fields (see their doc comments in internal/domain/taxon.go: Rank
+// alone already identifies the canonical spelling for every rank besides
+// RankOther, so setting RankVerbatim unconditionally would defeat
+// "RankVerbatim populated" as a signal for "this rank is exotic/RankOther")
+// and the same gating internal/application/ingest.go's WCVP ingest already
+// applies. Extracted as its own function (rather than an inline
+// `if rank == domain.RankOther` at each of the two call sites) so the
+// invariant itself — not just IngestNativeSpace's end-to-end behavior — is
+// directly unit-testable.
+func rankVerbatimFor(rank domain.Rank, verbatim string) string {
+	if rank == domain.RankOther {
+		return verbatim
+	}
+	return ""
+}
+
 // IngestNativeSpace writes every row of src whose rank qualifies (see
 // qualifiesAsFallBConcept — at-or-more-specific-than minRank, but strictly
 // more general than SPECIES) as its own taxon_concept with
@@ -186,19 +205,28 @@ func writeNativeRow(
 		return false, nil
 	}
 
+	// rankVerbatimFor gates RankVerbatim exactly like
+	// internal/application/ingest.go's WCVP ingest: populated ONLY for
+	// RankOther. See its own doc comment for why.
+	rv := rankVerbatimFor(rank, verbatim)
 	name := domain.Name{
 		ID:           bv.ID + ":name:" + row.SourceID,
 		Canonical:    row.Taxon,
 		Rank:         rank,
-		RankVerbatim: verbatim,
+		RankVerbatim: rv,
 	}
 	concept := domain.Concept{
 		ID:           bv.ID + ":concept:" + row.SourceID,
 		BackboneID:   bv.ID,
 		AcceptedName: name,
 		Rank:         rank,
-		RankVerbatim: verbatim,
 		Status:       domain.StatusAccepted,
+		// RankVerbatim mirrors name.RankVerbatim: both were derived from the
+		// same row by the same domain.ParseRankLenient call, so they're
+		// always identical (see domain.Concept.RankVerbatim's doc comment
+		// for why it's still its own field). Matches
+		// internal/application/ingest.go's WCVP ingest.
+		RankVerbatim: rv,
 	}
 	if row.ParentID != "" && qualifyingSourceIDs[row.ParentID] {
 		concept.ParentID = bv.ID + ":concept:" + row.ParentID

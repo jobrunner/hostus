@@ -448,13 +448,27 @@ type nameSpaceEntryWrite struct {
 	entry     domain.NameSpaceEntry
 }
 
+// classificationWrite records one UpsertClassification call.
+type classificationWrite struct {
+	conceptID                    string
+	family, orderName, className string
+}
+
+// vernacularWrite records one AddVernacularName call.
+type vernacularWrite struct {
+	conceptID string
+	name      domain.VernacularName
+}
+
 // fakeNameSpaceTx records what IngestNameSpace writes and can fail on demand.
 type fakeNameSpaceTx struct {
-	failOn    string
-	spaces    []domain.NameSpaceMeta
-	entries   []nameSpaceEntryWrite
-	committed bool
-	rolled    bool
+	failOn          string
+	spaces          []domain.NameSpaceMeta
+	entries         []nameSpaceEntryWrite
+	classifications []classificationWrite
+	vernaculars     []vernacularWrite
+	committed       bool
+	rolled          bool
 }
 
 func (t *fakeNameSpaceTx) UpsertNameSpace(meta domain.NameSpaceMeta) error {
@@ -470,6 +484,22 @@ func (t *fakeNameSpaceTx) AddNameSpaceEntry(conceptID string, e domain.NameSpace
 		return errors.New("boom")
 	}
 	t.entries = append(t.entries, nameSpaceEntryWrite{conceptID: conceptID, entry: e})
+	return nil
+}
+
+func (t *fakeNameSpaceTx) UpsertClassification(conceptID string, family, orderName, className string) error {
+	if t.failOn == "classification" {
+		return errors.New("boom")
+	}
+	t.classifications = append(t.classifications, classificationWrite{conceptID: conceptID, family: family, orderName: orderName, className: className})
+	return nil
+}
+
+func (t *fakeNameSpaceTx) AddVernacularName(conceptID string, v domain.VernacularName) error {
+	if t.failOn == "vernacular" {
+		return errors.New("boom")
+	}
+	t.vernaculars = append(t.vernaculars, vernacularWrite{conceptID: conceptID, name: v})
 	return nil
 }
 
@@ -618,6 +648,75 @@ func TestIngestNameSpace_CarriesTheSourceStatus(t *testing.T) {
 		if !e.AcceptedInSpace() {
 			t.Errorf("entry %s does not report as accepted, so it could not win a target-space tie", e.ExtID)
 		}
+	}
+}
+
+// TestIngestNameSpace_WritesClassificationOntoMatchedConcept pins Task 4:
+// once a row resolves, its Family/OrderName/ClassName (already walked up the
+// source's own parent chain by the caller — see internal/app/ingest.go's
+// classificationFor) land on taxon_concept via UpsertClassification, and are
+// readable back through repo.Concept(). Deviates from the brief's literal
+// example (which seeds its own "Salsola kali" concept via an unspecified
+// seededNamespaceRepo helper): reusing seededMatchRepo's real WCVP fixture
+// and its already-known festucaOvinaConceptID gets the same coverage without
+// inventing a second concept-seeding helper for one test.
+func TestIngestNameSpace_WritesClassificationOntoMatchedConcept(t *testing.T) {
+	repo := seededMatchRepo(t)
+	ctx := context.Background()
+
+	src := sliceRowSource{{
+		Taxon: "Festuca ovina", SourceID: "1408c0e8", Status: "accepted",
+		Family: "Poaceae", OrderName: "Poales", ClassName: "Liliopsida",
+	}}
+
+	report, err := application.IngestNameSpace(ctx, repo, src, floravegMeta)
+	if err != nil {
+		t.Fatalf("IngestNameSpace: unexpected error: %v", err)
+	}
+	if report.Matched != 1 {
+		t.Fatalf("report.Matched = %d, want 1", report.Matched)
+	}
+
+	var concept *domain.Concept
+	if c, _, _, _, err := repo.Concept(ctx, festucaOvinaConceptID); err != nil {
+		t.Fatalf("Concept: unexpected error: %v", err)
+	} else {
+		concept = c
+	}
+	if concept.Family != "Poaceae" {
+		t.Errorf("concept.Family = %q, want %q", concept.Family, "Poaceae")
+	}
+	if concept.OrderName != "Poales" {
+		t.Errorf("concept.OrderName = %q, want %q", concept.OrderName, "Poales")
+	}
+	if concept.ClassName != "Liliopsida" {
+		t.Errorf("concept.ClassName = %q, want %q", concept.ClassName, "Liliopsida")
+	}
+}
+
+// TestIngestNameSpace_WritesVernacularNameOntoMatchedConcept pins the
+// VernacularDE half of Task 4: a matched row's German common name reaches
+// tx.AddVernacularName exactly once, tagged "de", for the resolved
+// concept — asserted against the fake tx (application has no read-back
+// query for `vernacular`; the sqlite adapter's own round-trip is pinned
+// separately in internal/adapters/sqlite/namespace_test.go).
+func TestIngestNameSpace_WritesVernacularNameOntoMatchedConcept(t *testing.T) {
+	repo := &fakeNameSpaceRepo{
+		matches: map[string][]output.MatchCandidate{
+			"festuca ovina": {{Concept: domain.Concept{ID: "c-1"}}},
+		},
+	}
+	src := sliceRowSource{{Taxon: "Festuca ovina", SourceID: "1", VernacularDE: "Schaf-Schwingel"}}
+
+	if _, err := application.IngestNameSpace(context.Background(), repo, src, floravegMeta); err != nil {
+		t.Fatalf("IngestNameSpace: unexpected error: %v", err)
+	}
+	if len(repo.tx.vernaculars) != 1 {
+		t.Fatalf("vernaculars = %+v, want exactly one write", repo.tx.vernaculars)
+	}
+	got := repo.tx.vernaculars[0]
+	if got.conceptID != "c-1" || got.name != (domain.VernacularName{Language: "de", Name: "Schaf-Schwingel"}) {
+		t.Errorf("vernaculars[0] = %+v, want conceptID=c-1 name={de Schaf-Schwingel}", got)
 	}
 }
 

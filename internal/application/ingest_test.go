@@ -966,7 +966,9 @@ func (t *fakeCapturingTx) UpsertNameSpace(domain.NameSpaceMeta) error        { r
 func (t *fakeCapturingTx) AddNameSpaceEntry(string, domain.NameSpaceEntry) error {
 	return nil
 }
-func (t *fakeCapturingTx) UpsertSecReference(domain.SecReference) error { return nil }
+func (t *fakeCapturingTx) UpsertClassification(string, string, string, string) error { return nil }
+func (t *fakeCapturingTx) AddVernacularName(string, domain.VernacularName) error     { return nil }
+func (t *fakeCapturingTx) UpsertSecReference(domain.SecReference) error              { return nil }
 func (t *fakeCapturingTx) AddConceptRelation(string, string, domain.Relation, string) error {
 	return nil
 }

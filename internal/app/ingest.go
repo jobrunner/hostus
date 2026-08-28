@@ -206,11 +206,60 @@ func ingestXrefSource(ctx context.Context, xs manifest.XrefSource, manifestSHA s
 type nameSpaceRowSource struct{ ds *namelist.Dataset }
 
 func (s nameSpaceRowSource) Rows() []application.NameRow {
+	byID := make(map[string]namelist.Row, len(s.ds.Rows))
+	for _, r := range s.ds.Rows {
+		byID[r.SourceID] = r
+	}
+
 	out := make([]application.NameRow, 0, len(s.ds.Rows))
 	for _, r := range s.ds.Rows {
-		out = append(out, application.NameRow{Taxon: r.Taxon, SourceID: r.SourceID, Status: r.Status})
+		family, order, class := classificationFor(r, byID)
+		out = append(out, application.NameRow{
+			Taxon:        r.Taxon,
+			SourceID:     r.SourceID,
+			Status:       r.Status,
+			Family:       family,
+			OrderName:    order,
+			ClassName:    class,
+			VernacularDE: r.VernacularDE,
+		})
 	}
 	return out
+}
+
+// classificationFor walks r's parent chain (via namelist.Row.ParentID,
+// resolved through byID — the full row set of the SAME source, both
+// Fall-A species rows and Fall-B higher-rank rows) upward until it has
+// found the nearest FAMILY/ORDER/CLASS ancestor for each, or runs out of
+// parents. It stops after a bounded number of hops (guards against a
+// malformed cyclic parent chain in the raw data — never trust bulk pipeline
+// data to be well-formed, same posture as namelist's own row-level error
+// handling) rather than looping forever.
+func classificationFor(r namelist.Row, byID map[string]namelist.Row) (family, order, class string) {
+	const maxHops = 20
+	current := r
+	for hops := 0; hops < maxHops && current.ParentID != ""; hops++ {
+		parent, ok := byID[current.ParentID]
+		if !ok {
+			break
+		}
+		// switch true (not `switch rank`) deliberately: a switch typed on
+		// domain.Rank would have to exhaust every one of its ~30 rank
+		// constants (exhaustive linter) even though every rank besides
+		// these three just means "keep walking upward" — a bool switch
+		// says that without one line per uninteresting rank.
+		rank, _ := domain.ParseRankLenient(parent.Rank)
+		switch {
+		case rank == domain.RankFamily && family == "":
+			family = parent.Taxon
+		case rank == domain.RankOrder && order == "":
+			order = parent.Taxon
+		case rank == domain.RankClass && class == "":
+			class = parent.Taxon
+		}
+		current = parent
+	}
+	return family, order, class
 }
 
 // ingestNameSpace opens ns's canonical name-list CSV and runs

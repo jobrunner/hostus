@@ -64,6 +64,38 @@ func (t *ingestTx) AddNameSpaceEntry(conceptID string, e domain.NameSpaceEntry) 
 	return nil
 }
 
+// UpsertClassification records family/order/class for conceptID (see
+// schema.sql's taxon_concept.family/order_name/class_name). Empty strings
+// are written as SQL NULL via nullString — the same rule AddNameSpaceEntry
+// applies to e.Resolution — since a blank column here means "unknown",
+// never "empty on purpose".
+func (t *ingestTx) UpsertClassification(conceptID string, family, orderName, className string) error {
+	_, err := t.tx.ExecContext(t.ctx, `
+		UPDATE taxon_concept SET family = ?, order_name = ?, class_name = ?
+		WHERE id = ?`,
+		nullString(family), nullString(orderName), nullString(className), conceptID,
+	)
+	if err != nil {
+		return fmt.Errorf("sqlite: upserting classification for concept %q: %w", conceptID, err)
+	}
+	return nil
+}
+
+// AddVernacularName writes one vernacular-name row (schema.sql's
+// `vernacular` table). INSERT OR REPLACE on the (concept_id, lang, name)
+// primary key, mirroring AddNameSpaceEntry's re-ingest-is-idempotent rule.
+func (t *ingestTx) AddVernacularName(conceptID string, v domain.VernacularName) error {
+	_, err := t.tx.ExecContext(t.ctx, `
+		INSERT OR REPLACE INTO vernacular (concept_id, lang, name, preferred)
+		VALUES (?, ?, ?, 0)`,
+		conceptID, v.Language, v.Name,
+	)
+	if err != nil {
+		return fmt.Errorf("sqlite: adding vernacular name %q for concept %q: %w", v.Name, conceptID, err)
+	}
+	return nil
+}
+
 // boolToInt renders a Go bool for SQLite's integer boolean columns.
 func boolToInt(b bool) int {
 	if b {

@@ -231,6 +231,15 @@ type Concept struct {
 	// tracks its accepted name's Rank, but the two are separate structs/
 	// rows, so this is carried independently rather than assumed equal).
 	RankVerbatim string
+	// Family, OrderName and ClassName carry the classification ABOVE family
+	// (see schema.sql's taxon_concept.family/order_name/class_name and
+	// docs/superpowers/specs/2026-08-27-hostus-namensraum-redesign-design.md
+	// section 4). Empty when unknown — never guessed. A WCVP concept
+	// (BackboneID "wcvp") gets these from the Fall-A name-space crosswalk,
+	// not from its own data: WCVP carries no rank above FAMILY.
+	Family    string
+	OrderName string
+	ClassName string
 }
 
 // Xref is a cross-reference to a name or concept in an external authority
@@ -238,6 +247,15 @@ type Concept struct {
 type Xref struct {
 	Authority string
 	ExtID     string
+}
+
+// VernacularName is one vernacular (common) name for a concept, in a given
+// language (see the `vernacular` table, schema.sql). Language is a short tag
+// ("de", "en", ...), not validated further here — the ingest side is the
+// only writer and currently only ever supplies "de" (GermanSL).
+type VernacularName struct {
+	Language string
+	Name     string
 }
 
 // ClassificationEntry is one ancestor in a Concept's parent chain, as

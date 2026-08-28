@@ -20,6 +20,7 @@ import (
 // and MatchExact so the three reads decode identically.
 const conceptColumns = `
 	tc.id, tc.backbone_id, bv.version, tc.rank, COALESCE(tc.parent_id, ''), COALESCE(tc.sec_reference, ''), tc.status, COALESCE(tc.rank_verbatim, ''),
+	COALESCE(tc.family, ''), COALESCE(tc.order_name, ''), COALESCE(tc.class_name, ''),
 	an.id, an.canonical, COALESCE(an.authorship, ''), an.rank, COALESCE(an.ipni_id, ''), COALESCE(an.published_in, ''), COALESCE(an.nom_status, ''), COALESCE(an.basionym_id, ''), COALESCE(an.rank_verbatim, '')`
 
 const conceptJoin = `
@@ -38,6 +39,7 @@ func scanConcept(scan func(dest ...any) error) (*domain.Concept, error) {
 	)
 	if err := scan(
 		&c.ID, &c.BackboneID, &c.BackboneVersion, &conceptRank, &parentID, &secReference, &status, &conceptRankVerbatim,
+		&c.Family, &c.OrderName, &c.ClassName,
 		&an.ID, &an.Canonical, &an.Authorship, &nameRank, &an.IPNIID, &an.PublishedIn, &an.NomStatus, &an.BasionymID, &nameRankVerbatim,
 	); err != nil {
 		return nil, err
@@ -776,6 +778,7 @@ func scanMatchCandidateRows(rows *sql.Rows, op, arg string) ([]output.MatchCandi
 			&role, &homotypic,
 			&matched.ID, &matched.Canonical, &matched.Authorship, &matchedRank, &matched.IPNIID, &matched.PublishedIn, &matched.NomStatus, &matched.BasionymID, &matchedRankVerbatim,
 			&c.ID, &c.BackboneID, &c.BackboneVersion, &conceptRank, &parentID, &secReference, &status, &conceptRankVerbatim,
+			&c.Family, &c.OrderName, &c.ClassName,
 			&an.ID, &an.Canonical, &an.Authorship, &nameRank, &an.IPNIID, &an.PublishedIn, &an.NomStatus, &an.BasionymID, &nameRankVerbatim,
 		); err != nil {
 			return nil, fmt.Errorf("sqlite: scanning %s %q row: %w", op, arg, err)

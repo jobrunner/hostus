@@ -343,6 +343,13 @@ type IngestTx interface {
 	// upserted the space and resolved the concept first — see
 	// application.IngestNameSpace's two-phase resolution.
 	AddNameSpaceEntry(conceptID string, e domain.NameSpaceEntry) error
+	// UpsertClassification records family/order/class for conceptID — see
+	// Task 2's schema (taxon_concept.family/order_name/class_name). Empty
+	// strings are written as SQL NULL, never as "".
+	UpsertClassification(conceptID string, family, orderName, className string) error
+	// AddVernacularName writes one vernacular-name row (see the existing
+	// `vernacular` table, schema.sql:176).
+	AddVernacularName(conceptID string, v domain.VernacularName) error
 	// Finalize (re)builds the FTS5 autosuggest index (fts_name/fts_name_map)
 	// for every name this transaction has linked to a concept (both the
 	// accepted name and its synonyms), so Suggest can find them. Callers

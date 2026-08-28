@@ -81,6 +81,8 @@ func (t *fakeCDMTx) UpsertNameSpace(domain.NameSpaceMeta) error        { return 
 func (t *fakeCDMTx) AddNameSpaceEntry(string, domain.NameSpaceEntry) error {
 	return nil
 }
+func (t *fakeCDMTx) UpsertClassification(string, string, string, string) error { return nil }
+func (t *fakeCDMTx) AddVernacularName(string, domain.VernacularName) error     { return nil }
 func (t *fakeCDMTx) Finalize() error {
 	if t.failOn == "finalize" {
 		return errors.New("boom")

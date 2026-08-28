@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 
@@ -285,5 +286,92 @@ func TestUpsertNameSpace_UnknownSpaceViolatesForeignKey(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("AddNameSpaceEntry for an unrecorded space: want a foreign-key error, got nil")
+	}
+}
+
+// TestUpsertClassification_WritesFamilyOrderClassAndReadsBackViaConcept pins
+// Task 4's classification write: family/order_name/class_name land on
+// taxon_concept and are readable back through db.Concept, exercising the
+// SAME conceptColumns/scanConcept path /v1/concept/{id} uses.
+func TestUpsertClassification_WritesFamilyOrderClassAndReadsBackViaConcept(t *testing.T) {
+	db := openSeededDB(t)
+	ctx := context.Background()
+
+	tx, err := db.BeginIngest(ctx, seedBackboneVersion)
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	if err := tx.UpsertClassification(corynephorusID, "Poaceae", "Poales", "Liliopsida"); err != nil {
+		t.Fatalf("UpsertClassification: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+
+	var concept *domain.Concept
+	if c, _, _, _, err := db.Concept(ctx, corynephorusID); err != nil {
+		t.Fatalf("Concept: unexpected error: %v", err)
+	} else {
+		concept = c
+	}
+	if concept.Family != "Poaceae" || concept.OrderName != "Poales" || concept.ClassName != "Liliopsida" {
+		t.Errorf("concept classification = %+v, want Family=Poaceae OrderName=Poales ClassName=Liliopsida", concept)
+	}
+}
+
+// TestUpsertClassification_EmptyValuesAreStoredAsNULL pins the nullString
+// rule (mirroring AddNameSpaceEntry's resolution column): an UNSET
+// classification field must round-trip as SQL NULL — surfaced here as the
+// empty string db.Concept already COALESCEs it to — never as a literal "".
+func TestUpsertClassification_EmptyValuesAreStoredAsNULL(t *testing.T) {
+	db := openSeededDB(t)
+	ctx := context.Background()
+
+	tx, err := db.BeginIngest(ctx, seedBackboneVersion)
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	if err := tx.UpsertClassification(corynephorusID, "", "", ""); err != nil {
+		t.Fatalf("UpsertClassification: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+
+	var family sql.NullString
+	if err := db.sql.QueryRowContext(ctx, `SELECT family FROM taxon_concept WHERE id = ?`, corynephorusID).Scan(&family); err != nil {
+		t.Fatalf("querying family: unexpected error: %v", err)
+	}
+	if family.Valid {
+		t.Errorf("family = %q (Valid), want SQL NULL", family.String)
+	}
+}
+
+// TestAddVernacularName_WritesAndRoundTrips pins the vernacular half of Task
+// 4: one (concept_id, lang, name) row lands in `vernacular` and round-trips
+// verbatim.
+func TestAddVernacularName_WritesAndRoundTrips(t *testing.T) {
+	db := openSeededDB(t)
+	ctx := context.Background()
+
+	tx, err := db.BeginIngest(ctx, seedBackboneVersion)
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	if err := tx.AddVernacularName(corynephorusID, domain.VernacularName{Language: "de", Name: "Graues Blasenschmielengras"}); err != nil {
+		t.Fatalf("AddVernacularName: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+
+	var name string
+	if err := db.sql.QueryRowContext(ctx,
+		`SELECT name FROM vernacular WHERE concept_id = ? AND lang = ?`, corynephorusID, "de",
+	).Scan(&name); err != nil {
+		t.Fatalf("querying vernacular: unexpected error: %v", err)
+	}
+	if name != "Graues Blasenschmielengras" {
+		t.Errorf("vernacular name = %q, want %q", name, "Graues Blasenschmielengras")
 	}
 }

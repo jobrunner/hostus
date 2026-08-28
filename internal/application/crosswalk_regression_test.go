@@ -255,6 +255,19 @@ func hasProvenance(t *testing.T, repo output.Repository, concept *domain.Concept
 	return len(entries) > 0
 }
 
+// Final-review Important-6 note (spec §11.3, "Kein-Fabrikat"-Invariante):
+// there is currently NO schema field recording a derived statement's own
+// source_id (classification, aggregate membership, concept_agreement) — a
+// full schema addition for that is out of scope for the final fix round
+// (too large a change). This test is the deliberate substitute: it proves
+// the INDIRECT case spec §11.3 asks for — every concept with
+// Family/OrderName/ClassName set has EITHER a name_space_entry (Fall A) OR
+// is itself a Fall-B concept (backbone_id in {eurosl,germansl}) — via
+// hasProvenance below, using the FKs that already exist rather than a new
+// column. Adding an explicit source_id column so this becomes checkable
+// directly (not just structurally) remains a separate, larger follow-up
+// task.
+//
 // TestClassification_EveryValueTracesToASourceRow is the "no fabrication"
 // sample (Task 13 Step 3, spec §11 correctness test 3): every concept this
 // test finds with Family/OrderName/ClassName set must be traceable to an

@@ -486,7 +486,7 @@
 
   function renderClassification(chain) {
     var box = el("div");
-    box.appendChild(el("h3", null, "Klassifikation (Wurzel zuerst)"));
+    box.appendChild(el("h3", null, "Elternkette (Wurzel zuerst)"));
     if (!chain || chain.length === 0) {
       box.appendChild(el("p", "empty", "Keine Elternkette erfasst."));
       return box;
@@ -535,47 +535,6 @@
     box.appendChild(el("p", "mono", dists.map(function (d) {
       return d.area_scheme + ":" + d.area_code;
     }).join(", ")));
-    return box;
-  }
-
-  function renderTraits(res) {
-    var box = el("div");
-    box.appendChild(el("h3", null, "Traits"));
-    if (!res.ok) {
-      box.appendChild(errorBox(res));
-      return box;
-    }
-    var sets = (res.body && res.body.traits) || [];
-    if (sets.length === 0) {
-      box.appendChild(el("p", "empty", "Keine Indikatorwerte erfasst."));
-      return box;
-    }
-    sets.forEach(function (set) {
-      var head = set.vocab + " " + set.vocab_version + (set.taxonomy ? "  ·  " + set.taxonomy : "");
-      box.appendChild(el("p", null, head));
-      var t = table(["Dim", "Wert", "Skala", "Nischenbreite", "n_systems", "Auflösung"]);
-      var body = t.tBodies[0];
-      (set.values || []).forEach(function (v) {
-        var tr = el("tr");
-        tr.appendChild(cell("td", v.dim));
-        tr.appendChild(cell("td", num(v.value, 3), "num"));
-        var scale = v.scale
-          ? num(v.scale.min, 1) + "–" + num(v.scale.max, 1) + (v.scale.normalized ? " (norm.)" : "")
-          : "–";
-        tr.appendChild(cell("td", scale));
-        tr.appendChild(cell("td", v.niche_width === undefined ? "–" : num(v.niche_width, 3), "num"));
-        tr.appendChild(cell("td", v.n_systems === undefined ? "–" : String(v.n_systems), "num"));
-        var resol = el("td");
-        if (v.resolution) {
-          resol.appendChild(badge(v.resolution, "warn"));
-        } else {
-          resol.appendChild(el("span", null, "exakt"));
-        }
-        tr.appendChild(resol);
-        body.appendChild(tr);
-      });
-      box.appendChild(scroller(t));
-    });
     return box;
   }
 
@@ -630,7 +589,6 @@
     var base = "/v1/concept/" + encodeURIComponent(id);
     Promise.all([
       api(base),
-      api(base + "/traits"),
       api(base + "/synonyms?relevance=publication")
     ]).then(function (all) {
       if (currentConceptID !== id) { return; }
@@ -653,12 +611,11 @@
         ["sec.", c.sec && c.sec.title ? c.sec.title : secSource(c.concept_id), "sec"],
         ["Backbone", c.backbone ? c.backbone.id + " @ " + c.backbone.version : "", "backbone"]
       ]));
-      out.appendChild(renderClassification(c.classification));
+      out.appendChild(renderClassification(c.parent_chain));
       out.appendChild(renderXrefs(c.xrefs));
       out.appendChild(renderDistribution(c.distribution));
       out.appendChild(renderConceptSynonyms(c.synonyms));
-      out.appendChild(renderTraits(all[1]));
-      out.appendChild(renderPublicationSynonyms(all[2]));
+      out.appendChild(renderPublicationSynonyms(all[1]));
       conceptOut.replaceChildren(out);
     });
   }

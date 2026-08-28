@@ -273,6 +273,22 @@ paths:
             verdrängen. Eine nicht ingestierte Backbone liefert 400.
           schema:
             type: string
+        - name: match_mode
+          in: query
+          required: false
+          description: >-
+            Steuert, wie streng ein Kandidatenname `q` treffen muss. `` und
+            `name_start` (Standard, gleichwertig) verlangen, dass mindestens
+            eines der Namenstoken MIT `q` beginnt — die ursprüngliche,
+            engere Autosuggest-Semantik. `anywhere` stellt das reine FTS5-
+            Präfix-Verhalten wieder her, das `q` irgendwo im indexierten
+            Text (nicht nur am Tokenanfang) treffen lässt und dadurch mehr,
+            aber weniger präzise Treffer liefert. Jeder andere Wert liefert
+            400 und nennt den Wert.
+          schema:
+            type: string
+            enum: [name_start, anywhere]
+            default: name_start
       responses:
         '200':
           description: Priorisierte, gekürzte Liste von Autosuggest-Kandidaten.
@@ -1657,7 +1673,13 @@ components:
             (`concept_agreement`-Tabelle, Task 7) zwischen ihren beiden
             Aggregat-Concepts. Fehlt, wenn 0 oder 1 Namensraum das Aggregat
             kennt (nichts zu vergleichen) oder kein Vergleich vorberechnet
-            wurde.
+            wurde. BEKANNTE EINSCHRÄNKUNG: der `concept_agreement`-Vergleich
+            läuft nur über die Ränge SPECIES_AGGREGATE/GENUS_AGGREGATE
+            (application.ComputeConceptAgreement) — für einen SECTION/
+            SUBSECTION/SUBGENUS-Treffer (die drei anderen Sammelränge, für
+            die `options[]` selbst korrekt auflöst) bleibt `agreement` daher
+            aktuell IMMER leer, auch wenn beide Namensräume `status: known`
+            melden.
 
     SuggestItem:
       type: object

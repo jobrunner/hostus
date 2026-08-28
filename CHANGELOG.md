@@ -7,6 +7,29 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Changed
+
+* **`GET /v1/concept/{id}` / `GET /v1/xref`:** die Ahnen-Kette heißt jetzt
+  `parent_chain` statt `classification`. BREAKING. `classification` ist ein
+  NEUES Feld: ein Objekt `{family, order, class}` (Familie/Ordnung/Klasse
+  oberhalb von Family, aus dem EuroSL/GermanSL-Namensraum-Crosswalk).
+* **`POST /v1/match`:** liefert jetzt für jedes Ergebnis mit gesetzter
+  `concept_id` zusätzlich `classification` (dasselbe Objekt wie oben) sowie,
+  bei Aggregat-/Sammelrang-Treffern (SPECIES_AGGREGATE/GENUS_AGGREGATE/
+  SECTION/SUBSECTION/SUBGENUS), `aggregate_resolution` mit den nativen
+  Aggregat-Mitgliederlisten und dem eurosl/germansl-Übereinstimmungsstatus.
+  BREAKING: die Antwort ist nicht mehr byteweise identisch ohne
+  `target_space` gesetzt, sobald ein Treffer diese Felder trägt.
+* **`GET /v1/suggest`:** neuer optionaler `match_mode`-Parameter
+  (`name_start`, Standard, oder `anywhere`). BREAKING: `name_start` ändert
+  das bisherige Default-Verhalten (bislang immer `anywhere`, reines FTS5-
+  Präfix-Matching) auf ein engeres Standardverhalten — mindestens ein
+  Namenstoken muss jetzt selbst mit `q` beginnen.
+* **`POST /v1/translate`:** `target_space` akzeptiert jetzt zusätzlich zu
+  CDM-`sec.`-UUIDs auch Namensraum-Ids (`eurosl`/`germansl`/`wcvp`); die
+  Antwort trägt in diesem Fall `result: name_space_translation` mit dem
+  Ergebnis im gleichnamigen Feld statt in `candidates`.
+
 ### Removed
 
 * **Traits-Subsystem entfernt** (`GET /v1/concept/{id}/traits`, EIVE/Tichý/

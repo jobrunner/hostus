@@ -49,30 +49,73 @@ type SuggestItem struct {
 // counterpart (nothosubsp. after subspecies, nothovar. after subvariety,
 // nothof. after subform) — WCVP doesn't define a relative order between a
 // rank and its nothotaxon sibling, so this is a deliberate, documented
-// choice rather than a measured requirement. RankOther (and any other
-// unrecognized Rank) is placed last, after SUBFORM/NOTHOFORM, so it never
-// masquerades as FAMILY (ordinal 0) or intrudes elsewhere in the ordering.
+// choice rather than a measured requirement.
+//
+// The 26 EuroSL/GermanSL ranks (Task 1's extended canonical rank set) are
+// interleaved by taxonomic generality rather than appended at the end:
+//   - ROOT..ORDER sit ahead of FAMILY (more general than family);
+//   - SUBFAMILY/TRIBE sit between FAMILY and GENUS;
+//   - the collective/infrageneric ranks (SUBGENUS, SECTION, SUBSECTION,
+//     SERIES, SPECIES_AGGREGATE, GENUS_AGGREGATE) sit between GENUS and
+//     SPECIES — they are taxonomically broader than a species but narrower
+//     than a genus;
+//   - the remaining infraspecific ranks (COLL_SPECIES, SUBSPECIES_GROUP,
+//     PROLES, RACE, CONVAR, GREX, UNRANKED_INFRAGENERIC,
+//     UNRANKED_INFRASPECIFIC) sit after the existing infraspecies chain
+//     (SUBFORM/NOTHOFORM), since they are all finer-or-equal-to subspecies
+//     but the source data gives no sharper relative order among them.
+//
+// RankOther (and any other unrecognized Rank) is placed last, after all of
+// the above, so it never masquerades as a real rank or intrudes elsewhere
+// in the ordering.
 var rankOrder = map[Rank]int{
-	RankFamily:          0,
-	RankGenus:           1,
-	RankSpecies:         2,
-	RankSubspecies:      3,
-	RankNothosubspecies: 4,
-	RankVariety:         5,
-	RankSubvariety:      6,
-	RankNothovariety:    7,
-	RankForm:            8,
-	RankSubform:         9,
-	RankNothoform:       10,
+	RankRoot:          0,
+	RankPhylum:        1,
+	RankSubdivision:   2,
+	RankInformalClade: 3,
+	RankClass:         4,
+	RankSubclass:      5,
+	RankSuperorder:    6,
+	RankOrder:         7,
+
+	RankFamily:    8,
+	RankSubfamily: 9,
+	RankTribe:     10,
+
+	RankGenus:            11,
+	RankSubgenus:         12,
+	RankSection:          13,
+	RankSubsection:       14,
+	RankSeries:           15,
+	RankSpeciesAggregate: 16,
+	RankGenusAggregate:   17,
+
+	RankSpecies:         18,
+	RankSubspecies:      19,
+	RankNothosubspecies: 20,
+	RankVariety:         21,
+	RankSubvariety:      22,
+	RankNothovariety:    23,
+	RankForm:            24,
+	RankSubform:         25,
+	RankNothoform:       26,
+
+	RankCollSpecies:           27,
+	RankSubspeciesGroup:       28,
+	RankProles:                29,
+	RankRace:                  30,
+	RankConvar:                31,
+	RankGrex:                  32,
+	RankUnrankedInfrageneric:  33,
+	RankUnrankedInfraspecific: 34,
 }
 
-const unknownRankOrder = 11
+const unknownRankOrder = 35
 
-// RankOrderPriority returns the ordinal used to compare Ranks for suggest ranking
-// (§B.1 step 4): FAMILY(0) < GENUS(1) < SPECIES(2) < SUBSPECIES(3) <
-// VARIETY(5) < SUBVARIETY(6) < FORM(8) < SUBFORM(9), with the nothotaxon
-// ranks interleaved (see rankOrder's doc comment) and RankOther/any
-// unrecognized Rank sorting after all of them (11).
+// RankOrderPriority returns the ordinal used to compare Ranks for suggest
+// ranking (§B.1 step 4): the general-to-specific ordering documented on
+// rankOrder above, with RankOther/any unrecognized Rank sorting after all
+// of them (unknownRankOrder).
 func RankOrderPriority(r Rank) int {
 	if order, ok := rankOrder[r]; ok {
 		return order

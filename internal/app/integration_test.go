@@ -886,10 +886,13 @@ func assertFuzzyMatch(t *testing.T, client *http.Client, baseURL string) {
 }
 
 // assertClassificationEndToEnd drives GET /v1/concept/{corynephorus} over
-// real HTTP and checks the classification chain the WCVP fixture actually
+// real HTTP and checks the ancestor chain the WCVP fixture actually
 // carries: Corynephorus canescens' (405825) parent is the genus concept
 // Corynephorus (451295), also present in the fixture — see
 // wcvp_taxon.csv's parentNameUsageID column.
+//
+// The field was renamed from "classification" (array) to "parent_chain" by
+// Task 9 — "classification" is now a distinct object ({family,order,class}).
 func assertClassificationEndToEnd(t *testing.T, client *http.Client, baseURL string) {
 	t.Helper()
 	resp, err := client.Get(baseURL + "/v1/concept/" + corynephorusConceptID)
@@ -900,26 +903,26 @@ func assertClassificationEndToEnd(t *testing.T, client *http.Client, baseURL str
 		t.Fatalf("GET /v1/concept: status = %d, want 200", resp.StatusCode)
 	}
 	var body struct {
-		Classification []struct {
+		ParentChain []struct {
 			ConceptID string `json:"concept_id"`
 			Canonical string `json:"canonical"`
 			Rank      string `json:"rank"`
-		} `json:"classification"`
+		} `json:"parent_chain"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decoding /v1/concept response: %v", err)
 	}
 	_ = resp.Body.Close()
 
-	if len(body.Classification) == 0 {
-		t.Fatal("classification is empty, want at least the Corynephorus genus ancestor")
+	if len(body.ParentChain) == 0 {
+		t.Fatal("parent_chain is empty, want at least the Corynephorus genus ancestor")
 	}
-	parent := body.Classification[len(body.Classification)-1]
+	parent := body.ParentChain[len(body.ParentChain)-1]
 	if parent.Canonical != "Corynephorus" {
-		t.Errorf("classification's last (immediate parent) entry canonical = %q, want %q", parent.Canonical, "Corynephorus")
+		t.Errorf("parent_chain's last (immediate parent) entry canonical = %q, want %q", parent.Canonical, "Corynephorus")
 	}
 	if parent.Rank != "GENUS" {
-		t.Errorf("classification's last entry rank = %q, want %q", parent.Rank, "GENUS")
+		t.Errorf("parent_chain's last entry rank = %q, want %q", parent.Rank, "GENUS")
 	}
 }
 

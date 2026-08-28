@@ -921,6 +921,9 @@ func (f *fakeCapturingRepo) AggregateConcepts(context.Context, string, []domain.
 func (f *fakeCapturingRepo) WriteConceptAgreement(context.Context, []domain.ConceptAgreementPair) error {
 	return nil
 }
+func (f *fakeCapturingRepo) ConceptAgreement(context.Context, string) (*domain.ConceptAgreementPair, error) {
+	return nil, nil
+}
 func (f *fakeCapturingRepo) NameSpaces(context.Context) ([]domain.NameSpaceMeta, error) {
 	panic("not needed by Ingest")
 }

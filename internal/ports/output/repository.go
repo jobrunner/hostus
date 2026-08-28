@@ -207,6 +207,15 @@ type Repository interface {
 	// ingest.
 	WriteConceptAgreement(ctx context.Context, pairs []domain.ConceptAgreementPair) error
 
+	// ConceptAgreement returns the precomputed concept_agreement row
+	// involving conceptID on EITHER side (eurosl_concept_id or
+	// germansl_concept_id), or (nil, nil) if none exists — no precomputed
+	// agreement is a normal outcome (e.g. the aggregate has no
+	// name-matched counterpart in the other space, or agreement was never
+	// (re)computed), not a failure. Used by Task 10's match-time aggregate
+	// resolution to populate AggregateResolution.Agreement.
+	ConceptAgreement(ctx context.Context, conceptID string) (*domain.ConceptAgreementPair, error)
+
 	// Suggest returns FTS5 prefix-match candidates for q (an autosuggest
 	// query fragment), scored but UNRANKED: the application layer runs
 	// domain.RankSuggestions over the result and truncates to opts.Limit

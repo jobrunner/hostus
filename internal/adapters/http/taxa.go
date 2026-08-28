@@ -246,6 +246,17 @@ func classificationInfo(c *domain.Concept) *classificationInfoDTO {
 	return &classificationInfoDTO{Family: c.Family, Order: c.OrderName, Class: c.ClassName}
 }
 
+// classificationInfoFromMatch is classificationInfo's counterpart for
+// application.MatchResult.Classification (Task 10): same "nil unless
+// something is known" rule, applied to the domain.Classification struct
+// matchNamesFiltered fills in rather than a *domain.Concept.
+func classificationInfoFromMatch(cl domain.Classification) *classificationInfoDTO {
+	if cl.Family == "" && cl.OrderName == "" && cl.ClassName == "" {
+		return nil
+	}
+	return &classificationInfoDTO{Family: cl.Family, Order: cl.OrderName, Class: cl.ClassName}
+}
+
 // matchNameDTO is one entry of POST /v1/match's request body, per §B.2.
 type matchNameDTO struct {
 	ID       string `json:"id"`
@@ -295,6 +306,61 @@ type matchResultDTO struct {
 	TargetSpaceName        string `json:"target_space_name,omitempty"`
 	AggregatePolicy        string `json:"aggregate_policy,omitempty"`
 	ESyDiagnosticRelevance string `json:"esy_diagnostic_relevance,omitempty"`
+
+	// Classification and AggregateResolution are Task 10's additions,
+	// unconditional on target_space (unlike the three UC4 fields above):
+	// Classification is rendered whenever any of Family/Order/Class is
+	// known (reusing classificationInfoDTO/classificationInfo, exactly as
+	// GET /v1/concept/{id} does), and AggregateResolution only when the
+	// match carried one (an aggregate/collective-rank hit).
+	Classification      *classificationInfoDTO  `json:"classification,omitempty"`
+	AggregateResolution *aggregateResolutionDTO `json:"aggregate_resolution,omitempty"`
+}
+
+// aggregateResolutionOptionDTO is one name space's entry of a
+// matchResultDTO.aggregate_resolution.options[] array (Task 10).
+type aggregateResolutionOptionDTO struct {
+	NameSpace          string `json:"name_space"`
+	Status             string `json:"status,omitempty"`
+	AggregateConceptID string `json:"aggregate_concept_id,omitempty"`
+	MemberCount        int    `json:"member_count,omitempty"`
+}
+
+// aggregateResolutionDTO is POST /v1/match's aggregate_resolution object
+// (Task 10), present only for a result whose query or resolved concept is
+// an aggregate/collective rank.
+type aggregateResolutionDTO struct {
+	RequestedNameSpace string                         `json:"requested_name_space"`
+	Status             string                         `json:"status,omitempty"`
+	MemberCount        int                            `json:"member_count,omitempty"`
+	Options            []aggregateResolutionOptionDTO `json:"options"`
+	Agreement          string                         `json:"agreement,omitempty"`
+}
+
+// aggregateResolutionToDTO renders application.MatchResult.AggregateResolution
+// as the wire shape, or nil if res is nil (the caller must check res != nil
+// before rendering the containing field, since matchResultDTO.
+// AggregateResolution is itself omitempty on a nil pointer).
+func aggregateResolutionToDTO(res *domain.AggregateResolution) *aggregateResolutionDTO {
+	if res == nil {
+		return nil
+	}
+	options := make([]aggregateResolutionOptionDTO, len(res.Options))
+	for i, o := range res.Options {
+		options[i] = aggregateResolutionOptionDTO{
+			NameSpace:          o.NameSpace,
+			Status:             string(o.Status),
+			AggregateConceptID: o.AggregateConceptID,
+			MemberCount:        o.MemberCount,
+		}
+	}
+	return &aggregateResolutionDTO{
+		RequestedNameSpace: res.RequestedNameSpace,
+		Status:             string(res.Status),
+		MemberCount:        res.MemberCount,
+		Options:            options,
+		Agreement:          string(res.Agreement),
+	}
 }
 
 // esyRelevanceNotDeterminable is the sentinel value of every
@@ -552,6 +618,8 @@ func matchResultsToDTO(results []application.MatchResult, targetSpace bool) []ma
 			dto.AggregatePolicy = string(res.AggregatePolicy)
 			dto.ESyDiagnosticRelevance = esyRelevanceNotDeterminable
 		}
+		dto.Classification = classificationInfoFromMatch(res.Classification)
+		dto.AggregateResolution = aggregateResolutionToDTO(res.AggregateResolution)
 		out[i] = dto
 	}
 	return out

@@ -1567,6 +1567,28 @@ components:
             gelesen werden — genau dieser Fehlschluss ist der von UC4 gefürchtete
             False Negative.
           example: not_determinable
+        classification:
+          allOf:
+            - $ref: '#/components/schemas/ClassificationInfo'
+          description: >-
+            Familie/Ordnung/Klasse oberhalb von Family (Task 10, dieselbe Form
+            wie `Concept.classification`). Present sobald `concept_id` gesetzt
+            ist und mindestens eines der drei Unterfelder bekannt ist — nie
+            ein Objekt mit lauter leeren Strings, und UNABHÄNGIG von
+            `target_space` (anders als `target_space_name`/`aggregate_policy`/
+            `esy_diagnostic_relevance` oben).
+        aggregate_resolution:
+          allOf:
+            - $ref: '#/components/schemas/AggregateResolution'
+          description: >-
+            Nur present, wenn die Anfrage ein Aggregat-/Sammelrang-Name war
+            ODER das aufgelöste Concept selbst einen Sammelrang trägt
+            (SPECIES_AGGREGATE/GENUS_AGGREGATE/SECTION/SUBSECTION/SUBGENUS,
+            Spec Abschnitt 6). Nutzt Task 5/6/7s NATIVE Aggregat-Konzepte
+            (`concept_aggregate`-Tabelle, echte Mitgliederlisten) — ein
+            ANDERER, neuerer Mechanismus als `aggregate_policy`/
+            `target_space_name` oben, die den älteren Namensraum-Alias
+            (`NameSpaceEntry.Aggregate`) beschreiben.
 
     MatchResponse:
       type: object
@@ -1581,6 +1603,78 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/MatchResult'
+
+    AggregateResolutionOption:
+      type: object
+      required: [name_space]
+      description: >-
+        Ein Namensraum-Eintrag von `AggregateResolution.options[]` (Task 10):
+        das Ergebnis der Suche nach einem namensgleichen nativen
+        Aggregat-Konzept (`concept_aggregate`-Tabelle) in diesem Namensraum.
+      properties:
+        name_space:
+          type: string
+          enum: [eurosl, germansl, wcvp]
+        status:
+          type: string
+          enum: [known, unresolvable]
+          description: >-
+            Tri-State. `known`: ein namensgleiches natives Aggregat-Concept
+            wurde in diesem Namensraum gefunden. `unresolvable`: der
+            Namensraum wurde geprüft, aber keines gefunden. FEHLT (dritter
+            Zustand) für `wcvp`: WCVP führt strukturell keine nativen
+            Aggregat-Concepts, es gibt hier nichts nachzuschlagen.
+        aggregate_concept_id:
+          type: string
+          description: 'Nur gesetzt bei `status: known`.'
+        member_count:
+          type: integer
+          description: >-
+            Anzahl WCVP-Mitglieder des gefundenen Aggregat-Concepts. `0`
+            sowohl bei `unresolvable`/fehlendem `status` als auch bei einem
+            `known` Aggregat ohne (ingestierte) Mitglieder — nicht
+            unterscheidbar über dieses Feld allein.
+
+    AggregateResolution:
+      type: object
+      required: [requested_name_space, options]
+      description: >-
+        Task 10s Antwort auf „wie löst jeder Namensraum diese Aggregat-/
+        Sammelrang-Anfrage auf" — siehe `MatchResult.aggregate_resolution`.
+      properties:
+        requested_name_space:
+          type: string
+          description: >-
+            Namensraum des BEREITS aufgelösten Concepts (`concept_id`s
+            `<namespace>:concept:`-Präfix) — der Raum, in dem die Anfrage
+            tatsächlich gelandet ist, im Unterschied zu `options[]`, das für
+            jeden bekannten Namensraum berechnet wird.
+          example: eurosl
+        status:
+          type: string
+          enum: [known, unresolvable]
+          description: >-
+            Spiegelt den `options[]`-Eintrag von `requested_name_space`.
+            Bleibt leer, wenn `requested_name_space` keinen der drei
+            bekannten Namensräume nennt (z. B. ein `cdm:`-Concept).
+        member_count:
+          type: integer
+          description: Spiegelt den `options[]`-Eintrag von `requested_name_space`.
+        options:
+          type: array
+          description: Immer genau drei Einträge, in fester Reihenfolge — eurosl, germansl, wcvp.
+          items:
+            $ref: '#/components/schemas/AggregateResolutionOption'
+        agreement:
+          type: string
+          enum: [identical, subset, superset, overlap, disjoint, one_sided]
+          description: >-
+            Nur gesetzt, wenn SOWOHL eurosl ALS AUCH germansl `status: known`
+            sind — der vorberechnete Mitgliederlisten-Vergleich
+            (`concept_agreement`-Tabelle, Task 7) zwischen ihren beiden
+            Aggregat-Concepts. Fehlt, wenn 0 oder 1 Namensraum das Aggregat
+            kennt (nichts zu vergleichen) oder kein Vergleich vorberechnet
+            wurde.
 
     SuggestItem:
       type: object

@@ -125,7 +125,9 @@ func seedSynonymAndAcceptedSameNameOneConcept(t *testing.T, repo *sqlite.DB) str
 // should fuzzy-resolve to (a single epithet-letter typo, well past
 // domain.FuzzyThreshold; see domain.Similarity's doc comment). The real
 // WCVP test fixture carries no Silene at all, so this is seeded directly
-// via the Repository port, same pattern as seedFestucaOvinaAggregate.
+// via the Repository port, same pattern as seedFestucaOvinaAggregate. It
+// also carries a classification (Family "Caryophyllaceae", Task 10's
+// TestMatchNames_AlwaysIncludesClassification).
 func seedSileneOtites(t *testing.T, repo *sqlite.DB) string {
 	t.Helper()
 	ctx := context.Background()
@@ -143,6 +145,9 @@ func seedSileneOtites(t *testing.T, repo *sqlite.DB) string {
 	}
 	if err := tx.LinkName(concept.ID, name.ID, "accepted", nil); err != nil {
 		t.Fatalf("LinkName: unexpected error: %v", err)
+	}
+	if err := tx.UpsertClassification(concept.ID, "Caryophyllaceae", "", ""); err != nil {
+		t.Fatalf("UpsertClassification: unexpected error: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("Commit: unexpected error: %v", err)
@@ -737,5 +742,65 @@ func TestMatchNames_AggregateWithSeveralNamesOfOneConceptStillResolves(t *testin
 	}
 	if r.RequiresReview {
 		t.Error("RequiresReview = true, want false (two names, one concept, is not an ambiguity)")
+	}
+}
+
+// seededAggregateRepo seeds a fresh in-memory repo with native SPECIES_
+// AGGREGATE concepts for "Salsola kali" in BOTH eurosl (spelled "Salsola
+// kali agg.") and germansl (spelled "Salsola kali s.l." — a different
+// marker spelling, so the two never collide on MatchExact's exact-canonical
+// lookup, only on Task 10's name-match key
+// domain.Canonicalize(domain.StripAggregateMarkers(...))), each linked to
+// the SAME WCVP member, then precomputes+writes their concept_agreement
+// pair via application.ComputeConceptAgreement — which is Agreement
+// "identical" for identical member sets. A verbatim query for "Salsola kali
+// agg." then resolves (via MatchExact) uniquely to the eurosl concept.
+func seededAggregateRepo(t *testing.T) *sqlite.DB {
+	t.Helper()
+	repo := openMemoryRepo(t)
+	seedAggregateWithMembers(t, repo, "eurosl:concept:salsola-kali-agg", "Salsola kali agg.", []string{"wcvp:concept:salsola-kali-1"})
+	seedAggregateWithMembers(t, repo, "germansl:concept:salsola-kali-agg", "Salsola kali s.l.", []string{"wcvp:concept:salsola-kali-1"})
+
+	report, err := application.ComputeConceptAgreement(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("ComputeConceptAgreement: unexpected error: %v", err)
+	}
+	if err := repo.WriteConceptAgreement(context.Background(), report.Pairs); err != nil {
+		t.Fatalf("WriteConceptAgreement: unexpected error: %v", err)
+	}
+	return repo
+}
+
+func TestMatchNames_AlwaysIncludesClassification(t *testing.T) {
+	repo := seededMatchRepo(t)
+	seedSileneOtites(t, repo)
+	results, err := application.MatchNames(context.Background(), repo, []application.MatchRequest{
+		{ID: "1", Verbatim: "Silene otites"},
+	})
+	if err != nil {
+		t.Fatalf("MatchNames: unexpected error: %v", err)
+	}
+	if results[0].Classification.Family != "Caryophyllaceae" {
+		t.Errorf("Classification.Family = %q, want %q", results[0].Classification.Family, "Caryophyllaceae")
+	}
+}
+
+func TestMatchNames_AggregateHitCarriesResolutionAcrossSpaces(t *testing.T) {
+	repo := seededAggregateRepo(t)
+	results, err := application.MatchNames(context.Background(), repo, []application.MatchRequest{
+		{ID: "1", Verbatim: "Salsola kali agg."},
+	})
+	if err != nil {
+		t.Fatalf("MatchNames: unexpected error: %v", err)
+	}
+	res := results[0].AggregateResolution
+	if res == nil {
+		t.Fatal("AggregateResolution = nil, want non-nil for an aggregate match")
+	}
+	if len(res.Options) != 3 {
+		t.Fatalf("len(Options) = %d, want 3 (eurosl, germansl, wcvp)", len(res.Options))
+	}
+	if res.Agreement != domain.AgreementIdentical {
+		t.Errorf("Agreement = %q, want %q", res.Agreement, domain.AgreementIdentical)
 	}
 }

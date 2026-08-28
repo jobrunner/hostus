@@ -291,6 +291,63 @@ type Xref struct {
 	ExtID     string
 }
 
+// Classification is the classification-above-family slice of a Concept
+// (Family/OrderName/ClassName, see Concept's own doc comment), carried
+// separately on MatchResult (Task 10) so every /v1/match hit reports it
+// without a caller having to fetch the full concept.
+type Classification struct {
+	Family    string
+	OrderName string
+	ClassName string
+}
+
+// AggregateResolutionOption is one name space's (eurosl/germansl/wcvp)
+// native-aggregate-concept lookup result for an aggregate/collective-rank
+// match (Task 10, the concept_aggregate-table mechanism — NOT the
+// NameSpaceEntry-alias mechanism ResolveTargetSpace uses).
+//
+// Status is the tri-state from AggregatePolicy: AggregatePolicyKnown when a
+// name-matched native aggregate concept was found in that space,
+// AggregatePolicyUnresolvable when the space was checked but none matched,
+// and "" (the zero value) when the space structurally never carries native
+// aggregate concepts (wcvp — see AggregateResolution's doc comment).
+type AggregateResolutionOption struct {
+	NameSpace          string
+	Status             AggregatePolicy
+	AggregateConceptID string
+	MemberCount        int
+}
+
+// AggregateResolution is the per-match-result answer to "how does each name
+// space resolve this aggregate/collective-rank query", populated only when
+// the query is an aggregate name or the resolved concept itself carries a
+// collective rank (Task 10).
+//
+// RequestedNameSpace is the name space of the ALREADY-RESOLVED concept
+// (parsed from its "<space>:concept:<id>" id) — the space the request
+// actually landed in, as opposed to Options, which is computed for every
+// known name space regardless of which one the match resolved into.
+// Status/MemberCount at this top level mirror whichever Options entry
+// matches RequestedNameSpace (left at their zero value if RequestedNameSpace
+// names no known space, e.g. a "cdm:" concept).
+//
+// wcvp ALWAYS gets Status "" (absent)/AggregateConceptID ""/MemberCount 0 in
+// Options: WCVP structurally carries no native aggregate concepts (see the
+// design spec §6), so there is nothing to look up there — this is not a
+// lookup that came back empty, it is a lookup that was never meaningful.
+//
+// Agreement is set only when BOTH eurosl and germansl resolved to
+// AggregatePolicyKnown — the precomputed comparison of their two member
+// sets (Repository.ConceptAgreement) — and stays "" otherwise (0 or 1 name
+// space knowing the aggregate has nothing to compare).
+type AggregateResolution struct {
+	RequestedNameSpace string
+	Status             AggregatePolicy
+	MemberCount        int
+	Options            []AggregateResolutionOption
+	Agreement          Agreement
+}
+
 // VernacularName is one vernacular (common) name for a concept, in a given
 // language (see the `vernacular` table, schema.sql). Language is a short tag
 // ("de", "en", ...), not validated further here — the ingest side is the

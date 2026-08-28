@@ -509,9 +509,11 @@ paths:
       responses:
         '200':
           description: >-
-            Übersetzungsergebnis. `result` ist `translated` oder
-            `no_relation_recorded`; im zweiten Fall ist `candidates` ein
-            leeres Array (nicht weggelassen).
+            Übersetzungsergebnis. `result` ist `translated`,
+            `no_relation_recorded` oder `name_space_translation`; bei
+            `no_relation_recorded` ist `candidates` ein leeres Array
+            (nicht weggelassen), bei `name_space_translation` liegt die
+            Antwort in `name_space_translation` statt in `candidates`.
           content:
             application/json:
               schema:
@@ -1114,7 +1116,17 @@ components:
             verbatim-Pfad). Bei `concept_id` ignoriert. Unbekannt → `400`.
         target_space:
           type: string
-          description: Id des Ziel-`sec.`-Referenzraums.
+          description: >-
+            Id des Ziel-`sec.`-Referenzraums ODER eines ingestierten
+            NAME SPACE (`eurosl`, `germansl`, ...) ODER `wcvp`. Ein
+            Namensraum-Ziel liefert `name_space_translation` statt
+            `candidates`/`is_equality` — dort gibt es keine
+            `concept_relation`-Kante, die diese CDM-spezifischen Felder
+            sinnvoll füllen könnte. `wcvp` als Ziel ist nur für eine Quelle
+            aufgelöst, die selbst schon ein WCVP-Konzept ist (triviale
+            Identität); aus einem nativen `eurosl`/`germansl`-Konzept
+            zurück nach `wcvp` gibt es aktuell keinen Pfad im Schema
+            (`404`).
         max_hops:
           type: integer
           description: >-
@@ -1368,12 +1380,14 @@ components:
           description: Immer 1 — die Ein-Hop-Grenze wird ausgesprochen, nicht angenommen.
         result:
           type: string
-          enum: [translated, no_relation_recorded]
+          enum: [translated, no_relation_recorded, name_space_translation]
         candidates:
           type: array
           description: >-
             Bei `no_relation_recorded` ein LEERES Array, nie weggelassen —
-            die leere Antwort ist die Antwort.
+            die leere Antwort ist die Antwort. Bei
+            `result: name_space_translation` ebenfalls leer: dort steht die
+            Antwort in `name_space_translation`, nicht hier.
           items:
             $ref: '#/components/schemas/TranslateCandidate'
         unrelated_name_candidates:
@@ -1384,6 +1398,8 @@ components:
             `candidates` iteriert, nie einen Namensraten sieht.
           items:
             $ref: '#/components/schemas/TranslateNameCandidate'
+        name_space_translation:
+          $ref: '#/components/schemas/NameSpaceTranslation'
         requires_review:
           type: boolean
         note:
@@ -1392,6 +1408,32 @@ components:
           type: object
           additionalProperties:
             type: string
+    NameSpaceTranslation:
+      type: object
+      description: >-
+        Nur vorhanden, wenn `target_space` (siehe TranslateRequest) einen
+        ingestierten NAME SPACE oder `wcvp` benannt hat statt eines CDM
+        `sec.`-Referenzraums. Kein `is_equality`, keine Relation — diese
+        Konzepte ergeben für einen Namensraum-Vergleich keinen Sinn.
+      required: [name_space, name]
+      properties:
+        name_space:
+          type: string
+          example: germansl
+        name:
+          type: string
+          description: >-
+            Die Schreibweise des Ziel-Namensraums für das Quellkonzept.
+            Leer, wenn `aggregate_policy: unresolvable`.
+          example: Weiß-Tanne
+        aggregate_policy:
+          type: string
+          enum: [known, unresolvable]
+          description: >-
+            Nur gesetzt, wenn die Quelle eine Sammelart/ein Aggregat ist
+            (UC4). `known`: der Zielraum führt das Aggregat als eigenen
+            Taxon. `unresolvable`: der Zielraum kennt nur Mikrospezies
+            darunter — NICHT gleichbedeutend mit "nicht erfüllt".
     ErrorResponse:
       type: object
       required: [error]

@@ -17,8 +17,9 @@ import (
 // cannot read "no relation recorded" as a transport hiccup or a truncated
 // list — and so the empty case is impossible to overlook.
 const (
-	translateResultTranslated = "translated"
-	translateResultNoRelation = "no_relation_recorded"
+	translateResultTranslated           = "translated"
+	translateResultNoRelation           = "no_relation_recorded"
+	translateResultNameSpaceTranslation = "name_space_translation"
 )
 
 // Wire values for a candidate's direction, spelling out which of the two
@@ -126,6 +127,18 @@ type translateNameCandidateDTO struct {
 	RequiresReview bool            `json:"requires_review"`
 }
 
+// nameSpaceTranslationDTO is the wire shape for a target_space that names an
+// ingested NAME SPACE (eurosl/germansl/...) or the "wcvp" special case,
+// rather than a CDM sec. reference. It carries no is_equality/relation
+// fields at all — those are CDM-specific concepts a name-space comparison
+// has no basis for — and is rendered only when application.Translate took
+// that branch.
+type nameSpaceTranslationDTO struct {
+	NameSpace       string `json:"name_space"`
+	Name            string `json:"name"`
+	AggregatePolicy string `json:"aggregate_policy,omitempty"`
+}
+
 // translateSourceDTO identifies the concept that was translated.
 type translateSourceDTO struct {
 	ConceptID  string          `json:"concept_id"`
@@ -148,11 +161,16 @@ type translateResponseDTO struct {
 	Result  string `json:"result"`
 	// Candidates is never omitempty: the empty array IS the answer in the
 	// no-relation case, and omitting it would make that answer invisible.
-	Candidates       []translateCandidateDTO     `json:"candidates"`
-	NameCandidates   []translateNameCandidateDTO `json:"unrelated_name_candidates,omitempty"`
-	RequiresReview   bool                        `json:"requires_review"`
-	Note             string                      `json:"note,omitempty"`
-	BackboneVersions map[string]string           `json:"backbone_versions"`
+	Candidates     []translateCandidateDTO     `json:"candidates"`
+	NameCandidates []translateNameCandidateDTO `json:"unrelated_name_candidates,omitempty"`
+	// NameSpaceTranslation is set instead of the CDM-relation shape above
+	// (TargetSpace stays the zero value, Candidates stays empty) when
+	// target_space named an ingested NAME SPACE or the "wcvp" special case
+	// — see application.NameSpaceTranslation.
+	NameSpaceTranslation *nameSpaceTranslationDTO `json:"name_space_translation,omitempty"`
+	RequiresReview       bool                     `json:"requires_review"`
+	Note                 string                   `json:"note,omitempty"`
+	BackboneVersions     map[string]string        `json:"backbone_versions"`
 }
 
 // handleTranslate serves POST /v1/translate: concept translation between
@@ -257,6 +275,20 @@ func translateToDTO(res application.TranslateResult) translateResponseDTO {
 	}
 	if res.HasRelation() {
 		out.Result = translateResultTranslated
+	}
+	if res.NameSpaceTranslation != nil {
+		// A name-space target has no concept_relation edge to render at all
+		// (Candidates/TargetSpace are the CDM shape's zero values here, by
+		// construction — see application.translateToNameSpace) — this
+		// branch replaces, rather than supplements, the relation-based
+		// Result value set above.
+		out.Result = translateResultNameSpaceTranslation
+		out.TargetSpace = secReferenceDTO{ID: res.NameSpaceTranslation.NameSpace}
+		out.NameSpaceTranslation = &nameSpaceTranslationDTO{
+			NameSpace:       res.NameSpaceTranslation.NameSpace,
+			Name:            res.NameSpaceTranslation.Name,
+			AggregatePolicy: string(res.NameSpaceTranslation.AggregatePolicy),
+		}
 	}
 
 	for _, c := range res.Candidates {

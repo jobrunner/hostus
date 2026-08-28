@@ -4,10 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jobrunner/hostus/internal/domain"
 	"github.com/jobrunner/hostus/internal/ports/output"
 )
+
+// nameSpaceWCVP is the id spec §9 documents as a valid target_space even
+// though Repository.NameSpaces never lists it: WCVP is a backbone, not an
+// ingested name space, and name_space_entry.concept_id is structurally
+// always a WCVP concept (Fall A only attaches namespace spellings TO WCVP
+// concepts, never the reverse). "wcvp" therefore gets its own branch,
+// beside the NameSpaces loop, handling only the trivial identity case (see
+// translateToWCVP).
+const nameSpaceWCVP = "wcvp"
 
 // MaxTranslateHops is the number of concept_relation edges /v1/translate is
 // allowed to traverse: exactly one, always, with no request parameter that
@@ -167,6 +177,23 @@ type TranslateResult struct {
 	NameCandidates []NameCandidate
 	RequiresReview bool
 	Note           string
+	// NameSpaceTranslation is set instead of TargetSec/Candidates when
+	// req.TargetSec named an ingested NAME SPACE (eurosl/germansl/...) or
+	// the "wcvp" special case, rather than a CDM sec. reference — see
+	// translateToNameSpace. Nil in every other case.
+	NameSpaceTranslation *NameSpaceTranslation
+}
+
+// NameSpaceTranslation is Translate's answer when req.TargetSec names an
+// ingested NAME SPACE (eurosl/germansl/...) rather than a CDM sec.
+// reference space. A namespace comparison has no concept_relation edge to
+// render — IsEquality/RelationFromSource are CDM-specific concepts that
+// mean nothing for "what does this space call it" — so the result lands
+// here, never in Candidates.
+type NameSpaceTranslation struct {
+	NameSpace       string
+	Name            string
+	AggregatePolicy domain.AggregatePolicy
 }
 
 // HasRelation reports whether any relation-backed candidate was found. It
@@ -199,6 +226,18 @@ func Translate(ctx context.Context, repo output.Repository, req TranslateRequest
 	}
 	if req.MaxHops != 0 && req.MaxHops != MaxTranslateHops {
 		return TranslateResult{}, fmt.Errorf("%w (requested %d)", ErrMultiHopUnsupported, req.MaxHops)
+	}
+
+	// A NAME SPACE target (eurosl/germansl/...) or the "wcvp" special case
+	// must be recognized BEFORE the sec_reference lookup below:
+	// repo.SecReferenceByID would 404 on e.g. "germansl" immediately, since
+	// neither is ever a sec_reference row.
+	nativeRes, handled, err := translateToNativeTarget(ctx, repo, req)
+	if err != nil {
+		return TranslateResult{}, err
+	}
+	if handled {
+		return nativeRes, nil
 	}
 
 	target, err := repo.SecReferenceByID(ctx, req.TargetSec)
@@ -240,21 +279,31 @@ func Translate(ctx context.Context, repo output.Repository, req TranslateRequest
 		return res, nil
 	}
 
+	return attachNameCandidatesIfRequested(ctx, repo, req, source, res)
+}
+
+// attachNameCandidatesIfRequested renders the "no relation found" tail of
+// Translate: the explicit empty-answer note, plus the opt-in, explicitly
+// NON-relational name-guess block when req.IncludeNameCandidates asked for
+// it. Split out of Translate to keep that function's branching within the
+// linter's complexity budget.
+func attachNameCandidatesIfRequested(ctx context.Context, repo output.Repository, req TranslateRequest, source domain.Concept, res TranslateResult) (TranslateResult, error) {
 	res.Note = noteNoRelation
-	if req.IncludeNameCandidates {
-		names, err := nameCandidates(ctx, repo, source, req.TargetSec)
-		if err != nil {
-			return TranslateResult{}, err
-		}
-		res.NameCandidates = names
-		if len(names) > 0 {
-			// A response carrying name candidates always requires review,
-			// even when the entry itself was an exact concept id: the block
-			// is a human-checkable hint, not an answer. The note says the
-			// same thing in prose, in the payload.
-			res.RequiresReview = true
-			res.Note = noteNoRelation + " " + noteNameCandidates
-		}
+	if !req.IncludeNameCandidates {
+		return res, nil
+	}
+	names, err := nameCandidates(ctx, repo, source, req.TargetSec)
+	if err != nil {
+		return TranslateResult{}, err
+	}
+	res.NameCandidates = names
+	if len(names) > 0 {
+		// A response carrying name candidates always requires review, even
+		// when the entry itself was an exact concept id: the block is a
+		// human-checkable hint, not an answer. The note says the same thing
+		// in prose, in the payload.
+		res.RequiresReview = true
+		res.Note = noteNoRelation + " " + noteNameCandidates
 	}
 	return res, nil
 }
@@ -332,6 +381,119 @@ func resolveTranslateEntry(ctx context.Context, repo output.Repository, req Tran
 		Note:           m.Note,
 		RequiresReview: m.RequiresReview,
 	}, nil
+}
+
+// translateToNativeTarget dispatches req.TargetSec to the name-space branch
+// (translateToNameSpace) or the "wcvp" special case (translateToWCVP) when
+// it names either, before Translate ever calls repo.SecReferenceByID. Its
+// second return value is false — with a nil error — when neither applies
+// (an ordinary CDM sec. reference id, or the documented "wcvp target from a
+// native namespace concept" gap), so the caller falls through to the
+// existing sec_reference-based flow unchanged.
+func translateToNativeTarget(ctx context.Context, repo output.Repository, req TranslateRequest) (TranslateResult, bool, error) {
+	nameSpaces, err := repo.NameSpaces(ctx)
+	if err != nil {
+		return TranslateResult{}, false, err
+	}
+	for _, ns := range nameSpaces {
+		if ns.ID == req.TargetSec {
+			res, err := translateToNameSpace(ctx, repo, req)
+			return res, true, err
+		}
+	}
+	if req.TargetSec != nameSpaceWCVP {
+		return TranslateResult{}, false, nil
+	}
+	res, ok, err := translateToWCVP(ctx, repo, req)
+	if err != nil || ok {
+		return res, ok, err
+	}
+	// The source resolved to a native eurosl/germansl concept: there is no
+	// reverse lookup from a namespace-native concept back to WCVP in
+	// today's schema (name_space_entry.concept_id is always a WCVP concept,
+	// never the other direction). Documented scope gap — report "not
+	// handled" so the caller falls through to the sec_reference lookup,
+	// which reports the familiar "unknown target space" NOT_FOUND.
+	return TranslateResult{}, false, nil
+}
+
+// conceptByID is repo.Concept narrowed to the one field the name-space
+// branches need (the concept row itself), so their call sites don't carry
+// three blank identifiers apiece for the synonym/xref/distribution results
+// they never use.
+func conceptByID(ctx context.Context, repo output.Repository, id string) (domain.Concept, error) {
+	c, syns, xrefs, dists, err := repo.Concept(ctx, id)
+	_ = syns
+	_ = xrefs
+	_ = dists
+	if err != nil {
+		return domain.Concept{}, err
+	}
+	return *c, nil
+}
+
+// translateToNameSpace answers Translate for a NAME SPACE target
+// (eurosl/germansl/...) rather than a CDM sec. reference. A namespace
+// comparison has no concept_relation edge to render — IsEquality/
+// RelationFromSource are CDM-specific concepts that mean nothing for "what
+// does this space call it" — so the result lands in the distinct
+// NameSpaceTranslation field, never in Candidates.
+func translateToNameSpace(ctx context.Context, repo output.Repository, req TranslateRequest) (TranslateResult, error) {
+	conceptID, entry, err := resolveTranslateEntry(ctx, repo, req)
+	if err != nil {
+		return TranslateResult{}, err
+	}
+	source, err := conceptByID(ctx, repo, conceptID)
+	if err != nil {
+		return TranslateResult{}, err
+	}
+	entries, err := repo.NameSpaceEntries(ctx, conceptID, []string{req.TargetSec})
+	if err != nil {
+		return TranslateResult{}, err
+	}
+	sourceIsAggregate := domain.IsAggregateName(source.AcceptedName.Canonical) || isCollectiveRank(source.Rank)
+	name, policy := domain.ResolveTargetSpace(sourceIsAggregate, entries)
+	return TranslateResult{
+		Source:         source,
+		Entry:          entry,
+		MaxHops:        MaxTranslateHops,
+		RequiresReview: entry.RequiresReview,
+		NameSpaceTranslation: &NameSpaceTranslation{
+			NameSpace:       req.TargetSec,
+			Name:            name,
+			AggregatePolicy: policy,
+		},
+	}, nil
+}
+
+// translateToWCVP handles target_space="wcvp" (see nameSpaceWCVP): the only
+// case today's schema supports is the trivial identity, when the resolved
+// source concept IS ALREADY a WCVP concept (id prefix "wcvp:"). Its second
+// return value is false — with a nil error — when the source resolved to a
+// native eurosl/germansl concept instead, so the caller can fall through to
+// the existing "unknown target space" handling for that documented gap.
+func translateToWCVP(ctx context.Context, repo output.Repository, req TranslateRequest) (TranslateResult, bool, error) {
+	conceptID, entry, err := resolveTranslateEntry(ctx, repo, req)
+	if err != nil {
+		return TranslateResult{}, false, err
+	}
+	if !strings.HasPrefix(conceptID, "wcvp:") {
+		return TranslateResult{}, false, nil
+	}
+	source, err := conceptByID(ctx, repo, conceptID)
+	if err != nil {
+		return TranslateResult{}, false, err
+	}
+	return TranslateResult{
+		Source:         source,
+		Entry:          entry,
+		MaxHops:        MaxTranslateHops,
+		RequiresReview: entry.RequiresReview,
+		NameSpaceTranslation: &NameSpaceTranslation{
+			NameSpace: nameSpaceWCVP,
+			Name:      source.AcceptedName.Canonical,
+		},
+	}, true, nil
 }
 
 // sourceSecReference resolves the source concept's own sec. space for the

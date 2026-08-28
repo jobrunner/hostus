@@ -339,6 +339,22 @@ func isCollectiveRank(r domain.Rank) bool {
 
 // aggregateResolutionRanks is collectiveRanks as the []domain.Rank slice
 // Repository.AggregateConcepts takes.
+//
+// KNOWN ASYMMETRY (final-review Minor-11 finding): this list (5 ranks) is
+// wider than concept_agreement.go's aggregateRanks (2 ranks:
+// SPECIES_AGGREGATE/GENUS_AGGREGATE only). resolveAggregateOption below uses
+// THIS list, so aggregate_resolution.options[]'s per-name-space known/
+// unresolvable lookup works for all 5 collective ranks. But
+// buildAggregateResolution's Agreement field is populated by
+// Repository.ConceptAgreement, which only ever has rows for the 2 ranks
+// ComputeConceptAgreement (concept_agreement.go) actually compares — so a
+// SECTION/SUBSECTION/SUBGENUS match's aggregate_resolution.agreement stays
+// permanently empty in the live /v1/match path, even though its
+// options[].status resolves correctly. Widening ComputeConceptAgreement to
+// all 5 ranks (so the two lists agree) is a separate, larger follow-up, not
+// fixed in this round — see openapi.yaml's
+// AggregateResolution.agreement description for the client-facing version
+// of this note.
 var aggregateResolutionRanks = []domain.Rank{
 	domain.RankSpeciesAggregate, domain.RankGenusAggregate,
 	domain.RankSection, domain.RankSubsection, domain.RankSubgenus,

@@ -120,18 +120,18 @@ func TestRankOrderPriority(t *testing.T) {
 		rank domain.Rank
 		want int
 	}{
-		{domain.RankFamily, 0},
-		{domain.RankGenus, 1},
-		{domain.RankSpecies, 2},
-		{domain.RankSubspecies, 3},
-		{domain.RankNothosubspecies, 4},
-		{domain.RankVariety, 5},
-		{domain.RankSubvariety, 6},
-		{domain.RankNothovariety, 7},
-		{domain.RankForm, 8},
-		{domain.RankSubform, 9},
-		{domain.RankNothoform, 10},
-		{domain.RankOther, 11},
+		{domain.RankFamily, 8},
+		{domain.RankGenus, 11},
+		{domain.RankSpecies, 18},
+		{domain.RankSubspecies, 19},
+		{domain.RankNothosubspecies, 20},
+		{domain.RankVariety, 21},
+		{domain.RankSubvariety, 22},
+		{domain.RankNothovariety, 23},
+		{domain.RankForm, 24},
+		{domain.RankSubform, 25},
+		{domain.RankNothoform, 26},
+		{domain.RankOther, 35},
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.rank), func(t *testing.T) {
@@ -167,5 +167,43 @@ func TestRankOrderPriority_UnknownRankIsWorstOrder(t *testing.T) {
 	// middle of the ordering.
 	if got := domain.RankOrderPriority(domain.Rank("")); got <= domain.RankOrderPriority(domain.RankForm) {
 		t.Fatalf("RankOrderPriority of unknown rank must exceed RankOrderPriority(FORM), got %d", got)
+	}
+}
+
+// TestRankOrderPriority_ExtendedRankSetPrioritized is the final-review
+// Important-8 regression test: before this fix, every one of Task 1's 26
+// EuroSL/GermanSL ranks above/around GENUS (ORDER, CLASS, FAMILY,
+// SPECIES_AGGREGATE, ...) fell through RankOrderPriority to
+// unknownRankOrder — the same bucket as RankOther — and so sorted dead
+// last in /v1/suggest instead of near their taxonomically appropriate
+// position. This pins that each of a representative sample now sorts
+// STRICTLY BEFORE unknownRankOrder, and that the broad-to-narrow relative
+// order the finding asked for holds: ROOT < FAMILY < GENUS <
+// SPECIES_AGGREGATE < SPECIES < COLL_SPECIES.
+func TestRankOrderPriority_ExtendedRankSetPrioritized(t *testing.T) {
+	unknown := domain.RankOrderPriority(domain.RankOther)
+	for _, r := range []domain.Rank{
+		domain.RankRoot, domain.RankPhylum, domain.RankSubdivision, domain.RankInformalClade,
+		domain.RankClass, domain.RankSubclass, domain.RankSuperorder, domain.RankOrder,
+		domain.RankSubfamily, domain.RankTribe,
+		domain.RankSubgenus, domain.RankSection, domain.RankSubsection, domain.RankSeries,
+		domain.RankSpeciesAggregate, domain.RankGenusAggregate,
+		domain.RankCollSpecies, domain.RankSubspeciesGroup, domain.RankProles, domain.RankRace,
+		domain.RankConvar, domain.RankGrex, domain.RankUnrankedInfrageneric, domain.RankUnrankedInfraspecific,
+	} {
+		if got := domain.RankOrderPriority(r); got >= unknown {
+			t.Errorf("RankOrderPriority(%s) = %d, want strictly less than unknownRankOrder (%d)", r, got, unknown)
+		}
+	}
+
+	chain := []domain.Rank{
+		domain.RankRoot, domain.RankFamily, domain.RankGenus,
+		domain.RankSpeciesAggregate, domain.RankSpecies, domain.RankCollSpecies,
+	}
+	for i := 1; i < len(chain); i++ {
+		if domain.RankOrderPriority(chain[i-1]) >= domain.RankOrderPriority(chain[i]) {
+			t.Fatalf("RankOrderPriority must be strictly increasing along %s -> %s: %d >= %d",
+				chain[i-1], chain[i], domain.RankOrderPriority(chain[i-1]), domain.RankOrderPriority(chain[i]))
+		}
 	}
 }

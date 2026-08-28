@@ -135,9 +135,30 @@ func parseSuggestLimit(param string) (int, error) {
 	return strconv.Atoi(param)
 }
 
-// handleSuggest serves GET /v1/suggest?q=&area=&rank=&limit=, the frontend
-// autosuggest endpoint, per spec §B.1. A missing/empty q, an unknown rank
-// token, or a non-numeric limit all report 400 INVALID_QUERY.
+// validSuggestMatchModes are the only accepted `match_mode` query values —
+// "" and "name_start" are equivalent (both select the default), "anywhere"
+// restores the pre-SP7 plain FTS5 prefix behavior. Anything else is 400
+// INVALID_QUERY: an unrecognized mode silently falling back to the default
+// would hide a caller's typo behind a behavior change they didn't ask for.
+var validSuggestMatchModes = map[string]bool{
+	"":           true,
+	"name_start": true,
+	"anywhere":   true,
+}
+
+// parseSuggestMatchMode validates the `match_mode` query parameter against
+// validSuggestMatchModes, returning it unchanged when valid.
+func parseSuggestMatchMode(param string) (string, error) {
+	if !validSuggestMatchModes[param] {
+		return "", fmt.Errorf("unknown match_mode %q", param)
+	}
+	return param, nil
+}
+
+// handleSuggest serves GET /v1/suggest?q=&area=&rank=&limit=&match_mode=,
+// the frontend autosuggest endpoint, per spec §B.1. A missing/empty q, an
+// unknown rank token, a non-numeric limit, or an unrecognized match_mode
+// all report 400 INVALID_QUERY.
 func handleSuggest(repo output.Repository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
@@ -154,6 +175,12 @@ func handleSuggest(repo output.Repository) http.HandlerFunc {
 			return
 		}
 
+		matchMode, err := parseSuggestMatchMode(query.Get("match_mode"))
+		if err != nil {
+			httperr.InvalidQueryError(w, err.Error())
+			return
+		}
+
 		entryBackbone := query.Get("entry_backbone")
 		targetSpace := query.Get("target_space")
 		resp, err := application.Suggest(r.Context(), repo, application.SuggestRequest{
@@ -163,6 +190,7 @@ func handleSuggest(repo output.Repository) http.HandlerFunc {
 			Limit:         limit,
 			EntryBackbone: entryBackbone,
 			TargetSpace:   targetSpace,
+			MatchMode:     matchMode,
 		})
 		if errors.Is(err, application.ErrEmptyQuery) {
 			httperr.InvalidQueryError(w, "q query parameter is required")

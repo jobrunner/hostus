@@ -245,7 +245,7 @@ func writeNativeRow(
 		return false, fmt.Errorf("application: linking native name %q: %w", row.Taxon, err)
 	}
 
-	if err := linkAggregateMembers(tx, row, bv, concept.ID, memberLinks, report); err != nil {
+	if err := linkAggregateMembers(tx, row, bv, concept.ID, rank, memberLinks, report); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -256,14 +256,34 @@ func writeNativeRow(
 // a side effect. Split out of writeNativeRow to keep that function's
 // cognitive complexity within the linter's bound (gocognit) — mirrors
 // writeNativeRow's own extraction out of IngestNativeSpace's loop.
+//
+// rank is the row's own Rank (domain.ParseRankLenient(row.Rank) — already
+// computed once by the caller, not recomputed here). A concept_aggregate
+// edge's aggregating side must ALWAYS be a genuine collective/aggregate rank
+// (isCollectiveRank, match.go Task 10) — never a bare Fall-B concept like
+// GENUS or ORDER that merely happens to be the ParentID of a Fall-A-
+// crosswalked member. Without this guard, a full production ingest
+// (minRank=domain.RankRoot, which qualifies every rank as its own Fall-B
+// concept) would contaminate concept_aggregate with GENUS->species edges,
+// and internal/adapters/http/taxa.go's aggregateMembershipsFor — which picks
+// its match by prefix with no ORDER BY — could then non-deterministically
+// surface the GENUS concept instead of the real aggregate/section concept
+// as aggregate_concept_id in /v1/concept/{id} responses (final-review
+// residual finding).
 func linkAggregateMembers(
 	tx output.IngestTx,
 	row NativeRow,
 	bv domain.BackboneVersion,
 	aggregateConceptID string,
+	rank domain.Rank,
 	memberLinks map[string][]string,
 	report *NativeSpaceIngestReport,
 ) error {
+	if !isCollectiveRank(rank) {
+		return nil // GENUS/ORDER/etc. sind Fall-B-Konzepte, aber niemals die
+		// aggregierende Seite einer concept_aggregate-Kante — nur echte
+		// Sammel-Ränge dürfen Mitglieder tragen.
+	}
 	memberSourceIDs, ok := memberLinks[row.SourceID]
 	if !ok {
 		return nil

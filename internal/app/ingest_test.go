@@ -190,16 +190,20 @@ func assertNativeSpacesReport(t *testing.T, nativeSpaces []application.NativeSpa
 		if nsr.Written != 2 {
 			t.Errorf("reports.NativeSpaces[%q].Written = %d, want 2 (genus + aggregate)", nsr.Space, nsr.Written)
 		}
-		// nativeMemberLinks (ingest.go) links EVERY ParentID edge, not just
-		// aggregate->species ones: the genus row is ALSO a qualifying Fall-B
-		// concept here (minRank=RankRoot), and Fall A separately crosswalks
-		// the aggregate row itself onto the SAME WCVP concept via the
-		// aggregate-to-nominate rule — so both the genus->aggregate edge and
-		// the aggregate->species edge resolve, each to wcvp:concept:415853.
-		// This is the documented, deliberate behavior (see nativeMemberLinks'
-		// doc comment: no rank-filtering, ResolveNameSpaceMember decides).
-		if nsr.MembersLinked != 2 {
-			t.Errorf("reports.NativeSpaces[%q].MembersLinked = %d, want 2 (genus->aggregate and aggregate->species both resolve)", nsr.Space, nsr.MembersLinked)
+		// nativeMemberLinks (ingest.go) links EVERY ParentID edge without a
+		// rank filter, so the genus row is ALSO handed a memberLinks entry
+		// (genus -> aggregate's source id) here (minRank=RankRoot) exactly
+		// like the aggregate row is (aggregate -> species's source id). But
+		// linkAggregateMembers (nativespace_ingest.go) only ever writes a
+		// concept_aggregate edge for a row whose OWN rank is a genuine
+		// collective/aggregate rank (isCollectiveRank) — GENUS never
+		// qualifies, so its memberLinks entry resolves to nothing written.
+		// Only the aggregate row's edge (to wcvp:concept:415853) counts — this
+		// is the final-review residual-finding fix: previously GENUS also
+		// wrote a concept_aggregate edge here, contaminating the table with a
+		// second, wrong aggregating-side candidate for the same member.
+		if nsr.MembersLinked != 1 {
+			t.Errorf("reports.NativeSpaces[%q].MembersLinked = %d, want 1 (only the aggregate->species edge; GENUS is never the aggregating side)", nsr.Space, nsr.MembersLinked)
 		}
 	}
 }
@@ -244,6 +248,8 @@ func assertConceptAgreementPersisted(t *testing.T, dbPath string) {
 		t.Errorf("AggregateMembers(eurosl:concept:e-agg1) = %v, want [wcvp:concept:415853]", members)
 	}
 
+	assertGenusNeverAggregatingSide(t, repo)
+
 	rawDB, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("sql.Open: unexpected error: %v", err)
@@ -267,5 +273,40 @@ func assertConceptAgreementPersisted(t *testing.T, dbPath string) {
 	}
 	if agreement != string(domain.AgreementIdentical) {
 		t.Errorf("concept_agreement.agreement (raw SQL) = %q, want %q", agreement, domain.AgreementIdentical)
+	}
+}
+
+// assertGenusNeverAggregatingSide is the final-review residual-finding
+// regression check, split out of assertConceptAgreementPersisted to keep
+// that function's cyclomatic complexity within the linter's bound (gocyclo):
+// the GENUS row (e-gen1) also qualifies as its own Fall-B concept at
+// minRank=RankRoot and also gets a memberLinks entry (nativeMemberLinks
+// links every ParentID edge without a rank filter) — but GENUS must NEVER
+// end up as a concept_aggregate edge's aggregating side. Proven two ways:
+// (1) e-gen1 itself has no members, and (2) AggregatesByMember for the
+// shared WCVP member returns ONLY the real aggregate concept, not the
+// genus — the exact ambiguity internal/adapters/http/taxa.go's
+// aggregateMembershipsFor (no ORDER BY, prefix match) would otherwise
+// resolve non-deterministically.
+func assertGenusNeverAggregatingSide(t *testing.T, repo *sqlite.DB) {
+	t.Helper()
+	ctx := context.Background()
+
+	genusMembers, err := repo.AggregateMembers(ctx, "eurosl:concept:e-gen1")
+	if err != nil {
+		t.Fatalf("AggregateMembers(e-gen1): unexpected error: %v", err)
+	}
+	if len(genusMembers) != 0 {
+		t.Errorf("AggregateMembers(eurosl:concept:e-gen1) = %v, want empty (GENUS is never the aggregating side)", genusMembers)
+	}
+
+	aggregatesByMember, err := repo.AggregatesByMember(ctx, "wcvp:concept:415853")
+	if err != nil {
+		t.Fatalf("AggregatesByMember: unexpected error: %v", err)
+	}
+	for _, id := range aggregatesByMember {
+		if id == "eurosl:concept:e-gen1" || id == "germansl:concept:g-gen1" {
+			t.Errorf("AggregatesByMember(wcvp:concept:415853) = %v, must not contain a GENUS concept id (%q)", aggregatesByMember, id)
+		}
 	}
 }

@@ -212,6 +212,74 @@ func TestIngestNativeSpace_UnresolvedMemberIsSkippedNotError(t *testing.T) {
 	}
 }
 
+// TestIngestNativeSpace_GenusRowIsNeverAggregatingSide is the final-review
+// residual-finding regression test: nativeMemberLinks (internal/app/
+// ingest.go) links every ParentID edge without a rank filter, so at
+// minRank=domain.RankRoot (full production ingest) a GENUS row qualifies as
+// its own Fall-B concept AND ends up as row.SourceID's memberLinks key when
+// its child (here the aggregate row) resolves a Fall-A crosswalk member.
+// Without linkAggregateMembers's isCollectiveRank guard, BOTH the GENUS
+// row and the SPECIES_AGGREGATE row would write a concept_aggregate edge
+// for the same member, and internal/adapters/http/taxa.go's
+// aggregateMembershipsFor (no ORDER BY, prefix match) could then
+// non-deterministically surface the GENUS concept as aggregate_concept_id.
+// This test proves only the genuine collective rank (SPECIES_AGGREGATE)
+// gets the edge; the GENUS row never does.
+func TestIngestNativeSpace_GenusRowIsNeverAggregatingSide(t *testing.T) {
+	repo := seededMatchRepo(t) // WCVP concept "Festuca ovina" already exists
+	seedNameSpaceEntry(t, repo, "eurosl", "fo1", festucaOvinaConceptID)
+
+	src := staticNativeRows{
+		{Taxon: "Festuca", SourceID: "genus1", Rank: "Genus", Status: "accepted"},
+		{Taxon: "Festuca ovina aggr.", SourceID: "agg1", Rank: "SPECIES_AGGREGATE", Status: "accepted", ParentID: "genus1"},
+	}
+	bv := domain.BackboneVersion{ID: "eurosl", Version: "2026-08-27", Redistribution: domain.RedistributionUnknown}
+	// Simulates internal/app/ingest.go's nativeMemberLinks(ds) at
+	// minRank=domain.RankRoot: it links EVERY ParentID edge without a rank
+	// filter, so the GENUS row ("genus1") ends up carrying its child
+	// aggregate's member ("fo1") as a memberLinks entry too, alongside the
+	// aggregate row's own correct entry.
+	memberLinks := map[string][]string{
+		"genus1": {"fo1"},
+		"agg1":   {"fo1"},
+	}
+
+	report, err := application.IngestNativeSpace(context.Background(), repo, src, bv, domain.RankRoot, memberLinks)
+	if err != nil {
+		t.Fatalf("IngestNativeSpace: unexpected error: %v", err)
+	}
+	if report.Written != 2 {
+		t.Fatalf("report.Written = %d, want 2 (Genus + Aggregat qualifizieren beide bei minRank=ROOT)", report.Written)
+	}
+	if report.MembersLinked != 1 {
+		t.Errorf("report.MembersLinked = %d, want 1 (nur die Aggregat-Kante zaehlt)", report.MembersLinked)
+	}
+
+	genusMembers, err := repo.AggregateMembers(context.Background(), "eurosl:concept:genus1")
+	if err != nil {
+		t.Fatalf("AggregateMembers(genus1): unexpected error: %v", err)
+	}
+	if len(genusMembers) != 0 {
+		t.Errorf("AggregateMembers(genus1) = %v, want empty (GENUS ist niemals aggregierende Seite)", genusMembers)
+	}
+
+	aggMembers, err := repo.AggregateMembers(context.Background(), "eurosl:concept:agg1")
+	if err != nil {
+		t.Fatalf("AggregateMembers(agg1): unexpected error: %v", err)
+	}
+	if len(aggMembers) != 1 || aggMembers[0] != festucaOvinaConceptID {
+		t.Errorf("AggregateMembers(agg1) = %v, want [%s]", aggMembers, festucaOvinaConceptID)
+	}
+
+	members, err := repo.AggregatesByMember(context.Background(), festucaOvinaConceptID)
+	if err != nil {
+		t.Fatalf("AggregatesByMember: unexpected error: %v", err)
+	}
+	if len(members) != 1 || members[0] != "eurosl:concept:agg1" {
+		t.Errorf("AggregatesByMember(%s) = %v, want [eurosl:concept:agg1] only", festucaOvinaConceptID, members)
+	}
+}
+
 // seedNameSpaceEntry writes one name_space_entry row directly (bypassing
 // IngestNameSpace's own name-matching, which this task's fixture does not
 // need to exercise) so a test can pin what Task 6 consumes: a Fall-A

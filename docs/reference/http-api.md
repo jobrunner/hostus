@@ -65,8 +65,15 @@ GET /v1/concept/wcvp:concept:405825
   "status": "ACCEPTED",
   "backbone": { "id": "wcvp", "version": "2026-06-15" },
   "xrefs": { "powo": ["396681-1"], "inat": ["160927"] },
-  "classification": [
+  "parent_chain": [
     { "concept_id": "wcvp:concept:451295", "canonical": "Corynephorus", "rank": "GENUS" }
+  ],
+  "classification": { "family": "Poaceae" },
+  "vernacular_names": [
+    { "language": "de", "name": "Graues Silbergras", "source": "germansl" }
+  ],
+  "aggregate_memberships": [
+    { "name_space": "eurosl", "aggregate_concept_id": "eurosl:concept:agg1", "aggregate_name": "Corynephorus canescens aggr." }
   ],
   "synonyms": [
     { "canonical": "Weingaertneria canescens var. pallida", "authorship": "Beckh." },
@@ -89,9 +96,10 @@ GET /v1/concept/wcvp:concept:405825
 ```
 
 `vernacular_de` (deutscher Trivialname) ist Teil der DTO, aber immer
-leer/omitted — die Vernakular-Tabelle wird noch nicht ingestiert.
+leer/omitted — es ist ein Legacy-Feld aus SP1, das `vernacular_names`
+(siehe unten) nicht ersetzt.
 
-`classification` (Klassifikationskette) wird durch Verfolgen von
+`parent_chain` (Vorfahren-Kette) wird durch Verfolgen von
 `taxon_concept.parent_id` nach oben ermittelt und ROOT-FIRST geliefert:
 Index 0 ist die oberste erreichte Vorfahren-Ebene, das letzte Element das
 direkte Elternteil des angefragten Concepts; das Concept selbst ist nie
@@ -99,7 +107,34 @@ Teil der Kette. Die Tiefe ist auf 10 Hops begrenzt, damit eine
 zyklische/korrupte `parent_id`-Kette niemals hängen bleibt. `parent_id`
 wird nur gesetzt, wenn das Eltern-Taxon selbst als akzeptiertes Concept
 ingestiert wurde — andernfalls (und wenn die Kette nach der
-Tiefenbegrenzung endet) ist `classification` leer/omitted.
+Tiefenbegrenzung endet) ist `parent_chain` leer/omitted. Dieses Feld hieß
+vor dem Namensraum-/Klassifikations-Redesign `classification` — der
+Schlüssel wurde frei, weil das Redesign ein NEUES, gleichnamiges Feld
+einführt (siehe direkt darunter).
+
+`classification` ist seit dem Namensraum-/Klassifikations-Redesign ein
+**Objekt** `{"family", "order", "class"}` — die Klassifikation OBERHALB von
+Family, aus dem EuroSL/GermanSL-Namensraum-Crosswalk. Es fehlt vollständig
+(nie ein Objekt mit lauter leeren Strings), wenn keines der drei Felder
+bekannt ist; jedes Unterfeld ist zudem einzeln optional.
+
+`vernacular_names` listet jeden ingestierten Vernakularnamen
+(`{"language", "name", "source"}`). `source` ist aktuell hartkodiert
+`"germansl"` — der GermanSL-Ingest ist derzeit der einzige Schreiber der
+`vernacular`-Tabelle; das Feld fehlt/ist leer, wenn keine Vernakularnamen
+ingestiert wurden.
+
+`aggregate_memberships` listet, für ein Concept vom Rang `SPECIES`, jeden
+Namensraum, dessen Sammel-/Aggregat-Concept diese Art einschließt (Fall-A-
+Rückverweis auf Abschnitt 5 des Redesign-Specs). `aggregate_concept_id`
+fehlt, wenn sich das Sammel-Concept dieses Namensraums nicht auflösen ließ
+(bekannte Lücke). Ein Concept ohne eine solche Namensraum-Zuordnung liefert
+das Feld gar nicht.
+
+Für ein Fall-B-Sammel-/Aggregat-Concept selbst (Rang
+`SPECIES_AGGREGATE`/`GENUS_AGGREGATE`/`SECTION`/`SUBSECTION`/`SUBGENUS`)
+liefert die Antwort stattdessen `members[]` — `{"concept_id", "name"}` je
+WCVP-Mitglied dieses Aggregats.
 
 `synonyms[].homotypic` ist `true`, wenn die Basionym-Verknüpfung ein
 gemeinsames Basionym mit dem akzeptierten Namen beweist (Rekombination

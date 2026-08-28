@@ -1,10 +1,12 @@
 package httpx
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gorilla/mux"
 
@@ -55,6 +57,65 @@ type distributionDTO struct {
 	AreaCode   string `json:"area_code"`
 }
 
+// classificationInfoDTO is the classification-above-family object introduced
+// by the namespace/classification redesign spec §4 (domain.Concept.Family/
+// OrderName/ClassName, Task 4). It is a DIFFERENT field from
+// conceptDTO.ParentChain (the pre-existing ancestor-chain array, spec §4.3):
+// the two happened to want the same JSON key ("classification"), so
+// ParentChain took the rename to "parent_chain" — see its own doc comment.
+// Each sub-field is itself omitempty: a concept may carry only Family, for
+// instance.
+type classificationInfoDTO struct {
+	Family string `json:"family,omitempty"`
+	Order  string `json:"order,omitempty"`
+	Class  string `json:"class,omitempty"`
+}
+
+// vernacularNameDTO is one vernacular (common) name for a concept, per spec
+// §4's vernacular_names shape.
+type vernacularNameDTO struct {
+	Language string `json:"language"`
+	Name     string `json:"name"`
+	// Source is hardcoded to "germansl": AddVernacularName (Task 4) has
+	// exactly one writer today (the GermanSL ingest), and neither
+	// domain.VernacularName nor the vernacular table itself carries a
+	// provenance column. Revisit this the day a second writer exists — see
+	// Task 9's report for the ruling.
+	Source string `json:"source,omitempty"`
+}
+
+// aggregateMemberDTO is one WCVP member of a Fall-B aggregate/collective
+// concept (spec §5's members[] shape).
+type aggregateMemberDTO struct {
+	ConceptID string `json:"concept_id"`
+	Name      string `json:"name"`
+}
+
+// aggregateMembershipDTO is one name space's aggregate that a SPECIES
+// concept belongs to (spec §4's aggregate_memberships[] shape, the Fall-A
+// back-reference to Fall-B). AggregateConceptID is omitted when
+// output.Repository.AggregatesByMember could not resolve it (e.g. no
+// concept_aggregate edge was ingested for this member/space pair) — the
+// name space and the aggregate's own spelling (from NameSpaceEntry.Name)
+// are still meaningful without it.
+type aggregateMembershipDTO struct {
+	NameSpace          string `json:"name_space"`
+	AggregateConceptID string `json:"aggregate_concept_id,omitempty"`
+	AggregateName      string `json:"aggregate_name,omitempty"`
+}
+
+// aggregateRanksForMembers is the Fall-B collective-rank set (spec §6) whose
+// concepts render members[] instead of/alongside the ordinary shape: a
+// SPECIES_AGGREGATE/GENUS_AGGREGATE/SECTION/SUBSECTION/SUBGENUS concept's
+// own rows in concept_aggregate name its WCVP members.
+var aggregateRanksForMembers = map[domain.Rank]bool{
+	domain.RankSpeciesAggregate: true,
+	domain.RankGenusAggregate:   true,
+	domain.RankSection:          true,
+	domain.RankSubsection:       true,
+	domain.RankSubgenus:         true,
+}
+
 // conceptDTO is the wire shape for GET /v1/concept/{id} and GET /v1/xref,
 // per spec §B. It is kept in the http adapter (not domain) since it is a
 // response-rendering concern, not a domain concept.
@@ -87,19 +148,38 @@ type conceptDTO struct {
 	// rows by (authority, ext_id), so each slice here is already
 	// deterministically sorted — never dependent on ingest/query order.
 	Xrefs map[string][]string `json:"xrefs,omitempty"`
-	// Classification is the parent chain (root-first — see
+	// ParentChain is the ancestor chain (root-first — see
 	// output.Repository.Classification's doc comment), omitted when empty
 	// (a top-level concept with no ingested parent, or one whose backbone
-	// simply doesn't carry parent linkage).
-	Classification []classificationDTO `json:"classification,omitempty"`
-	Synonyms       []synonymDTO        `json:"synonyms"`
-	Distribution   []distributionDTO   `json:"distribution,omitempty"`
+	// simply doesn't carry parent linkage). Named "parent_chain" (not
+	// "classification") since the namespace/classification redesign spec §4
+	// claimed the "classification" key for a different, NEW field
+	// (Classification below) — see classificationInfoDTO's doc comment.
+	ParentChain []classificationDTO `json:"parent_chain,omitempty"`
+	// Classification is the family/order/class object introduced by spec §4
+	// (domain.Concept.Family/OrderName/ClassName). nil (field omitted)
+	// when none of the three is known — never an object of all-empty
+	// strings.
+	Classification *classificationInfoDTO `json:"classification,omitempty"`
+	Synonyms       []synonymDTO           `json:"synonyms"`
+	Distribution   []distributionDTO      `json:"distribution,omitempty"`
 	// Sec names the concept's sec. reference space (id + title), present only
 	// for a sec-bearing concept (CDM). Since CDM added many concepts of the
 	// SAME name — one per reference work — this is what tells two otherwise
 	// identical results apart (SP5). Omitted (never empty) for a concept with
 	// no sec. reference (WCVP), so the SP1 shape is unchanged.
 	Sec *secReferenceDTO `json:"sec,omitempty"`
+	// VernacularNames lists every ingested common name (spec §4), alongside
+	// the legacy VernacularDE field above. Omitted when the concept has none.
+	VernacularNames []vernacularNameDTO `json:"vernacular_names,omitempty"`
+	// Members lists a Fall-B aggregate/collective concept's WCVP members
+	// (spec §5), rendered only when Rank is one of aggregateRanksForMembers.
+	Members []aggregateMemberDTO `json:"members,omitempty"`
+	// AggregateMemberships lists every name space whose aggregate this
+	// SPECIES concept belongs to (spec §4's Fall-A back-reference),
+	// rendered only for Rank == domain.RankSpecies with at least one
+	// NameSpaceEntry.Aggregate == true.
+	AggregateMemberships []aggregateMembershipDTO `json:"aggregate_memberships,omitempty"`
 }
 
 // conceptToDTO renders a resolved concept (as returned by
@@ -132,11 +212,11 @@ func conceptToDTO(c *domain.Concept, synonyms []output.SynonymName, xrefs []doma
 		}
 	}
 
-	var classif []classificationDTO
+	var parentChain []classificationDTO
 	if len(classification) > 0 {
-		classif = make([]classificationDTO, len(classification))
+		parentChain = make([]classificationDTO, len(classification))
 		for i, entry := range classification {
-			classif[i] = classificationDTO{ConceptID: entry.ConceptID, Canonical: entry.Canonical, Rank: string(entry.Rank)}
+			parentChain[i] = classificationDTO{ConceptID: entry.ConceptID, Canonical: entry.Canonical, Rank: string(entry.Rank)}
 		}
 	}
 
@@ -149,10 +229,21 @@ func conceptToDTO(c *domain.Concept, synonyms []output.SynonymName, xrefs []doma
 		Status:         string(c.Status),
 		Backbone:       backboneRefDTO{ID: c.BackboneID, Version: c.BackboneVersion},
 		Xrefs:          xrefMap,
-		Classification: classif,
+		ParentChain:    parentChain,
+		Classification: classificationInfo(c),
 		Synonyms:       syns,
 		Distribution:   dists,
 	}
+}
+
+// classificationInfo builds conceptDTO.Classification from c's
+// Family/OrderName/ClassName (spec §4), or nil if none of the three is
+// known.
+func classificationInfo(c *domain.Concept) *classificationInfoDTO {
+	if c.Family == "" && c.OrderName == "" && c.ClassName == "" {
+		return nil
+	}
+	return &classificationInfoDTO{Family: c.Family, Order: c.OrderName, Class: c.ClassName}
 }
 
 // matchNameDTO is one entry of POST /v1/match's request body, per §B.2.
@@ -260,7 +351,91 @@ func writeConcept(w http.ResponseWriter, r *http.Request, repo output.Repository
 			dto.Sec = &secReferenceDTO{ID: sr.ID, Title: sr.Title}
 		}
 	}
+	if vnames, err := repo.VernacularNames(r.Context(), id); err == nil {
+		dto.VernacularNames = vernacularNamesToDTO(vnames)
+	}
+	if aggregateRanksForMembers[c.Rank] {
+		dto.Members = aggregateMembers(r.Context(), repo, id)
+	}
+	if c.Rank == domain.RankSpecies {
+		dto.AggregateMemberships = aggregateMembershipsFor(r.Context(), repo, id)
+	}
 	writeJSON(w, dto)
+}
+
+// vernacularNameSource is the hardcoded value of every rendered
+// vernacular_names[].source: AddVernacularName (Task 4) has exactly one
+// writer today, the GermanSL ingest — see vernacularNameDTO's doc comment.
+const vernacularNameSource = "germansl"
+
+// vernacularNamesToDTO renders Repository.VernacularNames' result as the
+// wire shape, stamping every entry's Source with vernacularNameSource.
+func vernacularNamesToDTO(vnames []domain.VernacularName) []vernacularNameDTO {
+	if len(vnames) == 0 {
+		return nil
+	}
+	out := make([]vernacularNameDTO, len(vnames))
+	for i, v := range vnames {
+		out[i] = vernacularNameDTO{Language: v.Language, Name: v.Name, Source: vernacularNameSource}
+	}
+	return out
+}
+
+// aggregateMembers resolves a Fall-B aggregate/collective concept's WCVP
+// members (spec §5) via Repository.AggregateMembers + one Repository.Concept
+// call per member id (N+1 — acceptable at the typically small member counts
+// these concepts carry; see Task 9's report). A member id that no longer
+// resolves (should not happen given FK integrity, but Concept can still
+// error) is silently skipped rather than failing the whole response.
+func aggregateMembers(ctx context.Context, repo output.Repository, aggregateConceptID string) []aggregateMemberDTO {
+	memberIDs, err := repo.AggregateMembers(ctx, aggregateConceptID)
+	if err != nil || len(memberIDs) == 0 {
+		return nil
+	}
+	out := make([]aggregateMemberDTO, 0, len(memberIDs))
+	for _, memberID := range memberIDs {
+		mc, _, _, _, err := repo.Concept(ctx, memberID)
+		if err != nil {
+			continue
+		}
+		out = append(out, aggregateMemberDTO{ConceptID: memberID, Name: mc.AcceptedName.Canonical})
+	}
+	return out
+}
+
+// aggregateMembershipsFor resolves a SPECIES concept's Fall-A back-reference
+// into every name space's aggregate it belongs to (spec §4), from its
+// NameSpaceEntry rows flagged Aggregate == true. AggregateConceptID is
+// resolved via Repository.AggregatesByMember, narrowed to the entry's own
+// space by that space's "<space>:concept:" id prefix (the id scheme
+// internal/application/nativespace_ingest.go's Fall-B ingest assigns) —
+// left empty (omitted on the wire) if no aggregate concept resolves for
+// that space, so a caller still gets the space + aggregate name.
+func aggregateMembershipsFor(ctx context.Context, repo output.Repository, conceptID string) []aggregateMembershipDTO {
+	entries, err := repo.NameSpaceEntries(ctx, conceptID, nil)
+	if err != nil {
+		return nil
+	}
+	var aggregateIDs []string
+	var out []aggregateMembershipDTO
+	for _, e := range entries {
+		if !e.Aggregate {
+			continue
+		}
+		membership := aggregateMembershipDTO{NameSpace: e.Space, AggregateName: e.Name}
+		if aggregateIDs == nil {
+			aggregateIDs, _ = repo.AggregatesByMember(ctx, conceptID)
+		}
+		prefix := e.Space + ":concept:"
+		for _, aggID := range aggregateIDs {
+			if strings.HasPrefix(aggID, prefix) {
+				membership.AggregateConceptID = aggID
+				break
+			}
+		}
+		out = append(out, membership)
+	}
+	return out
 }
 
 // handleConcept serves GET /v1/concept/{id}.

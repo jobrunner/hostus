@@ -175,6 +175,22 @@ type Repository interface {
 	// includes, via concept_aggregate. An aggregate with no linked members
 	// returns an empty, non-error slice.
 	AggregateMembers(ctx context.Context, aggregateConceptID string) ([]string, error)
+	// AggregatesByMember is the reverse of AggregateMembers: it returns
+	// every Fall-B aggregate/collective concept id that lists
+	// memberConceptID (a WCVP concept) among its concept_aggregate members,
+	// via the table's member_concept_id index. A member linked into no
+	// aggregate returns an empty, non-error slice. Used to resolve a
+	// SPECIES concept's `aggregate_memberships[].aggregate_concept_id`
+	// (spec §4) — a caller narrows the result to one name space by
+	// matching its "<space>:concept:" id prefix (see
+	// internal/application/nativespace_ingest.go's concept id scheme).
+	AggregatesByMember(ctx context.Context, memberConceptID string) ([]string, error)
+
+	// VernacularNames returns every vernacular-name row for conceptID (see
+	// schema.sql's vernacular table), ordered by (lang, name) for a
+	// deterministic result. A concept with no vernacular name returns an
+	// empty, non-error slice.
+	VernacularNames(ctx context.Context, conceptID string) ([]domain.VernacularName, error)
 
 	// AggregateConcepts returns every taxon_concept in backboneID whose rank
 	// is one of ranks — the native Fall-B aggregate/collective-species

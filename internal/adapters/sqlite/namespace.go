@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -62,6 +63,68 @@ func (t *ingestTx) AddNameSpaceEntry(conceptID string, e domain.NameSpaceEntry) 
 		}
 	}
 	return nil
+}
+
+// AddAggregateMember records one aggregate->member edge (schema.sql's
+// concept_aggregate table). INSERT OR REPLACE on the (aggregate_concept_id,
+// member_concept_id) primary key, mirroring AddNameSpaceEntry's
+// re-ingest-is-idempotent rule.
+func (t *ingestTx) AddAggregateMember(aggregateConceptID, memberConceptID string) error {
+	_, err := t.tx.ExecContext(t.ctx, `
+		INSERT OR REPLACE INTO concept_aggregate (aggregate_concept_id, member_concept_id)
+		VALUES (?, ?)`,
+		aggregateConceptID, memberConceptID,
+	)
+	if err != nil {
+		return fmt.Errorf("sqlite: linking aggregate member %q -> %q: %w", aggregateConceptID, memberConceptID, err)
+	}
+	return nil
+}
+
+// ResolveNameSpaceMember reads name_space_entry for (space, extID) within
+// THIS transaction and returns its concept_id, or "" (no error) if no such
+// entry exists — a Fall-A crosswalk (Task 4) may simply not have resolved
+// that row.
+func (t *ingestTx) ResolveNameSpaceMember(space, extID string) (string, error) {
+	var conceptID string
+	err := t.tx.QueryRowContext(t.ctx, `
+		SELECT concept_id FROM name_space_entry WHERE space = ? AND ext_id = ?`,
+		space, extID,
+	).Scan(&conceptID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("sqlite: resolving name space member %s:%s: %w", space, extID, err)
+	}
+	return conceptID, nil
+}
+
+// AggregateMembers returns the WCVP concept ids aggregateConceptID includes,
+// via concept_aggregate. An aggregate with no linked members returns an
+// empty, non-error slice.
+func (db *DB) AggregateMembers(ctx context.Context, aggregateConceptID string) ([]string, error) {
+	rows, err := db.sql.QueryContext(ctx, `
+		SELECT member_concept_id FROM concept_aggregate WHERE aggregate_concept_id = ?`,
+		aggregateConceptID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: querying aggregate members for %q: %w", aggregateConceptID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := []string{}
+	for rows.Next() {
+		var memberConceptID string
+		if err := rows.Scan(&memberConceptID); err != nil {
+			return nil, fmt.Errorf("sqlite: scanning aggregate member for %q: %w", aggregateConceptID, err)
+		}
+		out = append(out, memberConceptID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: iterating aggregate members for %q: %w", aggregateConceptID, err)
+	}
+	return out, nil
 }
 
 // UpsertClassification records family/order/class for conceptID (see

@@ -350,7 +350,12 @@ func ingestNativeSpace(ctx context.Context, ns manifest.NameSpace, manifestSHA s
 		ManifestSHA:    manifestSHA,
 		Redistribution: redistribution,
 	}
-	return application.IngestNativeSpace(ctx, repo, nativeRowSource{ds: ds}, bv, minRank)
+	// memberLinks (Task 6's aggregate->member wiring, native source id ->
+	// WCVP crosswalk source ids) is not populated here: like minRank above,
+	// which manifest section supplies it is a later task/step's wiring, not
+	// this one's. An empty map makes IngestNativeSpace's aggregate-member
+	// step a no-op rather than leaving this composition root uncompilable.
+	return application.IngestNativeSpace(ctx, repo, nativeRowSource{ds: ds}, bv, minRank, map[string][]string{})
 }
 
 // ingestConceptSource reads cs's two canonical CDM CSVs and runs

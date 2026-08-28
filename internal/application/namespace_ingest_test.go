@@ -526,6 +526,10 @@ func (t *fakeNameSpaceTx) UpsertXrefSource(domain.XrefSourceMeta) error      { r
 func (t *fakeNameSpaceTx) AddConceptRelation(string, string, domain.Relation, string) error {
 	return nil
 }
+func (t *fakeNameSpaceTx) AddAggregateMember(string, string) error { return nil }
+func (t *fakeNameSpaceTx) ResolveNameSpaceMember(string, string) (string, error) {
+	return "", nil
+}
 
 // fakeNameSpaceRepo answers MatchExact from a canned map and counts both how
 // many lookups happened and how many of them happened while the ingest
@@ -612,6 +616,9 @@ func (r *fakeNameSpaceRepo) TraitVocabularies(context.Context) ([]domain.TraitVo
 	return nil, nil
 }
 func (r *fakeNameSpaceRepo) NameSpaceEntries(context.Context, string, []string) ([]domain.NameSpaceEntry, error) {
+	return nil, nil
+}
+func (r *fakeNameSpaceRepo) AggregateMembers(context.Context, string) ([]string, error) {
 	return nil, nil
 }
 func (r *fakeNameSpaceRepo) NameSpaces(context.Context) ([]domain.NameSpaceMeta, error) {

@@ -170,6 +170,12 @@ type Repository interface {
 	// a database actually holds.
 	NameSpaces(ctx context.Context) ([]domain.NameSpaceMeta, error)
 
+	// AggregateMembers returns the WCVP concept ids that aggregateConceptID
+	// (a Fall-B native concept, rank SPECIES_AGGREGATE/GENUS_AGGREGATE)
+	// includes, via concept_aggregate. An aggregate with no linked members
+	// returns an empty, non-error slice.
+	AggregateMembers(ctx context.Context, aggregateConceptID string) ([]string, error)
+
 	// Suggest returns FTS5 prefix-match candidates for q (an autosuggest
 	// query fragment), scored but UNRANKED: the application layer runs
 	// domain.RankSuggestions over the result and truncates to opts.Limit
@@ -343,6 +349,17 @@ type IngestTx interface {
 	// upserted the space and resolved the concept first — see
 	// application.IngestNameSpace's two-phase resolution.
 	AddNameSpaceEntry(conceptID string, e domain.NameSpaceEntry) error
+	// AddAggregateMember records one aggregate->member edge (concept_
+	// aggregate). Both ids must already be written within this transaction
+	// or a prior one.
+	AddAggregateMember(aggregateConceptID, memberConceptID string) error
+	// ResolveNameSpaceMember reads name_space_entry for (space, extID) and
+	// returns its concept_id, or "" if no such entry exists — NOT an error,
+	// since a Fall-A crosswalk (Task 4) may simply not have resolved that
+	// row. Reads WITHIN this same open transaction, which is safe: it is
+	// the same IngestTx, not a second Repository call while a foreign
+	// transaction is open.
+	ResolveNameSpaceMember(space, extID string) (string, error)
 	// UpsertClassification records family/order/class for conceptID — see
 	// Task 2's schema (taxon_concept.family/order_name/class_name). Empty
 	// strings are written as SQL NULL, never as "".

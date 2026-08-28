@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jobrunner/hostus/internal/adapters/sqlite"
 	"github.com/jobrunner/hostus/internal/application"
 	"github.com/jobrunner/hostus/internal/domain"
 )
@@ -13,6 +14,10 @@ import (
 type staticNativeRows []application.NativeRow
 
 func (s staticNativeRows) Rows() []application.NativeRow { return s }
+
+// noMemberLinks is the empty memberLinks map passed by every test that does
+// not exercise the Task 6 aggregate-member relation.
+var noMemberLinks = map[string][]string{}
 
 func TestIngestNativeSpace_WritesAggregateAsOwnConcept(t *testing.T) {
 	repo := openMemoryRepo(t)
@@ -31,7 +36,7 @@ func TestIngestNativeSpace_WritesAggregateAsOwnConcept(t *testing.T) {
 	}
 	bv := domain.BackboneVersion{ID: "eurosl", Version: "2026-08-27", Redistribution: domain.RedistributionUnknown}
 
-	report, err := application.IngestNativeSpace(context.Background(), repo, src, bv, domain.RankSpeciesAggregate)
+	report, err := application.IngestNativeSpace(context.Background(), repo, src, bv, domain.RankSpeciesAggregate, noMemberLinks)
 	if err != nil {
 		t.Fatalf("IngestNativeSpace: unexpected error: %v", err)
 	}
@@ -68,7 +73,7 @@ func TestIngestNativeSpace_SkipsSpeciesAndInfraspecificRows(t *testing.T) {
 	}
 	bv := domain.BackboneVersion{ID: "eurosl", Version: "2026-08-27", Redistribution: domain.RedistributionUnknown}
 
-	report, err := application.IngestNativeSpace(context.Background(), repo, src, bv, domain.RankGenus)
+	report, err := application.IngestNativeSpace(context.Background(), repo, src, bv, domain.RankGenus, noMemberLinks)
 	if err != nil {
 		t.Fatalf("IngestNativeSpace: unexpected error: %v", err)
 	}
@@ -94,7 +99,7 @@ func TestIngestNativeSpace_OrdinaryRankGetsEmptyRankVerbatim(t *testing.T) {
 	}
 	bv := domain.BackboneVersion{ID: "eurosl", Version: "2026-08-27", Redistribution: domain.RedistributionUnknown}
 
-	report, err := application.IngestNativeSpace(context.Background(), repo, src, bv, domain.RankFamily)
+	report, err := application.IngestNativeSpace(context.Background(), repo, src, bv, domain.RankFamily, noMemberLinks)
 	if err != nil {
 		t.Fatalf("IngestNativeSpace: unexpected error: %v", err)
 	}
@@ -120,7 +125,7 @@ func TestIngestNativeSpace_UnknownRankFallsBackToOtherAndIsReported(t *testing.T
 	}
 	bv := domain.BackboneVersion{ID: "eurosl", Version: "2026-08-27", Redistribution: domain.RedistributionUnknown}
 
-	report, err := application.IngestNativeSpace(context.Background(), repo, src, bv, domain.RankSpeciesAggregate)
+	report, err := application.IngestNativeSpace(context.Background(), repo, src, bv, domain.RankSpeciesAggregate, noMemberLinks)
 	if err != nil {
 		t.Fatalf("IngestNativeSpace: unexpected error: %v", err)
 	}
@@ -135,5 +140,100 @@ func TestIngestNativeSpace_UnknownRankFallsBackToOtherAndIsReported(t *testing.T
 	}
 	if report.Skipped != 1 {
 		t.Errorf("report.Skipped = %d, want 1", report.Skipped)
+	}
+}
+
+// TestIngestNativeSpace_LinksAggregateMembers pins Task 6: a Fall-B
+// aggregate row's memberLinks entry resolves each listed member source id
+// against name_space_entry (the Fall-A crosswalk Task 4 already wrote for
+// this same space) and records the aggregate->member edge in
+// concept_aggregate. Deviates from the brief's literal fixture (an invented
+// "Salsola kali" WCVP concept via an unspecified seededNamespaceRepo
+// helper): reuses seededMatchRepo's real WCVP fixture and its already-known
+// festucaOvinaConceptID instead of inventing a second concept-seeding
+// helper, matching namespace_ingest_test.go's own established precedent
+// (TestIngestNameSpace_WritesClassificationOntoMatchedConcept's doc
+// comment).
+func TestIngestNativeSpace_LinksAggregateMembers(t *testing.T) {
+	repo := seededMatchRepo(t) // WCVP concept "Festuca ovina" already exists
+	// Fall A (Task 4) has already linked "Festuca ovina" under source id
+	// "fo1" in the eurosl name space:
+	seedNameSpaceEntry(t, repo, "eurosl", "fo1", festucaOvinaConceptID)
+
+	src := staticNativeRows{
+		{Taxon: "Festuca ovina aggr.", SourceID: "agg1", Rank: "SPECIES_AGGREGATE", Status: "accepted"},
+	}
+	bv := domain.BackboneVersion{ID: "eurosl", Version: "2026-08-27", Redistribution: domain.RedistributionUnknown}
+	memberLinks := map[string][]string{"agg1": {"fo1"}} // aggregat-source-id -> [mitglied-source-ids]
+
+	report, err := application.IngestNativeSpace(context.Background(), repo, src, bv, domain.RankSpeciesAggregate, memberLinks)
+	if err != nil {
+		t.Fatalf("IngestNativeSpace: unexpected error: %v", err)
+	}
+	if report.MembersLinked != 1 {
+		t.Errorf("report.MembersLinked = %d, want 1", report.MembersLinked)
+	}
+
+	members, err := repo.AggregateMembers(context.Background(), "eurosl:concept:agg1")
+	if err != nil {
+		t.Fatalf("AggregateMembers: unexpected error: %v", err)
+	}
+	if len(members) != 1 || members[0] != festucaOvinaConceptID {
+		t.Errorf("AggregateMembers = %v, want [%s]", members, festucaOvinaConceptID)
+	}
+}
+
+// TestIngestNativeSpace_UnresolvedMemberIsSkippedNotError pins the brief's
+// explicit non-error case: a memberLinks entry naming a member source id
+// that the Fall-A crosswalk never resolved (no name_space_entry row) is
+// silently skipped, not an ingest failure.
+func TestIngestNativeSpace_UnresolvedMemberIsSkippedNotError(t *testing.T) {
+	repo := openMemoryRepo(t)
+	src := staticNativeRows{
+		{Taxon: "Festuca ovina aggr.", SourceID: "agg1", Rank: "SPECIES_AGGREGATE", Status: "accepted"},
+	}
+	bv := domain.BackboneVersion{ID: "eurosl", Version: "2026-08-27", Redistribution: domain.RedistributionUnknown}
+	memberLinks := map[string][]string{"agg1": {"does-not-exist"}}
+
+	report, err := application.IngestNativeSpace(context.Background(), repo, src, bv, domain.RankSpeciesAggregate, memberLinks)
+	if err != nil {
+		t.Fatalf("IngestNativeSpace: unexpected error: %v", err)
+	}
+	if report.MembersLinked != 0 {
+		t.Errorf("report.MembersLinked = %d, want 0", report.MembersLinked)
+	}
+
+	members, err := repo.AggregateMembers(context.Background(), "eurosl:concept:agg1")
+	if err != nil {
+		t.Fatalf("AggregateMembers: unexpected error: %v", err)
+	}
+	if len(members) != 0 {
+		t.Errorf("AggregateMembers = %v, want empty", members)
+	}
+}
+
+// seedNameSpaceEntry writes one name_space_entry row directly (bypassing
+// IngestNameSpace's own name-matching, which this task's fixture does not
+// need to exercise) so a test can pin what Task 6 consumes: a Fall-A
+// crosswalk result already sitting in name_space_entry for (space,
+// sourceID) -> conceptID.
+func seedNameSpaceEntry(t *testing.T, repo *sqlite.DB, space, sourceID, conceptID string) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := repo.BeginIngest(ctx, domain.BackboneVersion{ID: space, Version: "test", Redistribution: domain.RedistributionUnknown})
+	if err != nil {
+		t.Fatalf("BeginIngest(%s): unexpected error: %v", space, err)
+	}
+	if err := tx.UpsertNameSpace(domain.NameSpaceMeta{ID: space, Version: "test", Redistribution: domain.RedistributionUnknown}); err != nil {
+		t.Fatalf("UpsertNameSpace(%s): unexpected error: %v", space, err)
+	}
+	if err := tx.AddNameSpaceEntry(conceptID, domain.NameSpaceEntry{Space: space, ExtID: sourceID, Name: conceptID, Status: "accepted"}); err != nil {
+		t.Fatalf("AddNameSpaceEntry(%s:%s): unexpected error: %v", space, sourceID, err)
+	}
+	if err := tx.Finalize(); err != nil {
+		t.Fatalf("Finalize: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
 	}
 }

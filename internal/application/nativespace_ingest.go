@@ -40,6 +40,9 @@ type NativeSpaceIngestReport struct {
 	// spellings that triggered it.
 	UnknownRank       int
 	UnknownRankSample []string
+	// MembersLinked counts every aggregate->member edge (concept_aggregate)
+	// this run wrote, across every qualifying row's memberLinks entry.
+	MembersLinked int
 }
 
 // nativeConceptRankOrder is the root-to-leaf ordering of domain.Rank used
@@ -126,7 +129,7 @@ func rankVerbatimFor(rank domain.Rank, verbatim string) string {
 // violate taxon_concept's own FK constraint, and does happen in practice:
 // an aggregate's ParentID commonly names its GENUS row, which sits below
 // minRank and is therefore skipped.
-func IngestNativeSpace(ctx context.Context, repo output.Repository, src NativeRowSource, bv domain.BackboneVersion, minRank domain.Rank) (NativeSpaceIngestReport, error) {
+func IngestNativeSpace(ctx context.Context, repo output.Repository, src NativeRowSource, bv domain.BackboneVersion, minRank domain.Rank, memberLinks map[string][]string) (NativeSpaceIngestReport, error) {
 	report := NativeSpaceIngestReport{Space: bv.ID}
 	rows := src.Rows()
 	report.Rows = len(rows)
@@ -153,7 +156,7 @@ func IngestNativeSpace(ctx context.Context, repo output.Repository, src NativeRo
 
 	unknownSeen := map[string]bool{}
 	for _, row := range rows {
-		written, err := writeNativeRow(tx, row, bv, minRank, qualifyingSourceIDs, &report, unknownSeen)
+		written, err := writeNativeRow(tx, row, bv, minRank, qualifyingSourceIDs, memberLinks, &report, unknownSeen)
 		if err != nil {
 			_ = tx.Rollback()
 			return report, err
@@ -190,6 +193,7 @@ func writeNativeRow(
 	bv domain.BackboneVersion,
 	minRank domain.Rank,
 	qualifyingSourceIDs map[string]bool,
+	memberLinks map[string][]string,
 	report *NativeSpaceIngestReport,
 	unknownSeen map[string]bool,
 ) (bool, error) {
@@ -240,5 +244,42 @@ func writeNativeRow(
 	if err := tx.LinkName(concept.ID, name.ID, "accepted", nil); err != nil {
 		return false, fmt.Errorf("application: linking native name %q: %w", row.Taxon, err)
 	}
+
+	if err := linkAggregateMembers(tx, row, bv, concept.ID, memberLinks, report); err != nil {
+		return false, err
+	}
 	return true, nil
+}
+
+// linkAggregateMembers resolves and writes every concept_aggregate edge
+// row's memberLinks entry names (Task 6), updating report.MembersLinked as
+// a side effect. Split out of writeNativeRow to keep that function's
+// cognitive complexity within the linter's bound (gocognit) — mirrors
+// writeNativeRow's own extraction out of IngestNativeSpace's loop.
+func linkAggregateMembers(
+	tx output.IngestTx,
+	row NativeRow,
+	bv domain.BackboneVersion,
+	aggregateConceptID string,
+	memberLinks map[string][]string,
+	report *NativeSpaceIngestReport,
+) error {
+	memberSourceIDs, ok := memberLinks[row.SourceID]
+	if !ok {
+		return nil
+	}
+	for _, memberSourceID := range memberSourceIDs {
+		memberConceptID, err := tx.ResolveNameSpaceMember(bv.ID, memberSourceID)
+		if err != nil {
+			return fmt.Errorf("application: resolving aggregate member %q for %q: %w", memberSourceID, row.Taxon, err)
+		}
+		if memberConceptID == "" {
+			continue // Fall-A-Crosswalk hat diese Zeile nicht aufgelöst — kein Fehler
+		}
+		if err := tx.AddAggregateMember(aggregateConceptID, memberConceptID); err != nil {
+			return fmt.Errorf("application: linking aggregate member %q -> %q: %w", aggregateConceptID, memberConceptID, err)
+		}
+		report.MembersLinked++
+	}
+	return nil
 }

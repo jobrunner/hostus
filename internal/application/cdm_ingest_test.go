@@ -78,6 +78,10 @@ func (t *fakeCDMTx) AddTraitValue(string, domain.TraitValue) error     { return 
 func (t *fakeCDMTx) UpsertTraitVocabulary(domain.TraitVocabMeta) error { return nil }
 func (t *fakeCDMTx) UpsertXrefSource(domain.XrefSourceMeta) error      { return nil }
 func (t *fakeCDMTx) UpsertNameSpace(domain.NameSpaceMeta) error        { return nil }
+func (t *fakeCDMTx) AddAggregateMember(string, string) error           { return nil }
+func (t *fakeCDMTx) ResolveNameSpaceMember(string, string) (string, error) {
+	return "", nil
+}
 func (t *fakeCDMTx) AddNameSpaceEntry(string, domain.NameSpaceEntry) error {
 	return nil
 }
@@ -184,6 +188,10 @@ func (r *fakeCDMRepo) NameSpaceEntries(context.Context, string, []string) ([]dom
 }
 
 func (r *fakeCDMRepo) NameSpaces(context.Context) ([]domain.NameSpaceMeta, error) {
+	return nil, nil
+}
+
+func (r *fakeCDMRepo) AggregateMembers(context.Context, string) ([]string, error) {
 	return nil, nil
 }
 

@@ -906,6 +906,9 @@ func (f *fakeCapturingRepo) TraitVocabularies(context.Context) ([]domain.TraitVo
 func (f *fakeCapturingRepo) NameSpaceEntries(context.Context, string, []string) ([]domain.NameSpaceEntry, error) {
 	panic("not needed by Ingest")
 }
+func (f *fakeCapturingRepo) AggregateMembers(context.Context, string) ([]string, error) {
+	return nil, nil
+}
 func (f *fakeCapturingRepo) NameSpaces(context.Context) ([]domain.NameSpaceMeta, error) {
 	panic("not needed by Ingest")
 }
@@ -963,6 +966,10 @@ func (t *fakeCapturingTx) AddTraitValue(string, domain.TraitValue) error     { r
 func (t *fakeCapturingTx) UpsertTraitVocabulary(domain.TraitVocabMeta) error { return nil }
 func (t *fakeCapturingTx) UpsertXrefSource(domain.XrefSourceMeta) error      { return nil }
 func (t *fakeCapturingTx) UpsertNameSpace(domain.NameSpaceMeta) error        { return nil }
+func (t *fakeCapturingTx) AddAggregateMember(string, string) error           { return nil }
+func (t *fakeCapturingTx) ResolveNameSpaceMember(string, string) (string, error) {
+	return "", nil
+}
 func (t *fakeCapturingTx) AddNameSpaceEntry(string, domain.NameSpaceEntry) error {
 	return nil
 }

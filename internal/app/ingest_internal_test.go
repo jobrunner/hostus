@@ -31,6 +31,33 @@ func TestClassificationFor_WalksParentChainToFamilyOrderClass(t *testing.T) {
 	}
 }
 
+// TestClassificationFor_WalksParentChainWithGermanSLRankCodes is the
+// fix-round-1 regression test: GermanSL's real TaxonRank values are short
+// codes ("FAM", "ORD", "KLA"), not WCVP's full words ("Family", "Order",
+// "Class"). Before domain.ParseRankLenient learned GermanSL's rank-code
+// table, classificationFor never recognized these ancestors at all —
+// every GermanSL species silently got empty Family/OrderName/ClassName.
+func TestClassificationFor_WalksParentChainWithGermanSLRankCodes(t *testing.T) {
+	byID := map[string]namelist.Row{
+		"kla-1": {SourceID: "kla-1", Taxon: "Magnoliopsida", Rank: "KLA"},
+		"ord-1": {SourceID: "ord-1", Taxon: "Caryophyllales", Rank: "ORD", ParentID: "kla-1"},
+		"fam-1": {SourceID: "fam-1", Taxon: "Chenopodiaceae", Rank: "FAM", ParentID: "ord-1"},
+		"gat-1": {SourceID: "gat-1", Taxon: "Salsola", Rank: "GAT", ParentID: "fam-1"},
+	}
+	species := namelist.Row{SourceID: "spe-1", Taxon: "Salsola kali", Rank: "SPE", ParentID: "gat-1"}
+
+	family, order, class := classificationFor(species, byID)
+	if family != "Chenopodiaceae" {
+		t.Errorf("family = %q, want %q", family, "Chenopodiaceae")
+	}
+	if order != "Caryophyllales" {
+		t.Errorf("order = %q, want %q", order, "Caryophyllales")
+	}
+	if class != "Magnoliopsida" {
+		t.Errorf("class = %q, want %q", class, "Magnoliopsida")
+	}
+}
+
 // TestClassificationFor_MissingParentReturnsWhateverWasFound pins the
 // no-guess rule: a chain that runs out of parents before reaching every
 // rank returns empty strings for the ranks it never found, rather than

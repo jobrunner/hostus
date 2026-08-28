@@ -131,6 +131,76 @@ func TestParseRankLenient_CanonicalAndNothotaxonRanks(t *testing.T) {
 	}
 }
 
+// TestParseRankLenient_GermanSLRankCodes pins the fix-round-1 finding: the
+// review found that GermanSL's raw TaxonRank values are short codes
+// ("FAM", "ORD", "KLA", ...), not WCVP's full words, and ParseRankLenient
+// silently degraded every one of them to RankOther — meaning every
+// GermanSL row's classification walk (internal/app's classificationFor)
+// never matched a Family/Order/Class ancestor at all. This is the full
+// mapping measured against the real GermanSL 1.5.5 TCS sheet (see
+// germanSLRankCodes' doc comment).
+func TestParseRankLenient_GermanSLRankCodes(t *testing.T) {
+	cases := []struct {
+		in   string
+		want domain.Rank
+	}{
+		{"SPE", domain.RankSpecies},
+		{"SSP", domain.RankSubspecies},
+		{"GAT", domain.RankGenus},
+		{"VAR", domain.RankVariety},
+		{"FAM", domain.RankFamily},
+		{"AGG", domain.RankSpeciesAggregate},
+		{"ORD", domain.RankOrder},
+		{"FOR", domain.RankForm},
+		{"SEC", domain.RankSection},
+		{"KLA", domain.RankClass},
+		{"SER", domain.RankSeries},
+		{"ORA", domain.RankUnrankedInfraspecific},
+		{"ABT", domain.RankPhylum},
+		{"SGE", domain.RankSubgenus},
+		{"SGR", domain.RankSubspeciesGroup},
+		{"SFA", domain.RankSubfamily},
+		{"SSE", domain.RankSubsection},
+		{"AG1", domain.RankSpeciesAggregate},
+		{"AG2", domain.RankGenusAggregate},
+		{"CL1", domain.RankInformalClade},
+		{"CL2", domain.RankInformalClade},
+		{"CL3", domain.RankInformalClade},
+		{"CL4", domain.RankInformalClade},
+		{"CL5", domain.RankInformalClade},
+	}
+	for _, c := range cases {
+		t.Run(c.in, func(t *testing.T) {
+			rank, verbatim := domain.ParseRankLenient(c.in)
+			if rank != c.want {
+				t.Errorf("ParseRankLenient(%q) rank = %q, want %q", c.in, rank, c.want)
+			}
+			if verbatim != c.in {
+				t.Errorf("ParseRankLenient(%q) verbatim = %q, want %q", c.in, verbatim, c.in)
+			}
+			// The strict API parser must NOT accept these abbreviations — a
+			// client sending rank=FAM must get INVALID_QUERY, not a
+			// silently-accepted GermanSL-internal code.
+			if _, err := domain.ParseRank(c.in); err == nil {
+				t.Errorf("ParseRank(%q) = nil error, want an error (lenient-only code, never strict)", c.in)
+			}
+		})
+	}
+}
+
+// TestParseRankLenient_GermanSLDeliberatelyUnmappedCodesStayOther pins the
+// two codes the fix explicitly excludes: UAB and AG3 have no measured
+// GermanSL usage this system needs to distinguish, so they must keep
+// degrading to RankOther rather than being silently added later.
+func TestParseRankLenient_GermanSLDeliberatelyUnmappedCodesStayOther(t *testing.T) {
+	for _, in := range []string{"UAB", "AG3"} {
+		rank, _ := domain.ParseRankLenient(in)
+		if rank != domain.RankOther {
+			t.Errorf("ParseRankLenient(%q) = %q, want %q (deliberately unmapped)", in, rank, domain.RankOther)
+		}
+	}
+}
+
 func TestParseStatus(t *testing.T) {
 	cases := []struct {
 		in   string

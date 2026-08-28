@@ -143,6 +143,45 @@ var nothotaxonRanks = map[string]Rank{
 	"nothof.":     RankNothoform,
 }
 
+// germanSLRankCodes maps GermanSL's raw TaxonRank abbreviations (its own
+// short codes, not WCVP's full-word spellings) to the Rank ParseRankLenient
+// should return for them. LENIENT-ONLY, like nothotaxonRanks above: these
+// codes are never accepted by the strict ParseRank (API input), only by the
+// ingest-facing ParseRankLenient — a client sending rank=FAM should get
+// INVALID_QUERY, not a silently-accepted abbreviation.
+//
+// This is the full mapping measured against the real GermanSL 1.5.5 TCS
+// sheet (pipelines/germansl/germansl.summary.txt's rank histogram).
+// Deliberately NOT mapped (left to fall through to RankOther, which is
+// correct): "UAB", "AG3" — no measured GermanSL row uses them for anything
+// this table's callers (the classification walk) need to distinguish.
+var germanSLRankCodes = map[string]Rank{
+	"SPE": RankSpecies,
+	"SSP": RankSubspecies,
+	"GAT": RankGenus,
+	"VAR": RankVariety,
+	"FAM": RankFamily,
+	"AGG": RankSpeciesAggregate,
+	"ORD": RankOrder,
+	"FOR": RankForm,
+	"SEC": RankSection,
+	"KLA": RankClass,
+	"SER": RankSeries,
+	"ORA": RankUnrankedInfraspecific,
+	"ABT": RankPhylum,
+	"SGE": RankSubgenus,
+	"SGR": RankSubspeciesGroup,
+	"SFA": RankSubfamily,
+	"SSE": RankSubsection,
+	"AG1": RankSpeciesAggregate,
+	"AG2": RankGenusAggregate,
+	"CL1": RankInformalClade,
+	"CL2": RankInformalClade,
+	"CL3": RankInformalClade,
+	"CL4": RankInformalClade,
+	"CL5": RankInformalClade,
+}
+
 // ParseRankLenient maps a WCVP "taxonrank" column value — verbatim, exactly
 // as read from the source row — to a Rank. Unlike ParseRank, it NEVER
 // errors: this is the ingest-facing parser, and ParseRank's own doc comment
@@ -161,6 +200,9 @@ var nothotaxonRanks = map[string]Rank{
 func ParseRankLenient(s string) (Rank, string) {
 	trimmed := strings.TrimSpace(s)
 	if r, ok := nothotaxonRanks[strings.ToLower(trimmed)]; ok {
+		return r, trimmed
+	}
+	if r, ok := germanSLRankCodes[strings.ToUpper(trimmed)]; ok {
 		return r, trimmed
 	}
 	if r, err := ParseRank(trimmed); err == nil {

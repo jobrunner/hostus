@@ -68,6 +68,10 @@ func TestOpenAPISchemasMatchDTOs(t *testing.T) {
 		"BackboneListResponse":   reflect.TypeOf(backboneListResponseDTO{}),
 		"Space":                  reflect.TypeOf(spaceDTO{}),
 		"SpaceListResponse":      reflect.TypeOf(spaceListResponseDTO{}),
+		"ClassificationInfo":     reflect.TypeOf(classificationInfoDTO{}),
+		"VernacularNameEntry":    reflect.TypeOf(vernacularNameDTO{}),
+		"AggregateMember":        reflect.TypeOf(aggregateMemberDTO{}),
+		"AggregateMembership":    reflect.TypeOf(aggregateMembershipDTO{}),
 	}
 
 	for name := range schemas {

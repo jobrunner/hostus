@@ -106,25 +106,71 @@ func (t *ingestTx) ResolveNameSpaceMember(space, extID string) (string, error) {
 // via concept_aggregate. An aggregate with no linked members returns an
 // empty, non-error slice.
 func (db *DB) AggregateMembers(ctx context.Context, aggregateConceptID string) ([]string, error) {
-	rows, err := db.sql.QueryContext(ctx, `
-		SELECT member_concept_id FROM concept_aggregate WHERE aggregate_concept_id = ?`,
-		aggregateConceptID,
-	)
+	return db.queryConceptAggregateIDs(ctx,
+		`SELECT member_concept_id FROM concept_aggregate WHERE aggregate_concept_id = ?`,
+		aggregateConceptID)
+}
+
+// AggregatesByMember returns every Fall-B aggregate concept id that lists
+// memberConceptID among its concept_aggregate members, via
+// idx_concept_aggregate_member. A member linked into no aggregate returns
+// an empty, non-error slice.
+func (db *DB) AggregatesByMember(ctx context.Context, memberConceptID string) ([]string, error) {
+	return db.queryConceptAggregateIDs(ctx,
+		`SELECT aggregate_concept_id FROM concept_aggregate WHERE member_concept_id = ?`,
+		memberConceptID)
+}
+
+// queryConceptAggregateIDs is the shared scan loop AggregateMembers/
+// AggregatesByMember both run: a single-column, single-placeholder query
+// against concept_aggregate, returning the matched column's values (empty,
+// non-nil slice for no match). query is always one of the two literal
+// SELECTs above — never built from caller input — so passing it straight to
+// QueryContext alongside whereVal keeps both parameterized.
+func (db *DB) queryConceptAggregateIDs(ctx context.Context, query, whereVal string) ([]string, error) {
+	rows, err := db.sql.QueryContext(ctx, query, whereVal)
 	if err != nil {
-		return nil, fmt.Errorf("sqlite: querying aggregate members for %q: %w", aggregateConceptID, err)
+		return nil, fmt.Errorf("sqlite: querying concept_aggregate for %q: %w", whereVal, err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	out := []string{}
 	for rows.Next() {
-		var memberConceptID string
-		if err := rows.Scan(&memberConceptID); err != nil {
-			return nil, fmt.Errorf("sqlite: scanning aggregate member for %q: %w", aggregateConceptID, err)
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, fmt.Errorf("sqlite: scanning concept_aggregate row for %q: %w", whereVal, err)
 		}
-		out = append(out, memberConceptID)
+		out = append(out, v)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("sqlite: iterating aggregate members for %q: %w", aggregateConceptID, err)
+		return nil, fmt.Errorf("sqlite: iterating concept_aggregate rows for %q: %w", whereVal, err)
+	}
+	return out, nil
+}
+
+// VernacularNames returns every vernacular-name row for conceptID, ordered
+// by (lang, name). A concept with no vernacular name returns an empty,
+// non-error slice.
+func (db *DB) VernacularNames(ctx context.Context, conceptID string) ([]domain.VernacularName, error) {
+	rows, err := db.sql.QueryContext(ctx, `
+		SELECT lang, name FROM vernacular WHERE concept_id = ? ORDER BY lang, name`,
+		conceptID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: querying vernacular names for concept %q: %w", conceptID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := []domain.VernacularName{}
+	for rows.Next() {
+		var v domain.VernacularName
+		if err := rows.Scan(&v.Language, &v.Name); err != nil {
+			return nil, fmt.Errorf("sqlite: scanning vernacular name for concept %q: %w", conceptID, err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: iterating vernacular names for concept %q: %w", conceptID, err)
 	}
 	return out, nil
 }

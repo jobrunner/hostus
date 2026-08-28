@@ -769,17 +769,27 @@ components:
             type: array
             items:
               type: string
-        classification:
+        parent_chain:
           type: array
           description: >-
-            Übergeordnete Klassifikationskette, ROOT-FIRST (Index 0 = oberste
+            Übergeordnete Vorfahren-Kette, ROOT-FIRST (Index 0 = oberste
             erreichte Vorfahren-Ebene, letztes Element = direktes Elternteil
             dieses Concepts). Wird durch Verfolgen von `parent_id` ermittelt,
             bis zu einer festen Tiefenbegrenzung (10 Hops), damit eine
             zyklische/korrupte Kette nie hängen bleibt. Fehlt/leer, wenn kein
-            Eltern-Concept ingestiert wurde.
+            Eltern-Concept ingestiert wurde. Heißt bewusst NICHT
+            `classification` — dieser Schlüssel ist seit dem Namensraum-/
+            Klassifikations-Redesign das neue `classification`-Objekt unten.
           items:
             $ref: '#/components/schemas/ClassificationEntry'
+        classification:
+          allOf:
+            - $ref: '#/components/schemas/ClassificationInfo'
+          description: >-
+            Familie/Ordnung/Klasse oberhalb von Family (aus dem
+            Namensraum-Crosswalk, Task 4). Fehlt vollständig, wenn keines der
+            drei Felder bekannt ist — nie ein Objekt mit lauter leeren
+            Strings.
         synonyms:
           type: array
           items:
@@ -800,6 +810,93 @@ components:
             sec-tragendes (CDM-)Concept present — so sind zwei gleichnamige
             Konzepte unterscheidbar (SP5). Fehlt bei einem WCVP-Concept ohne
             `sec_reference` (SP1-Form unverändert).
+        vernacular_names:
+          type: array
+          description: >-
+            Alle ingestierten Vernakularnamen. Ergänzt (ersetzt nicht)
+            `vernacular_de` oben. Fehlt/leer, wenn keine ingestiert wurden.
+          items:
+            $ref: '#/components/schemas/VernacularNameEntry'
+        members:
+          type: array
+          description: >-
+            WCVP-Mitglieder eines Fall-B-Sammel-/Aggregat-Concepts (Rang
+            `SPECIES_AGGREGATE`, `GENUS_AGGREGATE`, `SECTION`, `SUBSECTION`
+            oder `SUBGENUS`). Nur bei einem dieser Ränge present, sonst
+            weggelassen — niemals gleichzeitig mit `aggregate_memberships`.
+          items:
+            $ref: '#/components/schemas/AggregateMember'
+        aggregate_memberships:
+          type: array
+          description: >-
+            Fall-A-Rückverweis: jeder Namensraum, dessen Sammel-Concept
+            dieses SPECIES-Concept einschließt. Nur für Rang `SPECIES`
+            present, wenn mindestens ein `NameSpaceEntry` mit `aggregate =
+            true` existiert; sonst weggelassen.
+          items:
+            $ref: '#/components/schemas/AggregateMembership'
+
+    ClassificationInfo:
+      type: object
+      description: >-
+        Familie/Ordnung/Klasse oberhalb von Family. Jedes Unterfeld ist
+        einzeln optional (z. B. nur `family` bekannt).
+      properties:
+        family:
+          type: string
+          example: Asteraceae
+        order:
+          type: string
+          example: Asterales
+        class:
+          type: string
+          example: Magnoliopsida
+
+    VernacularNameEntry:
+      type: object
+      required: [language, name]
+      properties:
+        language:
+          type: string
+          example: de
+        name:
+          type: string
+          example: Rauhaariges Alant
+        source:
+          type: string
+          description: >-
+            Herkunft dieses Vernakularnamens. Aktuell hartkodiert
+            `"germansl"` — der GermanSL-Ingest ist derzeit der einzige
+            Schreiber der `vernacular`-Tabelle.
+          example: germansl
+
+    AggregateMember:
+      type: object
+      required: [concept_id, name]
+      properties:
+        concept_id:
+          type: string
+          example: 'wcvp:concept:123'
+        name:
+          type: string
+          example: Salsola kali
+
+    AggregateMembership:
+      type: object
+      required: [name_space]
+      properties:
+        name_space:
+          type: string
+          example: eurosl
+        aggregate_concept_id:
+          type: string
+          description: >-
+            Fehlt, wenn sich das Sammel-Concept dieses Namensraums nicht
+            auflösen ließ (bekannte Lücke, siehe Task 9's Report).
+          example: 'eurosl:concept:258049b6...'
+        aggregate_name:
+          type: string
+          example: Salsola kali aggr.
 
     SynonymDetail:
       type: object

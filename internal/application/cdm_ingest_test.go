@@ -195,6 +195,14 @@ func (r *fakeCDMRepo) AggregateMembers(context.Context, string) ([]string, error
 	return nil, nil
 }
 
+func (r *fakeCDMRepo) AggregatesByMember(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+
+func (r *fakeCDMRepo) VernacularNames(context.Context, string) ([]domain.VernacularName, error) {
+	return nil, nil
+}
+
 func (r *fakeCDMRepo) AggregateConcepts(context.Context, string, []domain.Rank) ([]output.AggregateConceptSummary, error) {
 	return nil, nil
 }

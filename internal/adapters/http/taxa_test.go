@@ -174,12 +174,12 @@ type conceptResponse struct {
 		ID      string `json:"id"`
 		Version string `json:"version"`
 	} `json:"backbone"`
-	Xrefs          map[string][]string `json:"xrefs"`
-	Classification []struct {
+	Xrefs       map[string][]string `json:"xrefs"`
+	ParentChain []struct {
 		ConceptID string `json:"concept_id"`
 		Canonical string `json:"canonical"`
 		Rank      string `json:"rank"`
-	} `json:"classification"`
+	} `json:"parent_chain"`
 	Synonyms []struct {
 		Canonical  string `json:"canonical"`
 		Authorship string `json:"authorship"`
@@ -277,11 +277,11 @@ func assertCorynephorusCanescensDistribution(t *testing.T, got conceptResponse) 
 // accepted in the same fixture and with no further ancestor of its own.
 func assertCorynephorusCanescensClassification(t *testing.T, got conceptResponse) {
 	t.Helper()
-	if len(got.Classification) != 1 {
-		t.Fatalf("len(classification) = %d, want 1 (the Corynephorus genus ancestor)", len(got.Classification))
+	if len(got.ParentChain) != 1 {
+		t.Fatalf("len(parent_chain) = %d, want 1 (the Corynephorus genus ancestor)", len(got.ParentChain))
 	}
-	if got.Classification[0].ConceptID != "wcvp:concept:451295" || got.Classification[0].Canonical != "Corynephorus" || got.Classification[0].Rank != "GENUS" {
-		t.Errorf("classification[0] = %+v, want {wcvp:concept:451295 Corynephorus GENUS}", got.Classification[0])
+	if got.ParentChain[0].ConceptID != "wcvp:concept:451295" || got.ParentChain[0].Canonical != "Corynephorus" || got.ParentChain[0].Rank != "GENUS" {
+		t.Errorf("parent_chain[0] = %+v, want {wcvp:concept:451295 Corynephorus GENUS}", got.ParentChain[0])
 	}
 }
 
@@ -699,6 +699,227 @@ func TestHandleConcept_OtherRank_RendersRankVerbatim(t *testing.T) {
 	}
 	if _, present := rawOrdinary["rank_verbatim"]; present {
 		t.Errorf("raw JSON = %s, want the \"rank_verbatim\" key OMITTED entirely for a canonically-ranked concept", rr2.Body.String())
+	}
+}
+
+// seedAggregateFixture writes a minimal, valid fixture directly via the low
+// level IngestTx API (mirroring internal/adapters/sqlite's
+// namespace_agreement_internal_test.go's seedTestConcept): a WCVP species
+// concept (Salsola kali) plus its eurosl Fall-B aggregate (Salsola kali
+// aggr.), linked via concept_aggregate — Task 6's shape — with a
+// name_space_entry marking the WCVP concept's own eurosl spelling as an
+// aggregate alias, so both members[] (on the aggregate) and
+// aggregate_memberships[] (on the species) have real data to render.
+func seedAggregateFixture(t *testing.T, db *sqlite.DB) {
+	t.Helper()
+	seedAggregateFixtureWCVP(t, db)
+	seedAggregateFixtureEurosl(t, db)
+}
+
+// seedAggregateFixtureWCVP writes the fixture's WCVP half: the Salsola kali
+// species concept plus its eurosl NameSpaceEntry flagged Aggregate == true
+// (the Fall-A back-reference aggregate_memberships[] renders from).
+func seedAggregateFixtureWCVP(t *testing.T, db *sqlite.DB) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := db.BeginIngest(ctx, domain.BackboneVersion{ID: "wcvp", Version: "test", Redistribution: domain.RedistributionUnknown})
+	if err != nil {
+		t.Fatalf("BeginIngest(wcvp): unexpected error: %v", err)
+	}
+	speciesName := domain.Name{ID: "wcvp:name:sp1", Canonical: "Salsola kali", Rank: domain.RankSpecies}
+	species := domain.Concept{ID: "wcvp:concept:sp1", BackboneID: "wcvp", AcceptedName: speciesName, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+	mustSeed(t, "UpsertName(species)", tx.UpsertName(speciesName))
+	mustSeed(t, "UpsertConcept(species)", tx.UpsertConcept(species))
+	mustSeed(t, "LinkName(species)", tx.LinkName(species.ID, speciesName.ID, "accepted", nil))
+	mustSeed(t, "UpsertNameSpace(eurosl)", tx.UpsertNameSpace(domain.NameSpaceMeta{ID: "eurosl", Version: "test", Redistribution: domain.RedistributionUnknown}))
+	mustSeed(t, "AddNameSpaceEntry", tx.AddNameSpaceEntry(species.ID, domain.NameSpaceEntry{
+		Space: "eurosl", ExtID: "agg1", Name: "Salsola kali aggr.", Aggregate: true, Status: "accepted",
+	}))
+	mustSeed(t, "Finalize(wcvp)", tx.Finalize())
+	mustSeed(t, "Commit(wcvp)", tx.Commit())
+}
+
+// seedAggregateFixtureEurosl writes the fixture's eurosl half: the Fall-B
+// aggregate concept (Salsola kali aggr.), linked to the WCVP species via
+// concept_aggregate (Task 6's shape) — the members[] source.
+func seedAggregateFixtureEurosl(t *testing.T, db *sqlite.DB) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := db.BeginIngest(ctx, domain.BackboneVersion{ID: "eurosl", Version: "test", Redistribution: domain.RedistributionUnknown})
+	if err != nil {
+		t.Fatalf("BeginIngest(eurosl): unexpected error: %v", err)
+	}
+	aggName := domain.Name{ID: "eurosl:name:agg1", Canonical: "Salsola kali aggr.", Rank: domain.RankSpeciesAggregate}
+	agg := domain.Concept{ID: "eurosl:concept:agg1", BackboneID: "eurosl", AcceptedName: aggName, Rank: domain.RankSpeciesAggregate, Status: domain.StatusAccepted}
+	mustSeed(t, "UpsertName(agg)", tx.UpsertName(aggName))
+	mustSeed(t, "UpsertConcept(agg)", tx.UpsertConcept(agg))
+	mustSeed(t, "LinkName(agg)", tx.LinkName(agg.ID, aggName.ID, "accepted", nil))
+	mustSeed(t, "AddAggregateMember", tx.AddAggregateMember(agg.ID, "wcvp:concept:sp1"))
+	mustSeed(t, "Finalize(eurosl)", tx.Finalize())
+	mustSeed(t, "Commit(eurosl)", tx.Commit())
+}
+
+// mustSeed fails the test immediately if a fixture-seeding step errored,
+// naming which step failed — the shared assertion seedAggregateFixture's two
+// halves use for every IngestTx call.
+func mustSeed(t *testing.T, step string, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("%s: unexpected error: %v", step, err)
+	}
+}
+
+// seededFullRepo opens a fresh in-memory sqlite repo and seeds it with
+// seedAggregateFixture's Salsola kali (WCVP) / Salsola kali aggr. (eurosl)
+// pair — the shared fixture for this file's classification/aggregate
+// response tests.
+func seededFullRepo(t *testing.T) *sqlite.DB {
+	t.Helper()
+	db, err := sqlite.Open(":memory:")
+	if err != nil {
+		t.Fatalf("sqlite.Open(:memory:): unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	seedAggregateFixture(t, db)
+	return db
+}
+
+// TestHandleConcept_IncludesClassificationAndAggregateMembers is the Task 9
+// brief's Step 1 test: a Fall-B aggregate concept (rank SPECIES_AGGREGATE)
+// must render members[] naming its one WCVP member.
+func TestHandleConcept_IncludesClassificationAndAggregateMembers(t *testing.T) {
+	repo := seededFullRepo(t)
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/concept/eurosl:concept:agg1", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	members, ok := body["members"].([]any)
+	if !ok || len(members) != 1 {
+		t.Fatalf("body[\"members\"] = %v, want 1 entry", body["members"])
+	}
+	member, ok := members[0].(map[string]any)
+	if !ok || member["concept_id"] != "wcvp:concept:sp1" || member["name"] != "Salsola kali" {
+		t.Fatalf("members[0] = %v, want {concept_id: wcvp:concept:sp1, name: Salsola kali}", members[0])
+	}
+}
+
+// TestHandleConcept_SpeciesRendersAggregateMemberships proves the Fall-A
+// back-reference: a SPECIES concept with an eurosl NameSpaceEntry flagged
+// Aggregate == true renders aggregate_memberships[], including the resolved
+// aggregate_concept_id (via Repository.AggregatesByMember).
+func TestHandleConcept_SpeciesRendersAggregateMemberships(t *testing.T) {
+	repo := seededFullRepo(t)
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/concept/wcvp:concept:sp1", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rr.Code, rr.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	memberships, ok := body["aggregate_memberships"].([]any)
+	if !ok || len(memberships) != 1 {
+		t.Fatalf("body[\"aggregate_memberships\"] = %v, want 1 entry", body["aggregate_memberships"])
+	}
+	m, ok := memberships[0].(map[string]any)
+	if !ok || m["name_space"] != "eurosl" || m["aggregate_name"] != "Salsola kali aggr." || m["aggregate_concept_id"] != "eurosl:concept:agg1" {
+		t.Fatalf("aggregate_memberships[0] = %v, want {name_space: eurosl, aggregate_name: Salsola kali aggr., aggregate_concept_id: eurosl:concept:agg1}", memberships[0])
+	}
+}
+
+// TestHandleConcept_ClassificationObjectRendersFamilyOrderClass proves the
+// NEW "classification" object (spec §4, distinct from "parent_chain") is
+// populated from domain.Concept.Family/OrderName/ClassName and omitted
+// entirely when all three are unknown.
+func TestHandleConcept_ClassificationObjectRendersFamilyOrderClass(t *testing.T) {
+	repo := seededFullRepo(t)
+	ctx := context.Background()
+	tx, err := repo.BeginTraitIngest(ctx)
+	if err != nil {
+		t.Fatalf("BeginTraitIngest: unexpected error: %v", err)
+	}
+	if err := tx.UpsertClassification("wcvp:concept:sp1", "Chenopodiaceae", "Caryophyllales", "Magnoliopsida"); err != nil {
+		t.Fatalf("UpsertClassification: unexpected error: %v", err)
+	}
+	if err := tx.Finalize(); err != nil {
+		t.Fatalf("Finalize: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	rrWith := httptest.NewRecorder()
+	r.ServeHTTP(rrWith, httptest.NewRequest(http.MethodGet, "/v1/concept/wcvp:concept:sp1", nil))
+	var withClassification map[string]any
+	if err := json.Unmarshal(rrWith.Body.Bytes(), &withClassification); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	classification, ok := withClassification["classification"].(map[string]any)
+	if !ok || classification["family"] != "Chenopodiaceae" || classification["order"] != "Caryophyllales" || classification["class"] != "Magnoliopsida" {
+		t.Fatalf("classification = %v, want {family: Chenopodiaceae, order: Caryophyllales, class: Magnoliopsida}", withClassification["classification"])
+	}
+
+	rrWithout := httptest.NewRecorder()
+	r.ServeHTTP(rrWithout, httptest.NewRequest(http.MethodGet, "/v1/concept/eurosl:concept:agg1", nil))
+	var withoutClassification map[string]any
+	if err := json.Unmarshal(rrWithout.Body.Bytes(), &withoutClassification); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, present := withoutClassification["classification"]; present {
+		t.Errorf("classification = %v, want the key OMITTED for a concept with no family/order/class", withoutClassification["classification"])
+	}
+}
+
+// TestHandleConcept_VernacularNamesRenderWithHardcodedSource proves
+// vernacular_names[] renders every ingested vernacular row with source
+// hardcoded to "germansl" (Task 9's ruling — see vernacularNameDTO's doc
+// comment).
+func TestHandleConcept_VernacularNamesRenderWithHardcodedSource(t *testing.T) {
+	repo := seededFullRepo(t)
+	ctx := context.Background()
+	tx, err := repo.BeginTraitIngest(ctx)
+	if err != nil {
+		t.Fatalf("BeginTraitIngest: unexpected error: %v", err)
+	}
+	if err := tx.AddVernacularName("wcvp:concept:sp1", domain.VernacularName{Language: "de", Name: "Kali-Salzkraut"}); err != nil {
+		t.Fatalf("AddVernacularName: unexpected error: %v", err)
+	}
+	if err := tx.Finalize(); err != nil {
+		t.Fatalf("Finalize: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/concept/wcvp:concept:sp1", nil))
+
+	var body map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	names, ok := body["vernacular_names"].([]any)
+	if !ok || len(names) != 1 {
+		t.Fatalf("body[\"vernacular_names\"] = %v, want 1 entry", body["vernacular_names"])
+	}
+	name, ok := names[0].(map[string]any)
+	if !ok || name["language"] != "de" || name["name"] != "Kali-Salzkraut" || name["source"] != "germansl" {
+		t.Fatalf("vernacular_names[0] = %v, want {language: de, name: Kali-Salzkraut, source: germansl}", names[0])
 	}
 }
 

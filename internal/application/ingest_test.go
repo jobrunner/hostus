@@ -909,6 +909,12 @@ func (f *fakeCapturingRepo) NameSpaceEntries(context.Context, string, []string) 
 func (f *fakeCapturingRepo) AggregateMembers(context.Context, string) ([]string, error) {
 	return nil, nil
 }
+func (f *fakeCapturingRepo) AggregatesByMember(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+func (f *fakeCapturingRepo) VernacularNames(context.Context, string) ([]domain.VernacularName, error) {
+	return nil, nil
+}
 func (f *fakeCapturingRepo) AggregateConcepts(context.Context, string, []domain.Rank) ([]output.AggregateConceptSummary, error) {
 	return nil, nil
 }

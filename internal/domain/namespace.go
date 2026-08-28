@@ -27,9 +27,8 @@ package domain
 // spelling denotes an AGGREGATE rather than a single taxon.
 
 // NameSpaceMeta is one ingested name space's provenance row — the name-space
-// counterpart of BackboneVersion/TraitVocabMeta/XrefSourceMeta. IngestedAt is
-// stamped by the repository adapter, not by the caller, exactly as it is for
-// those three.
+// counterpart of BackboneVersion/XrefSourceMeta. IngestedAt is stamped by
+// the repository adapter, not by the caller, exactly as it is for those two.
 type NameSpaceMeta struct {
 	// ID is the manifest-pinned space id, e.g. "floraveg". It is also the
 	// value NameSpaceEntry.Space carries and the one a /v1/match
@@ -83,8 +82,8 @@ type NameSpaceEntry struct {
 	Status string
 	// Resolution records HOW the crosswalk reached the concept: empty for an
 	// exact canonical match, else the NormalizationRule that was needed.
-	// Same "absence is information" rule as TraitValue.Resolution: empty
-	// means "no normalisation was needed", never "unknown".
+	// Absence is information here: empty means "no normalisation was
+	// needed", never "unknown".
 	Resolution string
 }
 

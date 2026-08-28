@@ -2,7 +2,7 @@ package domain
 
 // XrefSourceMeta is the provenance record for one ingested cross-reference
 // source (e.g. the Wikidata bridge-hub CSV): license/source metadata plus
-// the redistribution gate, mirroring TraitVocabMeta's shape for the same
+// the redistribution gate, mirroring NameSpaceMeta's shape for the same
 // purpose. It is persisted as one xref_source row per ingested source, and
 // every xref row that source writes carries its id in xref.source — so an
 // ingested database can answer both "which harvest are these xrefs from?"

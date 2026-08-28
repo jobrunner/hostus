@@ -62,7 +62,6 @@ func runIngest(cmd *cobra.Command, _ []string) error {
 	}
 
 	printIngestReport(cmd.OutOrStdout(), reports.Backbone)
-	printTraitReports(cmd.OutOrStdout(), reports.Traits)
 	printXrefReports(cmd.OutOrStdout(), reports.Xrefs)
 	printConceptSourceReports(cmd.OutOrStdout(), reports.ConceptSources)
 	printNameSpaceReports(cmd.OutOrStdout(), reports.NameSpaces)
@@ -74,7 +73,8 @@ func runIngest(cmd *cobra.Command, _ []string) error {
 }
 
 // printNameSpaceReports renders one line per ingested name space (SP9/UC4).
-// Its visibility posture matches the three report printers above: the
+// Its visibility posture matches the other report printers (called before it
+// in runIngest): the
 // crosswalk from a flat name list onto hostus concepts is lossy by
 // construction (the name lists carry no external id hostus could join on), so
 // every loss mode — unmatched, ambiguous, duplicate ext_id, reader-rejected
@@ -141,7 +141,7 @@ func printIngestReport(w io.Writer, report application.IngestReport) {
 // canonical domain.Rank (see application.ParseRankLenient / domain.RankOther).
 // This is what makes an exotic rank spelling (e.g. WCVP's "proles") VISIBLE
 // to whoever runs "hostus ingest" — the ingest itself never aborts on it —
-// mirroring printTraitReports' "unmatched sample" line below.
+// mirroring printNameSpaceReports' "unmatched sample" line below.
 func printOtherRanksNotice(w io.Writer, b application.BackboneReport) {
 	printOtherRanksLine(w, b.OtherRanks, b.OtherRankSample)
 }
@@ -186,51 +186,11 @@ func printRedistributionNotice(w io.Writer, id, redistribution string) {
 	_, _ = fmt.Fprintf(w, "  hinweis: %s (redistribution=%s) — lokal genutzt, nicht redistribuierbar\n", id, redistribution)
 }
 
-// printTraitReports renders one line per ingested trait vocabulary,
-// including its UnmatchedSample — the crosswalk from a trait table's bare
-// taxon name to a hostus taxon_concept is lossy by construction (PoC P6:
-// the trait tables carry no external taxon id), so this is where that loss
-// becomes VISIBLE to whoever runs "hostus ingest", not silently swallowed.
-func printTraitReports(w io.Writer, reports []application.TraitIngestReport) {
-	if len(reports) == 0 {
-		return
-	}
-	_, _ = fmt.Fprintln(w, "Trait vocabularies:")
-	for _, r := range reports {
-		// tiebroken is appended only when it fired: a "tiebroken=0" on every
-		// vocabulary is noise, and noise on a line that reports a judgement
-		// call is worse than silence.
-		tiebroken := ""
-		if r.TieBroken > 0 {
-			tiebroken = fmt.Sprintf(" tiebroken=%d", r.TieBroken)
-		}
-		_, _ = fmt.Fprintf(w, "  %s: rows=%d matched=%d unmatched=%d ambiguous=%d%s\n",
-			r.Vocab, r.Rows, r.Matched, r.Unmatched, r.Ambiguous, tiebroken)
-		for _, n := range r.Normalized {
-			flag := ""
-			if n.Flagged {
-				flag = " [flagged: circumscriptions equated, not identical]"
-			}
-			_, _ = fmt.Fprintf(w, "    normalized %s: rows=%d taxa=%d%s\n", n.Rule, n.Rows, n.Taxa, flag)
-		}
-		if len(r.FlaggedSample) > 0 {
-			_, _ = fmt.Fprintf(w, "    flagged sample: %s\n", strings.Join(r.FlaggedSample, ", "))
-		}
-		if len(r.TieBrokenSample) > 0 {
-			_, _ = fmt.Fprintf(w, "    tiebroken sample: %s\n", strings.Join(r.TieBrokenSample, ", "))
-		}
-		if len(r.UnmatchedSample) > 0 {
-			_, _ = fmt.Fprintf(w, "    unmatched sample: %s\n", strings.Join(r.UnmatchedSample, ", "))
-		}
-		printRedistributionNotice(w, r.Vocab, r.Redistribution)
-	}
-}
-
 // printXrefReports renders one line per ingested xref source, including its
 // per-authority coverage and both conflict-sample lines — mirroring
-// printTraitReports' visibility posture: the ID-based join's two loss modes
-// (unmatched join ids, conflicting external ids) must be seen by whoever
-// runs "hostus ingest", never silently swallowed.
+// printNameSpaceReports' visibility posture: the ID-based join's two loss
+// modes (unmatched join ids, conflicting external ids) must be seen by
+// whoever runs "hostus ingest", never silently swallowed.
 func printXrefReports(w io.Writer, reports []application.XrefIngestReport) {
 	if len(reports) == 0 {
 		return
@@ -267,7 +227,7 @@ func sortedKeys(m map[string]int) []string {
 }
 
 // printConceptSourceReports renders one line per ingested concept source
-// (SP5). Its visibility posture matches printTraitReports/printXrefReports,
+// (SP5). Its visibility posture matches printNameSpaceReports/printXrefReports,
 // and the four loss counters it prints are the whole point: a CDM ingest
 // legitimately writes fewer relations than it read, and the operator must be
 // able to see WHY — dropped misapplied-name rows, unresolvable ends,

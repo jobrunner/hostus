@@ -30,9 +30,9 @@ func (t *ingestTx) UpsertNameSpace(meta domain.NameSpaceMeta) error {
 
 // AddNameSpaceEntry attaches one name-space spelling to conceptID. e.Name is
 // written VERBATIM — it is the string a target-space caller gets back, so it
-// must not be folded to the canonical match key. e.Resolution follows
-// AddTraitValue's rule: an empty resolution (an exact canonical match) is
-// stored as NULL, not as ”.
+// must not be folded to the canonical match key. e.Resolution follows the
+// "absence is information" rule: an empty resolution (an exact canonical
+// match) is stored as NULL, not as ”.
 func (t *ingestTx) AddNameSpaceEntry(conceptID string, e domain.NameSpaceEntry) error {
 	_, err := t.tx.ExecContext(t.ctx, `
 		INSERT OR REPLACE INTO name_space_entry (space, ext_id, concept_id, name, aggregate, resolution, status)

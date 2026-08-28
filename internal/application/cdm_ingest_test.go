@@ -74,8 +74,6 @@ func (t *fakeCDMTx) AddConceptRelation(from, to string, rel domain.Relation, sou
 func (t *fakeCDMTx) AddXref(string, domain.Xref, string) error         { return nil }
 func (t *fakeCDMTx) AddDistribution(string, domain.Distribution) error { return nil }
 func (t *fakeCDMTx) UpsertArea(domain.Area) error                      { return nil }
-func (t *fakeCDMTx) AddTraitValue(string, domain.TraitValue) error     { return nil }
-func (t *fakeCDMTx) UpsertTraitVocabulary(domain.TraitVocabMeta) error { return nil }
 func (t *fakeCDMTx) UpsertXrefSource(domain.XrefSourceMeta) error      { return nil }
 func (t *fakeCDMTx) UpsertNameSpace(domain.NameSpaceMeta) error        { return nil }
 func (t *fakeCDMTx) AddAggregateMember(string, string) error           { return nil }
@@ -173,14 +171,6 @@ func (r *fakeCDMRepo) BackboneVersions(context.Context) ([]domain.BackboneVersio
 
 func (r *fakeCDMRepo) BuildDistributionClosure(context.Context) error {
 	return nil
-}
-
-func (r *fakeCDMRepo) Traits(context.Context, string, []domain.TraitVocab) ([]domain.TraitSet, error) {
-	return nil, nil
-}
-
-func (r *fakeCDMRepo) TraitVocabularies(context.Context) ([]domain.TraitVocabMeta, error) {
-	return nil, nil
 }
 
 func (r *fakeCDMRepo) NameSpaceEntries(context.Context, string, []string) ([]domain.NameSpaceEntry, error) {

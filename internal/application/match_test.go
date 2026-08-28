@@ -45,9 +45,8 @@ func seedFestucaOvinaAggregate(t *testing.T, repo *sqlite.DB) string {
 // situation WCVP itself does not model, but one MatchNames must still
 // handle correctly: a query for that canonical+author now classifies
 // exact_author against BOTH concepts, and picking either one silently
-// would hide a genuine ambiguity from the caller. Returns both concept
-// IDs in ingestion order.
-func seedHomonymPair(t *testing.T, repo *sqlite.DB) (conceptA, conceptB string) {
+// would hide a genuine ambiguity from the caller.
+func seedHomonymPair(t *testing.T, repo *sqlite.DB) {
 	t.Helper()
 	ctx := context.Background()
 	tx, err := repo.BeginIngest(ctx, domain.BackboneVersion{ID: "test-homonym", Version: "v1"})
@@ -79,7 +78,6 @@ func seedHomonymPair(t *testing.T, repo *sqlite.DB) (conceptA, conceptB string) 
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("Commit: unexpected error: %v", err)
 	}
-	return conceptAObj.ID, conceptBObj.ID
 }
 
 // seedSynonymAndAcceptedSameNameOneConcept ingests ONE concept whose

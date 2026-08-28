@@ -2,9 +2,8 @@
 // emitted by pipelines/wikidata/build.sh (see pipelines/README.md for the
 // contract): one row per (bridge item x external authority), carrying the
 // join key (join_authority/join_id) the ingest resolves against hostus'
-// existing xref table. It stays string-typed, mirroring
-// internal/adapters/traits' reader: a thin, defensive CSV decode, not
-// validation of the authorities/ids themselves.
+// existing xref table. It stays string-typed: a thin, defensive CSV decode,
+// not validation of the authorities/ids themselves.
 package xref
 
 import (
@@ -99,7 +98,7 @@ func Read(path string) (*Dataset, error) {
 // minFieldsFor returns how many fields a data row must have for Read to
 // index every wanted column safely: one past the RIGHTMOST position any
 // wanted column occupies in the ACTUAL header. See the identical helper in
-// internal/adapters/traits/reader.go for why this is not simply
+// internal/adapters/namelist/reader.go for why this is not simply
 // len(wantHeader).
 func minFieldsFor(idx map[string]int) int {
 	minFields := 0

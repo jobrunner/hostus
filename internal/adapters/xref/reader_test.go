@@ -90,11 +90,10 @@ func TestRead_MalformedRowsAreCollectedNotPanicking(t *testing.T) {
 }
 
 // TestRead_ExtraLeadingColumnShortRowIsCollectedNotPanicking pins the
-// short-row guard against a header carrying EXTRA columns — see the
-// identical test in internal/adapters/traits/reader_test.go for why this
-// matters: FieldsPerRecord = -1 tolerates a prepended column, which shifts
-// every wanted column one position right, and a guard of len(wantHeader)
-// would wave a row through only for Read to index past it and panic.
+// short-row guard against a header carrying EXTRA columns: FieldsPerRecord
+// = -1 tolerates a prepended column, which shifts every wanted column one
+// position right, and a guard of len(wantHeader) would wave a row through
+// only for Read to index past it and panic.
 func TestRead_ExtraLeadingColumnShortRowIsCollectedNotPanicking(t *testing.T) {
 	dir := t.TempDir()
 	content := "extra|" + cleanHeader +

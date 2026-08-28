@@ -1,6 +1,7 @@
 package httpx_test
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -8,6 +9,25 @@ import (
 	httpx "github.com/jobrunner/hostus/internal/adapters/http"
 	"github.com/jobrunner/hostus/internal/adapters/sqlite"
 )
+
+// TestRouter_TraitsRouteRemoved pins the removal of the traits subsystem
+// (Task 12): GET /v1/concept/{id}/traits must no longer be a registered
+// route, so unmatched requests fall through to gorilla/mux's default 404.
+func TestRouter_TraitsRouteRemoved(t *testing.T) {
+	db, err := sqlite.Open(":memory:")
+	if err != nil {
+		t.Fatalf("sqlite.Open(:memory:): unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	router := httpx.NewRouter(httpx.Deps{Repo: db})
+	req := httptest.NewRequest(http.MethodGet, "/v1/concept/wcvp:concept:1/traits", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 (Route soll entfernt sein)", w.Code)
+	}
+}
 
 func TestHealthLive(t *testing.T) {
 	r := httpx.NewRouter(httpx.Deps{})

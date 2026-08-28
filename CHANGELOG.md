@@ -5,6 +5,15 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [Unreleased]
+
+### Removed
+
+* **Traits-Subsystem entfernt** (`GET /v1/concept/{id}/traits`, EIVE/Tichý/
+  Midolo-Pipelines). BREAKING. Transfer nach situs (Teilprojekt 2), siehe
+  docs/superpowers/specs/2026-08-27-hostus-namensraum-redesign-design.md
+  Abschnitt 8.
+
 ## [2.6.1-alpha.0](https://github.com/jobrunner/hostus/compare/v2.6.0-alpha.0...v2.6.1-alpha.0) (2026-08-24)
 
 

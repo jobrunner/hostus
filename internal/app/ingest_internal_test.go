@@ -179,9 +179,9 @@ func TestNativeRowSourceRows_CarriesRankAndParentID(t *testing.T) {
 
 // TestIngestNativeSpace_WritesQualifyingRowsFromRealCSV drives
 // ingestNativeSpace end to end against a real on-disk CSV and a real
-// on-disk SQLite file (the same posture as TestIngest_ReportsTraitVocabularies
-// above — the sqlite adapter runs with SetMaxOpenConns(1), so this is the
-// only way to catch a phase-ordering deadlock).
+// on-disk SQLite file (the same posture as TestIngest_ReportsXrefSources in
+// ingest_test.go — the sqlite adapter runs with SetMaxOpenConns(1), so this
+// is the only way to catch a phase-ordering deadlock).
 func TestIngestNativeSpace_WritesQualifyingRowsFromRealCSV(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
 	repo, err := sqlite.Open(dbPath)

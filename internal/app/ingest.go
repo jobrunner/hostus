@@ -9,7 +9,6 @@ import (
 	"github.com/jobrunner/hostus/internal/adapters/manifest"
 	"github.com/jobrunner/hostus/internal/adapters/namelist"
 	"github.com/jobrunner/hostus/internal/adapters/sqlite"
-	"github.com/jobrunner/hostus/internal/adapters/traits"
 	"github.com/jobrunner/hostus/internal/adapters/wcvp"
 	"github.com/jobrunner/hostus/internal/adapters/xref"
 	"github.com/jobrunner/hostus/internal/application"
@@ -99,62 +98,10 @@ func readerFor(b application.Backbone) (application.RowSource, error) {
 	return wcvpRowSource{ds: ds}, nil
 }
 
-// traitVocabRowSource adapts a *traits.Dataset (T2's reader output) into
-// application.TraitRowSource, so application never imports
-// internal/adapters/traits directly (depguard) — the trait-vocabulary
-// counterpart of wcvpRowSource above.
-type traitVocabRowSource struct{ ds *traits.Dataset }
-
-func (s traitVocabRowSource) Rows() []application.TraitRow {
-	out := make([]application.TraitRow, 0, len(s.ds.Rows))
-	for _, r := range s.ds.Rows {
-		out = append(out, application.TraitRow{
-			Taxon:        r.Taxon,
-			Vocab:        r.Vocab,
-			VocabVersion: r.VocabVersion,
-			Dim:          r.Dim,
-			Value:        r.Value,
-			NicheWidth:   r.NicheWidth,
-			NSystems:     r.NSystems,
-		})
-	}
-	return out
-}
-
-// ingestTraitVocab opens tv's canonical trait CSV and runs
-// application.IngestTraits against repo, adapting the manifest's
-// TraitVocabulary entry into the domain.TraitVocabMeta the use case records.
-func ingestTraitVocab(ctx context.Context, tv manifest.TraitVocabulary, repo *sqlite.DB) (application.TraitIngestReport, error) {
-	ds, err := traits.Read(tv.Path)
-	if err != nil {
-		return application.TraitIngestReport{}, fmt.Errorf("app: reading trait vocabulary %q at %q: %w", tv.ID, tv.Path, err)
-	}
-	vocab, err := domain.ParseTraitVocab(tv.ID)
-	if err != nil {
-		return application.TraitIngestReport{}, fmt.Errorf("app: trait vocabulary %q: %w", tv.ID, err)
-	}
-	// tv.Redistribution is routed through ParseRedistribution for the same
-	// reason as adaptBackbones' backbone mapping above — see its doc
-	// comment.
-	redistribution, err := domain.ParseRedistribution(tv.Redistribution)
-	if err != nil {
-		return application.TraitIngestReport{}, fmt.Errorf("app: trait vocabulary %q: %w", tv.ID, err)
-	}
-	meta := domain.TraitVocabMeta{
-		Vocab:          vocab,
-		Version:        tv.Version,
-		Taxonomy:       tv.Taxonomy,
-		License:        tv.License,
-		SourceURL:      tv.SourceURL,
-		Redistribution: redistribution,
-	}
-	return application.IngestTraits(ctx, repo, traitVocabRowSource{ds: ds}, meta)
-}
-
 // xrefSourceRowSource adapts a *xref.Dataset (T1/T2's reader output) into
 // application.XrefRowSource, so application never imports
 // internal/adapters/xref directly (depguard) — the xref-source counterpart
-// of wcvpRowSource/traitVocabRowSource above.
+// of wcvpRowSource above.
 type xrefSourceRowSource struct{ ds *xref.Dataset }
 
 func (s xrefSourceRowSource) Rows() []application.XrefRow {
@@ -202,7 +149,7 @@ func ingestXrefSource(ctx context.Context, xs manifest.XrefSource, manifestSHA s
 // nameSpaceRowSource adapts a *namelist.Dataset into
 // application.NameRowSource, so application never imports
 // internal/adapters/namelist directly (depguard) — the name-space
-// counterpart of wcvpRowSource/traitVocabRowSource/xrefSourceRowSource above.
+// counterpart of wcvpRowSource/xrefSourceRowSource above.
 type nameSpaceRowSource struct{ ds *namelist.Dataset }
 
 func (s nameSpaceRowSource) Rows() []application.NameRow {
@@ -362,7 +309,7 @@ func ingestNativeSpace(ctx context.Context, ns manifest.NameSpace, manifestSHA s
 // application.IngestCDM against repo. This is the adapter -> application DTO
 // bridge for SP5: internal/application must not import
 // internal/adapters/cdm (depguard), so the row mapping lives here in the
-// composition root, exactly like wcvpRowSource/traitVocabRowSource above.
+// composition root, exactly like wcvpRowSource above.
 //
 // Reader-level row errors are surfaced on the report rather than aborting:
 // the CSVs are the output of a 16–20 h crawl, and one malformed line out of
@@ -436,7 +383,6 @@ func adaptCDMRelations(rows []cdm.RelationRow) []application.CDMRelationRow {
 // already discarding most of it with blank identifiers.
 type Reports struct {
 	Backbone       application.IngestReport
-	Traits         []application.TraitIngestReport
 	Xrefs          []application.XrefIngestReport
 	ConceptSources []application.CDMIngestReport
 	NameSpaces     []application.NameSpaceIngestReport
@@ -444,11 +390,15 @@ type Reports struct {
 
 // Ingest parses and validates the manifest at manifestPath, opens (or
 // creates) the SQLite database at dbPath, and runs application.Ingest
-// against every pinned backbone, then application.IngestTraits against every
-// pinned trait vocabulary, then application.IngestXrefs against every pinned
-// xref source, then application.IngestCDM against every pinned concept
+// against every pinned backbone, then application.IngestXrefs against every
+// pinned xref source, then application.IngestCDM against every pinned concept
 // source, then application.IngestNameSpace against every pinned name space.
 // It is the entry point "hostus ingest" calls.
+//
+// A manifest's trait_vocabularies entries (manifest.Dataset.TraitVocabularies)
+// are deliberately IGNORED here — the traits subsystem was removed and
+// transferred to situs (Teilprojekt 2); a manifest still pinning one is not
+// an error, its entries are simply never read.
 //
 // Concept sources run LATE on purpose: their relation ends resolve against
 // taxon_concept, so anything an earlier phase wrote is already available to
@@ -477,15 +427,6 @@ func Ingest(ctx context.Context, manifestPath, dbPath string) (Reports, error) {
 	reports.Backbone, err = application.Ingest(ctx, ds, readerFor, repo)
 	if err != nil {
 		return reports, err
-	}
-
-	reports.Traits = make([]application.TraitIngestReport, 0, len(manifestDS.TraitVocabularies))
-	for _, tv := range manifestDS.TraitVocabularies {
-		tr, err := ingestTraitVocab(ctx, tv, repo)
-		if err != nil {
-			return reports, err
-		}
-		reports.Traits = append(reports.Traits, tr)
 	}
 
 	reports.Xrefs = make([]application.XrefIngestReport, 0, len(manifestDS.XrefSources))

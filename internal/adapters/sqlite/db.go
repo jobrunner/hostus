@@ -73,6 +73,10 @@ func Open(path string) (*DB, error) {
 		_ = sqlDB.Close()
 		return nil, err
 	}
+	if err := migrateTaxonConceptClassification(context.Background(), sqlDB); err != nil {
+		_ = sqlDB.Close()
+		return nil, err
+	}
 	if err := verifySchemaColumns(context.Background(), sqlDB); err != nil {
 		_ = sqlDB.Close()
 		return nil, err
@@ -552,6 +556,28 @@ func migrateXrefSourceColumn(ctx context.Context, sqlDB *sql.DB) error {
 // determinate.
 func migrateNameSpaceEntryStatus(ctx context.Context, sqlDB *sql.DB) error {
 	return addColumnIfMissing(ctx, sqlDB, "name_space_entry", "status", "TEXT NOT NULL DEFAULT ''")
+}
+
+// migrateTaxonConceptClassification adds taxon_concept.family/order_name/
+// class_name to an index built before they existed. Without it
+// verifySchemaColumns would refuse to open such a database at all, since the
+// embedded schema now declares the columns and CREATE TABLE IF NOT EXISTS
+// never adds a column to an existing table.
+//
+// Existing rows keep NULL — "classification not recorded" — which mirrors
+// the schema's own NULL-means-unknown rule for these columns (never guessed).
+// Only a re-ingest fills them.
+func migrateTaxonConceptClassification(ctx context.Context, sqlDB *sql.DB) error {
+	if err := addColumnIfMissing(ctx, sqlDB, "taxon_concept", "family", "TEXT"); err != nil {
+		return fmt.Errorf("sqlite: migrating taxon_concept.family: %w", err)
+	}
+	if err := addColumnIfMissing(ctx, sqlDB, "taxon_concept", "order_name", "TEXT"); err != nil {
+		return fmt.Errorf("sqlite: migrating taxon_concept.order_name: %w", err)
+	}
+	if err := addColumnIfMissing(ctx, sqlDB, "taxon_concept", "class_name", "TEXT"); err != nil {
+		return fmt.Errorf("sqlite: migrating taxon_concept.class_name: %w", err)
+	}
+	return nil
 }
 
 // Close releases the underlying database handle.

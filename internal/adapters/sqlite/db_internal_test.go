@@ -743,3 +743,50 @@ func TestOpen_MigratesXrefSourceColumnOntoAPreExistingDatabase(t *testing.T) {
 	}
 	_ = again.Close()
 }
+
+// TestSchema_ClassificationColumnsExist proves taxon_concept carries the
+// three classification columns above family (Fall B — see schema.sql's doc
+// comment on taxon_concept). verifySchemaColumns already guards this at
+// startup, but this test pins the exact column names down independently of
+// that generic mechanism.
+func TestSchema_ClassificationColumnsExist(t *testing.T) {
+	db := openTestDB(t)
+	rows, err := db.sql.Query(`PRAGMA table_info(taxon_concept)`)
+	if err != nil {
+		t.Fatalf("PRAGMA table_info: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	cols := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		cols[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterating table_info rows: %v", err)
+	}
+	for _, want := range []string{"family", "order_name", "class_name"} {
+		if !cols[want] {
+			t.Errorf("taxon_concept missing column %q", want)
+		}
+	}
+}
+
+// TestSchema_ConceptAggregateAndAgreementTablesExist proves the two new
+// tables for Fall B aggregate membership (concept_aggregate) and the
+// precomputed namespace comparison (concept_agreement) are created by Open.
+func TestSchema_ConceptAggregateAndAgreementTablesExist(t *testing.T) {
+	db := openTestDB(t)
+	for _, table := range []string{"concept_aggregate", "concept_agreement"} {
+		var name string
+		err := db.sql.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name)
+		if err != nil {
+			t.Errorf("table %q not found: %v", table, err)
+		}
+	}
+}

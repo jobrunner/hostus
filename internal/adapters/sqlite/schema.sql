@@ -100,7 +100,15 @@ CREATE TABLE IF NOT EXISTS taxon_concept (
   -- rank (which is always the same value as its accepted name's rank, but
   -- copied independently here since Concept and Name are separate rows/
   -- structs — see domain.Concept.RankVerbatim).
-  rank_verbatim  TEXT
+  rank_verbatim  TEXT,
+  -- Klassifikation oberhalb der Familie (Herkunft: EuroSL/GermanSL Fall B,
+  -- siehe docs/superpowers/specs/2026-08-27-hostus-namensraum-redesign-design.md
+  -- Abschnitt 4). NULL wenn unbekannt — nie geraten. WCVP-Konzepte (backbone_id
+  -- = "wcvp") haben diese Spalten aus Fall A per Crosswalk befüllt, nicht aus
+  -- eigenen Daten (WCVP führt keine Ränge oberhalb FAMILY).
+  family      TEXT,
+  order_name  TEXT,
+  class_name  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_taxon_concept_backbone_id ON taxon_concept(backbone_id);
@@ -408,6 +416,31 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts_name USING fts5(
   canonical, vernacular_de,
   content='',                       -- external content, ids via rowid mapping
   tokenize='unicode61 remove_diacritics 2'
+);
+
+-- Aggregat-/Sektions-Mitgliedschaft (Fall B). aggregate_concept_id ist immer
+-- ein natives eurosl:/germansl:-Konzept (RankSpeciesAggregate/RankSection/...);
+-- member_concept_id ist der WCVP-Sippen-Konzept, den das Aggregat umfasst.
+-- Kein WCVP-Konzept ist je die aggregate-Seite (WCVP kennt keine Aggregate).
+CREATE TABLE IF NOT EXISTS concept_aggregate (
+  aggregate_concept_id TEXT NOT NULL REFERENCES taxon_concept(id),
+  member_concept_id    TEXT NOT NULL REFERENCES taxon_concept(id),
+  PRIMARY KEY (aggregate_concept_id, member_concept_id)
+);
+CREATE INDEX IF NOT EXISTS idx_concept_aggregate_member ON concept_aggregate(member_concept_id);
+
+-- Vorberechneter Namensraum-Vergleich (Spec Abschnitt 5). Ein Eintrag pro
+-- Paar (eurosl-Aggregat, germansl-Aggregat), das beim Ingest als
+-- namensgleiches Gegenstück erkannt wurde. agreement ist einer von
+-- identical|subset|superset|overlap|disjoint|one_sided (domain.Agreement).
+CREATE TABLE IF NOT EXISTS concept_agreement (
+  eurosl_concept_id   TEXT REFERENCES taxon_concept(id),   -- NULL bei one_sided (nur germansl)
+  germansl_concept_id TEXT REFERENCES taxon_concept(id),   -- NULL bei one_sided (nur eurosl)
+  agreement           TEXT NOT NULL,
+  agreement_text      TEXT NOT NULL,
+  only_in_eurosl       TEXT NOT NULL DEFAULT '',  -- komma-getrennte WCVP-Konzept-IDs
+  only_in_germansl     TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (eurosl_concept_id, germansl_concept_id)
 );
 
 -- Bundle provenance. Created (empty) in every database this schema is

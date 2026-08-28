@@ -68,12 +68,12 @@ var rankOrder = map[Rank]int{
 
 const unknownRankOrder = 11
 
-// RankOrder returns the ordinal used to compare Ranks for suggest ranking
+// RankOrderPriority returns the ordinal used to compare Ranks for suggest ranking
 // (§B.1 step 4): FAMILY(0) < GENUS(1) < SPECIES(2) < SUBSPECIES(3) <
 // VARIETY(5) < SUBVARIETY(6) < FORM(8) < SUBFORM(9), with the nothotaxon
 // ranks interleaved (see rankOrder's doc comment) and RankOther/any
 // unrecognized Rank sorting after all of them (11).
-func RankOrder(r Rank) int {
+func RankOrderPriority(r Rank) int {
 	if order, ok := rankOrder[r]; ok {
 		return order
 	}
@@ -111,7 +111,7 @@ func RankSuggestions(items []SuggestItem) []SuggestItem {
 		if aAccepted != bAccepted {
 			return aAccepted
 		}
-		if ao, bo := RankOrder(a.Rank), RankOrder(b.Rank); ao != bo {
+		if ao, bo := RankOrderPriority(a.Rank), RankOrderPriority(b.Rank); ao != bo {
 			return ao < bo
 		}
 		return a.Score < b.Score

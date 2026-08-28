@@ -38,6 +38,33 @@ const (
 	RankOther Rank = "OTHER"
 )
 
+const (
+	RankRoot                  Rank = "ROOT"
+	RankPhylum                Rank = "PHYLUM"
+	RankSubdivision           Rank = "SUBDIVISION"
+	RankInformalClade         Rank = "INFORMAL_CLADE"
+	RankClass                 Rank = "CLASS"
+	RankSubclass              Rank = "SUBCLASS"
+	RankSuperorder            Rank = "SUPERORDER"
+	RankOrder                 Rank = "ORDER"
+	RankSubfamily             Rank = "SUBFAMILY"
+	RankTribe                 Rank = "TRIBE"
+	RankSubgenus              Rank = "SUBGENUS"
+	RankSection               Rank = "SECTION"
+	RankSubsection            Rank = "SUBSECTION"
+	RankSeries                Rank = "SERIES"
+	RankSpeciesAggregate      Rank = "SPECIES_AGGREGATE"
+	RankGenusAggregate        Rank = "GENUS_AGGREGATE"
+	RankCollSpecies           Rank = "COLL_SPECIES"
+	RankSubspeciesGroup       Rank = "SUBSPECIES_GROUP"
+	RankProles                Rank = "PROLES"
+	RankRace                  Rank = "RACE"
+	RankConvar                Rank = "CONVAR"
+	RankGrex                  Rank = "GREX"
+	RankUnrankedInfrageneric  Rank = "UNRANKED_INFRAGENERIC"
+	RankUnrankedInfraspecific Rank = "UNRANKED_INFRASPECIFIC"
+)
+
 // ParseRank maps a canonical Rank spelling (case-insensitive; the exact set
 // of constants above) to a Rank. Unknown or empty input returns an error —
 // this is the STRICT parser, used for API input (e.g. the suggest
@@ -52,6 +79,12 @@ const (
 // the two parsers separate is what lets the ingest tolerate WCVP's full
 // rank vocabulary while the API stays strict about what it accepts.
 func ParseRank(s string) (Rank, error) {
+	// INFORMAL_CLADE_<n> (tier suffix, e.g. GermanSL CL1-CL5) maps to
+	// RankInformalClade regardless of tier number.
+	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(s)), "INFORMAL_CLADE") {
+		return RankInformalClade, nil
+	}
+
 	switch strings.ToUpper(strings.TrimSpace(s)) {
 	case "FAMILY":
 		return RankFamily, nil
@@ -75,6 +108,52 @@ func ParseRank(s string) (Rank, error) {
 		return RankNothovariety, nil
 	case "NOTHOFORM":
 		return RankNothoform, nil
+	case "ROOT":
+		return RankRoot, nil
+	case "PHYLUM":
+		return RankPhylum, nil
+	case "SUBDIVISION":
+		return RankSubdivision, nil
+	case "CLASS":
+		return RankClass, nil
+	case "SUBCLASS":
+		return RankSubclass, nil
+	case "SUPERORDER":
+		return RankSuperorder, nil
+	case "ORDER":
+		return RankOrder, nil
+	case "SUBFAMILY":
+		return RankSubfamily, nil
+	case "TRIBE":
+		return RankTribe, nil
+	case "SUBGENUS":
+		return RankSubgenus, nil
+	case "SECTION":
+		return RankSection, nil
+	case "SUBSECTION":
+		return RankSubsection, nil
+	case "SERIES":
+		return RankSeries, nil
+	case "SPECIES_AGGREGATE":
+		return RankSpeciesAggregate, nil
+	case "GENUS_AGGREGATE":
+		return RankGenusAggregate, nil
+	case "COLL_SPECIES":
+		return RankCollSpecies, nil
+	case "SUBSPECIES_GROUP":
+		return RankSubspeciesGroup, nil
+	case "PROLES":
+		return RankProles, nil
+	case "RACE":
+		return RankRace, nil
+	case "CONVAR":
+		return RankConvar, nil
+	case "GREX":
+		return RankGrex, nil
+	case "UNRANKED_INFRAGENERIC":
+		return RankUnrankedInfrageneric, nil
+	case "UNRANKED_INFRASPECIFIC":
+		return RankUnrankedInfraspecific, nil
 	case "OTHER":
 		return RankOther, nil
 	default:

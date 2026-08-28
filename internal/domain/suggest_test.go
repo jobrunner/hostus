@@ -115,7 +115,7 @@ func TestRankSuggestions_Empty(t *testing.T) {
 	}
 }
 
-func TestRankOrder(t *testing.T) {
+func TestRankOrderPriority(t *testing.T) {
 	tests := []struct {
 		rank domain.Rank
 		want int
@@ -135,8 +135,8 @@ func TestRankOrder(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.rank), func(t *testing.T) {
-			if got := domain.RankOrder(tt.rank); got != tt.want {
-				t.Fatalf("RankOrder(%s) = %d, want %d", tt.rank, got, tt.want)
+			if got := domain.RankOrderPriority(tt.rank); got != tt.want {
+				t.Fatalf("RankOrderPriority(%s) = %d, want %d", tt.rank, got, tt.want)
 			}
 		})
 	}
@@ -154,18 +154,18 @@ func TestRankOrder(t *testing.T) {
 		domain.RankForm, domain.RankSubform, domain.RankOther,
 	}
 	for i := 1; i < len(ranks); i++ {
-		if domain.RankOrder(ranks[i-1]) >= domain.RankOrder(ranks[i]) {
-			t.Fatalf("RankOrder must be strictly increasing: %s(%d) >= %s(%d)",
-				ranks[i-1], domain.RankOrder(ranks[i-1]), ranks[i], domain.RankOrder(ranks[i]))
+		if domain.RankOrderPriority(ranks[i-1]) >= domain.RankOrderPriority(ranks[i]) {
+			t.Fatalf("RankOrderPriority must be strictly increasing: %s(%d) >= %s(%d)",
+				ranks[i-1], domain.RankOrderPriority(ranks[i-1]), ranks[i], domain.RankOrderPriority(ranks[i]))
 		}
 	}
 }
 
-func TestRankOrder_UnknownRankIsWorstOrder(t *testing.T) {
+func TestRankOrderPriority_UnknownRankIsWorstOrder(t *testing.T) {
 	// An unrecognized/empty Rank must sort after all known ranks, not be
 	// mistaken for FAMILY (ordinal 0) or silently accepted anywhere in the
 	// middle of the ordering.
-	if got := domain.RankOrder(domain.Rank("")); got <= domain.RankOrder(domain.RankForm) {
-		t.Fatalf("RankOrder of unknown rank must exceed RankOrder(FORM), got %d", got)
+	if got := domain.RankOrderPriority(domain.Rank("")); got <= domain.RankOrderPriority(domain.RankForm) {
+		t.Fatalf("RankOrderPriority of unknown rank must exceed RankOrderPriority(FORM), got %d", got)
 	}
 }

@@ -79,8 +79,10 @@ func TestParseRank_RejectsBogus(t *testing.T) {
 // the empty string. ParseRankLenient must map every single one of these to
 // RankOther, and must never error, or a full WCVP ingest aborts again
 // (this is the exact defect this task fixes).
+// Note: "proles" and "grex" were removed from this list as they are now
+// canonical ranks per the namespace redesign (Task 1).
 var wcvpRankInventory = []string{
-	"", "proles", "lusus", "microgène", "Convariety", "monstr.", "grex",
+	"", "lusus", "microgène", "Convariety", "monstr.",
 	"subproles", "stirps", "provar.", "psp.", "modif.", "mut.", "sublusus",
 	"subap.", "subsubsp.", "subspecioid", "positio", "nid", "micromorphe",
 	"microf.", "group", "ecas.", "agamosp.",
@@ -212,5 +214,44 @@ func TestNormalizeAuthor(t *testing.T) {
 		if got != c.want {
 			t.Errorf("NormalizeAuthor(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+func TestParseRank_ExtendedVocabulary(t *testing.T) {
+	cases := map[string]domain.Rank{
+		"ORDER": domain.RankOrder, "CLASS": domain.RankClass,
+		"SECTION": domain.RankSection, "SUBSECTION": domain.RankSubsection,
+		"SUBGENUS": domain.RankSubgenus, "SERIES": domain.RankSeries,
+		"SPECIES_AGGREGATE": domain.RankSpeciesAggregate,
+		"GENUS_AGGREGATE":   domain.RankGenusAggregate,
+		"SUBFAMILY":         domain.RankSubfamily, "TRIBE": domain.RankTribe,
+		"PHYLUM": domain.RankPhylum, "SUBDIVISION": domain.RankSubdivision,
+		"SUBCLASS": domain.RankSubclass, "SUPERORDER": domain.RankSuperorder,
+		"COLL_SPECIES":     domain.RankCollSpecies,
+		"SUBSPECIES_GROUP": domain.RankSubspeciesGroup,
+		"PROLES":           domain.RankProles, "RACE": domain.RankRace,
+		"CONVAR": domain.RankConvar, "GREX": domain.RankGrex,
+		"UNRANKED_INFRAGENERIC":  domain.RankUnrankedInfrageneric,
+		"UNRANKED_INFRASPECIFIC": domain.RankUnrankedInfraspecific,
+		"ROOT":                   domain.RankRoot,
+	}
+	for in, want := range cases {
+		got, err := domain.ParseRank(in)
+		if err != nil {
+			t.Errorf("ParseRank(%q): unexpected error %v", in, err)
+		}
+		if got != want {
+			t.Errorf("ParseRank(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestParseRank_InformalCladeCarriesTier(t *testing.T) {
+	got, err := domain.ParseRank("INFORMAL_CLADE_5")
+	if err != nil {
+		t.Fatalf("ParseRank(%q): unexpected error %v", "INFORMAL_CLADE_5", err)
+	}
+	if got != domain.RankInformalClade {
+		t.Errorf("ParseRank(%q) = %q, want %q", "INFORMAL_CLADE_5", got, domain.RankInformalClade)
 	}
 }

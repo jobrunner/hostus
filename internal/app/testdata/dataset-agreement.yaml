@@ -1,0 +1,20 @@
+backbones:
+  - id: wcvp
+    version: "2026-06-15"
+    license: CC-BY-4.0
+    source: https://sftp.kew.org/pub/data-repositories/WCVP/
+    path: ../../adapters/wcvp/testdata/wcvp-sample
+    redistribution: allowed
+name_spaces:
+  - id: eurosl
+    version: "2026-08-27"
+    source: https://eurosl.infinitenature.org/downloads/
+    path: nativespace-eurosl-agreement.csv
+    note: "Fixture für Critical-1-Regressionstest: Fall-B-/Agreement-Ingest-Pfad"
+    redistribution: unknown
+  - id: germansl
+    version: "1.5.6"
+    source: https://germansl.infinitenature.org/downloads/
+    path: nativespace-germansl-agreement.csv
+    note: "Fixture für Critical-1-Regressionstest: Fall-B-/Agreement-Ingest-Pfad"
+    redistribution: unknown

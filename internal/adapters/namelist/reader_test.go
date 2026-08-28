@@ -255,6 +255,58 @@ func TestRead_ParentColumnsAreOptional(t *testing.T) {
 	})
 }
 
+// TestRead_VernacularDEColumnIsOptional pins the GermanSL extension
+// (analogous to TestRead_ParentColumnsAreOptional above): a CSV carrying a
+// vernacular_de column populates Row.VernacularDE, while a CSV without it
+// (every non-GermanSL pipeline) keeps reading successfully with the field
+// empty. Deliberately not in wantHeader, for the same reason as parent_id/
+// parent_rank — see headerIndex/rowFrom.
+func TestRead_VernacularDEColumnIsOptional(t *testing.T) {
+	t.Parallel()
+
+	t.Run("present", func(t *testing.T) {
+		t.Parallel()
+		withVernacular := filepath.Join(t.TempDir(), "with-vernacular.csv")
+		content := "taxon|rank|status|accepted_taxon|source_id|parent_id|parent_rank|vernacular_de\n" +
+			"Salsola kali|Species|accepted||id1|id0|Species Aggregate|Kali-Salzkraut\n"
+		if err := writeFile(withVernacular, content); err != nil {
+			t.Fatalf("writing fixture: %v", err)
+		}
+		ds, err := namelist.Read(withVernacular)
+		if err != nil {
+			t.Fatalf("Read: unexpected error: %v", err)
+		}
+		want := namelist.Row{
+			Taxon: "Salsola kali", Rank: "Species", Status: "accepted",
+			SourceID: "id1", ParentID: "id0", ParentRank: "Species Aggregate",
+			VernacularDE: "Kali-Salzkraut",
+		}
+		if len(ds.Rows) != 1 || ds.Rows[0] != want {
+			t.Errorf("Read: got %+v, want exactly [%+v]", ds.Rows, want)
+		}
+	})
+
+	t.Run("absent", func(t *testing.T) {
+		t.Parallel()
+		noVernacular := filepath.Join(t.TempDir(), "no-vernacular.csv")
+		content := "taxon|rank|status|accepted_taxon|source_id\n" +
+			"Abies alba|SPE|accepted||2\n"
+		if err := writeFile(noVernacular, content); err != nil {
+			t.Fatalf("writing fixture: %v", err)
+		}
+		ds, err := namelist.Read(noVernacular)
+		if err != nil {
+			t.Fatalf("Read: unexpected error: %v", err)
+		}
+		if len(ds.Rows) != 1 {
+			t.Fatalf("Read: got %d rows, want 1 (%+v)", len(ds.Rows), ds.Rows)
+		}
+		if ds.Rows[0].VernacularDE != "" {
+			t.Errorf("Read: got VernacularDE=%q, want empty when the source has no vernacular_de column", ds.Rows[0].VernacularDE)
+		}
+	})
+}
+
 func writeFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o600)
 }

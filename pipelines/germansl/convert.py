@@ -28,6 +28,10 @@ Canonical mapping:
   parent_rank    = "" (GermanSL has no per-row parent-rank join, analogous
                    to EuroSL; the Go ingest resolves it from the
                    already-read row map)
+  vernacular_de  = VernacularName (German common name; empty if the source
+                   row carries none — GermanSL is the ONLY pipeline that
+                   emits this column, see internal/adapters/namelist's
+                   reader doc comment)
 """
 import csv
 import re
@@ -121,7 +125,7 @@ def convert(in_path, out_path):
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f, delimiter="|")
         w.writerow(["taxon", "rank", "status", "accepted_taxon", "source_id",
-                     "parent_id", "parent_rank"])
+                     "parent_id", "parent_rank", "vernacular_de"])
         for r in rows:
             if len(r) <= idx["TaxonName"] or not r[idx["TaxonName"]]:
                 continue
@@ -138,13 +142,16 @@ def convert(in_path, out_path):
             if has_parent_col and len(r) > idx["IsChildTaxonOfID"]:
                 parent_id = r[idx["IsChildTaxonOfID"]]
                 parent_id = "" if parent_id is None else str(parent_id)
+            vernacular_de = ""
+            if len(r) > idx["VernacularName"]:
+                vernacular_de = r[idx["VernacularName"]] or ""
 
             # parent_rank stays empty here, analogous to EuroSL: GermanSL
             # gives only the OWN rank per row, not the parent's, without a
             # self-join. The Go ingest resolves parent_rank via the
             # already-read row map (see internal/adapters/namelist).
             w.writerow([taxon, rank, status, accepted_taxon, source_id,
-                        parent_id, ""])
+                        parent_id, "", vernacular_de])
             row_count += 1
             taxa.add(taxon)
             ranks[rank] = ranks.get(rank, 0) + 1

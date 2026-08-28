@@ -564,13 +564,13 @@ func TestIngestCDMResolvesParentOnlyWhenTheParentConceptExists(t *testing.T) {
 
 func TestIngestCDMHandlesEmptyStatusAndExoticRanksExplicitly(t *testing.T) {
 	rows := []application.CDMConceptRow{
-		{ConceptUUID: "aaa", ScientificName: "Abies alba agg.", Rank: "Species Aggregate", Status: "", SecUUID: "s1", SecTitle: "One"},
+		{ConceptUUID: "aaa", ScientificName: "Abies alba agg.", Rank: "Nomen Exoticum", Status: "", SecUUID: "s1", SecTitle: "One"},
 		{ConceptUUID: "bbb", ScientificName: "Abies alba", Rank: "Species", Status: "Accepted", SecUUID: "s1", SecTitle: "One"},
 		// A second exotic-rank row with the SAME verbatim spelling, so the
 		// per-spelling tally is asserted as a COUNT and not merely as
 		// presence, and a second non-empty status so EmptyStatus can tell
 		// "empty" from "not empty".
-		{ConceptUUID: "ccc", ScientificName: "Pinus abies agg.", Rank: "Species Aggregate", Status: "Accepted", SecUUID: "s1", SecTitle: "One"},
+		{ConceptUUID: "ccc", ScientificName: "Pinus abies agg.", Rank: "Nomen Exoticum", Status: "Accepted", SecUUID: "s1", SecTitle: "One"},
 	}
 	repo := newCDMRepo()
 	rep, err := application.IngestCDM(context.Background(), repo, rows, nil, cdmMeta())
@@ -585,7 +585,7 @@ func TestIngestCDMHandlesEmptyStatusAndExoticRanksExplicitly(t *testing.T) {
 	if agg.Rank != domain.RankOther {
 		t.Errorf("exotic rank = %q, want OTHER", agg.Rank)
 	}
-	if agg.RankVerbatim != "Species Aggregate" {
+	if agg.RankVerbatim != "Nomen Exoticum" {
 		t.Errorf("rank verbatim = %q, want the raw spelling preserved", agg.RankVerbatim)
 	}
 	if agg.Status != domain.StatusUnknown {
@@ -597,7 +597,7 @@ func TestIngestCDMHandlesEmptyStatusAndExoticRanksExplicitly(t *testing.T) {
 	if rep.OtherRanks != 2 {
 		t.Errorf("OtherRanks = %d, want 2", rep.OtherRanks)
 	}
-	if len(rep.OtherRankSample) != 1 || rep.OtherRankSample[0].Verbatim != "Species Aggregate" || rep.OtherRankSample[0].Count != 2 {
+	if len(rep.OtherRankSample) != 1 || rep.OtherRankSample[0].Verbatim != "Nomen Exoticum" || rep.OtherRankSample[0].Count != 2 {
 		t.Errorf("OtherRankSample = %+v, want one entry {Species Aggregate 2}", rep.OtherRankSample)
 	}
 }

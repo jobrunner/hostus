@@ -182,6 +182,29 @@ var germanSLRankCodes = map[string]Rank{
 	"CL5": RankInformalClade,
 }
 
+// euroSLRankAliases maps EuroSL's raw TaxonRank column spellings — which
+// carry spaces, punctuation and parenthesized qualifiers that canonicalRanks
+// (the simple ToUpper/underscore-joined lookup ParseRank/ParseRankLenient
+// otherwise use) does not recognize — to the Rank ParseRankLenient should
+// return for them. LENIENT-ONLY, like nothotaxonRanks and germanSLRankCodes
+// above: never consulted by the strict ParseRank (API input).
+//
+// This is the full mapping measured against the real EuroSL 139,039-row TCS
+// sheet (pipelines/eurosl/eurosl.summary.txt's rank histogram; see
+// rank_golden_test.go's TestParseRankLenient_EuroSLGoldenVocabulary).
+// Deliberately NOT mapped (left to fall through to RankOther, which is
+// correct): "Suprageneric Taxon" — a domain/bookkeeping node in EuroSL's
+// tree, not a real taxonomic rank.
+var euroSLRankAliases = map[string]Rank{
+	"SPECIES AGGREGATE":        RankSpeciesAggregate,
+	"UNRANKED (INFRASPECIFIC)": RankUnrankedInfraspecific,
+	"UNRANKED (INFRAGENERIC)":  RankUnrankedInfrageneric,
+	"COLL. SPECIES":            RankCollSpecies,
+	"GREX (INFRASPEC.)":        RankGrex,
+	"SUBSECTION BOT.":          RankSubsection,
+	"DIVISION":                 RankPhylum,
+}
+
 // ParseRankLenient maps a WCVP "taxonrank" column value — verbatim, exactly
 // as read from the source row — to a Rank. Unlike ParseRank, it NEVER
 // errors: this is the ingest-facing parser, and ParseRank's own doc comment
@@ -203,6 +226,9 @@ func ParseRankLenient(s string) (Rank, string) {
 		return r, trimmed
 	}
 	if r, ok := germanSLRankCodes[strings.ToUpper(trimmed)]; ok {
+		return r, trimmed
+	}
+	if r, ok := euroSLRankAliases[strings.ToUpper(trimmed)]; ok {
 		return r, trimmed
 	}
 	if r, err := ParseRank(trimmed); err == nil {

@@ -18,20 +18,17 @@ import (
 // tests in this package assert the same raw-value -> Rank mapping twice.
 //
 // IMPORTANT — this table is NOT "the mapping a reader would expect from
-// each spelling's English meaning". It pins ParseRankLenient's REAL,
-// measured behavior as of this task, including seven raw EuroSL spellings
-// that this task found silently degrade to RankOther even though a
-// matching canonical constant (RankSpeciesAggregate,
-// RankUnrankedInfraspecific, RankUnrankedInfrageneric, RankCollSpecies,
-// RankGrex, RankSubsection, RankPhylum) already exists — see the "KNOWN
-// DEFECT" comments below and the Task 13 report for the full writeup.
-// canonicalRanks (internal/domain/taxon.go) only recognizes the
-// underscore-joined enum-style spelling of each of these ranks (e.g.
-// "SPECIES_AGGREGATE"), not EuroSL's literal, space/punctuation-bearing
-// column text (e.g. "Species Aggregate"), and no EuroSL-specific alias
-// table (the equivalent of germanSLRankCodes for GermanSL) exists yet to
-// bridge that gap. A future fix must update this golden list deliberately,
-// not let it silently regress back to RankOther expectations.
+// each spelling's English meaning" in the abstract; it pins
+// ParseRankLenient's REAL, measured behavior. Seven raw EuroSL spellings
+// (Species Aggregate, Unranked (infraspecific), Unranked (infrageneric),
+// Coll. species, Grex (infraspec.), Subsection bot., Division) are mapped
+// via euroSLRankAliases (internal/domain/taxon.go) — EuroSL's own literal,
+// space/punctuation-bearing column text does not match canonicalRanks'
+// underscore-joined enum-style spelling (e.g. "SPECIES_AGGREGATE" vs.
+// "Species Aggregate"), so a dedicated alias table (the EuroSL counterpart
+// of germanSLRankCodes for GermanSL) bridges that gap, the same way
+// nothotaxonRanks and germanSLRankCodes do for their own vocabularies. See
+// the Task 13 follow-up report for the full writeup.
 func TestParseRankLenient_EuroSLGoldenVocabulary(t *testing.T) {
 	golden := map[string]domain.Rank{
 		"Species":    domain.RankSpecies,
@@ -40,22 +37,18 @@ func TestParseRankLenient_EuroSLGoldenVocabulary(t *testing.T) {
 		"Genus":      domain.RankGenus,
 		"Form":       domain.RankForm,
 		"Family":     domain.RankFamily,
-		// KNOWN DEFECT: EuroSL's literal "Unranked (infraspecific)" (296
-		// rows) is not recognized and degrades to RankOther instead of
-		// RankUnrankedInfrageneric's sibling constant RankUnrankedInfraspecific.
-		"Unranked (infraspecific)": domain.RankOther,
-		// KNOWN DEFECT: EuroSL's literal "Species Aggregate" (287 rows —
-		// exactly the pinned aggregate count from
-		// docs/research/2026-08-27-drift-check.md) is not recognized and
-		// degrades to RankOther instead of RankSpeciesAggregate. As
-		// measured, the EuroSL ingest path cannot currently rely on Rank
-		// alone to detect any of these 287 aggregate rows.
-		"Species Aggregate": domain.RankOther,
+		// "Unranked (infraspecific)" (296 rows) maps via euroSLRankAliases
+		// to RankUnrankedInfraspecific.
+		"Unranked (infraspecific)": domain.RankUnrankedInfraspecific,
+		// "Species Aggregate" (287 rows — exactly the pinned aggregate
+		// count from docs/research/2026-08-27-drift-check.md) maps via
+		// euroSLRankAliases to RankSpeciesAggregate.
+		"Species Aggregate": domain.RankSpeciesAggregate,
 		"Subvariety":        domain.RankSubvariety,
 		"Section":           domain.RankSection,
-		// KNOWN DEFECT: "Coll. species" (155 rows) degrades to RankOther
-		// instead of RankCollSpecies.
-		"Coll. species": domain.RankOther,
+		// "Coll. species" (155 rows) maps via euroSLRankAliases to
+		// RankCollSpecies.
+		"Coll. species": domain.RankCollSpecies,
 		"Order":         domain.RankOrder,
 		"Tribe":         domain.RankTribe,
 		"Subgenus":      domain.RankSubgenus,
@@ -64,25 +57,23 @@ func TestParseRankLenient_EuroSLGoldenVocabulary(t *testing.T) {
 		"Subfamily":     domain.RankSubfamily,
 		"Subclass":      domain.RankSubclass,
 		"Race":          domain.RankRace,
-		// KNOWN DEFECT: "Unranked (infrageneric)" (19 rows) degrades to
-		// RankOther instead of RankUnrankedInfrageneric.
-		"Unranked (infrageneric)": domain.RankOther,
+		// "Unranked (infrageneric)" (19 rows) maps via euroSLRankAliases to
+		// RankUnrankedInfrageneric.
+		"Unranked (infrageneric)": domain.RankUnrankedInfrageneric,
 		"Class":                   domain.RankClass,
-		// KNOWN DEFECT: "Grex (infraspec.)" (15 rows) degrades to
-		// RankOther instead of RankGrex.
-		"Grex (infraspec.)": domain.RankOther,
+		// "Grex (infraspec.)" (15 rows) maps via euroSLRankAliases to
+		// RankGrex.
+		"Grex (infraspec.)": domain.RankGrex,
 		"Superorder":        domain.RankSuperorder,
-		// KNOWN DEFECT: "Subsection bot." (8 rows) degrades to RankOther
-		// instead of RankSubsection.
-		"Subsection bot.": domain.RankOther,
+		// "Subsection bot." (8 rows) maps via euroSLRankAliases to
+		// RankSubsection.
+		"Subsection bot.": domain.RankSubsection,
 		"Subdivision":     domain.RankSubdivision,
 		"Phylum":          domain.RankPhylum,
-		// KNOWN DEFECT: "Division" (2 rows, EuroSL's own synonym spelling
-		// for Phylum) degrades to RankOther. Nothing in canonicalRanks
-		// aliases "DIVISION" to RankPhylum, so the biological synonymy is
-		// NOT honored by the current parser, despite an earlier plan
-		// assumption that it already was.
-		"Division": domain.RankOther,
+		// "Division" (2 rows, EuroSL's own synonym spelling for Phylum)
+		// maps via euroSLRankAliases to RankPhylum — the biological
+		// synonymy is honored explicitly there, not via canonicalRanks.
+		"Division": domain.RankPhylum,
 		"Convar":   domain.RankConvar,
 		"Root":     domain.RankRoot,
 		// Deliberately, correctly unmapped: a domain/bookkeeping node in

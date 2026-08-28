@@ -211,6 +211,10 @@ func (r *fakeCDMRepo) WriteConceptAgreement(context.Context, []domain.ConceptAgr
 	return nil
 }
 
+func (r *fakeCDMRepo) ConceptAgreement(context.Context, string) (*domain.ConceptAgreementPair, error) {
+	return nil, nil
+}
+
 func (r *fakeCDMRepo) Suggest(context.Context, string, output.SuggestOpts) ([]domain.SuggestItem, error) {
 	return nil, nil
 }

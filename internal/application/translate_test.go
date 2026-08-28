@@ -57,6 +57,19 @@ func (f *fakeTranslateRepo) MatchFuzzyCandidates(context.Context, string, int, s
 	return f.fuzzy, nil
 }
 
+// Concept is a minimal stub satisfying Task 10's matchNamesFiltered, which
+// now calls Repository.Concept for every resolved match to fill in
+// Classification. This fake's Translate-only concepts carry none, so
+// Family/OrderName/ClassName stay their zero value — irrelevant here, since
+// no Translate test asserts on Classification.
+func (f *fakeTranslateRepo) Concept(_ context.Context, id string) (*domain.Concept, []output.SynonymName, []domain.Xref, []domain.Distribution, error) {
+	c, ok := f.concepts[id]
+	if !ok {
+		return nil, nil, nil, nil, fmt.Errorf("concept %q: %w", id, domain.ErrNotFound)
+	}
+	return &c, nil, nil, nil, nil
+}
+
 // --- fixtures --------------------------------------------------------------
 
 const (

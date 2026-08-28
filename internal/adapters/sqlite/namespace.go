@@ -249,6 +249,50 @@ func (db *DB) WriteConceptAgreement(ctx context.Context, pairs []domain.ConceptA
 	return nil
 }
 
+// ConceptAgreement returns the precomputed concept_agreement row involving
+// conceptID on either side, or (nil, nil) if none exists — see
+// output.Repository.ConceptAgreement's doc comment. eurosl_concept_id/
+// germansl_concept_id are NULLable (a one-sided pair), and
+// only_in_eurosl/only_in_germansl are comma-joined WCVP concept id lists
+// (see WriteConceptAgreement) split back into slices here — an empty string
+// splits to an empty, non-nil slice, never [""].
+func (db *DB) ConceptAgreement(ctx context.Context, conceptID string) (*domain.ConceptAgreementPair, error) {
+	var (
+		eurosl, germansl         sql.NullString
+		agreement, agreementText string
+		onlyEurosl, onlyGermansl string
+	)
+	err := db.sql.QueryRowContext(ctx, `
+		SELECT eurosl_concept_id, germansl_concept_id, agreement, agreement_text, only_in_eurosl, only_in_germansl
+		FROM concept_agreement
+		WHERE eurosl_concept_id = ? OR germansl_concept_id = ?`,
+		conceptID, conceptID,
+	).Scan(&eurosl, &germansl, &agreement, &agreementText, &onlyEurosl, &onlyGermansl)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: reading concept_agreement for %q: %w", conceptID, err)
+	}
+	return &domain.ConceptAgreementPair{
+		EuroslConceptID:   eurosl.String,
+		GermanslConceptID: germansl.String,
+		Agreement:         domain.Agreement(agreement),
+		AgreementText:     agreementText,
+		OnlyInEurosl:      splitCommaList(onlyEurosl),
+		OnlyInGermansl:    splitCommaList(onlyGermansl),
+	}, nil
+}
+
+// splitCommaList splits a comma-joined list (see WriteConceptAgreement) back
+// into a slice, mapping "" to an empty, non-nil slice rather than [""].
+func splitCommaList(s string) []string {
+	if s == "" {
+		return []string{}
+	}
+	return strings.Split(s, ",")
+}
+
 // UpsertClassification records family/order/class for conceptID (see
 // schema.sql's taxon_concept.family/order_name/class_name). Empty strings
 // are written as SQL NULL via nullString — the same rule AddNameSpaceEntry

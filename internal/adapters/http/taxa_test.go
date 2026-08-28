@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/jobrunner/hostus/internal/adapters/sqlite"
@@ -525,6 +526,23 @@ type matchResponse struct {
 		Candidates     []string `json:"candidates"`
 		RequiresReview bool     `json:"requires_review"`
 		Note           string   `json:"note"`
+		Classification *struct {
+			Family string `json:"family"`
+			Order  string `json:"order"`
+			Class  string `json:"class"`
+		} `json:"classification"`
+		AggregateResolution *struct {
+			RequestedNameSpace string `json:"requested_name_space"`
+			Status             string `json:"status"`
+			MemberCount        int    `json:"member_count"`
+			Options            []struct {
+				NameSpace          string `json:"name_space"`
+				Status             string `json:"status"`
+				AggregateConceptID string `json:"aggregate_concept_id"`
+				MemberCount        int    `json:"member_count"`
+			} `json:"options"`
+			Agreement string `json:"agreement"`
+		} `json:"aggregate_resolution"`
 	} `json:"results"`
 }
 
@@ -590,6 +608,172 @@ func TestHandleMatch_SpecBatch(t *testing.T) {
 	if silene.ConceptID != "" {
 		t.Errorf("result 3: concept_id = %q, want empty", silene.ConceptID)
 	}
+}
+
+// TestHandleMatch_ClassificationAndAggregateResolution exercises Task 10's
+// two new /v1/match fields: `classification` (present, unconditional on
+// target_space, once a concept resolves and carries one) and
+// `aggregate_resolution` (present only for an aggregate/collective-rank
+// hit, with one option per known name space and an `agreement` once both
+// eurosl and germansl resolve `known`).
+func TestHandleMatch_ClassificationAndAggregateResolution(t *testing.T) {
+	repo := seededRepo(t)
+
+	// Corynephorus canescens gets a classification via the same
+	// UpsertClassification path a real crosswalk ingest would use.
+	tx, err := repo.BeginIngest(context.Background(), domain.BackboneVersion{ID: "wcvp", Version: "2026-06-15"})
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	if err := tx.UpsertClassification(corynephorusConceptID, "Poaceae", "Poales", "Liliopsida"); err != nil {
+		t.Fatalf("UpsertClassification: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+
+	// A native SPECIES_AGGREGATE concept for "Salsola kali", known in BOTH
+	// eurosl and germansl with the same member, so ComputeConceptAgreement
+	// reports "identical" and both options resolve Known.
+	seedNativeAggregateForHTTPTest(t, repo, "eurosl:concept:salsola-kali-agg", "Salsola kali agg.", []string{"wcvp:concept:salsola-kali-1"})
+	seedNativeAggregateForHTTPTest(t, repo, "germansl:concept:salsola-kali-agg", "Salsola kali s.l.", []string{"wcvp:concept:salsola-kali-1"})
+	report, err := application.ComputeConceptAgreement(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("ComputeConceptAgreement: unexpected error: %v", err)
+	}
+	if err := repo.WriteConceptAgreement(context.Background(), report.Pairs); err != nil {
+		t.Fatalf("WriteConceptAgreement: unexpected error: %v", err)
+	}
+
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+	body := `{
+		"names": [
+			{"id": "1", "verbatim": "Corynephorus canescens"},
+			{"id": "2", "verbatim": "Salsola kali agg."}
+		]
+	}`
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/match", bytes.NewBufferString(body))
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	got := decodeJSON[matchResponse](t, rr.Body)
+	byID := map[string]int{}
+	for i, res := range got.Results {
+		byID[res.ID] = i
+	}
+
+	coryn := got.Results[byID["1"]]
+	if coryn.Classification == nil {
+		t.Fatal("result 1: classification = nil, want non-nil")
+	}
+	if coryn.Classification.Family != "Poaceae" {
+		t.Errorf("result 1: classification.family = %q, want %q", coryn.Classification.Family, "Poaceae")
+	}
+	if coryn.AggregateResolution != nil {
+		t.Errorf("result 1: aggregate_resolution = %+v, want nil (not an aggregate)", coryn.AggregateResolution)
+	}
+
+	salsola := got.Results[byID["2"]]
+	if salsola.AggregateResolution == nil {
+		t.Fatal("result 2: aggregate_resolution = nil, want non-nil for an aggregate match")
+	}
+	if len(salsola.AggregateResolution.Options) != 3 {
+		t.Fatalf("result 2: len(options) = %d, want 3", len(salsola.AggregateResolution.Options))
+	}
+	if salsola.AggregateResolution.Agreement != "identical" {
+		t.Errorf("result 2: agreement = %q, want %q", salsola.AggregateResolution.Agreement, "identical")
+	}
+	if salsola.AggregateResolution.RequestedNameSpace != "eurosl" {
+		t.Errorf("result 2: requested_name_space = %q, want %q", salsola.AggregateResolution.RequestedNameSpace, "eurosl")
+	}
+}
+
+// seedNativeAggregateForHTTPTest writes aggregateConceptID as a native
+// SPECIES_AGGREGATE concept (canonical name) under its own backbone
+// (derived from the id's "<backbone>:concept:<id>" shape) and links it to
+// memberConceptIDs via concept_aggregate, creating each member as a minimal
+// SPECIES concept first — mirrors internal/application/
+// concept_agreement_test.go's seedAggregateWithMembers, duplicated here
+// rather than exported since it is test-only fixture setup.
+func seedNativeAggregateForHTTPTest(t *testing.T, repo *sqlite.DB, aggregateConceptID, canonical string, memberConceptIDs []string) {
+	t.Helper()
+	for _, m := range memberConceptIDs {
+		seedMemberConceptForHTTPTest(t, repo, m)
+	}
+
+	backbone, sourceID, ok := splitConceptID(aggregateConceptID)
+	if !ok {
+		t.Fatalf("seedNativeAggregateForHTTPTest: %q is not a <backbone>:concept:<id> shape", aggregateConceptID)
+	}
+	tx, err := repo.BeginIngest(context.Background(), domain.BackboneVersion{ID: backbone, Version: "test", Redistribution: domain.RedistributionUnknown})
+	if err != nil {
+		t.Fatalf("BeginIngest(%q): unexpected error: %v", backbone, err)
+	}
+	name := domain.Name{ID: aggregateConceptID + ":name:" + sourceID, Canonical: canonical, Rank: domain.RankSpeciesAggregate}
+	concept := domain.Concept{ID: aggregateConceptID, BackboneID: backbone, AcceptedName: name, Rank: domain.RankSpeciesAggregate, Status: domain.StatusAccepted}
+	if err := tx.UpsertName(name); err != nil {
+		t.Fatalf("UpsertName: unexpected error: %v", err)
+	}
+	if err := tx.UpsertConcept(concept); err != nil {
+		t.Fatalf("UpsertConcept: unexpected error: %v", err)
+	}
+	if err := tx.LinkName(concept.ID, name.ID, "accepted", nil); err != nil {
+		t.Fatalf("LinkName: unexpected error: %v", err)
+	}
+	for _, m := range memberConceptIDs {
+		if err := tx.AddAggregateMember(aggregateConceptID, m); err != nil {
+			t.Fatalf("AddAggregateMember(%q, %q): unexpected error: %v", aggregateConceptID, m, err)
+		}
+	}
+	if err := tx.Finalize(); err != nil {
+		t.Fatalf("Finalize: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+}
+
+// seedMemberConceptForHTTPTest writes memberConceptID as a minimal
+// SPECIES-rank concept under its own backbone (derived from the id's
+// "<backbone>:concept:<id>" shape) — the member half of
+// seedNativeAggregateForHTTPTest, split out to keep both functions' own
+// cognitive complexity low.
+func seedMemberConceptForHTTPTest(t *testing.T, repo *sqlite.DB, memberConceptID string) {
+	t.Helper()
+	backbone, sourceID, ok := splitConceptID(memberConceptID)
+	if !ok {
+		t.Fatalf("seedMemberConceptForHTTPTest: %q is not a <backbone>:concept:<id> shape", memberConceptID)
+	}
+	tx, err := repo.BeginIngest(context.Background(), domain.BackboneVersion{ID: backbone, Version: "test", Redistribution: domain.RedistributionUnknown})
+	if err != nil {
+		t.Fatalf("BeginIngest(%q): unexpected error: %v", backbone, err)
+	}
+	name := domain.Name{ID: memberConceptID + ":name", Canonical: "Member " + sourceID, Rank: domain.RankSpecies}
+	concept := domain.Concept{ID: memberConceptID, BackboneID: backbone, AcceptedName: name, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+	if err := tx.UpsertName(name); err != nil {
+		t.Fatalf("UpsertName: unexpected error: %v", err)
+	}
+	if err := tx.UpsertConcept(concept); err != nil {
+		t.Fatalf("UpsertConcept: unexpected error: %v", err)
+	}
+	if err := tx.LinkName(concept.ID, name.ID, "accepted", nil); err != nil {
+		t.Fatalf("LinkName: unexpected error: %v", err)
+	}
+	if err := tx.Finalize(); err != nil {
+		t.Fatalf("Finalize: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+}
+
+// splitConceptID splits a "<backbone>:concept:<id>" string into its
+// backbone and source-id parts.
+func splitConceptID(conceptID string) (backbone, sourceID string, ok bool) {
+	return strings.Cut(conceptID, ":concept:")
 }
 
 func TestHandleMatch_MalformedBody_Returns400InvalidQuery(t *testing.T) {

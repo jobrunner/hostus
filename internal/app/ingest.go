@@ -209,18 +209,20 @@ func classificationFor(r namelist.Row, byID map[string]namelist.Row) (family, or
 	return family, order, class
 }
 
-// ingestNameSpace opens ns's canonical name-list CSV and runs
-// application.IngestNameSpace against repo (SP9/UC4). manifestSHA is recorded
-// onto the space's name_space row exactly as it is onto xref_source.
+// ingestNameSpaceDataset runs application.IngestNameSpace against repo
+// (SP9/UC4) for the ALREADY-READ ds. manifestSHA is recorded onto the
+// space's name_space row exactly as it is onto xref_source.
+//
+// It takes ds rather than reading ns.Path itself because Ingest()'s
+// composition-root loop reads ns's CSV exactly ONCE per name space and
+// passes the resulting *namelist.Dataset to both this function (Fall A) and
+// ingestNativeSpaceDataset (Fall B, for eurosl/germansl) — see Ingest()'s
+// NameSpaces loop.
 //
 // Reader-level row errors are surfaced on the report rather than aborting,
 // like ingestConceptSource: one malformed line out of 16.402 must not cost
 // the whole ingest, but it must not vanish either.
-func ingestNameSpace(ctx context.Context, ns manifest.NameSpace, manifestSHA string, repo *sqlite.DB) (application.NameSpaceIngestReport, error) {
-	ds, err := namelist.Read(ns.Path)
-	if err != nil {
-		return application.NameSpaceIngestReport{}, fmt.Errorf("app: reading name space %q at %q: %w", ns.ID, ns.Path, err)
-	}
+func ingestNameSpaceDataset(ctx context.Context, ds *namelist.Dataset, ns manifest.NameSpace, manifestSHA string, repo *sqlite.DB) (application.NameSpaceIngestReport, error) {
 	// ns.Redistribution is routed through ParseRedistribution for the same
 	// reason as adaptBackbones' backbone mapping above — see its doc comment.
 	redistribution, err := domain.ParseRedistribution(ns.Redistribution)
@@ -270,19 +272,22 @@ func (s nativeRowSource) Rows() []application.NativeRow {
 // domain.NameSpaceMeta: Fall B writes its own taxon_concept rows via
 // repo.BeginIngest, the backbone path, not the name-space path — see the
 // plan's "Architecture" section head.
-//
-// NOTE: this bridge function exists as required scaffolding for Fall-B
-// ingest (the NativeRowSource producer/consumer bridge), but is not yet
-// wired into the composition root's manifest-driven ingest loop (the
-// caller of ingestNameSpace below): the plan does not itself carve out a
-// dedicated task for that wiring (which manifest section names a Fall-B
-// space, what minRank each uses, ...). That wiring belongs to a later
-// task/step, not this one.
 func ingestNativeSpace(ctx context.Context, ns manifest.NameSpace, manifestSHA string, repo *sqlite.DB, minRank domain.Rank) (application.NativeSpaceIngestReport, error) {
 	ds, err := namelist.Read(ns.Path)
 	if err != nil {
 		return application.NativeSpaceIngestReport{}, fmt.Errorf("app: reading native space %q at %q: %w", ns.ID, ns.Path, err)
 	}
+	return ingestNativeSpaceDataset(ctx, ds, ns, manifestSHA, repo, minRank)
+}
+
+// ingestNativeSpaceDataset is ingestNativeSpace's logic split out from the
+// CSV read, mirroring ingestNameSpaceDataset above — Ingest()'s composition-
+// root loop reads ns's CSV once and passes the same *namelist.Dataset to
+// both the Fall-A and Fall-B bridge. memberLinks is derived from ds via
+// nativeMemberLinks below, rather than passed in, so this function's only
+// two inputs are "the row set" and "which space/minRank" — matching
+// ingestNameSpaceDataset's shape.
+func ingestNativeSpaceDataset(ctx context.Context, ds *namelist.Dataset, ns manifest.NameSpace, manifestSHA string, repo *sqlite.DB, minRank domain.Rank) (application.NativeSpaceIngestReport, error) {
 	// ns.Redistribution is routed through ParseRedistribution for the same
 	// reason as adaptBackbones' backbone mapping above — see its doc comment.
 	redistribution, err := domain.ParseRedistribution(ns.Redistribution)
@@ -297,12 +302,27 @@ func ingestNativeSpace(ctx context.Context, ns manifest.NameSpace, manifestSHA s
 		ManifestSHA:    manifestSHA,
 		Redistribution: redistribution,
 	}
-	// memberLinks (Task 6's aggregate->member wiring, native source id ->
-	// WCVP crosswalk source ids) is not populated here: like minRank above,
-	// which manifest section supplies it is a later task/step's wiring, not
-	// this one's. An empty map makes IngestNativeSpace's aggregate-member
-	// step a no-op rather than leaving this composition root uncompilable.
-	return application.IngestNativeSpace(ctx, repo, nativeRowSource{ds: ds}, bv, minRank, map[string][]string{})
+	return application.IngestNativeSpace(ctx, repo, nativeRowSource{ds: ds}, bv, minRank, nativeMemberLinks(ds))
+}
+
+// nativeMemberLinks derives Task 6's aggregate->member wiring from ds's
+// full row set: every row with a ParentID becomes a member entry under its
+// parent's SourceID, regardless of either row's own rank.
+// IngestNativeSpace's own write loop only consults memberLinks for a row it
+// has ALREADY confirmed qualifies as a Fall-B concept (see
+// qualifiesAsFallBConcept), and ResolveNameSpaceMember safely returns ""
+// (not an error) for a memberSourceID that Fall A never crosswalked — so no
+// rank-filtering is needed here; the downstream code already handles both
+// cases correctly.
+func nativeMemberLinks(ds *namelist.Dataset) map[string][]string {
+	links := map[string][]string{}
+	for _, r := range ds.Rows {
+		if r.ParentID == "" {
+			continue
+		}
+		links[r.ParentID] = append(links[r.ParentID], r.SourceID)
+	}
+	return links
 }
 
 // ingestConceptSource reads cs's two canonical CDM CSVs and runs
@@ -386,6 +406,70 @@ type Reports struct {
 	Xrefs          []application.XrefIngestReport
 	ConceptSources []application.CDMIngestReport
 	NameSpaces     []application.NameSpaceIngestReport
+	// NativeSpaces holds Fall B's own-concept ingest report for every name
+	// space that also runs Fall B (currently eurosl/germansl — see
+	// nativeSpaceBackboneIDs) — see Ingest()'s NameSpaces loop.
+	NativeSpaces []application.NativeSpaceIngestReport
+	// ConceptAgreement is the eurosl<->germansl aggregate-member comparison
+	// (Task 7), computed once after every name space's Fall A+B ingest has
+	// run — see Ingest()'s step 4.
+	ConceptAgreement application.ConceptAgreementReport
+}
+
+// nameSpaceIDEurosl/nameSpaceIDGermansl are the two name-space ids pinned
+// as named constants (rather than repeated string literals) so
+// nativeSpaceBackboneIDs below and its callers/tests share one spelling.
+const (
+	nameSpaceIDEurosl   = "eurosl"
+	nameSpaceIDGermansl = "germansl"
+)
+
+// nativeSpaceBackboneIDs are the name-space ids that also run Fall B
+// (application.IngestNativeSpace) in Ingest()'s NameSpaces loop, immediately
+// after their own Fall A (application.IngestNameSpace) run: eurosl and
+// germansl are the only two canonical CSVs in the manifest that carry a
+// parent_id chain above SPECIES (Task 3's deliberate scope) — floraveg/
+// euromed's 5-column CSV has none, so running Fall B against them would be a
+// silent no-op at best.
+var nativeSpaceBackboneIDs = map[string]bool{nameSpaceIDEurosl: true, nameSpaceIDGermansl: true}
+
+// ingestNameSpaceAndNative reads ns's canonical CSV exactly ONCE and runs
+// Fall A (application.IngestNameSpace) against it, then — for eurosl/
+// germansl only, see nativeSpaceBackboneIDs — Fall B
+// (application.IngestNativeSpace) against the SAME already-read dataset.
+// Split out of Ingest()'s NameSpaces loop to keep that function's cognitive
+// complexity within the linter's bound (gocognit), mirroring
+// writeNativeRow's own extraction pattern in nativespace_ingest.go.
+//
+// The returned *application.NativeSpaceIngestReport is nil when ns did not
+// qualify for Fall B (ns.ID not in nativeSpaceBackboneIDs) — the caller
+// appends it to reports.NativeSpaces only when non-nil.
+func ingestNameSpaceAndNative(ctx context.Context, ns manifest.NameSpace, manifestSHA string, repo *sqlite.DB) (application.NameSpaceIngestReport, *application.NativeSpaceIngestReport, error) {
+	nsDS, err := namelist.Read(ns.Path)
+	if err != nil {
+		return application.NameSpaceIngestReport{}, nil, fmt.Errorf("app: reading name space %q at %q: %w", ns.ID, ns.Path, err)
+	}
+
+	nr, err := ingestNameSpaceDataset(ctx, nsDS, ns, manifestSHA, repo)
+	if err != nil {
+		return nr, nil, err
+	}
+	if !nativeSpaceBackboneIDs[ns.ID] {
+		return nr, nil, nil
+	}
+
+	// Fall B runs AFTER Fall A for the SAME name space, never before:
+	// IngestNativeSpace's aggregate-member resolution
+	// (ResolveNameSpaceMember) reads name_space_entry rows, which only
+	// Fall A (just above) writes. minRank=domain.RankRoot writes every rank
+	// above SPECIES as its own concept, not just a narrow band — see
+	// nativeConceptRankOrder's own doc comment for the full root-to-leaf
+	// ordering this cutoff is measured against.
+	nsr, err := ingestNativeSpaceDataset(ctx, nsDS, ns, manifestSHA, repo, domain.RankRoot)
+	if err != nil {
+		return nr, nil, err
+	}
+	return nr, &nsr, nil
 }
 
 // Ingest parses and validates the manifest at manifestPath, opens (or
@@ -448,13 +532,32 @@ func Ingest(ctx context.Context, manifestPath, dbPath string) (Reports, error) {
 	}
 
 	reports.NameSpaces = make([]application.NameSpaceIngestReport, 0, len(manifestDS.NameSpaces))
+	reports.NativeSpaces = make([]application.NativeSpaceIngestReport, 0, len(manifestDS.NameSpaces))
 	for _, ns := range manifestDS.NameSpaces {
-		nr, err := ingestNameSpace(ctx, ns, manifestDS.ManifestSHA, repo)
+		nr, nsr, err := ingestNameSpaceAndNative(ctx, ns, manifestDS.ManifestSHA, repo)
 		if err != nil {
 			return reports, err
 		}
 		reports.NameSpaces = append(reports.NameSpaces, nr)
+		if nsr != nil {
+			reports.NativeSpaces = append(reports.NativeSpaces, *nsr)
+		}
 	}
+
+	// ComputeConceptAgreement/WriteConceptAgreement (Task 7) run once, AFTER
+	// every name space's Fall A+B ingest is done: the comparison pairs up
+	// eurosl and germansl aggregate concepts by name and needs BOTH spaces'
+	// concept_aggregate member lists fully written first. This runs BEFORE
+	// BuildDistributionClosure below — it is itself part of "the whole
+	// index is now built", not a distribution concern.
+	agreementReport, err := application.ComputeConceptAgreement(ctx, repo)
+	if err != nil {
+		return reports, err
+	}
+	if err := repo.WriteConceptAgreement(ctx, agreementReport.Pairs); err != nil {
+		return reports, err
+	}
+	reports.ConceptAgreement = agreementReport
 
 	// BuildDistributionClosure runs once ALL backbones (incl. CDM) are
 	// ingested — it resolves CDM concepts' in_area name fallback against WCVP

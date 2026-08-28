@@ -1,0 +1,4 @@
+taxon|rank|status|accepted_taxon|source_id|parent_id
+Festuca|Genus|accepted||g-gen1|
+Festuca ovina agg.|SPECIES_AGGREGATE|accepted||g-agg1|g-gen1
+Festuca ovina|Species|accepted||g-sp1|g-agg1

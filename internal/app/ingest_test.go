@@ -2,10 +2,15 @@ package app_test
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 
+	_ "modernc.org/sqlite" // pure-Go SQLite driver, for this file's direct concept_agreement query only
+
+	"github.com/jobrunner/hostus/internal/adapters/sqlite"
 	"github.com/jobrunner/hostus/internal/app"
+	"github.com/jobrunner/hostus/internal/application"
 	"github.com/jobrunner/hostus/internal/domain"
 )
 
@@ -128,5 +133,139 @@ func TestIngest_ReportsNameSpaces(t *testing.T) {
 	}
 	if len(ns.UnmatchedSample) == 0 {
 		t.Error("reports.NameSpaces[0].UnmatchedSample is empty, want the lossy crosswalk to name the names it dropped")
+	}
+}
+
+// TestIngest_WiresFallBAndAgreementIntoRealCompositionRoot is the final-
+// review Critical-1 regression test: before this fix, app.Ingest()'s
+// NameSpaces loop only ever called ingestNameSpace (Fall A) — the Fall-B
+// bridge (ingestNativeSpace) and application.ComputeConceptAgreement had NO
+// production caller at all, so a real "hostus ingest" run left
+// concept_aggregate and concept_agreement permanently empty regardless of
+// what the manifest pinned.
+//
+// The fixture manifest (testdata/dataset-agreement.yaml) pins the SAME WCVP
+// backbone as dataset.yaml plus two synthetic name spaces, eurosl and
+// germansl, each with one genus row, one SPECIES_AGGREGATE row ("Festuca
+// ovina agg.") and one Species row ("Festuca ovina", which crosswalks by
+// name onto the WCVP fixture's real Festuca ovina concept,
+// wcvp:concept:415853) under the SAME aggregate name in both spaces — the
+// minimal shape that exercises Fall B's own-concept write, Task 6's
+// aggregate-member wiring, AND Task 7's agreement comparison end to end.
+//
+// It proves the fix two ways: (1) via app.Ingest's own Reports (the
+// production return value), and (2) via a direct SQL query against
+// concept_agreement — the exact table the finding named as staying
+// permanently empty.
+func TestIngest_WiresFallBAndAgreementIntoRealCompositionRoot(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
+
+	reports, err := app.Ingest(context.Background(), "testdata/dataset-agreement.yaml", dbPath)
+	if err != nil {
+		t.Fatalf("app.Ingest: unexpected error: %v", err)
+	}
+
+	t.Run("NativeSpaces", func(t *testing.T) {
+		assertNativeSpacesReport(t, reports.NativeSpaces)
+	})
+	t.Run("ConceptAgreementReport", func(t *testing.T) {
+		assertConceptAgreementReport(t, reports.ConceptAgreement)
+	})
+	t.Run("RepositoryAndRawSQL", func(t *testing.T) {
+		assertConceptAgreementPersisted(t, dbPath)
+	})
+}
+
+// assertNativeSpacesReport checks Fall B's own report entries — see
+// TestIngest_WiresFallBAndAgreementIntoRealCompositionRoot's doc comment for
+// the fixture shape.
+func assertNativeSpacesReport(t *testing.T, nativeSpaces []application.NativeSpaceIngestReport) {
+	t.Helper()
+	if len(nativeSpaces) != 2 {
+		t.Fatalf("len(reports.NativeSpaces) = %d, want 2 (eurosl and germansl both run Fall B)", len(nativeSpaces))
+	}
+	for _, nsr := range nativeSpaces {
+		// Genus + SPECIES_AGGREGATE both qualify at minRank=domain.RankRoot;
+		// the Species row is Fall A's territory and must NOT be written here.
+		if nsr.Written != 2 {
+			t.Errorf("reports.NativeSpaces[%q].Written = %d, want 2 (genus + aggregate)", nsr.Space, nsr.Written)
+		}
+		// nativeMemberLinks (ingest.go) links EVERY ParentID edge, not just
+		// aggregate->species ones: the genus row is ALSO a qualifying Fall-B
+		// concept here (minRank=RankRoot), and Fall A separately crosswalks
+		// the aggregate row itself onto the SAME WCVP concept via the
+		// aggregate-to-nominate rule — so both the genus->aggregate edge and
+		// the aggregate->species edge resolve, each to wcvp:concept:415853.
+		// This is the documented, deliberate behavior (see nativeMemberLinks'
+		// doc comment: no rank-filtering, ResolveNameSpaceMember decides).
+		if nsr.MembersLinked != 2 {
+			t.Errorf("reports.NativeSpaces[%q].MembersLinked = %d, want 2 (genus->aggregate and aggregate->species both resolve)", nsr.Space, nsr.MembersLinked)
+		}
+	}
+}
+
+// assertConceptAgreementReport checks Task 7's agreement comparison found
+// the one name-matched eurosl/germansl aggregate pair the fixture sets up.
+func assertConceptAgreementReport(t *testing.T, report application.ConceptAgreementReport) {
+	t.Helper()
+	if len(report.Pairs) != 1 {
+		t.Fatalf("len(reports.ConceptAgreement.Pairs) = %d, want 1 (one name-matched eurosl/germansl aggregate pair)", len(report.Pairs))
+	}
+	pair := report.Pairs[0]
+	if pair.EuroslConceptID != "eurosl:concept:e-agg1" || pair.GermanslConceptID != "germansl:concept:g-agg1" {
+		t.Errorf("ConceptAgreement.Pairs[0] = %+v, want eurosl/germansl concept ids e-agg1/g-agg1", pair)
+	}
+	if pair.Agreement != domain.AgreementIdentical {
+		t.Errorf("ConceptAgreement.Pairs[0].Agreement = %q, want %q (both sides resolve the SAME WCVP member)", pair.Agreement, domain.AgreementIdentical)
+	}
+}
+
+// assertConceptAgreementPersisted proves concept_aggregate and
+// concept_agreement are NOT empty on the real on-disk database at dbPath,
+// bypassing the Reports return value entirely — first via
+// repo.AggregateMembers (a repository method), then via a DIRECT SQL query
+// against concept_agreement, the exact table the finding named as staying
+// permanently empty.
+func assertConceptAgreementPersisted(t *testing.T, dbPath string) {
+	t.Helper()
+	ctx := context.Background()
+
+	repo, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+
+	members, err := repo.AggregateMembers(ctx, "eurosl:concept:e-agg1")
+	if err != nil {
+		t.Fatalf("AggregateMembers: unexpected error: %v", err)
+	}
+	if len(members) != 1 || members[0] != "wcvp:concept:415853" {
+		t.Errorf("AggregateMembers(eurosl:concept:e-agg1) = %v, want [wcvp:concept:415853]", members)
+	}
+
+	rawDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: unexpected error: %v", err)
+	}
+	defer func() { _ = rawDB.Close() }()
+
+	var count int
+	if err := rawDB.QueryRow("SELECT COUNT(*) FROM concept_agreement").Scan(&count); err != nil {
+		t.Fatalf("direct SQL query on concept_agreement: unexpected error: %v", err)
+	}
+	if count == 0 {
+		t.Error("SELECT COUNT(*) FROM concept_agreement = 0, want > 0 — the exact regression this test guards against")
+	}
+
+	var agreement string
+	if err := rawDB.QueryRow(
+		"SELECT agreement FROM concept_agreement WHERE eurosl_concept_id = ?",
+		"eurosl:concept:e-agg1",
+	).Scan(&agreement); err != nil {
+		t.Fatalf("direct SQL query for the eurosl:concept:e-agg1 row: unexpected error: %v", err)
+	}
+	if agreement != string(domain.AgreementIdentical) {
+		t.Errorf("concept_agreement.agreement (raw SQL) = %q, want %q", agreement, domain.AgreementIdentical)
 	}
 }

@@ -248,6 +248,16 @@ type SuggestOpts struct {
 	// than Limit candidates (see the Suggest doc comment's fetch-budget
 	// note). A value <= 0 uses the adapter's default budget.
 	Limit int
+	// MatchMode selects how strictly a candidate's name must match q.
+	// "" and "name_start" (the default) require at least one of the
+	// concept's names (accepted or synonym) to have its FULL canonicalized
+	// form start with q's prefix — not merely contain a matching FTS5
+	// token anywhere in it. "anywhere" restores the plain FTS5 prefix
+	// behavior, where a hit on any token (e.g. a species epithet) is
+	// enough. See the sqlite adapter's Suggest doc comment for the SP7
+	// finding ("ca" matching an epithet like "canescens") this guards
+	// against.
+	MatchMode string
 }
 
 // MatchCandidate is one row returned by Repository.MatchExact: a concept

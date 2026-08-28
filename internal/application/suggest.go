@@ -38,6 +38,12 @@ type SuggestRequest struct {
 	// backbone. Naming an un-ingested backbone is ErrUnknownBackbone, not an
 	// empty result: silence would read as "no such plant".
 	EntryBackbone string
+	// MatchMode is passed straight through to output.SuggestOpts.MatchMode
+	// (see its doc comment): "" and "name_start" are the default, "anywhere"
+	// restores plain FTS5 prefix behavior. Validation of the token itself
+	// (rejecting anything else) is the HTTP handler's job, matching how
+	// EntryBackbone/TargetSpace are validated at the edge rather than here.
+	MatchMode string
 }
 
 // SuggestResponse is the ranked, truncated result of Suggest, plus the
@@ -72,6 +78,7 @@ func Suggest(ctx context.Context, repo output.Repository, req SuggestRequest) (S
 		Limit:       limit,
 		Backbone:    req.EntryBackbone,
 		TargetSpace: req.TargetSpace,
+		MatchMode:   req.MatchMode,
 	})
 	if err != nil {
 		return SuggestResponse{}, err

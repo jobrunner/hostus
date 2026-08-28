@@ -278,6 +278,52 @@ func TestHandleSuggest_MalformedLimit_Returns400InvalidQuery(t *testing.T) {
 	}
 }
 
+// TestHandleSuggest_MatchModeValid asserts every accepted match_mode token
+// ("", "name_start", "anywhere") passes through to a normal 200 response —
+// none of them is itself rejected as invalid.
+func TestHandleSuggest_MatchModeValid(t *testing.T) {
+	for _, mode := range []string{"", "name_start", "anywhere"} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			repo := seededRepo(t)
+			r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+			url := "/v1/suggest?q=coryn"
+			if mode != "" {
+				url += "&match_mode=" + mode
+			}
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, url, nil)
+			r.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+// TestHandleSuggest_UnknownMatchMode_Returns400InvalidQuery asserts an
+// unrecognized match_mode token 400s rather than silently falling back to
+// the default — a caller's typo must not be hidden behind a behavior
+// change it didn't ask for.
+func TestHandleSuggest_UnknownMatchMode_Returns400InvalidQuery(t *testing.T) {
+	repo := seededRepo(t)
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/suggest?q=coryn&match_mode=bogus", nil)
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body: %s)", rr.Code, rr.Body.String())
+	}
+	assertJSONContentType(t, rr)
+	got := decodeJSON[errorEnvelope](t, rr.Body)
+	if got.Error.Code != "INVALID_QUERY" {
+		t.Errorf("error.code = %q, want %q", got.Error.Code, "INVALID_QUERY")
+	}
+}
+
 // TestHandleSuggest_NoMatches asserts a prefix nothing in the fixture
 // matches returns 200 with an empty results array (not 404 or an error) —
 // "no autosuggest candidates" is a normal, successful outcome.

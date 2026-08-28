@@ -36,6 +36,13 @@ type Row struct {
 	Status        string
 	AcceptedTaxon string
 	SourceID      string
+	// ParentID/ParentRank are the source's own parent-taxon link
+	// (EuroSL/GermanSL: IsChildTaxonOfID / the parent row's TaxonRank).
+	// OPTIONAL: not every pipeline emits them (euromed's 5-column CSV
+	// never does), so they are deliberately excluded from wantHeader —
+	// see headerIndex/rowFrom. Absent means both fields stay "".
+	ParentID   string
+	ParentRank string
 }
 
 // Dataset is the parsed canonical name-list CSV. Errors collects non-fatal,
@@ -152,6 +159,12 @@ func rowFrom(rec []string, idx map[string]int, minFields int) (Row, error) {
 	}
 	if row.SourceID == "" {
 		return Row{}, fmt.Errorf("taxon %q: empty source_id", row.Taxon)
+	}
+	if i, ok := idx["parent_id"]; ok && i < len(rec) {
+		row.ParentID = strings.TrimSpace(rec[i])
+	}
+	if i, ok := idx["parent_rank"]; ok && i < len(rec) {
+		row.ParentRank = strings.TrimSpace(rec[i])
 	}
 	return row, nil
 }

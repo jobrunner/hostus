@@ -1,9 +1,14 @@
 package app
 
 import (
+	"context"
+	"path/filepath"
 	"testing"
 
+	"github.com/jobrunner/hostus/internal/adapters/manifest"
 	"github.com/jobrunner/hostus/internal/adapters/namelist"
+	"github.com/jobrunner/hostus/internal/adapters/sqlite"
+	"github.com/jobrunner/hostus/internal/domain"
 )
 
 // TestClassificationFor_WalksParentChainToFamilyOrderClass pins the
@@ -146,5 +151,73 @@ func TestNameSpaceRowSourceRows_CarriesClassificationAndVernacular(t *testing.T)
 	}
 	if !found {
 		t.Fatal("species row (sp-1) not found in Rows() output")
+	}
+}
+
+// TestNativeRowSourceRows_CarriesRankAndParentID is the Fall-B counterpart
+// of TestNameSpaceRowSourceRows_CarriesClassificationAndVernacular: unlike
+// NameRow, application.NativeRow carries the row's OWN Rank/ParentID
+// verbatim (no classification walk — Fall B rows ARE the classification).
+func TestNativeRowSourceRows_CarriesRankAndParentID(t *testing.T) {
+	ds := &namelist.Dataset{
+		Rows: []namelist.Row{
+			{SourceID: "genus1", Taxon: "Salsola", Rank: "Genus", Status: "accepted"},
+			{SourceID: "agg1", Taxon: "Salsola kali aggr.", Rank: "SPECIES_AGGREGATE", Status: "accepted", ParentID: "genus1"},
+		},
+	}
+	src := nativeRowSource{ds: ds}
+
+	rows := src.Rows()
+	if len(rows) != 2 {
+		t.Fatalf("Rows() = %d rows, want 2", len(rows))
+	}
+	agg := rows[1]
+	if agg.Taxon != "Salsola kali aggr." || agg.SourceID != "agg1" || agg.Rank != "SPECIES_AGGREGATE" || agg.Status != "accepted" || agg.ParentID != "genus1" {
+		t.Errorf("Rows()[1] = %+v, want the agg1 row verbatim", agg)
+	}
+}
+
+// TestIngestNativeSpace_WritesQualifyingRowsFromRealCSV drives
+// ingestNativeSpace end to end against a real on-disk CSV and a real
+// on-disk SQLite file (the same posture as TestIngest_ReportsTraitVocabularies
+// above — the sqlite adapter runs with SetMaxOpenConns(1), so this is the
+// only way to catch a phase-ordering deadlock).
+func TestIngestNativeSpace_WritesQualifyingRowsFromRealCSV(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
+	repo, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+
+	ns := manifest.NameSpace{
+		ID:             "eurosl",
+		Version:        "2026-08-27",
+		Path:           "testdata/nativespace-sample.csv",
+		Redistribution: "unknown",
+	}
+
+	report, err := ingestNativeSpace(context.Background(), ns, "deadbeef", repo, domain.RankSpeciesAggregate)
+	if err != nil {
+		t.Fatalf("ingestNativeSpace: unexpected error: %v", err)
+	}
+	// The fixture carries a Genus row (below minRank), a SPECIES_AGGREGATE
+	// row (qualifies) and a Species row (Fall A's territory) — exactly one
+	// qualifying row.
+	if report.Written != 1 {
+		t.Errorf("report.Written = %d, want 1", report.Written)
+	}
+	if report.Space != "eurosl" {
+		t.Errorf("report.Space = %q, want %q", report.Space, "eurosl")
+	}
+
+	var concept *domain.Concept
+	if c, _, _, _, err := repo.Concept(context.Background(), "eurosl:concept:agg1"); err != nil {
+		t.Fatalf("Concept: unexpected error: %v", err)
+	} else {
+		concept = c
+	}
+	if concept.Rank != domain.RankSpeciesAggregate {
+		t.Errorf("concept.Rank = %q, want %q", concept.Rank, domain.RankSpeciesAggregate)
 	}
 }

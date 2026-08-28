@@ -293,6 +293,66 @@ func ingestNameSpace(ctx context.Context, ns manifest.NameSpace, manifestSHA str
 	return report, err
 }
 
+// nativeRowSource adapts a *namelist.Dataset into
+// application.NativeRowSource, the Fall-B counterpart of
+// nameSpaceRowSource above — application never imports
+// internal/adapters/namelist directly (depguard).
+type nativeRowSource struct{ ds *namelist.Dataset }
+
+func (s nativeRowSource) Rows() []application.NativeRow {
+	out := make([]application.NativeRow, 0, len(s.ds.Rows))
+	for _, r := range s.ds.Rows {
+		out = append(out, application.NativeRow{
+			Taxon:    r.Taxon,
+			SourceID: r.SourceID,
+			Rank:     r.Rank,
+			Status:   r.Status,
+			ParentID: r.ParentID,
+		})
+	}
+	return out
+}
+
+// ingestNativeSpace opens ns's canonical name-list CSV and runs
+// application.IngestNativeSpace against repo (Fall B — EuroSL/GermanSL
+// ranks above SPECIES, plus aggregates). It reuses the same CSV reader as
+// ingestNameSpace (Fall A): the two use cases differ only in what they DO
+// with each row, not in what they read.
+//
+// Unlike ingestNameSpace, this builds a domain.BackboneVersion, not a
+// domain.NameSpaceMeta: Fall B writes its own taxon_concept rows via
+// repo.BeginIngest, the backbone path, not the name-space path — see the
+// plan's "Architecture" section head.
+//
+// NOTE: this bridge function exists as required scaffolding for Fall-B
+// ingest (the NativeRowSource producer/consumer bridge), but is not yet
+// wired into the composition root's manifest-driven ingest loop (the
+// caller of ingestNameSpace below): the plan does not itself carve out a
+// dedicated task for that wiring (which manifest section names a Fall-B
+// space, what minRank each uses, ...). That wiring belongs to a later
+// task/step, not this one.
+func ingestNativeSpace(ctx context.Context, ns manifest.NameSpace, manifestSHA string, repo *sqlite.DB, minRank domain.Rank) (application.NativeSpaceIngestReport, error) {
+	ds, err := namelist.Read(ns.Path)
+	if err != nil {
+		return application.NativeSpaceIngestReport{}, fmt.Errorf("app: reading native space %q at %q: %w", ns.ID, ns.Path, err)
+	}
+	// ns.Redistribution is routed through ParseRedistribution for the same
+	// reason as adaptBackbones' backbone mapping above — see its doc comment.
+	redistribution, err := domain.ParseRedistribution(ns.Redistribution)
+	if err != nil {
+		return application.NativeSpaceIngestReport{}, fmt.Errorf("app: native space %q: %w", ns.ID, err)
+	}
+	bv := domain.BackboneVersion{
+		ID:             ns.ID,
+		Version:        ns.Version,
+		License:        ns.License,
+		SourceURL:      ns.SourceURL,
+		ManifestSHA:    manifestSHA,
+		Redistribution: redistribution,
+	}
+	return application.IngestNativeSpace(ctx, repo, nativeRowSource{ds: ds}, bv, minRank)
+}
+
 // ingestConceptSource reads cs's two canonical CDM CSVs and runs
 // application.IngestCDM against repo. This is the adapter -> application DTO
 // bridge for SP5: internal/application must not import

@@ -804,3 +804,44 @@ func TestMatchNames_AggregateHitCarriesResolutionAcrossSpaces(t *testing.T) {
 		t.Errorf("Agreement = %q, want %q", res.Agreement, domain.AgreementIdentical)
 	}
 }
+
+// TestMatchNames_AggregateResolutionMixedCaseMarkerStillMatches is the
+// end-to-end regression for the Task 10 fix-round-1 finding: a query whose
+// aggregate marker carries a non-lowercase letter ("agG." rather than the
+// stored "agg.") must still resolve the SAME AggregateResolution a
+// lowercase query would. The marker's FIRST letter is deliberately kept
+// lowercase ("agG.", not "AGG.") — splitVerbatim's own heuristic treats a
+// token STARTING with an uppercase letter as the beginning of the author
+// citation, not the canonical, so an all-caps marker never reaches
+// isAggregate/buildAggregateResolution as part of the canonical at all
+// (that is splitVerbatim's existing, unrelated rule — not this fix's
+// concern). A marker whose first letter is lowercase but some OTHER letter
+// is not (a real possibility: inconsistent casing in a pasted/OCR'd name
+// list) DOES reach buildAggregateResolution's raw `canonical`, unaltered by
+// any earlier canonicalization — that is the case this test exercises.
+//
+// Before the fix, this was accidentally fine only because both call sites
+// happened to canonicalize before stripping; the fix makes that guaranteed
+// (via the single aggregateMatchKey function) rather than accidental.
+func TestMatchNames_AggregateResolutionMixedCaseMarkerStillMatches(t *testing.T) {
+	repo := seededAggregateRepo(t)
+	results, err := application.MatchNames(context.Background(), repo, []application.MatchRequest{
+		{ID: "1", Verbatim: "Salsola kali agG."},
+	})
+	if err != nil {
+		t.Fatalf("MatchNames: unexpected error: %v", err)
+	}
+	res := results[0].AggregateResolution
+	if res == nil {
+		t.Fatal("AggregateResolution = nil, want non-nil for an aggregate match with a mixed-case marker")
+	}
+	if res.RequestedNameSpace != "eurosl" {
+		t.Errorf("RequestedNameSpace = %q, want %q", res.RequestedNameSpace, "eurosl")
+	}
+	if res.Status != domain.AggregatePolicyKnown {
+		t.Errorf("Status = %q, want %q", res.Status, domain.AggregatePolicyKnown)
+	}
+	if res.Agreement != domain.AgreementIdentical {
+		t.Errorf("Agreement = %q, want %q (mixed-case marker must still name-match the germansl aggregate)", res.Agreement, domain.AgreementIdentical)
+	}
+}

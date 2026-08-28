@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jobrunner/hostus/internal/domain"
+	"github.com/jobrunner/hostus/internal/ports/output"
 )
 
 // UpsertNameSpace records one name-space provenance row (SP9/UC4), the
@@ -125,6 +127,80 @@ func (db *DB) AggregateMembers(ctx context.Context, aggregateConceptID string) (
 		return nil, fmt.Errorf("sqlite: iterating aggregate members for %q: %w", aggregateConceptID, err)
 	}
 	return out, nil
+}
+
+// AggregateConcepts returns every taxon_concept in backboneID whose rank is
+// one of ranks — the native Fall-B aggregate/collective-species concepts
+// (Task 5/6) application.ComputeConceptAgreement pairs up across name
+// spaces. tc.accepted_name references name.id directly (no junction table
+// needed here, unlike concept_name, which serves synonym roles).
+func (db *DB) AggregateConcepts(ctx context.Context, backboneID string, ranks []domain.Rank) ([]output.AggregateConceptSummary, error) {
+	if len(ranks) == 0 {
+		return []output.AggregateConceptSummary{}, nil
+	}
+	query, args := aggregateConceptsQuery(backboneID, ranks)
+	rows, err := db.sql.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: querying aggregate concepts for backbone %q: %w", backboneID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := []output.AggregateConceptSummary{}
+	for rows.Next() {
+		var s output.AggregateConceptSummary
+		if err := rows.Scan(&s.ConceptID, &s.Canonical); err != nil {
+			return nil, fmt.Errorf("sqlite: scanning aggregate concept for backbone %q: %w", backboneID, err)
+		}
+		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: iterating aggregate concepts for backbone %q: %w", backboneID, err)
+	}
+	return out, nil
+}
+
+// aggregateConceptsQuery builds the query+args AggregateConcepts runs,
+// mirroring nameSpaceEntriesQuery/traitsQuery's split-out-query-builder
+// style in this package: len(ranks) is caller-bounded (the two Fall-B
+// aggregate ranks, see aggregateRanks), so a placeholder list is the right
+// trade-off here too.
+func aggregateConceptsQuery(backboneID string, ranks []domain.Rank) (string, []any) {
+	args := make([]any, 0, len(ranks)+1)
+	args = append(args, backboneID)
+	for _, r := range ranks {
+		args = append(args, string(r))
+	}
+	query := `
+		SELECT tc.id, n.canonical FROM taxon_concept tc
+		JOIN name n ON n.id = tc.accepted_name
+		WHERE tc.backbone_id = ? AND tc.rank IN (` + placeholdersFor(len(ranks)) + `)
+		ORDER BY tc.id`
+	return query, args
+}
+
+// WriteConceptAgreement (re)writes concept_agreement for every given pair,
+// one INSERT OR REPLACE per pair. Deliberately not part of IngestTx — see
+// output.Repository.WriteConceptAgreement's doc comment.
+func (db *DB) WriteConceptAgreement(ctx context.Context, pairs []domain.ConceptAgreementPair) error {
+	stmt, err := db.sql.PrepareContext(ctx, `
+		INSERT OR REPLACE INTO concept_agreement
+			(eurosl_concept_id, germansl_concept_id, agreement, agreement_text, only_in_eurosl, only_in_germansl)
+		VALUES (?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("sqlite: preparing concept_agreement insert: %w", err)
+	}
+	defer func() { _ = stmt.Close() }()
+
+	for _, p := range pairs {
+		if _, err := stmt.ExecContext(ctx,
+			nullString(p.EuroslConceptID), nullString(p.GermanslConceptID),
+			string(p.Agreement), p.AgreementText,
+			strings.Join(p.OnlyInEurosl, ","), strings.Join(p.OnlyInGermansl, ","),
+		); err != nil {
+			return fmt.Errorf("sqlite: writing concept_agreement for %q/%q: %w", p.EuroslConceptID, p.GermanslConceptID, err)
+		}
+	}
+	return nil
 }
 
 // UpsertClassification records family/order/class for conceptID (see

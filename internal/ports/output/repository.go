@@ -176,6 +176,21 @@ type Repository interface {
 	// returns an empty, non-error slice.
 	AggregateMembers(ctx context.Context, aggregateConceptID string) ([]string, error)
 
+	// AggregateConcepts returns every taxon_concept in backboneID whose rank
+	// is one of ranks — the native Fall-B aggregate/collective-species
+	// concepts (Task 5/6) application.ComputeConceptAgreement pairs up
+	// across name spaces. An empty result (no matching rows) is not an
+	// error.
+	AggregateConcepts(ctx context.Context, backboneID string, ranks []domain.Rank) ([]AggregateConceptSummary, error)
+
+	// WriteConceptAgreement (re)writes the precomputed eurosl/germansl
+	// aggregate comparison (schema.sql's concept_agreement table) for every
+	// given pair, INSERT OR REPLACE per pair. Deliberately NOT part of
+	// IngestTx: it runs once, after every backbone has been ingested, so
+	// there is no FK-ordering risk requiring transactional batching with an
+	// ingest.
+	WriteConceptAgreement(ctx context.Context, pairs []domain.ConceptAgreementPair) error
+
 	// Suggest returns FTS5 prefix-match candidates for q (an autosuggest
 	// query fragment), scored but UNRANKED: the application layer runs
 	// domain.RankSuggestions over the result and truncates to opts.Limit
@@ -250,6 +265,16 @@ type MatchCandidate struct {
 	// otherwise-tied concepts, the one for which the queried name is accepted
 	// or homotypic (see internal/application/match.go's classify).
 	Homotypic *bool
+}
+
+// AggregateConceptSummary is the minimal shape Repository.AggregateConcepts
+// (and application.ComputeConceptAgreement, its only caller) needs to
+// enumerate one backbone's aggregate concepts: just enough to name-match
+// across eurosl/germansl without paying for the full Concept()'s synonyms/
+// xrefs/distributions, which that use case never touches.
+type AggregateConceptSummary struct {
+	ConceptID string
+	Canonical string
 }
 
 // ConceptRelations is Repository.ConceptRelationsInSec' result: the queried

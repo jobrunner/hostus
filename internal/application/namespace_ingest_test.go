@@ -621,6 +621,12 @@ func (r *fakeNameSpaceRepo) NameSpaceEntries(context.Context, string, []string) 
 func (r *fakeNameSpaceRepo) AggregateMembers(context.Context, string) ([]string, error) {
 	return nil, nil
 }
+func (r *fakeNameSpaceRepo) AggregateConcepts(context.Context, string, []domain.Rank) ([]output.AggregateConceptSummary, error) {
+	return nil, nil
+}
+func (r *fakeNameSpaceRepo) WriteConceptAgreement(context.Context, []domain.ConceptAgreementPair) error {
+	return nil
+}
 func (r *fakeNameSpaceRepo) NameSpaces(context.Context) ([]domain.NameSpaceMeta, error) {
 	return nil, nil
 }

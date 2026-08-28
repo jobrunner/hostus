@@ -65,6 +65,48 @@ const (
 	RankUnrankedInfraspecific Rank = "UNRANKED_INFRASPECIFIC"
 )
 
+// canonicalRanks maps every strict, upper-cased Rank spelling ParseRank
+// accepts to its Rank constant. Keeping this as a lookup table instead of
+// a switch keeps ParseRank's cyclomatic complexity low (gocyclo) while the
+// mapping itself stays exactly as exhaustive.
+var canonicalRanks = map[string]Rank{
+	"FAMILY":                 RankFamily,
+	"GENUS":                  RankGenus,
+	"SPECIES":                RankSpecies,
+	"SUBSPECIES":             RankSubspecies,
+	"VARIETY":                RankVariety,
+	"SUBVARIETY":             RankSubvariety,
+	"FORM":                   RankForm,
+	"SUBFORM":                RankSubform,
+	"NOTHOSUBSPECIES":        RankNothosubspecies,
+	"NOTHOVARIETY":           RankNothovariety,
+	"NOTHOFORM":              RankNothoform,
+	"ROOT":                   RankRoot,
+	"PHYLUM":                 RankPhylum,
+	"SUBDIVISION":            RankSubdivision,
+	"CLASS":                  RankClass,
+	"SUBCLASS":               RankSubclass,
+	"SUPERORDER":             RankSuperorder,
+	"ORDER":                  RankOrder,
+	"SUBFAMILY":              RankSubfamily,
+	"TRIBE":                  RankTribe,
+	"SUBGENUS":               RankSubgenus,
+	"SECTION":                RankSection,
+	"SUBSECTION":             RankSubsection,
+	"SERIES":                 RankSeries,
+	"SPECIES_AGGREGATE":      RankSpeciesAggregate,
+	"GENUS_AGGREGATE":        RankGenusAggregate,
+	"COLL_SPECIES":           RankCollSpecies,
+	"SUBSPECIES_GROUP":       RankSubspeciesGroup,
+	"PROLES":                 RankProles,
+	"RACE":                   RankRace,
+	"CONVAR":                 RankConvar,
+	"GREX":                   RankGrex,
+	"UNRANKED_INFRAGENERIC":  RankUnrankedInfrageneric,
+	"UNRANKED_INFRASPECIFIC": RankUnrankedInfraspecific,
+	"OTHER":                  RankOther,
+}
+
 // ParseRank maps a canonical Rank spelling (case-insensitive; the exact set
 // of constants above) to a Rank. Unknown or empty input returns an error —
 // this is the STRICT parser, used for API input (e.g. the suggest
@@ -85,80 +127,10 @@ func ParseRank(s string) (Rank, error) {
 		return RankInformalClade, nil
 	}
 
-	switch strings.ToUpper(strings.TrimSpace(s)) {
-	case "FAMILY":
-		return RankFamily, nil
-	case "GENUS":
-		return RankGenus, nil
-	case "SPECIES":
-		return RankSpecies, nil
-	case "SUBSPECIES":
-		return RankSubspecies, nil
-	case "VARIETY":
-		return RankVariety, nil
-	case "SUBVARIETY":
-		return RankSubvariety, nil
-	case "FORM":
-		return RankForm, nil
-	case "SUBFORM":
-		return RankSubform, nil
-	case "NOTHOSUBSPECIES":
-		return RankNothosubspecies, nil
-	case "NOTHOVARIETY":
-		return RankNothovariety, nil
-	case "NOTHOFORM":
-		return RankNothoform, nil
-	case "ROOT":
-		return RankRoot, nil
-	case "PHYLUM":
-		return RankPhylum, nil
-	case "SUBDIVISION":
-		return RankSubdivision, nil
-	case "CLASS":
-		return RankClass, nil
-	case "SUBCLASS":
-		return RankSubclass, nil
-	case "SUPERORDER":
-		return RankSuperorder, nil
-	case "ORDER":
-		return RankOrder, nil
-	case "SUBFAMILY":
-		return RankSubfamily, nil
-	case "TRIBE":
-		return RankTribe, nil
-	case "SUBGENUS":
-		return RankSubgenus, nil
-	case "SECTION":
-		return RankSection, nil
-	case "SUBSECTION":
-		return RankSubsection, nil
-	case "SERIES":
-		return RankSeries, nil
-	case "SPECIES_AGGREGATE":
-		return RankSpeciesAggregate, nil
-	case "GENUS_AGGREGATE":
-		return RankGenusAggregate, nil
-	case "COLL_SPECIES":
-		return RankCollSpecies, nil
-	case "SUBSPECIES_GROUP":
-		return RankSubspeciesGroup, nil
-	case "PROLES":
-		return RankProles, nil
-	case "RACE":
-		return RankRace, nil
-	case "CONVAR":
-		return RankConvar, nil
-	case "GREX":
-		return RankGrex, nil
-	case "UNRANKED_INFRAGENERIC":
-		return RankUnrankedInfrageneric, nil
-	case "UNRANKED_INFRASPECIFIC":
-		return RankUnrankedInfraspecific, nil
-	case "OTHER":
-		return RankOther, nil
-	default:
-		return "", fmt.Errorf("domain: unknown taxon rank %q", s)
+	if rank, ok := canonicalRanks[strings.ToUpper(strings.TrimSpace(s))]; ok {
+		return rank, nil
 	}
+	return "", fmt.Errorf("domain: unknown taxon rank %q", s)
 }
 
 // nothotaxonRanks maps WCVP's raw nothotaxon taxonrank spellings (which

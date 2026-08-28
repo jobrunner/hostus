@@ -42,7 +42,7 @@ type SuggestItem struct {
 	TargetSpaceName string
 }
 
-// rankOrder assigns the ordinal used by RankOrder/RankSuggestions priority
+// rankOrder assigns the ordinal used by RankOrderPriority/RankSuggestions priority
 // step 4: species before subspecies before variety before form, with
 // FAMILY and GENUS ranked ahead of all of those (broader ranks first). The
 // nothotaxon (hybrid) ranks are placed directly after their non-hybrid
@@ -86,7 +86,7 @@ func RankOrderPriority(r Rank) int {
 //  1. PrefixHit true before false
 //  2. InArea true before false
 //  3. Status == StatusAccepted before any other status
-//  4. lower RankOrder first (broader/simpler ranks before finer ones)
+//  4. lower RankOrderPriority first (broader/simpler ranks before finer ones)
 //  5. Score ascending (bm25: lower Score means more relevant — see
 //     SuggestItem's doc comment on the sign convention)
 //

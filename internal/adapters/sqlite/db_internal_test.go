@@ -300,12 +300,12 @@ func TestIngestTx_UpsertNameConceptLinkXrefDistribution(t *testing.T) {
 }
 
 // TestIngestTx_UpsertNameConceptWithOtherRank_PersistsRankVerbatim is the
-// fix-round-1 regression: an OTHER-ranked Name/Concept (WCVP's "proles",
+// fix-round-1 regression: an OTHER-ranked Name/Concept (WCVP's "lusus",
 // via domain.ParseRankLenient) must land its RankVerbatim in the raw
 // name.rank_verbatim/taxon_concept.rank_verbatim columns, not just live in
 // the in-process domain.Name/Concept for the duration of the ingest run —
 // otherwise the moment the process exits, hostus can no longer tell
-// "proles" from "lusus", only "OTHER" (spec §A.1: a nomenclature service
+// "lusus" from "stirps", only "OTHER" (spec §A.1: a nomenclature service
 // must not lose which name/rank something actually is).
 func TestIngestTx_UpsertNameConceptWithOtherRank_PersistsRankVerbatim(t *testing.T) {
 	db := openTestDB(t)
@@ -316,8 +316,8 @@ func TestIngestTx_UpsertNameConceptWithOtherRank_PersistsRankVerbatim(t *testing
 		t.Fatalf("BeginIngest: unexpected error: %v", err)
 	}
 
-	name := domain.Name{ID: "n-proles", Canonical: "Paeonia corallina proles ovatifolia", Rank: domain.RankOther, RankVerbatim: "proles"}
-	concept := domain.Concept{ID: "c-proles", BackboneID: "wcvp", AcceptedName: name, Rank: domain.RankOther, RankVerbatim: "proles", Status: domain.StatusSynonym}
+	name := domain.Name{ID: "n-lusus", Canonical: "Paeonia corallina lusus ovatifolia", Rank: domain.RankOther, RankVerbatim: "lusus"}
+	concept := domain.Concept{ID: "c-lusus", BackboneID: "wcvp", AcceptedName: name, Rank: domain.RankOther, RankVerbatim: "lusus", Status: domain.StatusSynonym}
 
 	if err := tx.UpsertName(name); err != nil {
 		t.Fatalf("UpsertName: unexpected error: %v", err)
@@ -330,17 +330,17 @@ func TestIngestTx_UpsertNameConceptWithOtherRank_PersistsRankVerbatim(t *testing
 	}
 
 	var nameVerbatim, conceptVerbatim string
-	if err := db.sql.QueryRow(`SELECT rank_verbatim FROM name WHERE id = ?`, "n-proles").Scan(&nameVerbatim); err != nil {
+	if err := db.sql.QueryRow(`SELECT rank_verbatim FROM name WHERE id = ?`, "n-lusus").Scan(&nameVerbatim); err != nil {
 		t.Fatalf("reading name.rank_verbatim: unexpected error: %v", err)
 	}
-	if nameVerbatim != "proles" {
-		t.Errorf("name.rank_verbatim = %q, want %q", nameVerbatim, "proles")
+	if nameVerbatim != "lusus" {
+		t.Errorf("name.rank_verbatim = %q, want %q", nameVerbatim, "lusus")
 	}
-	if err := db.sql.QueryRow(`SELECT rank_verbatim FROM taxon_concept WHERE id = ?`, "c-proles").Scan(&conceptVerbatim); err != nil {
+	if err := db.sql.QueryRow(`SELECT rank_verbatim FROM taxon_concept WHERE id = ?`, "c-lusus").Scan(&conceptVerbatim); err != nil {
 		t.Fatalf("reading taxon_concept.rank_verbatim: unexpected error: %v", err)
 	}
-	if conceptVerbatim != "proles" {
-		t.Errorf("taxon_concept.rank_verbatim = %q, want %q", conceptVerbatim, "proles")
+	if conceptVerbatim != "lusus" {
+		t.Errorf("taxon_concept.rank_verbatim = %q, want %q", conceptVerbatim, "lusus")
 	}
 }
 

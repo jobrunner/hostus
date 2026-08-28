@@ -628,7 +628,7 @@ func TestMatchFuzzyCandidates_BracketFirstRuneStillFiltersNormally(t *testing.T)
 }
 
 // ingestOtherRankConcept writes one OTHER-ranked accepted concept (WCVP's
-// "proles") plus one OTHER-ranked synonym under it, via the real
+// "stirps") plus one OTHER-ranked synonym under it, via the real
 // IngestTx — not seed.sql, since this is a self-contained fixture rather
 // than a shared one — so the fix-round-1 rank_verbatim scanning tests
 // below have something real to read back through Concept/MatchExact.
@@ -640,9 +640,9 @@ func ingestOtherRankConcept(t *testing.T, db *DB) {
 		t.Fatalf("BeginIngest: unexpected error: %v", err)
 	}
 
-	accepted := domain.Name{ID: "n-other-accepted", Canonical: "Paeonia corallina proles ovatifolia", Authorship: "Rouy & Foucaud", Rank: domain.RankOther, RankVerbatim: "proles"}
-	synonym := domain.Name{ID: "n-other-synonym", Canonical: "Paeonia mascula proles ovatifolia", Rank: domain.RankOther, RankVerbatim: "lusus"}
-	concept := domain.Concept{ID: "c-other", BackboneID: "wcvp", AcceptedName: accepted, Rank: domain.RankOther, RankVerbatim: "proles", Status: domain.StatusAccepted}
+	accepted := domain.Name{ID: "n-other-accepted", Canonical: "Paeonia corallina stirps ovatifolia", Authorship: "Rouy & Foucaud", Rank: domain.RankOther, RankVerbatim: "stirps"}
+	synonym := domain.Name{ID: "n-other-synonym", Canonical: "Paeonia mascula stirps ovatifolia", Rank: domain.RankOther, RankVerbatim: "lusus"}
+	concept := domain.Concept{ID: "c-other", BackboneID: "wcvp", AcceptedName: accepted, Rank: domain.RankOther, RankVerbatim: "stirps", Status: domain.StatusAccepted}
 
 	if err := tx.UpsertName(accepted); err != nil {
 		t.Fatalf("UpsertName(accepted): unexpected error: %v", err)
@@ -686,8 +686,8 @@ func TestConcept_OtherRank_ScansAcceptedNameAndSynonymRankVerbatim(t *testing.T)
 	if concept.AcceptedName.Rank != domain.RankOther {
 		t.Errorf("concept.AcceptedName.Rank = %q, want %q", concept.AcceptedName.Rank, domain.RankOther)
 	}
-	if concept.AcceptedName.RankVerbatim != "proles" {
-		t.Errorf("concept.AcceptedName.RankVerbatim = %q, want %q", concept.AcceptedName.RankVerbatim, "proles")
+	if concept.AcceptedName.RankVerbatim != "stirps" {
+		t.Errorf("concept.AcceptedName.RankVerbatim = %q, want %q", concept.AcceptedName.RankVerbatim, "stirps")
 	}
 
 	if len(synonyms) != 1 {
@@ -711,7 +711,7 @@ func TestMatchExact_OtherRank_ScansRankVerbatimOnMatchedConceptAndAcceptedName(t
 	db := openTestDB(t)
 	ingestOtherRankConcept(t, db)
 
-	got, err := db.MatchExact(context.Background(), "Paeonia corallina proles ovatifolia")
+	got, err := db.MatchExact(context.Background(), "Paeonia corallina stirps ovatifolia")
 	if err != nil {
 		t.Fatalf("MatchExact: unexpected error: %v", err)
 	}
@@ -723,13 +723,13 @@ func TestMatchExact_OtherRank_ScansRankVerbatimOnMatchedConceptAndAcceptedName(t
 	if candidate.MatchedName.Rank != domain.RankOther {
 		t.Errorf("MatchedName.Rank = %q, want %q", candidate.MatchedName.Rank, domain.RankOther)
 	}
-	if candidate.MatchedName.RankVerbatim != "proles" {
-		t.Errorf("MatchedName.RankVerbatim = %q, want %q", candidate.MatchedName.RankVerbatim, "proles")
+	if candidate.MatchedName.RankVerbatim != "stirps" {
+		t.Errorf("MatchedName.RankVerbatim = %q, want %q", candidate.MatchedName.RankVerbatim, "stirps")
 	}
-	if candidate.Concept.RankVerbatim != "proles" {
-		t.Errorf("Concept.RankVerbatim = %q, want %q", candidate.Concept.RankVerbatim, "proles")
+	if candidate.Concept.RankVerbatim != "stirps" {
+		t.Errorf("Concept.RankVerbatim = %q, want %q", candidate.Concept.RankVerbatim, "stirps")
 	}
-	if candidate.Concept.AcceptedName.RankVerbatim != "proles" {
-		t.Errorf("Concept.AcceptedName.RankVerbatim = %q, want %q", candidate.Concept.AcceptedName.RankVerbatim, "proles")
+	if candidate.Concept.AcceptedName.RankVerbatim != "stirps" {
+		t.Errorf("Concept.AcceptedName.RankVerbatim = %q, want %q", candidate.Concept.AcceptedName.RankVerbatim, "stirps")
 	}
 }

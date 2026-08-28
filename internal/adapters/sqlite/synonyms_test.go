@@ -125,12 +125,12 @@ func TestSynonymCandidates_CarriesRankVerbatimForOtherRanks(t *testing.T) {
 		t.Fatalf("SynonymCandidates: unexpected error: %v", err)
 	}
 
-	proles := findCandidate(t, items, "n-uc5-proles")
-	if proles.Rank != domain.RankOther {
-		t.Fatalf("proles Rank = %q, want %q", proles.Rank, domain.RankOther)
+	lusus := findCandidate(t, items, "n-uc5-lusus")
+	if lusus.Rank != domain.RankOther {
+		t.Fatalf("lusus Rank = %q, want %q", lusus.Rank, domain.RankOther)
 	}
-	if proles.RankVerbatim != "proles" {
-		t.Errorf("proles RankVerbatim = %q, want %q", proles.RankVerbatim, "proles")
+	if lusus.RankVerbatim != "lusus" {
+		t.Errorf("lusus RankVerbatim = %q, want %q", lusus.RankVerbatim, "lusus")
 	}
 	if got := findCandidate(t, items, "n-uc5-f-pallidus").RankVerbatim; got != "" {
 		t.Errorf("f. pallidus RankVerbatim = %q, want empty — FORM already names its own spelling", got)

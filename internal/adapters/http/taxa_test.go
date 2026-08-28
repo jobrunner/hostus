@@ -619,7 +619,7 @@ type sliceRowSource struct{ taxa []application.TaxonRow }
 func (s sliceRowSource) Taxa() []application.TaxonRow                 { return s.taxa }
 func (s sliceRowSource) Distributions() []application.DistributionRow { return nil }
 
-// otherRankRepo ingests one ordinary "Species" concept and one "proles"
+// otherRankRepo ingests one ordinary "Species" concept and one "lusus"
 // concept (WCVP's real exotic rank that made hostus 2.0's full ingest
 // abort — see docs/research/reality-check.md's M1.0) into a fresh
 // in-memory repo, so /v1/concept's rank_verbatim rendering can be tested
@@ -636,7 +636,7 @@ func otherRankRepo(t *testing.T) *sqlite.DB {
 	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "wcvp-other", Version: "v1"}}, ManifestSHA: "x"}
 	taxa := []application.TaxonRow{
 		{TaxonID: "1", AcceptedTaxonID: "1", Accepted: true, Canonical: "Ordinary species", Rank: "Species", Status: "Accepted"},
-		{TaxonID: "2", AcceptedTaxonID: "2", Accepted: true, Canonical: "Paeonia corallina proles ovatifolia", Authorship: "Rouy & Foucaud", Rank: "proles", Status: "Synonym"},
+		{TaxonID: "2", AcceptedTaxonID: "2", Accepted: true, Canonical: "Paeonia corallina lusus ovatifolia", Authorship: "Rouy & Foucaud", Rank: "lusus", Status: "Synonym"},
 	}
 	readerFor := func(application.Backbone) (application.RowSource, error) {
 		return sliceRowSource{taxa: taxa}, nil
@@ -649,8 +649,8 @@ func otherRankRepo(t *testing.T) *sqlite.DB {
 
 // TestHandleConcept_OtherRank_RendersRankVerbatim proves Hardening Task 1's
 // fix-round-1 requirement end to end: a concept whose rank degraded to
-// domain.RankOther (WCVP's "proles") must render BOTH `"rank":"OTHER"` and
-// `"rank_verbatim":"proles"` on the wire — the whole point of persisting
+// domain.RankOther (WCVP's "lusus") must render BOTH `"rank":"OTHER"` and
+// `"rank_verbatim":"lusus"` on the wire — the whole point of persisting
 // RankVerbatim through the ingest is so a nomenclature service doesn't
 // forget which exotic rank a concept actually had (spec §A.1) — while a
 // canonically-ranked concept must OMIT the "rank_verbatim" key entirely
@@ -670,8 +670,8 @@ func TestHandleConcept_OtherRank_RendersRankVerbatim(t *testing.T) {
 	if got.Rank != "OTHER" {
 		t.Errorf("rank = %q, want %q", got.Rank, "OTHER")
 	}
-	if got.RankVerbatim != "proles" {
-		t.Errorf("rank_verbatim = %q, want %q", got.RankVerbatim, "proles")
+	if got.RankVerbatim != "lusus" {
+		t.Errorf("rank_verbatim = %q, want %q", got.RankVerbatim, "lusus")
 	}
 
 	var raw map[string]any

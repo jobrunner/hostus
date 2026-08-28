@@ -1069,7 +1069,7 @@ func TestExportBundle_ScopeIndependentExport_LargeConceptSetSucceeds(t *testing.
 	}
 }
 
-// ingestOtherRankFixture ingests one "proles" concept (WCVP's real exotic
+// ingestOtherRankFixture ingests one "lusus" concept (WCVP's real exotic
 // rank — see docs/research/reality-check.md's M1.0) into a fresh in-memory
 // repo, so ExportBundle's rank_verbatim carry-through can be tested without
 // depending on the shared WCVP fixture containing an exotic rank itself.
@@ -1083,7 +1083,7 @@ func ingestOtherRankFixture(t *testing.T) *sqlite.DB {
 
 	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "wcvp-other", Version: "v1", Redistribution: "allowed"}}, ManifestSHA: "x"}
 	taxa := []application.TaxonRow{
-		{TaxonID: "2", AcceptedTaxonID: "2", Accepted: true, Canonical: "Paeonia corallina proles ovatifolia", Authorship: "Rouy & Foucaud", Rank: "proles", Status: "Synonym"},
+		{TaxonID: "2", AcceptedTaxonID: "2", Accepted: true, Canonical: "Paeonia corallina lusus ovatifolia", Authorship: "Rouy & Foucaud", Rank: "lusus", Status: "Synonym"},
 	}
 	readerFor := func(application.Backbone) (application.RowSource, error) {
 		return sliceRowSource{taxa: taxa}, nil
@@ -1096,8 +1096,8 @@ func ingestOtherRankFixture(t *testing.T) *sqlite.DB {
 
 // TestExportBundle_CarriesRankVerbatimThrough proves Hardening Task 1's
 // fix-round-1 requirement that rank_verbatim survives a bundle export, not
-// just a live ingest: a "proles" concept's name.rank_verbatim/
-// taxon_concept.rank_verbatim must both read back as "proles" from the
+// just a live ingest: a "lusus" concept's name.rank_verbatim/
+// taxon_concept.rank_verbatim must both read back as "lusus" from the
 // exported bundle file, and repo.Concept against the reopened bundle must
 // surface it via domain.Concept.RankVerbatim.
 func TestExportBundle_CarriesRankVerbatimThrough(t *testing.T) {
@@ -1119,14 +1119,14 @@ func TestExportBundle_CarriesRankVerbatimThrough(t *testing.T) {
 	if err := raw.QueryRow(`SELECT rank_verbatim FROM name WHERE id = ?`, "wcvp-other:name:2").Scan(&nameVerbatim); err != nil {
 		t.Fatalf("reading name.rank_verbatim: unexpected error: %v", err)
 	}
-	if nameVerbatim != "proles" {
-		t.Errorf("bundle name.rank_verbatim = %q, want %q", nameVerbatim, "proles")
+	if nameVerbatim != "lusus" {
+		t.Errorf("bundle name.rank_verbatim = %q, want %q", nameVerbatim, "lusus")
 	}
 	if err := raw.QueryRow(`SELECT rank_verbatim FROM taxon_concept WHERE id = ?`, "wcvp-other:concept:2").Scan(&conceptVerbatim); err != nil {
 		t.Fatalf("reading taxon_concept.rank_verbatim: unexpected error: %v", err)
 	}
-	if conceptVerbatim != "proles" {
-		t.Errorf("bundle taxon_concept.rank_verbatim = %q, want %q", conceptVerbatim, "proles")
+	if conceptVerbatim != "lusus" {
+		t.Errorf("bundle taxon_concept.rank_verbatim = %q, want %q", conceptVerbatim, "lusus")
 	}
 
 	bundle, err := sqlite.Open(out)
@@ -1145,7 +1145,7 @@ func TestExportBundle_CarriesRankVerbatimThrough(t *testing.T) {
 	if concept.Rank != domain.RankOther {
 		t.Errorf("bundle concept.Rank = %q, want %q", concept.Rank, domain.RankOther)
 	}
-	if concept.RankVerbatim != "proles" {
-		t.Errorf("bundle concept.RankVerbatim = %q, want %q", concept.RankVerbatim, "proles")
+	if concept.RankVerbatim != "lusus" {
+		t.Errorf("bundle concept.RankVerbatim = %q, want %q", concept.RankVerbatim, "lusus")
 	}
 }

@@ -1,6 +1,10 @@
 package application
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/jobrunner/hostus/internal/domain"
+)
 
 func TestSplitVerbatim(t *testing.T) {
 	cases := []struct {
@@ -38,6 +42,42 @@ func TestSplitVerbatim(t *testing.T) {
 		if gotCanonical != c.wantCanonical || gotAuthor != c.wantAuthor {
 			t.Errorf("splitVerbatim(%q) = (%q, %q), want (%q, %q)", c.verbatim, gotCanonical, gotAuthor, c.wantCanonical, c.wantAuthor)
 		}
+	}
+}
+
+// TestAggregateMatchKey_MixedCaseMarkerRegression pins the fix-round-1
+// finding (Task 10 review): buildAggregateResolution's query-side prefix
+// and resolveAggregateOption's index-side per-candidate key now go through
+// the SAME function, aggregateMatchKey, so they can never independently
+// drift onto different orders again.
+//
+// It also pins WHY that shared function canonicalizes before stripping,
+// not after: domain.StripAggregateMarkers does a case-SENSITIVE lookup
+// against lowercase-only marker spellings, so calling it BEFORE
+// domain.Canonicalize on a mixed-case marker silently fails to strip
+// (verified below) — canonicalize-first is what keeps a query typed with a
+// non-lowercase marker resolving to the same key as the lowercase form
+// stored in the index.
+func TestAggregateMatchKey_MixedCaseMarkerRegression(t *testing.T) {
+	mixedCase := "Festuca ovina AGGR."
+	lowercase := "Festuca ovina aggr."
+
+	got := aggregateMatchKey(mixedCase)
+	want := aggregateMatchKey(lowercase)
+	if got != want {
+		t.Fatalf("aggregateMatchKey(%q) = %q, aggregateMatchKey(%q) = %q — want equal (marker case must not matter)",
+			mixedCase, got, lowercase, want)
+	}
+	if got != "festuca ovina" {
+		t.Errorf("aggregateMatchKey(%q) = %q, want %q (marker stripped)", mixedCase, got, "festuca ovina")
+	}
+
+	// Pin the reason: the strip-then-canonicalize order (Task 7's
+	// application.ComputeConceptAgreement/concept_agreement.go convention)
+	// silently fails to strip a mixed-case marker — this is NOT what
+	// aggregateMatchKey does, and this assertion documents why it must not.
+	if stripFirst := domain.Canonicalize(domain.StripAggregateMarkers(mixedCase)); stripFirst == "festuca ovina" {
+		t.Errorf("strip-then-canonicalize unexpectedly stripped %q too (%q) — the regression this test guards against no longer reproduces, revisit this test's premise", mixedCase, stripFirst)
 	}
 }
 

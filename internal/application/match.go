@@ -344,13 +344,47 @@ var aggregateResolutionRanks = []domain.Rank{
 	domain.RankSection, domain.RankSubsection, domain.RankSubgenus,
 }
 
+// aggregateMatchKey is the ONE name-matching key both call sites in this
+// file use to decide whether two aggregate/collective-rank spellings name
+// the same taxon, regardless of aggregate-marker SPELLING (agg./aggr./
+// s.l./...) — resolveAggregateOption applies it to a repo.AggregateConcepts
+// summary's stored canonical, buildAggregateResolution applies it to the
+// query's split verbatim, and a single shared function is what guarantees
+// the two can never independently drift onto different orders (they used
+// to: see git history / task-10-report.md's fix-round-1 entry).
+//
+// It canonicalizes BEFORE stripping the marker — the ORDER deliberately
+// differs from Task 7's application.ComputeConceptAgreement
+// (concept_agreement.go's indexAggregatesByMatchKey strips first, then
+// canonicalizes). That order is harmless for BACKBONE-ingested canonical
+// names, which by taxonomic convention always spell markers lowercase, but
+// domain.StripAggregateMarkers itself does a case-SENSITIVE map lookup
+// against lowercase-only marker spellings (its own doc comment: "peels the
+// trailing aggregate markers off an ALREADY-CANONICALIZED name") — stripping
+// BEFORE canonicalizing silently fails to strip a marker typed in
+// non-lowercase case. Verified directly:
+// StripAggregateMarkers("Festuca ovina AGGR.") returns the string
+// UNCHANGED (marker still attached), while
+// StripAggregateMarkers(Canonicalize("Festuca ovina AGGR.")) correctly
+// yields "festuca ovina". The query side here processes RAW user-typed
+// verbatim (via splitVerbatim), which carries no lowercase guarantee —
+// canonicalizing first is what keeps a query like "Salsola kali AGG."
+// resolving to the same key as a stored "Salsola kali agg.", consistent
+// with domain.IsAggregateName/this package's own isAggregate, which already
+// canonicalize before checking for a marker. See
+// TestAggregateMatchKey_MixedCaseMarkerRegression.
+func aggregateMatchKey(canonical string) string {
+	return domain.StripAggregateMarkers(domain.Canonicalize(canonical))
+}
+
 // resolveAggregateOption is buildAggregateResolution's per-name-space
 // lookup: ns's native aggregate concepts (Repository.AggregateConcepts),
-// name-matched against prefix (already domain.StripAggregateMarkers'd and
-// domain.Canonicalize'd) by the same key application.ComputeConceptAgreement
-// uses. wcvp always gets the absent/zero option unconditionally — it
-// structurally carries no native aggregate concepts, so there is nothing to
-// look up.
+// name-matched against prefix (an aggregateMatchKey value) by the same key
+// application.ComputeConceptAgreement's own name-matching logic follows in
+// intent (see aggregateMatchKey's doc comment for the order it deliberately
+// does NOT share with concept_agreement.go). wcvp always gets the absent/
+// zero option unconditionally — it structurally carries no native aggregate
+// concepts, so there is nothing to look up.
 func resolveAggregateOption(ctx context.Context, repo output.Repository, ns, prefix string) (domain.AggregateResolutionOption, error) {
 	opt := domain.AggregateResolutionOption{NameSpace: ns}
 	if ns == "wcvp" {
@@ -362,7 +396,7 @@ func resolveAggregateOption(ctx context.Context, repo output.Repository, ns, pre
 	}
 	found := ""
 	for _, s := range summaries {
-		if domain.Canonicalize(domain.StripAggregateMarkers(s.Canonical)) == prefix {
+		if aggregateMatchKey(s.Canonical) == prefix {
 			found = s.ConceptID
 			break
 		}
@@ -387,17 +421,17 @@ func resolveAggregateOption(ctx context.Context, repo output.Repository, ns, pre
 // AggregateConcepts, the concept_aggregate-table mechanism — a DIFFERENT,
 // newer mechanism than domain.ResolveTargetSpace/NameSpaceEntry.Aggregate's
 // Fall-A alias, which MatchInSpace uses unchanged) and matches them against
-// canonical by the SAME name key application.ComputeConceptAgreement uses:
-// domain.Canonicalize(domain.StripAggregateMarkers(...)). wcvp always gets
-// the absent/zero option, since it structurally carries no native aggregate
-// concepts.
+// canonical by aggregateMatchKey — the SAME function resolveAggregateOption
+// applies to each candidate's stored canonical, so the two sides can never
+// drift onto different normalization orders. wcvp always gets the absent/
+// zero option, since it structurally carries no native aggregate concepts.
 //
 // RequestedNameSpace/its own Status/MemberCount reflect the space of
 // resolvedConceptID itself (its "<space>:concept:" id prefix); Agreement is
 // populated only when BOTH eurosl and germansl resolved Known, via
 // Repository.ConceptAgreement keyed on eurosl's aggregate concept id.
 func buildAggregateResolution(ctx context.Context, repo output.Repository, canonical, resolvedConceptID string) (*domain.AggregateResolution, error) {
-	prefix := domain.StripAggregateMarkers(domain.Canonicalize(canonical))
+	prefix := aggregateMatchKey(canonical)
 
 	options := make(map[string]domain.AggregateResolutionOption, len(nativeAggregateNameSpaces))
 	for _, ns := range nativeAggregateNameSpaces {

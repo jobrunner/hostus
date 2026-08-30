@@ -24,7 +24,9 @@ type ExportCrosswalkReport struct {
 // Fall B's own native eurosl concept. Reported, never silently resolved to
 // one side (spec's "Prüfbare Zusagen") — both rows still land in
 // eurosl_crosswalk.csv, and situs' own ingest decides what to do with an
-// ambiguous name.
+// ambiguous name. Fall A can legitimately hold more than one concept id
+// under the same name (homonyms), so one Fall-B match against such a name
+// produces one CrosswalkCollision PER Fall-A id, not one collision total.
 type CrosswalkCollision struct {
 	Name           string
 	FallAConceptID string
@@ -38,6 +40,16 @@ type CrosswalkCollision struct {
 // handoff between two services run by the same operator, not a
 // distribution to a third party (spec, owner decision 2026-08-29).
 func ExportCrosswalk(ctx context.Context, dbPath, outDir string) (ExportCrosswalkReport, error) {
+	// sqlite.Open CREATES the file (and applies schema.sql) when dbPath does
+	// not exist yet — see its doc comment — so a typo'd --db is never
+	// "unopenable" from Open's point of view, only silently empty. Stat it
+	// first so a nonexistent database aborts with a named error instead of
+	// producing two empty CSVs and exiting 0 (spec's error table: "DB nicht
+	// lesbar -> Fehler, Befehl bricht ab").
+	if _, err := os.Stat(dbPath); err != nil {
+		return ExportCrosswalkReport{}, fmt.Errorf("app: database %q does not exist: %w", dbPath, err)
+	}
+
 	src, err := sqlite.Open(dbPath)
 	if err != nil {
 		return ExportCrosswalkReport{}, fmt.Errorf("app: opening database %q: %w", dbPath, err)
@@ -83,14 +95,19 @@ func ExportCrosswalk(ctx context.Context, dbPath, outDir string) (ExportCrosswal
 // fallB — see CrosswalkCollision's doc comment. Never resolved
 // automatically: every match is reported, and both sides' rows still get
 // written to eurosl_crosswalk.csv by writeCrosswalkCSV.
+//
+// A name in fallA can legitimately map to more than one concept id
+// (homonyms), so byName collects ALL Fall-A ids seen under a name rather
+// than keeping only the last — a map[string]string here would silently drop
+// every earlier id under a duplicate name, under-reporting real collisions.
 func detectCrosswalkCollisions(fallA, fallB []sqlite.CrosswalkEntry) []CrosswalkCollision {
-	byName := make(map[string]string, len(fallA))
+	byName := make(map[string][]string, len(fallA))
 	for _, e := range fallA {
-		byName[e.Name] = e.ConceptID
+		byName[e.Name] = append(byName[e.Name], e.ConceptID)
 	}
 	var collisions []CrosswalkCollision
 	for _, e := range fallB {
-		if aID, ok := byName[e.Name]; ok {
+		for _, aID := range byName[e.Name] {
 			collisions = append(collisions, CrosswalkCollision{
 				Name: e.Name, FallAConceptID: aID, FallBConceptID: e.ConceptID,
 			})

@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jobrunner/hostus/internal/app"
@@ -85,15 +86,32 @@ func assertWantedCollisions(t *testing.T, got []app.CrosswalkCollision) {
 	}
 }
 
-// assertCrosswalkCSV checks eurosl_crosswalk.csv's header and row count.
+// assertCrosswalkCSV checks eurosl_crosswalk.csv's header and its full,
+// exact row order: all 3 Fall A rows (by name), then all 2 Fall B rows (by
+// name) — a plain concatenation, never a merge/re-sort across the two
+// sources. This locks in writeCrosswalkCSV's determinism promise (spec's
+// UNION, not a merge that could hide a collision). Row values were read
+// directly off a real ingest of dataset-agreement.yaml (see this test
+// file's TestExportCrosswalk_WritesBothCSVsAndReportsCollisions doc
+// comment), not guessed.
 func assertCrosswalkCSV(t *testing.T, path string) {
 	t.Helper()
 	rows := readCSV(t, path)
-	if len(rows) != 6 { // header + 5 data rows
-		t.Fatalf("eurosl_crosswalk.csv has %d rows (incl. header), want 6: %+v", len(rows), rows)
+	want := [][]string{
+		{"name", "concept_id"},
+		{"Festuca", "wcvp:concept:451511"},
+		{"Festuca ovina", "wcvp:concept:415853"},
+		{"Festuca ovina agg.", "wcvp:concept:415853"},
+		{"Festuca", "eurosl:concept:e-gen1"},
+		{"Festuca ovina agg.", "eurosl:concept:e-agg1"},
 	}
-	if rows[0][0] != "name" || rows[0][1] != "concept_id" {
-		t.Errorf("eurosl_crosswalk.csv header = %v, want [name concept_id]", rows[0])
+	if len(rows) != len(want) {
+		t.Fatalf("eurosl_crosswalk.csv has %d rows (incl. header), want %d: %+v", len(rows), len(want), rows)
+	}
+	for i := range want {
+		if rows[i][0] != want[i][0] || rows[i][1] != want[i][1] {
+			t.Errorf("eurosl_crosswalk.csv row %d = %v, want %v", i, rows[i], want[i])
+		}
 	}
 }
 
@@ -180,5 +198,38 @@ func TestExportCrosswalk_UnopenableDatabase_ReportsNamedError(t *testing.T) {
 	}
 	if report.CrosswalkRows != 0 {
 		t.Errorf("report.CrosswalkRows = %d, want 0 on the error path", report.CrosswalkRows)
+	}
+}
+
+// TestExportCrosswalk_NonexistentDatabaseFile_ReportsNamedError pins the gap
+// TestExportCrosswalk_UnopenableDatabase_ReportsNamedError misses: a --db
+// path in an EXISTING directory that simply has no file at that name yet.
+// sqlite.Open CREATES the file and applies schema.sql for a path that does
+// not exist (see internal/adapters/sqlite/db.go), so this is never
+// "unopenable" from Open's point of view — without an explicit existence
+// check, a typo'd --db silently produces two empty, header-only CSVs and
+// exits 0 (spec's error table: "DB nicht lesbar -> Fehler, Befehl bricht
+// ab").
+func TestExportCrosswalk_NonexistentDatabaseFile_ReportsNamedError(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "typo.sqlite") // dir exists, file does not
+	outDir := filepath.Join(t.TempDir(), "out")
+
+	report, err := app.ExportCrosswalk(context.Background(), dbPath, outDir)
+	if err == nil {
+		t.Fatalf("app.ExportCrosswalk(%q): want an error, got nil (report=%+v)", dbPath, report)
+	}
+	if !strings.Contains(err.Error(), dbPath) {
+		t.Errorf("app.ExportCrosswalk error = %q, want it to mention %q", err.Error(), dbPath)
+	}
+	if report.CrosswalkRows != 0 || report.MemberRows != 0 || len(report.NameCollisions) != 0 {
+		t.Errorf("app.ExportCrosswalk report = %+v, want the zero value on the error path", report)
+	}
+	if _, statErr := os.Stat(dbPath); statErr == nil {
+		t.Errorf("app.ExportCrosswalk must not create %q on the error path", dbPath)
+	}
+	for _, name := range []string{"eurosl_crosswalk.csv", "aggregate_members.csv"} {
+		if _, statErr := os.Stat(filepath.Join(outDir, name)); statErr == nil {
+			t.Errorf("app.ExportCrosswalk must not create %q on the error path", name)
+		}
 	}
 }

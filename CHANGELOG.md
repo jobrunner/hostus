@@ -5,6 +5,53 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [3.0.0-alpha.0](https://github.com/jobrunner/hostus/compare/v2.6.1-alpha.0...v3.0.0-alpha.0) (2026-08-30)
+
+
+### ⚠ BREAKING CHANGES
+
+* **traits:** GET /v1/concept/{id}/traits entfernt. EIVE/Tichý/Midolo- Pipelines nach situs transferiert (Teilprojekt 2).
+* **match:** classification immer, aggregate_resolution als Pflichtfeld bei Sammel-Raengen
+* **concept:** Klassifikation, Aggregat-Mitglieder/-schaften im Response
+* **suggest:** match_mode Parameter (name_start Default, anywhere optional)
+
+### Features
+
+* **agreement:** Vorberechnung des EuroSL/GermanSL-Aggregat-Vergleichs ([226128a](https://github.com/jobrunner/hostus/commit/226128af7790e7679f037c2405fbdea5e77c8abb))
+* **app:** Bridge-Adapter nativeRowSource/ingestNativeSpace für Fall-B-Ingest ([0569d68](https://github.com/jobrunner/hostus/commit/0569d688e447eeba442479d9b8ad6fca39fb85d9))
+* **app:** ExportCrosswalk composition-root function ([435c6b6](https://github.com/jobrunner/hostus/commit/435c6b618557e7ad08aff61b64d941c80e104fee))
+* **cli:** hostus export-crosswalk command ([77b32f1](https://github.com/jobrunner/hostus/commit/77b32f111c1b02392acb9813c74bbdf1ec2fdb71))
+* **concept:** Klassifikation, Aggregat-Mitglieder/-schaften im Response ([dec3be8](https://github.com/jobrunner/hostus/commit/dec3be84b29b34978e0d7e70f45ada46917dcaf8))
+* **domain:** erweitertes kanonisches Rang-Set (EuroSL+GermanSL) ([31a455d](https://github.com/jobrunner/hostus/commit/31a455d90c9b505e5b51c30b1a946dabd86aefac))
+* **match:** classification immer, aggregate_resolution als Pflichtfeld bei Sammel-Raengen ([0a44fe7](https://github.com/jobrunner/hostus/commit/0a44fe7741133312f2d67d195ec28fed50e57f86))
+* **namelist:** GermanSL vernacular_de Spalte im Namensraum-CSV-Kontrakt ([94ce1a5](https://github.com/jobrunner/hostus/commit/94ce1a5d2f8cd88caad78ee333974f835e6ea6af))
+* Namensraum-/Klassifikations-/Aggregat-Redesign ([aa33a80](https://github.com/jobrunner/hostus/commit/aa33a803ab99e267f7912158bec8b7f4c1733c93))
+* **namespace:** Aggregat-Mitglieder-Relation (concept_aggregate) ([def636c](https://github.com/jobrunner/hostus/commit/def636ccb381bfb428fb01b63c2287e8eb5593f9))
+* **namespace:** Klassifikation + Vernakularnamen im Fall-A-Crosswalk ([35d52c6](https://github.com/jobrunner/hostus/commit/35d52c6f8f0e7f0d585f2012a4b5eacd65b6c666))
+* **namespace:** natives Konzept-Ingest für Fall-B-Ränge (EuroSL/GermanSL) ([e49f24f](https://github.com/jobrunner/hostus/commit/e49f24f7726665a7ce60cda8f97023bfaaa0b1ea))
+* **pipelines:** Eltern-Kette in EuroSL/GermanSL-CSV, GermanSL neu gepinnt ([d245ec9](https://github.com/jobrunner/hostus/commit/d245ec9ea7424a28ee9b02d9a280adbc29fe6a31))
+* **sqlite:** eurosl crosswalk + aggregate member query methods ([7a740b9](https://github.com/jobrunner/hostus/commit/7a740b9b070b1ed6ede4c6849b9a2d710d18e39d))
+* **sqlite:** Schema für Klassifikation, Aggregat-Mitglieder, concept_agreement ([c8239cc](https://github.com/jobrunner/hostus/commit/c8239cc7ddf542f6b936f809c8cfdb44e2062e15))
+* **suggest:** match_mode Parameter (name_start Default, anywhere optional) ([1df884d](https://github.com/jobrunner/hostus/commit/1df884d3a33d514f88c20c454c7a623ecffaed7c))
+* **traits:** Traits-Subsystem entfernt, Transfer nach situs ([6d2b9f6](https://github.com/jobrunner/hostus/commit/6d2b9f65457b572b655ba0deab11346d82fba7c3))
+* **translate:** target_space akzeptiert Namensräume (eurosl/germansl/wcvp) neben CDM sec.-UUIDs ([12d5941](https://github.com/jobrunner/hostus/commit/12d5941a440b40bab6a55e37020377674063b7d0))
+
+
+### Bug Fixes
+
+* **app:** abort export-crosswalk on nonexistent --db, report every Fall-A collision ([5c31871](https://github.com/jobrunner/hostus/commit/5c318710ecc12fc874480fd933a7e02ca148f46d))
+* **docs:** remove stale trait-ingest.md references, fixes strict mkdocs build ([b4820bd](https://github.com/jobrunner/hostus/commit/b4820bd7bf10d03f6fb2748299f2ee6d0ae54359))
+* **domain:** EuroSL-Rang-Aliase in ParseRankLenient (7 Rohwerte, strukturell wie GermanSL-Fix aus Task 4) ([0162aed](https://github.com/jobrunner/hostus/commit/0162aed50a2d0048f8ec905eb27daa00345913c8))
+* **domain:** GermanSL-Rang-Kürzel in ParseRankLenient (Fix-Runde 1, Task 4) ([562be93](https://github.com/jobrunner/hostus/commit/562be93b11c478bb9058a146676ed6362deffad4))
+* **domain:** Testfixtures nach proles/grex-Kanonisierung + verwaiste RankOrder-Kommentare korrigiert ([51203eb](https://github.com/jobrunner/hostus/commit/51203ebd406ad8a991cc46672d4a6b5851d92634))
+* **ingest:** Fall-B-/Agreement-Pfad in Composition Root verdrahten (finale Review, Critical 1) ([047dc7f](https://github.com/jobrunner/hostus/commit/047dc7f56c98568f70bd701e59ead69514d40d8e))
+* **match:** unify aggregate-name-match-key order between query and index side ([0d6f7cf](https://github.com/jobrunner/hostus/commit/0d6f7cf3c4197b1fcd171128e0e370293d55652b))
+* **mutation:** hoist tagless-switch conditions, add crosswalk unit tests ([0ac6ff1](https://github.com/jobrunner/hostus/commit/0ac6ff1a966a2b82751a5f63bea45d364361eda1))
+* **namespace:** concept_aggregate nur für echte Sammel-Ränge als aggregierende Seite (finale Review, Rest-Fund) ([91a3899](https://github.com/jobrunner/hostus/commit/91a3899c70a8daca52ea157ff17243a3111eaee0))
+* **namespace:** RankVerbatim nur bei RankOther setzen (Fall-B-Ingest) ([2cd746f](https://github.com/jobrunner/hostus/commit/2cd746fe87a8ef40f1a1ef2a4fb51278c16c166f))
+* **suggest:** close aggregate-alias name_start exemption bug (review finding) ([eeb02d9](https://github.com/jobrunner/hostus/commit/eeb02d95b689967061d47feb2df347d525d4f8b4))
+* verbleibende Findings der finalen Whole-Branch-Review beheben (Critical 2/3, Important 4-8, Minor 11/12) ([cf8f915](https://github.com/jobrunner/hostus/commit/cf8f9150e48f9ce08c5335170e5b9bc16b287ad2))
+
 ## [Unreleased]
 
 ### Added

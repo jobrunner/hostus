@@ -7,6 +7,18 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added
+
+* **`hostus export-crosswalk --db <path> --out-dir <dir>`:** neuer CLI-
+  Befehl, schreibt `eurosl_crosswalk.csv` (name→concept_id, Fall-A-
+  Namensraum-Crosswalk + Fall-B-native-eurosl-Konzepte) und
+  `aggregate_members.csv` (aggregate_concept_id→member_concept_id→
+  member_name aus `concept_aggregate`) für situs' dateibasierten Species-
+  Ingest. Kein Redistributions-Gate (lokaler Pipeline-Handoff, keine
+  Weitergabe an Dritte). Eine Namens-Kollision zwischen den beiden Quellen
+  wird gezählt und mit beiden Concept-IDs gemeldet, nie automatisch
+  aufgelöst.
+
 ### Changed
 
 * **`GET /v1/concept/{id}` / `GET /v1/xref`:** die Ahnen-Kette heißt jetzt

@@ -202,8 +202,14 @@ func TestCDMRelationRejectsADanglingEnd(t *testing.T) {
 		t.Fatalf("BeginIngest: %v", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := tx.AddConceptRelation("cdm:concept:aaa", "cdm:concept:ghost", domain.RelationCongruent, "cdm"); err == nil {
-		t.Fatal("want an FK error for a relation whose partner concept does not exist")
+	// BeginIngest sets PRAGMA defer_foreign_keys=ON (real native-space data
+	// is not reliably parent-before-child ordered), so the dangling
+	// reference fails at Commit, not on this statement.
+	if err := tx.AddConceptRelation("cdm:concept:aaa", "cdm:concept:ghost", domain.RelationCongruent, "cdm"); err != nil {
+		t.Fatalf("AddConceptRelation: unexpected error (should be deferred to Commit): %v", err)
+	}
+	if err := tx.Commit(); err == nil {
+		t.Fatal("Commit with a dangling relation partner: want an FK error, got nil")
 	}
 }
 

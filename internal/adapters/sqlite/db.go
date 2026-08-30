@@ -619,10 +619,25 @@ func (db *DB) BackboneVersions(ctx context.Context) ([]domain.BackboneVersion, e
 // scoping every write of one backbone import, so a failed/partial ingest
 // never leaves the index half-written. Callers must Commit or Rollback the
 // returned IngestTx.
+//
+// PRAGMA defer_foreign_keys=ON pushes every FK check in this transaction
+// from per-statement to commit time. Real native-space source data is NOT
+// reliably parent-before-child ordered — measured on the real GermanSL
+// canonical CSV, 6,567 of 15,083 parent_id references (43.5%) point at a
+// row that appears LATER in the file — so writeNativeRow's sequential
+// insert-with-parent_id-already-set would otherwise fail immediately on a
+// forward reference, even though the referenced parent DOES get written
+// later in this same transaction. The pragma is session-scoped and SQLite
+// resets it to OFF automatically at commit/rollback, so it never leaks into
+// a later transaction on this connection.
 func (db *DB) BeginIngest(ctx context.Context, bv domain.BackboneVersion) (output.IngestTx, error) {
 	tx, err := db.sql.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: beginning ingest transaction: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`); err != nil {
+		_ = tx.Rollback()
+		return nil, fmt.Errorf("sqlite: enabling defer_foreign_keys: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT OR REPLACE INTO backbone_version (id, version, license, source_url, ingested_at, manifest_sha, redistribution)

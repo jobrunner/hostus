@@ -260,11 +260,16 @@ func TestAddNameSpaceEntry_UnknownConceptViolatesForeignKey(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpsertNameSpace: unexpected error: %v", err)
 	}
-	err = tx.AddNameSpaceEntry("c-does-not-exist", domain.NameSpaceEntry{
+	// BeginIngest sets PRAGMA defer_foreign_keys=ON (real native-space data
+	// is not reliably parent-before-child ordered), so the dangling
+	// reference fails at Commit, not on this statement.
+	if err := tx.AddNameSpaceEntry("c-does-not-exist", domain.NameSpaceEntry{
 		Space: "floraveg", ExtID: "1", Name: "Nowhere taxon",
-	})
-	if err == nil {
-		t.Error("AddNameSpaceEntry for an unknown concept: want a foreign-key error, got nil")
+	}); err != nil {
+		t.Fatalf("AddNameSpaceEntry: unexpected error (should be deferred to Commit): %v", err)
+	}
+	if err := tx.Commit(); err == nil {
+		t.Error("Commit with an unknown concept: want a foreign-key error, got nil")
 	}
 }
 
@@ -281,11 +286,16 @@ func TestUpsertNameSpace_UnknownSpaceViolatesForeignKey(t *testing.T) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	err = tx.AddNameSpaceEntry(corynephorusID, domain.NameSpaceEntry{
+	// BeginIngest sets PRAGMA defer_foreign_keys=ON (see
+	// TestAddNameSpaceEntry_UnknownConceptViolatesForeignKey's comment), so
+	// the dangling reference fails at Commit, not on this statement.
+	if err := tx.AddNameSpaceEntry(corynephorusID, domain.NameSpaceEntry{
 		Space: "never-recorded", ExtID: "1", Name: "Festuca ovina",
-	})
-	if err == nil {
-		t.Error("AddNameSpaceEntry for an unrecorded space: want a foreign-key error, got nil")
+	}); err != nil {
+		t.Fatalf("AddNameSpaceEntry: unexpected error (should be deferred to Commit): %v", err)
+	}
+	if err := tx.Commit(); err == nil {
+		t.Error("Commit with an unrecorded space: want a foreign-key error, got nil")
 	}
 }
 

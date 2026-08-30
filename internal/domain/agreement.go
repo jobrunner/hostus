@@ -54,14 +54,24 @@ func CompareAggregateMembers(a, b []string) (agreement Agreement, onlyA, onlyB [
 	sort.Strings(onlyA)
 	sort.Strings(onlyB)
 
+	// Hoisted for the same coverage reason as ClassifyNomStatus'/
+	// judgeSynonym's switch (see internal/domain/synonym.go): a condition
+	// written inside a case arm sits in no counted block in Go's coverage
+	// model, so `make mutation` reports it as NOT COVERED regardless of
+	// how thoroughly the branch is actually tested. As plain assignments
+	// they are covered, mutated and killed.
+	aEmpty := len(onlyA) == 0
+	bEmpty := len(onlyB) == 0
+	disjoint := len(setA)+len(setB)-len(onlyA)-len(onlyB) == 0 // kein gemeinsames Element
+
 	switch {
-	case len(onlyA) == 0 && len(onlyB) == 0:
+	case aEmpty && bEmpty:
 		return AgreementIdentical, onlyA, onlyB
-	case len(onlyA) == 0:
+	case aEmpty:
 		return AgreementSubset, onlyA, onlyB // a ⊆ b
-	case len(onlyB) == 0:
+	case bEmpty:
 		return AgreementSuperset, onlyA, onlyB // a ⊇ b
-	case len(setA)+len(setB)-len(onlyA)-len(onlyB) == 0: // kein gemeinsames Element
+	case disjoint:
 		return AgreementDisjoint, onlyA, onlyB
 	default:
 		return AgreementOverlap, onlyA, onlyB

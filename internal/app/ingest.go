@@ -196,12 +196,20 @@ func classificationFor(r namelist.Row, byID map[string]namelist.Row) (family, or
 		// these three just means "keep walking upward" — a bool switch
 		// says that without one line per uninteresting rank.
 		rank, _ := domain.ParseRankLenient(parent.Rank)
+		// Hoisted for the same coverage reason as internal/domain/synonym.go's
+		// switch: a condition written inside a case arm sits in no counted
+		// block in Go's coverage model, so `make mutation` reports it as
+		// NOT COVERED regardless of how thoroughly the branch is tested. As
+		// plain assignments they are covered, mutated and killed.
+		isFamily := rank == domain.RankFamily && family == ""
+		isOrder := rank == domain.RankOrder && order == ""
+		isClass := rank == domain.RankClass && class == ""
 		switch {
-		case rank == domain.RankFamily && family == "":
+		case isFamily:
 			family = parent.Taxon
-		case rank == domain.RankOrder && order == "":
+		case isOrder:
 			order = parent.Taxon
-		case rank == domain.RankClass && class == "":
+		case isClass:
 			class = parent.Taxon
 		}
 		current = parent

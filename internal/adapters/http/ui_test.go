@@ -254,7 +254,6 @@ func TestAPISurfaceIdenticalWithAndWithoutUI(t *testing.T) {
 		{http.MethodGet, "/health/ready", ""},
 		{http.MethodGet, "/v1/concept/" + corynephorusConceptID, ""},
 		{http.MethodGet, "/v1/concept/does-not-exist", ""},
-		{http.MethodGet, "/v1/concept/" + corynephorusConceptID + "/traits", ""},
 		{http.MethodGet, "/v1/concept/" + corynephorusConceptID + "/synonyms", ""},
 		{http.MethodGet, "/v1/suggest?q=Coryne&limit=5", ""},
 		{http.MethodGet, "/v1/xref?authority=powo&id=nonexistent", ""},

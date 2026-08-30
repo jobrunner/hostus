@@ -75,15 +75,58 @@ func TestFtsPrefixToken_StripsAggregateMarker(t *testing.T) {
 	}
 }
 
+// seedSelfReferentialAggregateAlias attaches ONE aggregate name-space alias
+// onto conceptID that carries the SAME genus+epithet as the concept's own
+// accepted name, only with a marker appended (e.g. "Corynephorus canescens
+// agg.") — the only shape a RESOLVED aggregate alias actually takes in
+// production, per internal/application/namespace_ingest.go's aggregate-to-
+// nominate rule (a resolved aggregate spelling always resolves to its own
+// nominate species, never to an unrelated one).
+//
+// This is deliberately a SEPARATE helper from namespace_test.go's
+// seedFloraVegEntries, which attaches a cross-species alias ("Festuca
+// ovina...") onto the Corynephorus concept for a narrower, unrelated
+// purpose (pinning fts_name/fts_name_map row counts) and must not be
+// repurposed to stand in for realistic aggregate-suggest semantics — doing
+// so once already hid a real bug (see this file's Suggest doc comment on
+// nameStartFilter, "second EXISTS arm" note).
+func seedSelfReferentialAggregateAlias(t *testing.T, db *DB, conceptID, aliasName string) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := db.BeginIngest(ctx, seedBackboneVersion)
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	if err := tx.UpsertNameSpace(domain.NameSpaceMeta{
+		ID: "floraveg", Version: "2023-01-03",
+		License: "", SourceURL: "https://example.org/floraveg",
+		ManifestSHA: "deadbeef", Redistribution: domain.RedistributionUnknown,
+	}); err != nil {
+		t.Fatalf("UpsertNameSpace: unexpected error: %v", err)
+	}
+	if err := tx.AddNameSpaceEntry(conceptID, domain.NameSpaceEntry{
+		Space: "floraveg", ExtID: "self-ref-1", Name: aliasName,
+		Aggregate: true, Resolution: string(domain.RuleAggregateToNominate),
+	}); err != nil {
+		t.Fatalf("AddNameSpaceEntry: unexpected error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+}
+
 // TestSuggest_AggregateSpellingFindsConceptAndFlagsIt pins the two halves of
 // marker-insensitive aggregate suggest end to end: an aggregate spelling
 // (marker-stripped in the query) reaches the concept via its indexed aggregate
 // alias and the result carries Aggregate=true; a query matching only the
-// concept's own (non-aggregate) name carries Aggregate=false.
+// concept's own (non-aggregate) name carries Aggregate=false. The aggregate
+// alias is self-referential ("Corynephorus canescens agg.", same genus+
+// epithet as the concept's own accepted name), matching real production
+// semantics (see seedSelfReferentialAggregateAlias's doc comment).
 func TestSuggest_AggregateSpellingFindsConceptAndFlagsIt(t *testing.T) {
 	db := openTestDB(t)
-	seedCorynephorusConcept(t, db) // c-corynephorus-canescens WITH its own name in FTS (is_aggregate=0)
-	seedFloraVegEntries(t, db)     // attaches "Festuca ovina aggr./s. l." aggregate aliases to it
+	conceptID := seedCorynephorusConcept(t, db) // "Corynephorus canescens" WITH its own name in FTS (is_aggregate=0)
+	seedSelfReferentialAggregateAlias(t, db, conceptID, "Corynephorus canescens agg.")
 	ctx := context.Background()
 
 	find := func(q string) (domain.SuggestItem, bool) {
@@ -92,27 +135,68 @@ func TestSuggest_AggregateSpellingFindsConceptAndFlagsIt(t *testing.T) {
 			t.Fatalf("Suggest(%q): %v", q, err)
 		}
 		for _, it := range items {
-			if it.ConceptID == corynephorusID {
+			if it.ConceptID == conceptID {
 				return it, true
 			}
 		}
 		return domain.SuggestItem{}, false
 	}
 
-	agg, ok := find("Festuca ovina agg.")
+	agg, ok := find("Corynephorus canescens agg.")
 	if !ok {
-		t.Fatal(`Suggest("Festuca ovina agg.") did not reach the concept via its aggregate alias`)
+		t.Fatal(`Suggest("Corynephorus canescens agg.") did not reach the concept via its aggregate alias`)
 	}
 	if !agg.Aggregate {
 		t.Error("Aggregate = false, want true (matched via an aggregate alias)")
 	}
 
-	own, ok := find("Corynephorus can")
+	// A self-referential aggregate alias repeats its concept's own
+	// genus+epithet verbatim (only with a marker appended), so any query
+	// that is itself a prefix of that shared genus+epithet (e.g.
+	// "Corynephorus can") ALSO matches the alias's fts_name row — carrying
+	// Aggregate=true is then correct, not a bug (see
+	// SuggestItem.Aggregate's doc comment: "a concept that owns any
+	// aggregate alias carries it even when the query matched only the
+	// plain name" is true only when the plain-name query does not ALSO
+	// overlap the alias text; here it does). To exercise a query that
+	// matches ONLY a non-aggregate name, this uses the concept's SYNONYM
+	// ("Weingaertneria canescens" — a different genus the aggregate alias
+	// never touches), not its accepted name.
+	own, ok := find("Weingaertneria can")
 	if !ok {
-		t.Fatal(`Suggest("Corynephorus can") did not reach the concept via its own name`)
+		t.Fatal(`Suggest("Weingaertneria can") did not reach the concept via its synonym name`)
 	}
 	if own.Aggregate {
-		t.Error("Aggregate = true, want false (matched the concept's own non-aggregate name)")
+		t.Error("Aggregate = true, want false (matched only the concept's own non-aggregate synonym name)")
+	}
+}
+
+// TestSuggest_NameStart_AggregateAliasDoesNotExemptBareEpithetQuery is the
+// Fix-Round-1 regression test the code review demanded: a concept carrying a
+// self-referential aggregate alias ("Corynephorus canescens agg.") must
+// still be EXCLUDED from a name_start suggest for a bare epithet query
+// ("canescens") — the epithet token only ever matches mid-document (in
+// either the concept's own name OR the aggregate alias, which repeats the
+// same genus+epithet), never a name/alias that itself STARTS with
+// "canescens". An earlier version of nameStartFilter added an EXISTS arm
+// that exempted a concept from name_start whenever it had ANY is_aggregate=1
+// FTS match, regardless of whether that match's own text started with the
+// query prefix — reopening the SP7 bug for every concept with an aggregate
+// alias. This pins that regression closed for good.
+func TestSuggest_NameStart_AggregateAliasDoesNotExemptBareEpithetQuery(t *testing.T) {
+	db := openTestDB(t)
+	conceptID := seedCorynephorusConcept(t, db)
+	seedSelfReferentialAggregateAlias(t, db, conceptID, "Corynephorus canescens agg.")
+	ctx := context.Background()
+
+	got, err := db.Suggest(ctx, "canescens", output.SuggestOpts{Limit: 10, MatchMode: "name_start"})
+	if err != nil {
+		t.Fatalf("Suggest: unexpected error: %v", err)
+	}
+	for _, it := range got {
+		if it.ConceptID == conceptID {
+			t.Errorf("Suggest(%q, name_start) = %+v, want the concept excluded (bare epithet is not a name_start prefix of either the concept's name or its aggregate alias)", "canescens", it)
+		}
 	}
 }
 

@@ -135,22 +135,6 @@ type Repository interface {
 	// must already be present.
 	BuildDistributionClosure(ctx context.Context) error
 
-	// Traits returns every domain.TraitSet hostus holds for conceptID,
-	// grouped PER VOCABULARY — TraitSets are never merged across
-	// vocabularies, since PoC P10 found their Taxonomy namespaces genuinely
-	// diverge (see domain.TraitSet's doc comment). Each returned TraitSet
-	// carries the VocabVersion/Taxonomy joined from trait_vocabulary, and
-	// its Values are ordered by Dim for a deterministic result. vocabs
-	// restricts which vocabularies are returned; nil or empty means every
-	// vocabulary the concept has values in. Returns domain.ErrNotFound
-	// (wrapped) if conceptID is unknown; a concept with no ingested trait
-	// values (but which does exist) returns an empty, non-nil-error slice —
-	// callers must not conflate the two.
-	Traits(ctx context.Context, conceptID string, vocabs []domain.TraitVocab) ([]domain.TraitSet, error)
-	// TraitVocabularies lists every ingested (vocab, version) metadata row,
-	// for API/response provenance.
-	TraitVocabularies(ctx context.Context) ([]domain.TraitVocabMeta, error)
-
 	// NameSpaceEntries returns every name-space spelling attached to
 	// conceptID (SP9/UC4 — e.g. the FloraVeg/ESy names for a WCVP concept),
 	// ordered by (space, ext_id) for a deterministic result. spaces
@@ -169,6 +153,52 @@ type Repository interface {
 	// id, for API/response provenance and for "hostus ingest" to report what
 	// a database actually holds.
 	NameSpaces(ctx context.Context) ([]domain.NameSpaceMeta, error)
+
+	// AggregateMembers returns the WCVP concept ids that aggregateConceptID
+	// (a Fall-B native concept, rank SPECIES_AGGREGATE/GENUS_AGGREGATE)
+	// includes, via concept_aggregate. An aggregate with no linked members
+	// returns an empty, non-error slice.
+	AggregateMembers(ctx context.Context, aggregateConceptID string) ([]string, error)
+	// AggregatesByMember is the reverse of AggregateMembers: it returns
+	// every Fall-B aggregate/collective concept id that lists
+	// memberConceptID (a WCVP concept) among its concept_aggregate members,
+	// via the table's member_concept_id index. A member linked into no
+	// aggregate returns an empty, non-error slice. Used to resolve a
+	// SPECIES concept's `aggregate_memberships[].aggregate_concept_id`
+	// (spec §4) — a caller narrows the result to one name space by
+	// matching its "<space>:concept:" id prefix (see
+	// internal/application/nativespace_ingest.go's concept id scheme).
+	AggregatesByMember(ctx context.Context, memberConceptID string) ([]string, error)
+
+	// VernacularNames returns every vernacular-name row for conceptID (see
+	// schema.sql's vernacular table), ordered by (lang, name) for a
+	// deterministic result. A concept with no vernacular name returns an
+	// empty, non-error slice.
+	VernacularNames(ctx context.Context, conceptID string) ([]domain.VernacularName, error)
+
+	// AggregateConcepts returns every taxon_concept in backboneID whose rank
+	// is one of ranks — the native Fall-B aggregate/collective-species
+	// concepts (Task 5/6) application.ComputeConceptAgreement pairs up
+	// across name spaces. An empty result (no matching rows) is not an
+	// error.
+	AggregateConcepts(ctx context.Context, backboneID string, ranks []domain.Rank) ([]AggregateConceptSummary, error)
+
+	// WriteConceptAgreement (re)writes the precomputed eurosl/germansl
+	// aggregate comparison (schema.sql's concept_agreement table) for every
+	// given pair, INSERT OR REPLACE per pair. Deliberately NOT part of
+	// IngestTx: it runs once, after every backbone has been ingested, so
+	// there is no FK-ordering risk requiring transactional batching with an
+	// ingest.
+	WriteConceptAgreement(ctx context.Context, pairs []domain.ConceptAgreementPair) error
+
+	// ConceptAgreement returns the precomputed concept_agreement row
+	// involving conceptID on EITHER side (eurosl_concept_id or
+	// germansl_concept_id), or (nil, nil) if none exists — no precomputed
+	// agreement is a normal outcome (e.g. the aggregate has no
+	// name-matched counterpart in the other space, or agreement was never
+	// (re)computed), not a failure. Used by Task 10's match-time aggregate
+	// resolution to populate AggregateResolution.Agreement.
+	ConceptAgreement(ctx context.Context, conceptID string) (*domain.ConceptAgreementPair, error)
 
 	// Suggest returns FTS5 prefix-match candidates for q (an autosuggest
 	// query fragment), scored but UNRANKED: the application layer runs
@@ -199,8 +229,7 @@ type Repository interface {
 	// there would tell clients a trait vocabulary is a backbone (and could
 	// make a backbone-less database report ready). The returned IngestTx
 	// therefore has no backbone: its Finalize is a no-op (there are no
-	// concepts to index), and only AddTraitValue/UpsertTraitVocabulary are
-	// meaningful on it. Callers must Commit or Rollback.
+	// concepts to index). Callers must Commit or Rollback.
 	BeginTraitIngest(ctx context.Context) (IngestTx, error)
 }
 
@@ -227,6 +256,16 @@ type SuggestOpts struct {
 	// than Limit candidates (see the Suggest doc comment's fetch-budget
 	// note). A value <= 0 uses the adapter's default budget.
 	Limit int
+	// MatchMode selects how strictly a candidate's name must match q.
+	// "" and "name_start" (the default) require at least one of the
+	// concept's names (accepted or synonym) to have its FULL canonicalized
+	// form start with q's prefix — not merely contain a matching FTS5
+	// token anywhere in it. "anywhere" restores the plain FTS5 prefix
+	// behavior, where a hit on any token (e.g. a species epithet) is
+	// enough. See the sqlite adapter's Suggest doc comment for the SP7
+	// finding ("ca" matching an epithet like "canescens") this guards
+	// against.
+	MatchMode string
 }
 
 // MatchCandidate is one row returned by Repository.MatchExact: a concept
@@ -244,6 +283,16 @@ type MatchCandidate struct {
 	// otherwise-tied concepts, the one for which the queried name is accepted
 	// or homotypic (see internal/application/match.go's classify).
 	Homotypic *bool
+}
+
+// AggregateConceptSummary is the minimal shape Repository.AggregateConcepts
+// (and application.ComputeConceptAgreement, its only caller) needs to
+// enumerate one backbone's aggregate concepts: just enough to name-match
+// across eurosl/germansl without paying for the full Concept()'s synonyms/
+// xrefs/distributions, which that use case never touches.
+type AggregateConceptSummary struct {
+	ConceptID string
+	Canonical string
 }
 
 // ConceptRelations is Repository.ConceptRelationsInSec' result: the queried
@@ -309,14 +358,6 @@ type IngestTx interface {
 	// by (scheme, code) — first non-empty name wins (INSERT OR IGNORE), so it
 	// is safe to call once per distinct area. Backs Repository.Areas.
 	UpsertArea(a domain.Area) error
-	// AddTraitValue writes one trait_value row for conceptID. A nil
-	// tv.NicheWidth/tv.NSystems must be persisted as SQL NULL, not as a
-	// 0/0.0 literal — see domain.TraitValue's doc comment on why nil and
-	// zero are never interchangeable here.
-	AddTraitValue(conceptID string, tv domain.TraitValue) error
-	// UpsertTraitVocabulary records one (vocab, version) metadata row,
-	// joined onto trait_value reads by Repository.Traits.
-	UpsertTraitVocabulary(meta domain.TraitVocabMeta) error
 	// UpsertSecReference records one sec. reference space (id + citation
 	// title), so a concept's taxon_concept.sec_reference id can be resolved
 	// back to the flora it names instead of staying an opaque UUID.
@@ -343,6 +384,24 @@ type IngestTx interface {
 	// upserted the space and resolved the concept first — see
 	// application.IngestNameSpace's two-phase resolution.
 	AddNameSpaceEntry(conceptID string, e domain.NameSpaceEntry) error
+	// AddAggregateMember records one aggregate->member edge (concept_
+	// aggregate). Both ids must already be written within this transaction
+	// or a prior one.
+	AddAggregateMember(aggregateConceptID, memberConceptID string) error
+	// ResolveNameSpaceMember reads name_space_entry for (space, extID) and
+	// returns its concept_id, or "" if no such entry exists — NOT an error,
+	// since a Fall-A crosswalk (Task 4) may simply not have resolved that
+	// row. Reads WITHIN this same open transaction, which is safe: it is
+	// the same IngestTx, not a second Repository call while a foreign
+	// transaction is open.
+	ResolveNameSpaceMember(space, extID string) (string, error)
+	// UpsertClassification records family/order/class for conceptID — see
+	// Task 2's schema (taxon_concept.family/order_name/class_name). Empty
+	// strings are written as SQL NULL, never as "".
+	UpsertClassification(conceptID string, family, orderName, className string) error
+	// AddVernacularName writes one vernacular-name row (see the existing
+	// `vernacular` table, schema.sql:176).
+	AddVernacularName(conceptID string, v domain.VernacularName) error
 	// Finalize (re)builds the FTS5 autosuggest index (fts_name/fts_name_map)
 	// for every name this transaction has linked to a concept (both the
 	// accepted name and its synonyms), so Suggest can find them. Callers

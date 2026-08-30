@@ -34,6 +34,19 @@ type NameRow struct {
 	// Status is the space's own nomenclatural status, verbatim
 	// ("accepted", "synonym", "synonymobjective", ...).
 	Status string
+	// Family, OrderName and ClassName carry the row's classification above
+	// family, ALREADY RESOLVED by the caller (see internal/app/ingest.go's
+	// classificationFor) by walking the source's own parent chain up to the
+	// nearest FAMILY/ORDER/CLASS ancestor. Empty when that walk found none.
+	// Mirrors domain.Concept's fields of the same name — writeNameSpaceRow
+	// is what carries them across.
+	Family    string
+	OrderName string
+	ClassName string
+	// VernacularDE is the row's German common name, verbatim from the
+	// source (currently only GermanSL emits one). Empty when the source
+	// carries none.
+	VernacularDE string
 }
 
 // NameRowSource streams one name space's rows for IngestNameSpace.
@@ -102,24 +115,23 @@ type NameSpaceIngestReport struct {
 // and attaches the ones that resolve to their concept as name_space_entry
 // rows, then records meta as the space's provenance.
 //
-// It runs in two strictly separated phases — RESOLVE first, WRITE second —
-// for exactly the reason IngestTraits documents at length: the sqlite adapter
-// runs with SetMaxOpenConns(1), so a repository read issued while the ingest
-// transaction is open blocks forever waiting for a second connection. That is
-// a real deadlock in "hostus ingest", not a test artifact. Phase 1 resolves
-// every DISTINCT canonical name with no transaction open; phase 2 opens one
-// transaction and only writes.
+// It runs in two strictly separated phases — RESOLVE first, WRITE second:
+// the sqlite adapter runs with SetMaxOpenConns(1), so a repository read
+// issued while the ingest transaction is open blocks forever waiting for a
+// second connection. That is a real deadlock in "hostus ingest", not a test
+// artifact. Phase 1 resolves every DISTINCT canonical name with no
+// transaction open; phase 2 opens one transaction and only writes.
 //
-// Resolution REUSES resolveTraitName — the SP3 crosswalk ladder
-// (domain.NameCandidates: exact key first, then hybrid/genitive spelling
-// rewrites, then the two flagged circumscription judgements), with the same
-// three outcomes and the same refusal to guess:
+// Resolution REUSES resolveTraitName (crosswalk.go) — the shared crosswalk
+// ladder (domain.NameCandidates: exact key first, then hybrid/genitive
+// spelling rewrites, then the two flagged circumscription judgements), with
+// the same three outcomes and the same refusal to guess:
 //
 //  1. the first candidate key the index answers decides the outcome;
 //  2. no key answered -> Unmatched, nothing written;
 //  3. the answering key resolves to two or more DISTINCT concepts ->
 //     Ambiguous, skipped entirely. This path passes policyRefuseAmbiguity, so
-//     the homonym tie-break the trait crosswalk uses does NOT apply here —
+//     the policyResolveGenuineBearer homonym tie-break does NOT apply here —
 //     see the call site for why that is deliberate.
 //
 // It is deliberately not a second name-resolution path. SP3's crosswalk only
@@ -234,6 +246,16 @@ func writeNameSpaceRow(
 	}
 	if err := tx.AddNameSpaceEntry(res.conceptID, entry); err != nil {
 		return fmt.Errorf("application: writing name space entry %s:%s for concept %q: %w", meta.ID, row.SourceID, res.conceptID, err)
+	}
+	if row.Family != "" || row.OrderName != "" || row.ClassName != "" {
+		if err := tx.UpsertClassification(res.conceptID, row.Family, row.OrderName, row.ClassName); err != nil {
+			return fmt.Errorf("application: writing classification for concept %q: %w", res.conceptID, err)
+		}
+	}
+	if row.VernacularDE != "" {
+		if err := tx.AddVernacularName(res.conceptID, domain.VernacularName{Language: "de", Name: row.VernacularDE}); err != nil {
+			return fmt.Errorf("application: writing vernacular name for concept %q: %w", res.conceptID, err)
+		}
 	}
 	tally.countWritten(res.conceptID, row.SourceID, row.Taxon, res.rule)
 	return nil

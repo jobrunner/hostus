@@ -1,0 +1,4 @@
+taxon|rank|status|accepted_taxon|source_id|parent_id
+Salsola|Genus|accepted||genus1|
+Salsola kali aggr.|SPECIES_AGGREGATE|accepted||agg1|genus1
+Salsola kali|Species|accepted||sp1|agg1

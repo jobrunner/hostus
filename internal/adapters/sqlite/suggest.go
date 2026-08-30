@@ -123,8 +123,8 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 	// appear in the final query text below: match + pool cap (pool CTE), then
 	// — only with an area — match again (match_rows CTE), the area codes for
 	// in_area_rows, and the area codes for the in_area EXISTS (SELECT list),
-	// then the rank-filter codes (WHERE), the backbone id (WHERE), then the
-	// LIMIT budget.
+	// then the rank-filter codes (WHERE), the backbone id (WHERE), the
+	// name_start prefix (WHERE), then the LIMIT budget.
 	args := []any{match, suggestMatchPool}
 
 	codes := areaCodes(opts.Area)
@@ -227,6 +227,50 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 		args = append(args, opts.Backbone)
 	}
 
+	// nameStartFilter sits alongside rankFilter/backboneFilter in the outer
+	// WHERE clause (not inside cteClause) for the same reason backboneFilter
+	// does: cteClause has two branches (with/without opts.Area), and tc.id is
+	// equally available to both once the outer query joins taxon_concept, so
+	// duplicating the filter into both CTE branches would buy nothing.
+	nameStartFilter := ""
+	if opts.MatchMode != "anywhere" {
+		// name_start (Default): only concepts carrying AT LEAST ONE name
+		// (accepted OR synonym) whose FULL canonicalized string starts with
+		// the query prefix — not merely some FTS5 token inside it. Fixes the
+		// SP7 finding ("ca" matched Corynephorus canescens via the epithet
+		// token "canescens"). This checks ANY name of the concept, not only
+		// the specific fts_name row the outer query happened to join through
+		// — fts_name is a contentless FTS5 table (content='', see schema.sql),
+		// so its own canonical value cannot be read back outside a MATCH; the
+		// name+concept_name join is the only practical route to it.
+		//
+		// A real aggregate name-space alias (e.g. "Corynephorus canescens
+		// agg.") is deliberately NOT given its own exemption arm here: per
+		// internal/application/namespace_ingest.go's aggregate-to-nominate
+		// rule, a resolved aggregate alias always carries the SAME genus+
+		// epithet as its concept's accepted name, only with a marker
+		// appended — so a genuine aggregate query (marker-stripped by the
+		// same domain.StripAggregateMarkers call below) already reduces to
+		// that accepted name's own prefix and is caught by the EXISTS below
+		// without any extra clause. An earlier version of this filter added
+		// a second EXISTS arm that exempted a concept from name_start
+		// whenever ANY of its is_aggregate=1 fts_name rows was among the
+		// FTS matches — that arm checked only ROW MEMBERSHIP, never whether
+		// the matched text itself started with the prefix, so a bare-
+		// epithet query (e.g. "canescens", which only ever matches the
+		// aggregate alias's EPITHET TOKEN via the same position-independent
+		// FTS5 behavior this filter exists to close) silently exempted the
+		// whole concept from name_start again — reopening the exact SP7 bug
+		// for every concept carrying an aggregate alias. See
+		// TestSuggest_NameStart_AggregateAliasDoesNotExemptBareEpithetQuery.
+		prefix := domain.StripAggregateMarkers(domain.Canonicalize(q))
+		nameStartFilter = ` AND EXISTS (
+			SELECT 1 FROM name nm JOIN concept_name cn ON cn.name_id = nm.id
+			WHERE cn.concept_id = tc.id AND nm.canonical_fold LIKE ? || '%'
+		)`
+		args = append(args, prefix)
+	}
+
 	args = append(args, fetchBudget(opts.Limit))
 
 	// bm25(fts_name) can only be evaluated directly against fts_name's own
@@ -247,7 +291,7 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 		JOIN fts_name_map fnm ON fnm.rowid = m.rowid
 		JOIN taxon_concept tc ON tc.id = fnm.concept_id
 		JOIN name an ON an.id = tc.accepted_name
-		WHERE 1 = 1` + rankFilter + backboneFilter + `
+		WHERE 1 = 1` + rankFilter + backboneFilter + nameStartFilter + `
 		GROUP BY tc.id
 		ORDER BY in_area DESC, score ASC
 		LIMIT ?`

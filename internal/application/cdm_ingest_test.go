@@ -74,13 +74,17 @@ func (t *fakeCDMTx) AddConceptRelation(from, to string, rel domain.Relation, sou
 func (t *fakeCDMTx) AddXref(string, domain.Xref, string) error         { return nil }
 func (t *fakeCDMTx) AddDistribution(string, domain.Distribution) error { return nil }
 func (t *fakeCDMTx) UpsertArea(domain.Area) error                      { return nil }
-func (t *fakeCDMTx) AddTraitValue(string, domain.TraitValue) error     { return nil }
-func (t *fakeCDMTx) UpsertTraitVocabulary(domain.TraitVocabMeta) error { return nil }
 func (t *fakeCDMTx) UpsertXrefSource(domain.XrefSourceMeta) error      { return nil }
 func (t *fakeCDMTx) UpsertNameSpace(domain.NameSpaceMeta) error        { return nil }
+func (t *fakeCDMTx) AddAggregateMember(string, string) error           { return nil }
+func (t *fakeCDMTx) ResolveNameSpaceMember(string, string) (string, error) {
+	return "", nil
+}
 func (t *fakeCDMTx) AddNameSpaceEntry(string, domain.NameSpaceEntry) error {
 	return nil
 }
+func (t *fakeCDMTx) UpsertClassification(string, string, string, string) error { return nil }
+func (t *fakeCDMTx) AddVernacularName(string, domain.VernacularName) error     { return nil }
 func (t *fakeCDMTx) Finalize() error {
 	if t.failOn == "finalize" {
 		return errors.New("boom")
@@ -169,19 +173,35 @@ func (r *fakeCDMRepo) BuildDistributionClosure(context.Context) error {
 	return nil
 }
 
-func (r *fakeCDMRepo) Traits(context.Context, string, []domain.TraitVocab) ([]domain.TraitSet, error) {
-	return nil, nil
-}
-
-func (r *fakeCDMRepo) TraitVocabularies(context.Context) ([]domain.TraitVocabMeta, error) {
-	return nil, nil
-}
-
 func (r *fakeCDMRepo) NameSpaceEntries(context.Context, string, []string) ([]domain.NameSpaceEntry, error) {
 	return nil, nil
 }
 
 func (r *fakeCDMRepo) NameSpaces(context.Context) ([]domain.NameSpaceMeta, error) {
+	return nil, nil
+}
+
+func (r *fakeCDMRepo) AggregateMembers(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+
+func (r *fakeCDMRepo) AggregatesByMember(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+
+func (r *fakeCDMRepo) VernacularNames(context.Context, string) ([]domain.VernacularName, error) {
+	return nil, nil
+}
+
+func (r *fakeCDMRepo) AggregateConcepts(context.Context, string, []domain.Rank) ([]output.AggregateConceptSummary, error) {
+	return nil, nil
+}
+
+func (r *fakeCDMRepo) WriteConceptAgreement(context.Context, []domain.ConceptAgreementPair) error {
+	return nil
+}
+
+func (r *fakeCDMRepo) ConceptAgreement(context.Context, string) (*domain.ConceptAgreementPair, error) {
 	return nil, nil
 }
 
@@ -544,13 +564,13 @@ func TestIngestCDMResolvesParentOnlyWhenTheParentConceptExists(t *testing.T) {
 
 func TestIngestCDMHandlesEmptyStatusAndExoticRanksExplicitly(t *testing.T) {
 	rows := []application.CDMConceptRow{
-		{ConceptUUID: "aaa", ScientificName: "Abies alba agg.", Rank: "Species Aggregate", Status: "", SecUUID: "s1", SecTitle: "One"},
+		{ConceptUUID: "aaa", ScientificName: "Abies alba agg.", Rank: "Nomen Exoticum", Status: "", SecUUID: "s1", SecTitle: "One"},
 		{ConceptUUID: "bbb", ScientificName: "Abies alba", Rank: "Species", Status: "Accepted", SecUUID: "s1", SecTitle: "One"},
 		// A second exotic-rank row with the SAME verbatim spelling, so the
 		// per-spelling tally is asserted as a COUNT and not merely as
 		// presence, and a second non-empty status so EmptyStatus can tell
 		// "empty" from "not empty".
-		{ConceptUUID: "ccc", ScientificName: "Pinus abies agg.", Rank: "Species Aggregate", Status: "Accepted", SecUUID: "s1", SecTitle: "One"},
+		{ConceptUUID: "ccc", ScientificName: "Pinus abies agg.", Rank: "Nomen Exoticum", Status: "Accepted", SecUUID: "s1", SecTitle: "One"},
 	}
 	repo := newCDMRepo()
 	rep, err := application.IngestCDM(context.Background(), repo, rows, nil, cdmMeta())
@@ -565,7 +585,7 @@ func TestIngestCDMHandlesEmptyStatusAndExoticRanksExplicitly(t *testing.T) {
 	if agg.Rank != domain.RankOther {
 		t.Errorf("exotic rank = %q, want OTHER", agg.Rank)
 	}
-	if agg.RankVerbatim != "Species Aggregate" {
+	if agg.RankVerbatim != "Nomen Exoticum" {
 		t.Errorf("rank verbatim = %q, want the raw spelling preserved", agg.RankVerbatim)
 	}
 	if agg.Status != domain.StatusUnknown {
@@ -577,7 +597,7 @@ func TestIngestCDMHandlesEmptyStatusAndExoticRanksExplicitly(t *testing.T) {
 	if rep.OtherRanks != 2 {
 		t.Errorf("OtherRanks = %d, want 2", rep.OtherRanks)
 	}
-	if len(rep.OtherRankSample) != 1 || rep.OtherRankSample[0].Verbatim != "Species Aggregate" || rep.OtherRankSample[0].Count != 2 {
+	if len(rep.OtherRankSample) != 1 || rep.OtherRankSample[0].Verbatim != "Nomen Exoticum" || rep.OtherRankSample[0].Count != 2 {
 		t.Errorf("OtherRankSample = %+v, want one entry {Species Aggregate 2}", rep.OtherRankSample)
 	}
 }

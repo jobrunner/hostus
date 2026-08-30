@@ -38,6 +38,75 @@ const (
 	RankOther Rank = "OTHER"
 )
 
+const (
+	RankRoot                  Rank = "ROOT"
+	RankPhylum                Rank = "PHYLUM"
+	RankSubdivision           Rank = "SUBDIVISION"
+	RankInformalClade         Rank = "INFORMAL_CLADE"
+	RankClass                 Rank = "CLASS"
+	RankSubclass              Rank = "SUBCLASS"
+	RankSuperorder            Rank = "SUPERORDER"
+	RankOrder                 Rank = "ORDER"
+	RankSubfamily             Rank = "SUBFAMILY"
+	RankTribe                 Rank = "TRIBE"
+	RankSubgenus              Rank = "SUBGENUS"
+	RankSection               Rank = "SECTION"
+	RankSubsection            Rank = "SUBSECTION"
+	RankSeries                Rank = "SERIES"
+	RankSpeciesAggregate      Rank = "SPECIES_AGGREGATE"
+	RankGenusAggregate        Rank = "GENUS_AGGREGATE"
+	RankCollSpecies           Rank = "COLL_SPECIES"
+	RankSubspeciesGroup       Rank = "SUBSPECIES_GROUP"
+	RankProles                Rank = "PROLES"
+	RankRace                  Rank = "RACE"
+	RankConvar                Rank = "CONVAR"
+	RankGrex                  Rank = "GREX"
+	RankUnrankedInfrageneric  Rank = "UNRANKED_INFRAGENERIC"
+	RankUnrankedInfraspecific Rank = "UNRANKED_INFRASPECIFIC"
+)
+
+// canonicalRanks maps every strict, upper-cased Rank spelling ParseRank
+// accepts to its Rank constant. Keeping this as a lookup table instead of
+// a switch keeps ParseRank's cyclomatic complexity low (gocyclo) while the
+// mapping itself stays exactly as exhaustive.
+var canonicalRanks = map[string]Rank{
+	"FAMILY":                 RankFamily,
+	"GENUS":                  RankGenus,
+	"SPECIES":                RankSpecies,
+	"SUBSPECIES":             RankSubspecies,
+	"VARIETY":                RankVariety,
+	"SUBVARIETY":             RankSubvariety,
+	"FORM":                   RankForm,
+	"SUBFORM":                RankSubform,
+	"NOTHOSUBSPECIES":        RankNothosubspecies,
+	"NOTHOVARIETY":           RankNothovariety,
+	"NOTHOFORM":              RankNothoform,
+	"ROOT":                   RankRoot,
+	"PHYLUM":                 RankPhylum,
+	"SUBDIVISION":            RankSubdivision,
+	"CLASS":                  RankClass,
+	"SUBCLASS":               RankSubclass,
+	"SUPERORDER":             RankSuperorder,
+	"ORDER":                  RankOrder,
+	"SUBFAMILY":              RankSubfamily,
+	"TRIBE":                  RankTribe,
+	"SUBGENUS":               RankSubgenus,
+	"SECTION":                RankSection,
+	"SUBSECTION":             RankSubsection,
+	"SERIES":                 RankSeries,
+	"SPECIES_AGGREGATE":      RankSpeciesAggregate,
+	"GENUS_AGGREGATE":        RankGenusAggregate,
+	"COLL_SPECIES":           RankCollSpecies,
+	"SUBSPECIES_GROUP":       RankSubspeciesGroup,
+	"PROLES":                 RankProles,
+	"RACE":                   RankRace,
+	"CONVAR":                 RankConvar,
+	"GREX":                   RankGrex,
+	"UNRANKED_INFRAGENERIC":  RankUnrankedInfrageneric,
+	"UNRANKED_INFRASPECIFIC": RankUnrankedInfraspecific,
+	"OTHER":                  RankOther,
+}
+
 // ParseRank maps a canonical Rank spelling (case-insensitive; the exact set
 // of constants above) to a Rank. Unknown or empty input returns an error —
 // this is the STRICT parser, used for API input (e.g. the suggest
@@ -52,34 +121,16 @@ const (
 // the two parsers separate is what lets the ingest tolerate WCVP's full
 // rank vocabulary while the API stays strict about what it accepts.
 func ParseRank(s string) (Rank, error) {
-	switch strings.ToUpper(strings.TrimSpace(s)) {
-	case "FAMILY":
-		return RankFamily, nil
-	case "GENUS":
-		return RankGenus, nil
-	case "SPECIES":
-		return RankSpecies, nil
-	case "SUBSPECIES":
-		return RankSubspecies, nil
-	case "VARIETY":
-		return RankVariety, nil
-	case "SUBVARIETY":
-		return RankSubvariety, nil
-	case "FORM":
-		return RankForm, nil
-	case "SUBFORM":
-		return RankSubform, nil
-	case "NOTHOSUBSPECIES":
-		return RankNothosubspecies, nil
-	case "NOTHOVARIETY":
-		return RankNothovariety, nil
-	case "NOTHOFORM":
-		return RankNothoform, nil
-	case "OTHER":
-		return RankOther, nil
-	default:
-		return "", fmt.Errorf("domain: unknown taxon rank %q", s)
+	// INFORMAL_CLADE_<n> (tier suffix, e.g. GermanSL CL1-CL5) maps to
+	// RankInformalClade regardless of tier number.
+	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(s)), "INFORMAL_CLADE") {
+		return RankInformalClade, nil
 	}
+
+	if rank, ok := canonicalRanks[strings.ToUpper(strings.TrimSpace(s))]; ok {
+		return rank, nil
+	}
+	return "", fmt.Errorf("domain: unknown taxon rank %q", s)
 }
 
 // nothotaxonRanks maps WCVP's raw nothotaxon taxonrank spellings (which
@@ -90,6 +141,68 @@ var nothotaxonRanks = map[string]Rank{
 	"nothosubsp.": RankNothosubspecies,
 	"nothovar.":   RankNothovariety,
 	"nothof.":     RankNothoform,
+}
+
+// germanSLRankCodes maps GermanSL's raw TaxonRank abbreviations (its own
+// short codes, not WCVP's full-word spellings) to the Rank ParseRankLenient
+// should return for them. LENIENT-ONLY, like nothotaxonRanks above: these
+// codes are never accepted by the strict ParseRank (API input), only by the
+// ingest-facing ParseRankLenient — a client sending rank=FAM should get
+// INVALID_QUERY, not a silently-accepted abbreviation.
+//
+// This is the full mapping measured against the real GermanSL 1.5.5 TCS
+// sheet (pipelines/germansl/germansl.summary.txt's rank histogram).
+// Deliberately NOT mapped (left to fall through to RankOther, which is
+// correct): "UAB", "AG3" — no measured GermanSL row uses them for anything
+// this table's callers (the classification walk) need to distinguish.
+var germanSLRankCodes = map[string]Rank{
+	"SPE": RankSpecies,
+	"SSP": RankSubspecies,
+	"GAT": RankGenus,
+	"VAR": RankVariety,
+	"FAM": RankFamily,
+	"AGG": RankSpeciesAggregate,
+	"ORD": RankOrder,
+	"FOR": RankForm,
+	"SEC": RankSection,
+	"KLA": RankClass,
+	"SER": RankSeries,
+	"ORA": RankUnrankedInfraspecific,
+	"ABT": RankPhylum,
+	"SGE": RankSubgenus,
+	"SGR": RankSubspeciesGroup,
+	"SFA": RankSubfamily,
+	"SSE": RankSubsection,
+	"AG1": RankSpeciesAggregate,
+	"AG2": RankGenusAggregate,
+	"CL1": RankInformalClade,
+	"CL2": RankInformalClade,
+	"CL3": RankInformalClade,
+	"CL4": RankInformalClade,
+	"CL5": RankInformalClade,
+}
+
+// euroSLRankAliases maps EuroSL's raw TaxonRank column spellings — which
+// carry spaces, punctuation and parenthesized qualifiers that canonicalRanks
+// (the simple ToUpper/underscore-joined lookup ParseRank/ParseRankLenient
+// otherwise use) does not recognize — to the Rank ParseRankLenient should
+// return for them. LENIENT-ONLY, like nothotaxonRanks and germanSLRankCodes
+// above: never consulted by the strict ParseRank (API input).
+//
+// This is the full mapping measured against the real EuroSL 139,039-row TCS
+// sheet (pipelines/eurosl/eurosl.summary.txt's rank histogram; see
+// rank_golden_test.go's TestParseRankLenient_EuroSLGoldenVocabulary).
+// Deliberately NOT mapped (left to fall through to RankOther, which is
+// correct): "Suprageneric Taxon" — a domain/bookkeeping node in EuroSL's
+// tree, not a real taxonomic rank.
+var euroSLRankAliases = map[string]Rank{
+	"SPECIES AGGREGATE":        RankSpeciesAggregate,
+	"UNRANKED (INFRASPECIFIC)": RankUnrankedInfraspecific,
+	"UNRANKED (INFRAGENERIC)":  RankUnrankedInfrageneric,
+	"COLL. SPECIES":            RankCollSpecies,
+	"GREX (INFRASPEC.)":        RankGrex,
+	"SUBSECTION BOT.":          RankSubsection,
+	"DIVISION":                 RankPhylum,
 }
 
 // ParseRankLenient maps a WCVP "taxonrank" column value — verbatim, exactly
@@ -110,6 +223,12 @@ var nothotaxonRanks = map[string]Rank{
 func ParseRankLenient(s string) (Rank, string) {
 	trimmed := strings.TrimSpace(s)
 	if r, ok := nothotaxonRanks[strings.ToLower(trimmed)]; ok {
+		return r, trimmed
+	}
+	if r, ok := germanSLRankCodes[strings.ToUpper(trimmed)]; ok {
+		return r, trimmed
+	}
+	if r, ok := euroSLRankAliases[strings.ToUpper(trimmed)]; ok {
 		return r, trimmed
 	}
 	if r, err := ParseRank(trimmed); err == nil {
@@ -180,6 +299,15 @@ type Concept struct {
 	// tracks its accepted name's Rank, but the two are separate structs/
 	// rows, so this is carried independently rather than assumed equal).
 	RankVerbatim string
+	// Family, OrderName and ClassName carry the classification ABOVE family
+	// (see schema.sql's taxon_concept.family/order_name/class_name and
+	// docs/superpowers/specs/2026-08-27-hostus-namensraum-redesign-design.md
+	// section 4). Empty when unknown — never guessed. A WCVP concept
+	// (BackboneID "wcvp") gets these from the Fall-A name-space crosswalk,
+	// not from its own data: WCVP carries no rank above FAMILY.
+	Family    string
+	OrderName string
+	ClassName string
 }
 
 // Xref is a cross-reference to a name or concept in an external authority
@@ -187,6 +315,72 @@ type Concept struct {
 type Xref struct {
 	Authority string
 	ExtID     string
+}
+
+// Classification is the classification-above-family slice of a Concept
+// (Family/OrderName/ClassName, see Concept's own doc comment), carried
+// separately on MatchResult (Task 10) so every /v1/match hit reports it
+// without a caller having to fetch the full concept.
+type Classification struct {
+	Family    string
+	OrderName string
+	ClassName string
+}
+
+// AggregateResolutionOption is one name space's (eurosl/germansl/wcvp)
+// native-aggregate-concept lookup result for an aggregate/collective-rank
+// match (Task 10, the concept_aggregate-table mechanism — NOT the
+// NameSpaceEntry-alias mechanism ResolveTargetSpace uses).
+//
+// Status is the tri-state from AggregatePolicy: AggregatePolicyKnown when a
+// name-matched native aggregate concept was found in that space,
+// AggregatePolicyUnresolvable when the space was checked but none matched,
+// and "" (the zero value) when the space structurally never carries native
+// aggregate concepts (wcvp — see AggregateResolution's doc comment).
+type AggregateResolutionOption struct {
+	NameSpace          string
+	Status             AggregatePolicy
+	AggregateConceptID string
+	MemberCount        int
+}
+
+// AggregateResolution is the per-match-result answer to "how does each name
+// space resolve this aggregate/collective-rank query", populated only when
+// the query is an aggregate name or the resolved concept itself carries a
+// collective rank (Task 10).
+//
+// RequestedNameSpace is the name space of the ALREADY-RESOLVED concept
+// (parsed from its "<space>:concept:<id>" id) — the space the request
+// actually landed in, as opposed to Options, which is computed for every
+// known name space regardless of which one the match resolved into.
+// Status/MemberCount at this top level mirror whichever Options entry
+// matches RequestedNameSpace (left at their zero value if RequestedNameSpace
+// names no known space, e.g. a "cdm:" concept).
+//
+// wcvp ALWAYS gets Status "" (absent)/AggregateConceptID ""/MemberCount 0 in
+// Options: WCVP structurally carries no native aggregate concepts (see the
+// design spec §6), so there is nothing to look up there — this is not a
+// lookup that came back empty, it is a lookup that was never meaningful.
+//
+// Agreement is set only when BOTH eurosl and germansl resolved to
+// AggregatePolicyKnown — the precomputed comparison of their two member
+// sets (Repository.ConceptAgreement) — and stays "" otherwise (0 or 1 name
+// space knowing the aggregate has nothing to compare).
+type AggregateResolution struct {
+	RequestedNameSpace string
+	Status             AggregatePolicy
+	MemberCount        int
+	Options            []AggregateResolutionOption
+	Agreement          Agreement
+}
+
+// VernacularName is one vernacular (common) name for a concept, in a given
+// language (see the `vernacular` table, schema.sql). Language is a short tag
+// ("de", "en", ...), not validated further here — the ingest side is the
+// only writer and currently only ever supplies "de" (GermanSL).
+type VernacularName struct {
+	Language string
+	Name     string
 }
 
 // ClassificationEntry is one ancestor in a Concept's parent chain, as

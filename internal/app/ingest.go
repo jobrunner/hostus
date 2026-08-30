@@ -9,7 +9,6 @@ import (
 	"github.com/jobrunner/hostus/internal/adapters/manifest"
 	"github.com/jobrunner/hostus/internal/adapters/namelist"
 	"github.com/jobrunner/hostus/internal/adapters/sqlite"
-	"github.com/jobrunner/hostus/internal/adapters/traits"
 	"github.com/jobrunner/hostus/internal/adapters/wcvp"
 	"github.com/jobrunner/hostus/internal/adapters/xref"
 	"github.com/jobrunner/hostus/internal/application"
@@ -99,62 +98,10 @@ func readerFor(b application.Backbone) (application.RowSource, error) {
 	return wcvpRowSource{ds: ds}, nil
 }
 
-// traitVocabRowSource adapts a *traits.Dataset (T2's reader output) into
-// application.TraitRowSource, so application never imports
-// internal/adapters/traits directly (depguard) — the trait-vocabulary
-// counterpart of wcvpRowSource above.
-type traitVocabRowSource struct{ ds *traits.Dataset }
-
-func (s traitVocabRowSource) Rows() []application.TraitRow {
-	out := make([]application.TraitRow, 0, len(s.ds.Rows))
-	for _, r := range s.ds.Rows {
-		out = append(out, application.TraitRow{
-			Taxon:        r.Taxon,
-			Vocab:        r.Vocab,
-			VocabVersion: r.VocabVersion,
-			Dim:          r.Dim,
-			Value:        r.Value,
-			NicheWidth:   r.NicheWidth,
-			NSystems:     r.NSystems,
-		})
-	}
-	return out
-}
-
-// ingestTraitVocab opens tv's canonical trait CSV and runs
-// application.IngestTraits against repo, adapting the manifest's
-// TraitVocabulary entry into the domain.TraitVocabMeta the use case records.
-func ingestTraitVocab(ctx context.Context, tv manifest.TraitVocabulary, repo *sqlite.DB) (application.TraitIngestReport, error) {
-	ds, err := traits.Read(tv.Path)
-	if err != nil {
-		return application.TraitIngestReport{}, fmt.Errorf("app: reading trait vocabulary %q at %q: %w", tv.ID, tv.Path, err)
-	}
-	vocab, err := domain.ParseTraitVocab(tv.ID)
-	if err != nil {
-		return application.TraitIngestReport{}, fmt.Errorf("app: trait vocabulary %q: %w", tv.ID, err)
-	}
-	// tv.Redistribution is routed through ParseRedistribution for the same
-	// reason as adaptBackbones' backbone mapping above — see its doc
-	// comment.
-	redistribution, err := domain.ParseRedistribution(tv.Redistribution)
-	if err != nil {
-		return application.TraitIngestReport{}, fmt.Errorf("app: trait vocabulary %q: %w", tv.ID, err)
-	}
-	meta := domain.TraitVocabMeta{
-		Vocab:          vocab,
-		Version:        tv.Version,
-		Taxonomy:       tv.Taxonomy,
-		License:        tv.License,
-		SourceURL:      tv.SourceURL,
-		Redistribution: redistribution,
-	}
-	return application.IngestTraits(ctx, repo, traitVocabRowSource{ds: ds}, meta)
-}
-
 // xrefSourceRowSource adapts a *xref.Dataset (T1/T2's reader output) into
 // application.XrefRowSource, so application never imports
 // internal/adapters/xref directly (depguard) — the xref-source counterpart
-// of wcvpRowSource/traitVocabRowSource above.
+// of wcvpRowSource above.
 type xrefSourceRowSource struct{ ds *xref.Dataset }
 
 func (s xrefSourceRowSource) Rows() []application.XrefRow {
@@ -202,29 +149,88 @@ func ingestXrefSource(ctx context.Context, xs manifest.XrefSource, manifestSHA s
 // nameSpaceRowSource adapts a *namelist.Dataset into
 // application.NameRowSource, so application never imports
 // internal/adapters/namelist directly (depguard) — the name-space
-// counterpart of wcvpRowSource/traitVocabRowSource/xrefSourceRowSource above.
+// counterpart of wcvpRowSource/xrefSourceRowSource above.
 type nameSpaceRowSource struct{ ds *namelist.Dataset }
 
 func (s nameSpaceRowSource) Rows() []application.NameRow {
+	byID := make(map[string]namelist.Row, len(s.ds.Rows))
+	for _, r := range s.ds.Rows {
+		byID[r.SourceID] = r
+	}
+
 	out := make([]application.NameRow, 0, len(s.ds.Rows))
 	for _, r := range s.ds.Rows {
-		out = append(out, application.NameRow{Taxon: r.Taxon, SourceID: r.SourceID, Status: r.Status})
+		family, order, class := classificationFor(r, byID)
+		out = append(out, application.NameRow{
+			Taxon:        r.Taxon,
+			SourceID:     r.SourceID,
+			Status:       r.Status,
+			Family:       family,
+			OrderName:    order,
+			ClassName:    class,
+			VernacularDE: r.VernacularDE,
+		})
 	}
 	return out
 }
 
-// ingestNameSpace opens ns's canonical name-list CSV and runs
-// application.IngestNameSpace against repo (SP9/UC4). manifestSHA is recorded
-// onto the space's name_space row exactly as it is onto xref_source.
+// classificationFor walks r's parent chain (via namelist.Row.ParentID,
+// resolved through byID — the full row set of the SAME source, both
+// Fall-A species rows and Fall-B higher-rank rows) upward until it has
+// found the nearest FAMILY/ORDER/CLASS ancestor for each, or runs out of
+// parents. It stops after a bounded number of hops (guards against a
+// malformed cyclic parent chain in the raw data — never trust bulk pipeline
+// data to be well-formed, same posture as namelist's own row-level error
+// handling) rather than looping forever.
+func classificationFor(r namelist.Row, byID map[string]namelist.Row) (family, order, class string) {
+	const maxHops = 20
+	current := r
+	for hops := 0; hops < maxHops && current.ParentID != ""; hops++ {
+		parent, ok := byID[current.ParentID]
+		if !ok {
+			break
+		}
+		// switch true (not `switch rank`) deliberately: a switch typed on
+		// domain.Rank would have to exhaust every one of its ~30 rank
+		// constants (exhaustive linter) even though every rank besides
+		// these three just means "keep walking upward" — a bool switch
+		// says that without one line per uninteresting rank.
+		rank, _ := domain.ParseRankLenient(parent.Rank)
+		// Hoisted for the same coverage reason as internal/domain/synonym.go's
+		// switch: a condition written inside a case arm sits in no counted
+		// block in Go's coverage model, so `make mutation` reports it as
+		// NOT COVERED regardless of how thoroughly the branch is tested. As
+		// plain assignments they are covered, mutated and killed.
+		isFamily := rank == domain.RankFamily && family == ""
+		isOrder := rank == domain.RankOrder && order == ""
+		isClass := rank == domain.RankClass && class == ""
+		switch {
+		case isFamily:
+			family = parent.Taxon
+		case isOrder:
+			order = parent.Taxon
+		case isClass:
+			class = parent.Taxon
+		}
+		current = parent
+	}
+	return family, order, class
+}
+
+// ingestNameSpaceDataset runs application.IngestNameSpace against repo
+// (SP9/UC4) for the ALREADY-READ ds. manifestSHA is recorded onto the
+// space's name_space row exactly as it is onto xref_source.
+//
+// It takes ds rather than reading ns.Path itself because Ingest()'s
+// composition-root loop reads ns's CSV exactly ONCE per name space and
+// passes the resulting *namelist.Dataset to both this function (Fall A) and
+// ingestNativeSpaceDataset (Fall B, for eurosl/germansl) — see Ingest()'s
+// NameSpaces loop.
 //
 // Reader-level row errors are surfaced on the report rather than aborting,
 // like ingestConceptSource: one malformed line out of 16.402 must not cost
 // the whole ingest, but it must not vanish either.
-func ingestNameSpace(ctx context.Context, ns manifest.NameSpace, manifestSHA string, repo *sqlite.DB) (application.NameSpaceIngestReport, error) {
-	ds, err := namelist.Read(ns.Path)
-	if err != nil {
-		return application.NameSpaceIngestReport{}, fmt.Errorf("app: reading name space %q at %q: %w", ns.ID, ns.Path, err)
-	}
+func ingestNameSpaceDataset(ctx context.Context, ds *namelist.Dataset, ns manifest.NameSpace, manifestSHA string, repo *sqlite.DB) (application.NameSpaceIngestReport, error) {
 	// ns.Redistribution is routed through ParseRedistribution for the same
 	// reason as adaptBackbones' backbone mapping above — see its doc comment.
 	redistribution, err := domain.ParseRedistribution(ns.Redistribution)
@@ -244,11 +250,94 @@ func ingestNameSpace(ctx context.Context, ns manifest.NameSpace, manifestSHA str
 	return report, err
 }
 
+// nativeRowSource adapts a *namelist.Dataset into
+// application.NativeRowSource, the Fall-B counterpart of
+// nameSpaceRowSource above — application never imports
+// internal/adapters/namelist directly (depguard).
+type nativeRowSource struct{ ds *namelist.Dataset }
+
+func (s nativeRowSource) Rows() []application.NativeRow {
+	out := make([]application.NativeRow, 0, len(s.ds.Rows))
+	for _, r := range s.ds.Rows {
+		out = append(out, application.NativeRow{
+			Taxon:    r.Taxon,
+			SourceID: r.SourceID,
+			Rank:     r.Rank,
+			Status:   r.Status,
+			ParentID: r.ParentID,
+		})
+	}
+	return out
+}
+
+// ingestNativeSpace opens ns's canonical name-list CSV and runs
+// application.IngestNativeSpace against repo (Fall B — EuroSL/GermanSL
+// ranks above SPECIES, plus aggregates). It reuses the same CSV reader as
+// ingestNameSpace (Fall A): the two use cases differ only in what they DO
+// with each row, not in what they read.
+//
+// Unlike ingestNameSpace, this builds a domain.BackboneVersion, not a
+// domain.NameSpaceMeta: Fall B writes its own taxon_concept rows via
+// repo.BeginIngest, the backbone path, not the name-space path — see the
+// plan's "Architecture" section head.
+func ingestNativeSpace(ctx context.Context, ns manifest.NameSpace, manifestSHA string, repo *sqlite.DB, minRank domain.Rank) (application.NativeSpaceIngestReport, error) {
+	ds, err := namelist.Read(ns.Path)
+	if err != nil {
+		return application.NativeSpaceIngestReport{}, fmt.Errorf("app: reading native space %q at %q: %w", ns.ID, ns.Path, err)
+	}
+	return ingestNativeSpaceDataset(ctx, ds, ns, manifestSHA, repo, minRank)
+}
+
+// ingestNativeSpaceDataset is ingestNativeSpace's logic split out from the
+// CSV read, mirroring ingestNameSpaceDataset above — Ingest()'s composition-
+// root loop reads ns's CSV once and passes the same *namelist.Dataset to
+// both the Fall-A and Fall-B bridge. memberLinks is derived from ds via
+// nativeMemberLinks below, rather than passed in, so this function's only
+// two inputs are "the row set" and "which space/minRank" — matching
+// ingestNameSpaceDataset's shape.
+func ingestNativeSpaceDataset(ctx context.Context, ds *namelist.Dataset, ns manifest.NameSpace, manifestSHA string, repo *sqlite.DB, minRank domain.Rank) (application.NativeSpaceIngestReport, error) {
+	// ns.Redistribution is routed through ParseRedistribution for the same
+	// reason as adaptBackbones' backbone mapping above — see its doc comment.
+	redistribution, err := domain.ParseRedistribution(ns.Redistribution)
+	if err != nil {
+		return application.NativeSpaceIngestReport{}, fmt.Errorf("app: native space %q: %w", ns.ID, err)
+	}
+	bv := domain.BackboneVersion{
+		ID:             ns.ID,
+		Version:        ns.Version,
+		License:        ns.License,
+		SourceURL:      ns.SourceURL,
+		ManifestSHA:    manifestSHA,
+		Redistribution: redistribution,
+	}
+	return application.IngestNativeSpace(ctx, repo, nativeRowSource{ds: ds}, bv, minRank, nativeMemberLinks(ds))
+}
+
+// nativeMemberLinks derives Task 6's aggregate->member wiring from ds's
+// full row set: every row with a ParentID becomes a member entry under its
+// parent's SourceID, regardless of either row's own rank.
+// IngestNativeSpace's own write loop only consults memberLinks for a row it
+// has ALREADY confirmed qualifies as a Fall-B concept (see
+// qualifiesAsFallBConcept), and ResolveNameSpaceMember safely returns ""
+// (not an error) for a memberSourceID that Fall A never crosswalked — so no
+// rank-filtering is needed here; the downstream code already handles both
+// cases correctly.
+func nativeMemberLinks(ds *namelist.Dataset) map[string][]string {
+	links := map[string][]string{}
+	for _, r := range ds.Rows {
+		if r.ParentID == "" {
+			continue
+		}
+		links[r.ParentID] = append(links[r.ParentID], r.SourceID)
+	}
+	return links
+}
+
 // ingestConceptSource reads cs's two canonical CDM CSVs and runs
 // application.IngestCDM against repo. This is the adapter -> application DTO
 // bridge for SP5: internal/application must not import
 // internal/adapters/cdm (depguard), so the row mapping lives here in the
-// composition root, exactly like wcvpRowSource/traitVocabRowSource above.
+// composition root, exactly like wcvpRowSource above.
 //
 // Reader-level row errors are surfaced on the report rather than aborting:
 // the CSVs are the output of a 16–20 h crawl, and one malformed line out of
@@ -322,19 +411,86 @@ func adaptCDMRelations(rows []cdm.RelationRow) []application.CDMRelationRow {
 // already discarding most of it with blank identifiers.
 type Reports struct {
 	Backbone       application.IngestReport
-	Traits         []application.TraitIngestReport
 	Xrefs          []application.XrefIngestReport
 	ConceptSources []application.CDMIngestReport
 	NameSpaces     []application.NameSpaceIngestReport
+	// NativeSpaces holds Fall B's own-concept ingest report for every name
+	// space that also runs Fall B (currently eurosl/germansl — see
+	// nativeSpaceBackboneIDs) — see Ingest()'s NameSpaces loop.
+	NativeSpaces []application.NativeSpaceIngestReport
+	// ConceptAgreement is the eurosl<->germansl aggregate-member comparison
+	// (Task 7), computed once after every name space's Fall A+B ingest has
+	// run — see Ingest()'s step 4.
+	ConceptAgreement application.ConceptAgreementReport
+}
+
+// nameSpaceIDEurosl/nameSpaceIDGermansl are the two name-space ids pinned
+// as named constants (rather than repeated string literals) so
+// nativeSpaceBackboneIDs below and its callers/tests share one spelling.
+const (
+	nameSpaceIDEurosl   = "eurosl"
+	nameSpaceIDGermansl = "germansl"
+)
+
+// nativeSpaceBackboneIDs are the name-space ids that also run Fall B
+// (application.IngestNativeSpace) in Ingest()'s NameSpaces loop, immediately
+// after their own Fall A (application.IngestNameSpace) run: eurosl and
+// germansl are the only two canonical CSVs in the manifest that carry a
+// parent_id chain above SPECIES (Task 3's deliberate scope) — floraveg/
+// euromed's 5-column CSV has none, so running Fall B against them would be a
+// silent no-op at best.
+var nativeSpaceBackboneIDs = map[string]bool{nameSpaceIDEurosl: true, nameSpaceIDGermansl: true}
+
+// ingestNameSpaceAndNative reads ns's canonical CSV exactly ONCE and runs
+// Fall A (application.IngestNameSpace) against it, then — for eurosl/
+// germansl only, see nativeSpaceBackboneIDs — Fall B
+// (application.IngestNativeSpace) against the SAME already-read dataset.
+// Split out of Ingest()'s NameSpaces loop to keep that function's cognitive
+// complexity within the linter's bound (gocognit), mirroring
+// writeNativeRow's own extraction pattern in nativespace_ingest.go.
+//
+// The returned *application.NativeSpaceIngestReport is nil when ns did not
+// qualify for Fall B (ns.ID not in nativeSpaceBackboneIDs) — the caller
+// appends it to reports.NativeSpaces only when non-nil.
+func ingestNameSpaceAndNative(ctx context.Context, ns manifest.NameSpace, manifestSHA string, repo *sqlite.DB) (application.NameSpaceIngestReport, *application.NativeSpaceIngestReport, error) {
+	nsDS, err := namelist.Read(ns.Path)
+	if err != nil {
+		return application.NameSpaceIngestReport{}, nil, fmt.Errorf("app: reading name space %q at %q: %w", ns.ID, ns.Path, err)
+	}
+
+	nr, err := ingestNameSpaceDataset(ctx, nsDS, ns, manifestSHA, repo)
+	if err != nil {
+		return nr, nil, err
+	}
+	if !nativeSpaceBackboneIDs[ns.ID] {
+		return nr, nil, nil
+	}
+
+	// Fall B runs AFTER Fall A for the SAME name space, never before:
+	// IngestNativeSpace's aggregate-member resolution
+	// (ResolveNameSpaceMember) reads name_space_entry rows, which only
+	// Fall A (just above) writes. minRank=domain.RankRoot writes every rank
+	// above SPECIES as its own concept, not just a narrow band — see
+	// nativeConceptRankOrder's own doc comment for the full root-to-leaf
+	// ordering this cutoff is measured against.
+	nsr, err := ingestNativeSpaceDataset(ctx, nsDS, ns, manifestSHA, repo, domain.RankRoot)
+	if err != nil {
+		return nr, nil, err
+	}
+	return nr, &nsr, nil
 }
 
 // Ingest parses and validates the manifest at manifestPath, opens (or
 // creates) the SQLite database at dbPath, and runs application.Ingest
-// against every pinned backbone, then application.IngestTraits against every
-// pinned trait vocabulary, then application.IngestXrefs against every pinned
-// xref source, then application.IngestCDM against every pinned concept
+// against every pinned backbone, then application.IngestXrefs against every
+// pinned xref source, then application.IngestCDM against every pinned concept
 // source, then application.IngestNameSpace against every pinned name space.
 // It is the entry point "hostus ingest" calls.
+//
+// A manifest's trait_vocabularies entries (manifest.Dataset.TraitVocabularies)
+// are deliberately IGNORED here — the traits subsystem was removed and
+// transferred to situs (Teilprojekt 2); a manifest still pinning one is not
+// an error, its entries are simply never read.
 //
 // Concept sources run LATE on purpose: their relation ends resolve against
 // taxon_concept, so anything an earlier phase wrote is already available to
@@ -365,15 +521,6 @@ func Ingest(ctx context.Context, manifestPath, dbPath string) (Reports, error) {
 		return reports, err
 	}
 
-	reports.Traits = make([]application.TraitIngestReport, 0, len(manifestDS.TraitVocabularies))
-	for _, tv := range manifestDS.TraitVocabularies {
-		tr, err := ingestTraitVocab(ctx, tv, repo)
-		if err != nil {
-			return reports, err
-		}
-		reports.Traits = append(reports.Traits, tr)
-	}
-
 	reports.Xrefs = make([]application.XrefIngestReport, 0, len(manifestDS.XrefSources))
 	for _, xs := range manifestDS.XrefSources {
 		xr, err := ingestXrefSource(ctx, xs, manifestDS.ManifestSHA, repo)
@@ -393,13 +540,32 @@ func Ingest(ctx context.Context, manifestPath, dbPath string) (Reports, error) {
 	}
 
 	reports.NameSpaces = make([]application.NameSpaceIngestReport, 0, len(manifestDS.NameSpaces))
+	reports.NativeSpaces = make([]application.NativeSpaceIngestReport, 0, len(manifestDS.NameSpaces))
 	for _, ns := range manifestDS.NameSpaces {
-		nr, err := ingestNameSpace(ctx, ns, manifestDS.ManifestSHA, repo)
+		nr, nsr, err := ingestNameSpaceAndNative(ctx, ns, manifestDS.ManifestSHA, repo)
 		if err != nil {
 			return reports, err
 		}
 		reports.NameSpaces = append(reports.NameSpaces, nr)
+		if nsr != nil {
+			reports.NativeSpaces = append(reports.NativeSpaces, *nsr)
+		}
 	}
+
+	// ComputeConceptAgreement/WriteConceptAgreement (Task 7) run once, AFTER
+	// every name space's Fall A+B ingest is done: the comparison pairs up
+	// eurosl and germansl aggregate concepts by name and needs BOTH spaces'
+	// concept_aggregate member lists fully written first. This runs BEFORE
+	// BuildDistributionClosure below — it is itself part of "the whole
+	// index is now built", not a distribution concern.
+	agreementReport, err := application.ComputeConceptAgreement(ctx, repo)
+	if err != nil {
+		return reports, err
+	}
+	if err := repo.WriteConceptAgreement(ctx, agreementReport.Pairs); err != nil {
+		return reports, err
+	}
+	reports.ConceptAgreement = agreementReport
 
 	// BuildDistributionClosure runs once ALL backbones (incl. CDM) are
 	// ingested — it resolves CDM concepts' in_area name fallback against WCVP

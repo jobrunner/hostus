@@ -6,8 +6,8 @@
     DwC-A-Manifesten, per Wikidata-Brücke angereicherten Cross-References
     sowie, seit SP5, der CDM-Konzeptquelle; `hostus serve` bedient
     `/v1/concept/{id}`, `/v1/xref`, `/v1/match`, `/v1/suggest`,
-    `/v1/concept/{id}/traits`, `/v1/concept/{id}/synonyms` und
-    `/v1/translate` daraus). `/openapi` folgt in einem späteren SP. Die
+    `/v1/concept/{id}/synonyms` und `/v1/translate` daraus). `/openapi`
+    folgt in einem späteren SP. Die
     maßgebliche OpenAPI-Spezifikation liegt unter
     `api/openapi/openapi.yaml`.
 
@@ -65,8 +65,15 @@ GET /v1/concept/wcvp:concept:405825
   "status": "ACCEPTED",
   "backbone": { "id": "wcvp", "version": "2026-06-15" },
   "xrefs": { "powo": ["396681-1"], "inat": ["160927"] },
-  "classification": [
+  "parent_chain": [
     { "concept_id": "wcvp:concept:451295", "canonical": "Corynephorus", "rank": "GENUS" }
+  ],
+  "classification": { "family": "Poaceae" },
+  "vernacular_names": [
+    { "language": "de", "name": "Graues Silbergras", "source": "germansl" }
+  ],
+  "aggregate_memberships": [
+    { "name_space": "eurosl", "aggregate_concept_id": "eurosl:concept:agg1", "aggregate_name": "Corynephorus canescens aggr." }
   ],
   "synonyms": [
     { "canonical": "Weingaertneria canescens var. pallida", "authorship": "Beckh." },
@@ -89,9 +96,10 @@ GET /v1/concept/wcvp:concept:405825
 ```
 
 `vernacular_de` (deutscher Trivialname) ist Teil der DTO, aber immer
-leer/omitted — die Vernakular-Tabelle wird noch nicht ingestiert.
+leer/omitted — es ist ein Legacy-Feld aus SP1, das `vernacular_names`
+(siehe unten) nicht ersetzt.
 
-`classification` (Klassifikationskette) wird durch Verfolgen von
+`parent_chain` (Vorfahren-Kette) wird durch Verfolgen von
 `taxon_concept.parent_id` nach oben ermittelt und ROOT-FIRST geliefert:
 Index 0 ist die oberste erreichte Vorfahren-Ebene, das letzte Element das
 direkte Elternteil des angefragten Concepts; das Concept selbst ist nie
@@ -99,7 +107,34 @@ Teil der Kette. Die Tiefe ist auf 10 Hops begrenzt, damit eine
 zyklische/korrupte `parent_id`-Kette niemals hängen bleibt. `parent_id`
 wird nur gesetzt, wenn das Eltern-Taxon selbst als akzeptiertes Concept
 ingestiert wurde — andernfalls (und wenn die Kette nach der
-Tiefenbegrenzung endet) ist `classification` leer/omitted.
+Tiefenbegrenzung endet) ist `parent_chain` leer/omitted. Dieses Feld hieß
+vor dem Namensraum-/Klassifikations-Redesign `classification` — der
+Schlüssel wurde frei, weil das Redesign ein NEUES, gleichnamiges Feld
+einführt (siehe direkt darunter).
+
+`classification` ist seit dem Namensraum-/Klassifikations-Redesign ein
+**Objekt** `{"family", "order", "class"}` — die Klassifikation OBERHALB von
+Family, aus dem EuroSL/GermanSL-Namensraum-Crosswalk. Es fehlt vollständig
+(nie ein Objekt mit lauter leeren Strings), wenn keines der drei Felder
+bekannt ist; jedes Unterfeld ist zudem einzeln optional.
+
+`vernacular_names` listet jeden ingestierten Vernakularnamen
+(`{"language", "name", "source"}`). `source` ist aktuell hartkodiert
+`"germansl"` — der GermanSL-Ingest ist derzeit der einzige Schreiber der
+`vernacular`-Tabelle; das Feld fehlt/ist leer, wenn keine Vernakularnamen
+ingestiert wurden.
+
+`aggregate_memberships` listet, für ein Concept vom Rang `SPECIES`, jeden
+Namensraum, dessen Sammel-/Aggregat-Concept diese Art einschließt (Fall-A-
+Rückverweis auf Abschnitt 5 des Redesign-Specs). `aggregate_concept_id`
+fehlt, wenn sich das Sammel-Concept dieses Namensraums nicht auflösen ließ
+(bekannte Lücke). Ein Concept ohne eine solche Namensraum-Zuordnung liefert
+das Feld gar nicht.
+
+Für ein Fall-B-Sammel-/Aggregat-Concept selbst (Rang
+`SPECIES_AGGREGATE`/`GENUS_AGGREGATE`/`SECTION`/`SUBSECTION`/`SUBGENUS`)
+liefert die Antwort stattdessen `members[]` — `{"concept_id", "name"}` je
+WCVP-Mitglied dieses Aggregats.
 
 `synonyms[].homotypic` ist `true`, wenn die Basionym-Verknüpfung ein
 gemeinsames Basionym mit dem akzeptierten Namen beweist (Rekombination
@@ -221,6 +256,40 @@ POST /v1/match
 `unresolvable`. `candidates` (Liste von Kanonicalnamen) wird nur bei
 Autor-Mehrdeutigkeit gefüllt.
 
+#### `classification` und `aggregate_resolution` (Namensraum-/Klassifikations-Redesign)
+
+Seit dem Namensraum-/Klassifikations-Redesign liefert jedes Ergebnis mit
+gesetztem `concept_id` **zusätzlich** zwei Felder — **unabhängig davon, ob
+`target_space` gesetzt ist**. Das macht die Antwortform BREAKING gegenüber
+dem SP5-Stand: sie ist nicht mehr byteweise identisch, sobald ein Treffer
+diese Felder trägt.
+
+- `classification` — dasselbe `{family, order, class}`-Objekt wie
+  `GET /v1/concept/{id}`s gleichnamiges Feld (siehe oben). Present, sobald
+  `concept_id` gesetzt ist und mindestens eines der drei Unterfelder bekannt
+  ist — nie ein Objekt mit lauter leeren Strings.
+- `aggregate_resolution` — nur present, wenn die Anfrage ein Aggregat-/
+  Sammelrang-Name war ODER das aufgelöste Concept selbst einen Sammelrang
+  trägt (`SPECIES_AGGREGATE`, `GENUS_AGGREGATE`, `SECTION`, `SUBSECTION`,
+  `SUBGENUS`). Es nutzt die NATIVEN Aggregat-Concepts
+  (`concept_aggregate`-Tabelle, echte Mitgliederlisten) — ein anderer,
+  neuerer Mechanismus als `aggregate_policy`/`target_space_name` unten, die
+  den älteren Namensraum-Alias (`NameSpaceEntry.Aggregate`) beschreiben.
+  `aggregate_resolution.options[]` listet für jeden geprüften Namensraum
+  (`eurosl`, `germansl`, `wcvp`), ob ein namensgleiches natives
+  Aggregat-Concept existiert (`status: known`/`unresolvable`) und wie viele
+  WCVP-Mitglieder es führt. Details: siehe `AggregateResolution`/
+  `AggregateResolutionOption` in `api/openapi/openapi.yaml`.
+
+  **Bekannte Einschränkung:** `aggregate_resolution.options[]` (der
+  Namensraum-Lookup) wird für alle fünf Sammelränge befüllt, aber das
+  Top-Level-Feld `aggregate_resolution.agreement` (eurosl/germansl-
+  Übereinstimmung) bleibt für SECTION/SUBSECTION/SUBGENUS-Treffer immer
+  leer — der Ingest-seitige `concept_agreement`-Vergleich läuft bislang nur
+  über SPECIES_AGGREGATE/GENUS_AGGREGATE (siehe
+  `internal/application/concept_agreement.go`s `aggregateRanks`, enger als
+  `match.go`s `aggregateResolutionRanks`).
+
 #### `entry_backbone` / `entry_sec` (SP5): Auflösungs-Filter
 
 Im Multi-Backbone-Index (WCVP + CDMs ~119 `sec.`-Räumen) liegt derselbe Name
@@ -308,6 +377,13 @@ leer (auch nur Leerzeichen), liefert der Endpunkt `400 INVALID_QUERY`.
 - `limit` (optional): maximale Ergebnisanzahl. Nicht-numerische Werte
   liefern `400 INVALID_QUERY`; ein leerer oder `<= 0` Wert verwendet den
   serverseitigen Standardwert.
+- `match_mode` (optional): steuert, wie streng ein Kandidatenname `q`
+  treffen muss. Leer und `name_start` (**Standard**) sind gleichwertig und
+  verlangen, dass mindestens ein Namenstoken MIT `q` beginnt. `anywhere`
+  stellt das reine FTS5-Präfix-Verhalten wieder her (`q` darf irgendwo im
+  indexierten Text stehen, nicht nur am Tokenanfang) und liefert dadurch
+  mehr, aber weniger präzise Treffer. Jeder andere Wert liefert `400
+  INVALID_QUERY`.
 
 `in_area` ist ein **positiver** Verbreitungsbeleg, kein Ja/Nein: `true`, wenn
 das Concept selbst im Gebiet verbreitet ist ODER — bei Concepts ohne eigene
@@ -362,118 +438,6 @@ und aufgelöste Aggregat-Schreibweisen sind als Aliase indexiert. Bei einem
 gewöhnlichen Treffer fehlt das Feld (`omitempty`). Da ein FloraVeg-Aggregat auf
 die Nominatart zeigt, ist der Treffer die Nominatart mit gesetztem `aggregate`,
 kein separater Aggregat-Eintrag.
-
-## Trait-Endpunkt
-
-### `GET /v1/concept/{id}/traits?vocab={vocab}`
-
-Liefert alle für ein Concept ingestierten ökologischen Merkmalswerte
-(EIVE, Tichý et al. 2023, Midolo et al. 2023), gruppiert **pro Vokabular**
-— nie über Vokabulare hinweg zusammengeführt, da deren Taxonomie-
-Namensräume (`taxonomy`) nachweislich divergieren (z. B. `euromed-aligned`
-für EIVE vs. `floraveg-eunis-aligned` für Tichý).
-
-- `vocab` (optional): kommagetrennte Liste von Vokabular-Token (`eive`,
-  `tichy2023`, `midolo2023`). Leer bedeutet alle Vokabulare, für die
-  dieses Concept Werte hat. Ein unbekanntes Token liefert `400
-  INVALID_QUERY`.
-
-**Beispiel-Request**
-
-```
-GET /v1/concept/wcvp:concept:405825/traits?vocab=eive,tichy2023
-```
-
-**Beispiel-Response (`200 OK`)**
-
-```json
-{
-  "concept_id": "wcvp:concept:405825",
-  "traits": [
-    {
-      "vocab": "eive",
-      "vocab_version": "1.0",
-      "taxonomy": "euromed-aligned",
-      "values": [
-        {
-          "dim": "M",
-          "value": 2.49,
-          "niche_width": 3.43,
-          "n_systems": 20,
-          "scale": { "min": 0, "max": 10, "normalized": true }
-        }
-      ]
-    },
-    {
-      "vocab": "tichy2023",
-      "vocab_version": "2.0",
-      "taxonomy": "floraveg-eunis-aligned",
-      "values": [
-        {
-          "dim": "L",
-          "value": 8.4,
-          "scale": { "min": 1, "max": 9, "normalized": false }
-        },
-        {
-          "dim": "T",
-          "value": 6.3,
-          "resolution": "aggregate_to_nominate",
-          "scale": { "min": 1, "max": 12, "normalized": false }
-        }
-      ]
-    }
-  ]
-}
-```
-
-Wichtige Punkte für Clients:
-
-- **`scale` wird pro Wert gerendert, nicht pro Set.** Selbst innerhalb
-  eines Vokabulars unterscheiden sich die Skalen zwischen Dimensionen —
-  Tichý misst `T` auf 1–12, `L` aber auf 1–9. Ein einzelnes Set-weites
-  `scale`-Feld wäre für mindestens eine Dimension falsch, deshalb trägt
-  jeder Eintrag in `values` sein eigenes `scale`. `normalized: true`
-  gibt es ausschließlich bei EIVE (uniform 0–10); alle anderen
-  Kombinationen sind `normalized: false`. Ein `{"min": 0, "max": 0,
-  "normalized": false}`-Ergebnis ist ein Sentinel für "keine feste Skala
-  definiert" (z. B. Midolo-Störungsindikatoren), nicht "der Wert ist
-  exakt 0". **Ein EIVE-Wert von 4.2 ist daher niemals direkt mit einem
-  Tichý-Wert von 4.2 vergleichbar** — genau deshalb liefert jeder Wert
-  seine Skala mit.
-- **`niche_width`/`n_systems` fehlen ganz (nicht `0`), wenn das
-  Vokabular sie nicht liefert.** EIVE liefert beide für jeden Wert;
-  Tichý und Midolo liefern keines von beiden. Ein fehlendes Feld
-  bedeutet "dieses Vokabular kennt dieses Datum nicht", ein `0`-Wert
-  hätte fälschlich eine tatsächliche Nullbreite/-quellenzahl behauptet.
-- **`resolution` fehlt ganz, wenn der Taxonname des Vokabulars exakt auf
-  das Concept passte** — der Normalfall. Ist das Feld gesetzt, wurde der
-  Name über eine deterministische Normalisierungsregel aufgelöst
-  (`hybrid_spacing`, `hybrid_marker_dropped`, `hybrid_marker_added`,
-  `aggregate`, `aggregate_to_nominate`, `autonym`,
-  `orthography_genitive`). Zwei dieser Werte sind für Clients
-  entscheidend, weil sie zwei **nicht identische** Umgrenzungen
-  gleichsetzen:
-
-    - `aggregate_to_nominate` — eine Sammelart (`Acer opalus aggr.`) ist
-      WEITER als ihre Nominatart und umfasst weitere Kleinarten. Der
-      Wert ist also ein Kollektivmittel, das das Vokabular nie über
-      diese eine Art ausgesagt hat.
-    - `autonym` — ein Autonym (`Acer obtusatum subsp. obtusatum`) ist
-      ENGER als seine Art; es landet hier nur, weil das Rückgrat die
-      infraspezifische Gliederung überhaupt nicht führt.
-
-    Wer diese Näherung nicht akzeptieren kann, filtert auf genau diese
-    beiden Werte. Die übrigen Regeln korrigieren ausschließlich die
-    Schreibweise (Hybridmarker, `-ii`/`-i`-Genitiv) und lassen die
-    Umgrenzung unberührt. Hintergrund und gemessene Wirkung:
-    `docs/research/reality-check.md`, Abschnitt „Nach Hardening
-    (Task 5)".
-- **`taxonomy` fehlt ganz, wenn keine Vokabular-Metadatenzeile
-  zugeordnet werden konnte** — wird nicht als leerer String
-  vorgetäuscht.
-- Ein unbekanntes Concept liefert `404 NOT_FOUND`. Ein **bekanntes**
-  Concept ohne ingestierte Merkmalswerte liefert `200 OK` mit leerem
-  `traits`-Array — das ist kein Fehlerfall.
 
 ## Synonym-Endpunkt
 

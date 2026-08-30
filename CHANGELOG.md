@@ -5,6 +5,50 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [Unreleased]
+
+### Added
+
+* **`hostus export-crosswalk --db <path> --out-dir <dir>`:** neuer CLI-
+  Befehl, schreibt `eurosl_crosswalk.csv` (name→concept_id, Fall-A-
+  Namensraum-Crosswalk + Fall-B-native-eurosl-Konzepte) und
+  `aggregate_members.csv` (aggregate_concept_id→member_concept_id→
+  member_name aus `concept_aggregate`) für situs' dateibasierten Species-
+  Ingest. Kein Redistributions-Gate (lokaler Pipeline-Handoff, keine
+  Weitergabe an Dritte). Eine Namens-Kollision zwischen den beiden Quellen
+  wird gezählt und mit beiden Concept-IDs gemeldet, nie automatisch
+  aufgelöst.
+
+### Changed
+
+* **`GET /v1/concept/{id}` / `GET /v1/xref`:** die Ahnen-Kette heißt jetzt
+  `parent_chain` statt `classification`. BREAKING. `classification` ist ein
+  NEUES Feld: ein Objekt `{family, order, class}` (Familie/Ordnung/Klasse
+  oberhalb von Family, aus dem EuroSL/GermanSL-Namensraum-Crosswalk).
+* **`POST /v1/match`:** liefert jetzt für jedes Ergebnis mit gesetzter
+  `concept_id` zusätzlich `classification` (dasselbe Objekt wie oben) sowie,
+  bei Aggregat-/Sammelrang-Treffern (SPECIES_AGGREGATE/GENUS_AGGREGATE/
+  SECTION/SUBSECTION/SUBGENUS), `aggregate_resolution` mit den nativen
+  Aggregat-Mitgliederlisten und dem eurosl/germansl-Übereinstimmungsstatus.
+  BREAKING: die Antwort ist nicht mehr byteweise identisch ohne
+  `target_space` gesetzt, sobald ein Treffer diese Felder trägt.
+* **`GET /v1/suggest`:** neuer optionaler `match_mode`-Parameter
+  (`name_start`, Standard, oder `anywhere`). BREAKING: `name_start` ändert
+  das bisherige Default-Verhalten (bislang immer `anywhere`, reines FTS5-
+  Präfix-Matching) auf ein engeres Standardverhalten — mindestens ein
+  Namenstoken muss jetzt selbst mit `q` beginnen.
+* **`POST /v1/translate`:** `target_space` akzeptiert jetzt zusätzlich zu
+  CDM-`sec.`-UUIDs auch Namensraum-Ids (`eurosl`/`germansl`/`wcvp`); die
+  Antwort trägt in diesem Fall `result: name_space_translation` mit dem
+  Ergebnis im gleichnamigen Feld statt in `candidates`.
+
+### Removed
+
+* **Traits-Subsystem entfernt** (`GET /v1/concept/{id}/traits`, EIVE/Tichý/
+  Midolo-Pipelines). BREAKING. Transfer nach situs (Teilprojekt 2), siehe
+  docs/superpowers/specs/2026-08-27-hostus-namensraum-redesign-design.md
+  Abschnitt 8.
+
 ## [2.6.1-alpha.0](https://github.com/jobrunner/hostus/compare/v2.6.0-alpha.0...v2.6.1-alpha.0) (2026-08-24)
 
 

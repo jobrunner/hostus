@@ -80,7 +80,6 @@ CREATE INDEX IF NOT EXISTS idx_name_basionym_id ON name(basionym_id);
 -- reason: concept_name.concept_id (PK is (concept_id, name_id)),
 -- distribution.concept_id (PK is (concept_id, area_scheme, area_code)),
 -- vernacular.concept_id (PK is (concept_id, lang, name)),
--- trait_value.concept_id (PK is (concept_id, vocab, vocab_version, dim)),
 -- and concept_relation.from_concept (PK is
 -- (from_concept, to_concept, relation, source) since SP5 widened it — see
 -- the note on that table below; from_concept is still the LEADING column,
@@ -100,7 +99,15 @@ CREATE TABLE IF NOT EXISTS taxon_concept (
   -- rank (which is always the same value as its accepted name's rank, but
   -- copied independently here since Concept and Name are separate rows/
   -- structs — see domain.Concept.RankVerbatim).
-  rank_verbatim  TEXT
+  rank_verbatim  TEXT,
+  -- Klassifikation oberhalb der Familie (Herkunft: EuroSL/GermanSL Fall B,
+  -- siehe docs/superpowers/specs/2026-08-27-hostus-namensraum-redesign-design.md
+  -- Abschnitt 4). NULL wenn unbekannt — nie geraten. WCVP-Konzepte (backbone_id
+  -- = "wcvp") haben diese Spalten aus Fall A per Crosswalk befüllt, nicht aus
+  -- eigenen Daten (WCVP führt keine Ränge oberhalb FAMILY).
+  family      TEXT,
+  order_name  TEXT,
+  class_name  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_taxon_concept_backbone_id ON taxon_concept(backbone_id);
@@ -123,7 +130,7 @@ CREATE INDEX IF NOT EXISTS idx_concept_name_name_id ON concept_name(name_id);
 
 -- Cross-reference-source provenance metadata: one row per ingested xref
 -- source (e.g. the Wikidata bridge-hub harvest), the xref counterpart of
--- backbone_version/trait_vocabulary. It is what lets an ingested database
+-- backbone_version. It is what lets an ingested database
 -- answer "which harvest are these xrefs from?" (version + manifest_sha)
 -- and what ExportBundle's redistribution gate joins against.
 CREATE TABLE IF NOT EXISTS xref_source (
@@ -218,50 +225,6 @@ CREATE TABLE IF NOT EXISTS area (
   PRIMARY KEY (scheme, code)
 );
 
--- Indicator/trait values (pointer to concept + vocabulary version, not the
--- numbers as ground truth). value is always present (domain.TraitValue.Value
--- is a plain float64, never a pointer); niche_width/n_systems are nullable
--- because EIVE provides them and Tichý/Midolo do not — NULL there means "this
--- vocabulary does not provide this datum", never a stand-in for 0 (see
--- domain.TraitValue's doc comment).
-CREATE TABLE IF NOT EXISTS trait_value (
-  concept_id    TEXT NOT NULL REFERENCES taxon_concept(id),
-  vocab         TEXT NOT NULL,      -- eive|tichy2023|midolo2023
-  vocab_version TEXT NOT NULL,
-  dim           TEXT NOT NULL,      -- M|N|R|L|T|S
-  value         REAL NOT NULL,
-  niche_width   REAL,               -- EIVE only; NULL for Tichý/Midolo
-  n_systems     INTEGER,            -- EIVE only; NULL for Tichý/Midolo
-  -- resolution records HOW the vocabulary's taxon name was crosswalked onto
-  -- concept_id: NULL for the ordinary case (an exact canonical match), else
-  -- the name of the deterministic normalisation rule that was needed
-  -- (domain.NormalizationRule: hybrid_spacing, aggregate_to_nominate,
-  -- autonym, orthography_genitive, ...). Two of those rules equate two
-  -- circumscriptions that are NOT identical — an aggregate is wider than
-  -- its nominate species, an autonym narrower than its species — so a
-  -- consumer must be able to tell such a value apart from a directly
-  -- matched one. Same "absence is information" rule as niche_width above:
-  -- NULL means "no normalisation was needed", never "unknown".
-  -- See domain.TraitValue.Resolution / domain.NormalizationRule.Flagged.
-  resolution    TEXT,
-  PRIMARY KEY (concept_id, vocab, vocab_version, dim)
-);
-
--- Trait-vocabulary provenance metadata: one row per ingested (vocab,
--- version) pair, joined onto trait_value reads to surface VocabVersion and
--- the Taxonomy namespace (see domain.TraitSet.Taxonomy) each vocabulary's
--- values are harmonized against.
-CREATE TABLE IF NOT EXISTS trait_vocabulary (
-  vocab          TEXT NOT NULL,      -- eive|tichy2023|midolo2023
-  version        TEXT NOT NULL,
-  taxonomy       TEXT NOT NULL,      -- euromed-aligned|floraveg-eunis-aligned|...
-  license        TEXT,
-  source_url     TEXT,
-  ingested_at    TEXT NOT NULL,
-  redistribution TEXT NOT NULL DEFAULT 'unknown', -- allowed|restricted|unknown (domain.Redistribution); gates ExportBundle, never local ingest
-  PRIMARY KEY (vocab, version)
-);
-
 -- Name spaces (SP9, UC4). A name space is a checklist that contributes
 -- NAMES but no taxonomy — no synonymy graph, no parent chain, no external
 -- ids to join on. FloraVeg.EU's list (the namespace ESy's rules are written
@@ -295,9 +258,8 @@ CREATE TABLE IF NOT EXISTS name_space (
 --
 -- `aggregate` is 1 when the space's own spelling denotes a collective
 -- species rather than a single taxon (domain.IsAggregateName). `resolution`
--- follows trait_value.resolution's rule exactly: NULL for an exact canonical
--- match, else the domain.NormalizationRule that was needed — absence is
--- information, never "unknown".
+-- is NULL for an exact canonical match, else the domain.NormalizationRule
+-- that was needed — absence is information, never "unknown".
 CREATE TABLE IF NOT EXISTS name_space_entry (
   space        TEXT NOT NULL REFERENCES name_space(id),
   ext_id       TEXT NOT NULL,      -- the space's own stable id (FloraVeg SeqID)
@@ -408,6 +370,31 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts_name USING fts5(
   canonical, vernacular_de,
   content='',                       -- external content, ids via rowid mapping
   tokenize='unicode61 remove_diacritics 2'
+);
+
+-- Aggregat-/Sektions-Mitgliedschaft (Fall B). aggregate_concept_id ist immer
+-- ein natives eurosl:/germansl:-Konzept (RankSpeciesAggregate/RankSection/...);
+-- member_concept_id ist der WCVP-Sippen-Konzept, den das Aggregat umfasst.
+-- Kein WCVP-Konzept ist je die aggregate-Seite (WCVP kennt keine Aggregate).
+CREATE TABLE IF NOT EXISTS concept_aggregate (
+  aggregate_concept_id TEXT NOT NULL REFERENCES taxon_concept(id),
+  member_concept_id    TEXT NOT NULL REFERENCES taxon_concept(id),
+  PRIMARY KEY (aggregate_concept_id, member_concept_id)
+);
+CREATE INDEX IF NOT EXISTS idx_concept_aggregate_member ON concept_aggregate(member_concept_id);
+
+-- Vorberechneter Namensraum-Vergleich (Spec Abschnitt 5). Ein Eintrag pro
+-- Paar (eurosl-Aggregat, germansl-Aggregat), das beim Ingest als
+-- namensgleiches Gegenstück erkannt wurde. agreement ist einer von
+-- identical|subset|superset|overlap|disjoint|one_sided (domain.Agreement).
+CREATE TABLE IF NOT EXISTS concept_agreement (
+  eurosl_concept_id   TEXT REFERENCES taxon_concept(id),   -- NULL bei one_sided (nur germansl)
+  germansl_concept_id TEXT REFERENCES taxon_concept(id),   -- NULL bei one_sided (nur eurosl)
+  agreement           TEXT NOT NULL,
+  agreement_text      TEXT NOT NULL,
+  only_in_eurosl       TEXT NOT NULL DEFAULT '',  -- komma-getrennte WCVP-Konzept-IDs
+  only_in_germansl     TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (eurosl_concept_id, germansl_concept_id)
 );
 
 -- Bundle provenance. Created (empty) in every database this schema is

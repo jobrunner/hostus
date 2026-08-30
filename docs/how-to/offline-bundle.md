@@ -44,12 +44,10 @@ Bundle complete: bundle.sqlite (concepts=3 names=13 areas=16)
 
 ## Redistribution-Gate: ein Bundle kann keine ungeklärte Quelle mitführen
 
-Jeder Backbone-, Trait-Vokabular-, Xref-Quellen- und Namensraum-Eintrag im
-Manifest trägt ein Pflichtfeld `redistribution: allowed|restricted|unknown` (siehe
-[Merkmalswerte pipeln und ingestieren](trait-ingest.md) für die volle
-Erklärung). `hostus bundle` prüft vor jedem Export, welche Quellen
-tatsächlich Daten zum gewählten Scope (`--area` oder die ganze Datenbank)
-beitragen:
+Jeder Backbone-, Xref-Quellen- und Namensraum-Eintrag im Manifest trägt ein
+Pflichtfeld `redistribution: allowed|restricted|unknown`. `hostus bundle`
+prüft vor jedem Export, welche Quellen tatsächlich Daten zum gewählten
+Scope (`--area` oder die ganze Datenbank) beitragen:
 
 - **Trägt eine nicht-`allowed`-Quelle bei** (ein Backbone, ein
   Trait-Vokabular, eine Xref-Quelle unter `xref_sources:` — die

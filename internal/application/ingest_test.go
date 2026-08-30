@@ -535,7 +535,7 @@ func TestIngest_WCVPFixture_SynonymDoesNotGetItsOwnConcept(t *testing.T) {
 
 // TestIngest_UnknownRankDegradesToOther pins the Hardening Task 1 fix: an
 // unparseable "taxonrank" value (whether an arbitrary garbage string or one
-// of WCVP's real exotic spellings like "proles" — see
+// of WCVP's real exotic spellings like "lusus" — see
 // TestIngest_WCVPExoticRanks_CompletesAndReportsThem below for the latter)
 // must NOT abort the ingest anymore. This replaces the old
 // TestIngest_UnknownRankFails, which pinned the exact opposite (and now
@@ -586,10 +586,12 @@ func TestIngest_UnknownRankDegradesToOther(t *testing.T) {
 // abort after 5.37s on taxon 542377 — see
 // docs/research/reality-check.md's M1.0) must complete, not abort, and the
 // report must count+surface the exotic ranks rather than silently dropping
-// them. The fixture mixes "proles" (count 2, so it must sort first) with
-// two exotic ranks tied at count 1 ("grex"/"lusus", which must then break
-// the tie alphabetically) and one ordinary "Species" row, so both of
-// sortedRankCounts' sort keys (count desc, then verbatim asc) are actually
+// them. "proles" itself is now a canonical rank (see domain.RankProles), so
+// this fixture instead mixes two ranks that remain outside the canonical
+// set — "stirps" and "lusus" — tied at count 2 each, which must then break
+// the tie alphabetically ("lusus" before "stirps") and one ordinary
+// "Species" row, so both of sortedRankCounts' sort keys (count desc, then
+// verbatim asc) are actually
 // exercised, not just the count-desc one.
 // TestIngest_PopulatesAreaNamesFromDistribution pins that the distribution
 // rows' area NAME (WCVP Locality) is captured into the area lookup table, so
@@ -647,10 +649,10 @@ func TestIngest_WCVPExoticRanks_CompletesAndReportsThem(t *testing.T) {
 
 	taxa := []application.TaxonRow{
 		{TaxonID: "1", AcceptedTaxonID: "1", Accepted: true, Canonical: "Ordinary species", Rank: "Species"},
-		{TaxonID: "2", AcceptedTaxonID: "2", Accepted: true, Canonical: "Paeonia corallina proles ovatifolia", Rank: "proles"},
+		{TaxonID: "2", AcceptedTaxonID: "2", Accepted: true, Canonical: "Paeonia corallina stirps ovatifolia", Rank: "stirps"},
 		{TaxonID: "3", AcceptedTaxonID: "3", Accepted: true, Canonical: "Some lusus", Rank: "lusus"},
-		{TaxonID: "4", AcceptedTaxonID: "4", Accepted: true, Canonical: "Another proles", Rank: "proles"},
-		{TaxonID: "5", AcceptedTaxonID: "5", Accepted: true, Canonical: "Some grex", Rank: "grex"},
+		{TaxonID: "4", AcceptedTaxonID: "4", Accepted: true, Canonical: "Another stirps", Rank: "stirps"},
+		{TaxonID: "5", AcceptedTaxonID: "5", Accepted: true, Canonical: "Some lusus2", Rank: "lusus"},
 	}
 	readerFor := func(application.Backbone) (application.RowSource, error) {
 		return fakeRowSource{taxa: taxa}, nil
@@ -658,7 +660,7 @@ func TestIngest_WCVPExoticRanks_CompletesAndReportsThem(t *testing.T) {
 
 	report, err := application.Ingest(ctx, ds, readerFor, repo)
 	if err != nil {
-		t.Fatalf("Ingest: expected completion despite exotic ranks (proles/lusus/grex), got error: %v", err)
+		t.Fatalf("Ingest: expected completion despite exotic ranks (stirps/lusus), got error: %v", err)
 	}
 	if len(report.Backbones) != 1 {
 		t.Fatalf("len(report.Backbones) = %d, want 1", len(report.Backbones))
@@ -668,13 +670,12 @@ func TestIngest_WCVPExoticRanks_CompletesAndReportsThem(t *testing.T) {
 		t.Errorf("b.Names = %d, want 5 (every row still gets a Name, exotic rank or not)", b.Names)
 	}
 	if b.OtherRanks != 4 {
-		t.Errorf("b.OtherRanks = %d, want 4 (two proles + one lusus + one grex)", b.OtherRanks)
+		t.Errorf("b.OtherRanks = %d, want 4 (two stirps + two lusus)", b.OtherRanks)
 	}
-	// "grex" sorts before "lusus" alphabetically once their counts tie at 1.
+	// "lusus" appears twice, so it sorts first; "stirps" appears twice after.
 	wantSample := []application.RankVerbatimCount{
-		{Verbatim: "proles", Count: 2},
-		{Verbatim: "grex", Count: 1},
-		{Verbatim: "lusus", Count: 1},
+		{Verbatim: "lusus", Count: 2},
+		{Verbatim: "stirps", Count: 2},
 	}
 	if len(b.OtherRankSample) != len(wantSample) {
 		t.Fatalf("b.OtherRankSample = %+v, want %+v", b.OtherRankSample, wantSample)
@@ -685,19 +686,19 @@ func TestIngest_WCVPExoticRanks_CompletesAndReportsThem(t *testing.T) {
 		}
 	}
 
-	proles := mustConcept(ctx, t, repo, "wcvp-exotic:concept:2")
-	if proles.Rank != domain.RankOther {
-		t.Errorf("proles concept.Rank = %q, want %q", proles.Rank, domain.RankOther)
+	stirps := mustConcept(ctx, t, repo, "wcvp-exotic:concept:2")
+	if stirps.Rank != domain.RankOther {
+		t.Errorf("stirps concept.Rank = %q, want %q", stirps.Rank, domain.RankOther)
 	}
 	// Fix round 1: rank_verbatim now round-trips through the real sqlite
 	// adapter, not just the in-process domain.Name — proving a nomenclature
 	// service doesn't forget which exotic rank a concept actually had the
 	// moment the ingest process exits (spec §A.1).
-	if proles.RankVerbatim != "proles" {
-		t.Errorf("proles concept.RankVerbatim = %q, want %q (round-tripped through sqlite)", proles.RankVerbatim, "proles")
+	if stirps.RankVerbatim != "stirps" {
+		t.Errorf("stirps concept.RankVerbatim = %q, want %q (round-tripped through sqlite)", stirps.RankVerbatim, "stirps")
 	}
-	if proles.AcceptedName.RankVerbatim != "proles" {
-		t.Errorf("proles concept.AcceptedName.RankVerbatim = %q, want %q (round-tripped through sqlite)", proles.AcceptedName.RankVerbatim, "proles")
+	if stirps.AcceptedName.RankVerbatim != "stirps" {
+		t.Errorf("stirps concept.AcceptedName.RankVerbatim = %q, want %q (round-tripped through sqlite)", stirps.AcceptedName.RankVerbatim, "stirps")
 	}
 
 	ordinary := mustConcept(ctx, t, repo, "wcvp-exotic:concept:1")
@@ -800,7 +801,7 @@ func TestIngest_OtherRank_PopulatesNameRankVerbatim(t *testing.T) {
 
 	taxa := []application.TaxonRow{
 		{TaxonID: "1", AcceptedTaxonID: "1", Accepted: true, Canonical: "Ordinary species", Rank: "Species"},
-		{TaxonID: "2", AcceptedTaxonID: "2", Accepted: true, Canonical: "Paeonia corallina proles ovatifolia", Rank: "proles"},
+		{TaxonID: "2", AcceptedTaxonID: "2", Accepted: true, Canonical: "Paeonia corallina lusus ovatifolia", Rank: "lusus"},
 	}
 	readerFor := func(application.Backbone) (application.RowSource, error) {
 		return fakeRowSource{taxa: taxa}, nil
@@ -811,15 +812,15 @@ func TestIngest_OtherRank_PopulatesNameRankVerbatim(t *testing.T) {
 	}
 
 	names := repo.tx.namesByID()
-	proles, ok := names["wcvp-exotic:name:2"]
+	lusus, ok := names["wcvp-exotic:name:2"]
 	if !ok {
 		t.Fatalf("no Name captured for taxon 2")
 	}
-	if proles.Rank != domain.RankOther {
-		t.Errorf("proles Name.Rank = %q, want %q", proles.Rank, domain.RankOther)
+	if lusus.Rank != domain.RankOther {
+		t.Errorf("lusus Name.Rank = %q, want %q", lusus.Rank, domain.RankOther)
 	}
-	if proles.RankVerbatim != "proles" {
-		t.Errorf("proles Name.RankVerbatim = %q, want %q (preserved, readable)", proles.RankVerbatim, "proles")
+	if lusus.RankVerbatim != "lusus" {
+		t.Errorf("lusus Name.RankVerbatim = %q, want %q (preserved, readable)", lusus.RankVerbatim, "lusus")
 	}
 
 	ordinary, ok := names["wcvp-exotic:name:1"]
@@ -896,14 +897,26 @@ func (f *fakeCapturingRepo) BackboneVersions(context.Context) ([]domain.Backbone
 func (f *fakeCapturingRepo) BuildDistributionClosure(context.Context) error {
 	panic("not needed by Ingest")
 }
-func (f *fakeCapturingRepo) Traits(context.Context, string, []domain.TraitVocab) ([]domain.TraitSet, error) {
-	panic("not needed by Ingest")
-}
-func (f *fakeCapturingRepo) TraitVocabularies(context.Context) ([]domain.TraitVocabMeta, error) {
-	panic("not needed by Ingest")
-}
 func (f *fakeCapturingRepo) NameSpaceEntries(context.Context, string, []string) ([]domain.NameSpaceEntry, error) {
 	panic("not needed by Ingest")
+}
+func (f *fakeCapturingRepo) AggregateMembers(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+func (f *fakeCapturingRepo) AggregatesByMember(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+func (f *fakeCapturingRepo) VernacularNames(context.Context, string) ([]domain.VernacularName, error) {
+	return nil, nil
+}
+func (f *fakeCapturingRepo) AggregateConcepts(context.Context, string, []domain.Rank) ([]output.AggregateConceptSummary, error) {
+	return nil, nil
+}
+func (f *fakeCapturingRepo) WriteConceptAgreement(context.Context, []domain.ConceptAgreementPair) error {
+	return nil
+}
+func (f *fakeCapturingRepo) ConceptAgreement(context.Context, string) (*domain.ConceptAgreementPair, error) {
+	return nil, nil
 }
 func (f *fakeCapturingRepo) NameSpaces(context.Context) ([]domain.NameSpaceMeta, error) {
 	panic("not needed by Ingest")
@@ -958,14 +971,18 @@ func (t *fakeCapturingTx) LinkName(string, string, string, *bool) error      { r
 func (t *fakeCapturingTx) AddXref(string, domain.Xref, string) error         { return nil }
 func (t *fakeCapturingTx) AddDistribution(string, domain.Distribution) error { return nil }
 func (t *fakeCapturingTx) UpsertArea(domain.Area) error                      { return nil }
-func (t *fakeCapturingTx) AddTraitValue(string, domain.TraitValue) error     { return nil }
-func (t *fakeCapturingTx) UpsertTraitVocabulary(domain.TraitVocabMeta) error { return nil }
 func (t *fakeCapturingTx) UpsertXrefSource(domain.XrefSourceMeta) error      { return nil }
 func (t *fakeCapturingTx) UpsertNameSpace(domain.NameSpaceMeta) error        { return nil }
+func (t *fakeCapturingTx) AddAggregateMember(string, string) error           { return nil }
+func (t *fakeCapturingTx) ResolveNameSpaceMember(string, string) (string, error) {
+	return "", nil
+}
 func (t *fakeCapturingTx) AddNameSpaceEntry(string, domain.NameSpaceEntry) error {
 	return nil
 }
-func (t *fakeCapturingTx) UpsertSecReference(domain.SecReference) error { return nil }
+func (t *fakeCapturingTx) UpsertClassification(string, string, string, string) error { return nil }
+func (t *fakeCapturingTx) AddVernacularName(string, domain.VernacularName) error     { return nil }
+func (t *fakeCapturingTx) UpsertSecReference(domain.SecReference) error              { return nil }
 func (t *fakeCapturingTx) AddConceptRelation(string, string, domain.Relation, string) error {
 	return nil
 }

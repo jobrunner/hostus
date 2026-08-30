@@ -530,8 +530,8 @@ func TestSynonyms_OtherRankCarriesItsVerbatimSpelling(t *testing.T) {
 	if s.Rank != string(domain.RankOther) {
 		t.Fatalf("rank = %q, want %q", s.Rank, domain.RankOther)
 	}
-	if s.RankVerbatim != "proles" {
-		t.Errorf("rank_verbatim = %q, want %q — otherwise the entry renders as a bare OTHER", s.RankVerbatim, "proles")
+	if s.RankVerbatim != "lusus" {
+		t.Errorf("rank_verbatim = %q, want %q — otherwise the entry renders as a bare OTHER", s.RankVerbatim, "lusus")
 	}
 
 	// And it is OMITTED, not empty, for a canonically-ranked synonym.
@@ -552,7 +552,7 @@ func TestSynonyms_OtherRankCarriesItsVerbatimSpelling(t *testing.T) {
 const otherRankConceptID = "other:concept:corynephorus"
 
 // seedOtherRankSynonym writes one concept whose single synonym ranks OTHER
-// with a verbatim "proles", through the same output.Repository port
+// with a verbatim "lusus", through the same output.Repository port
 // seedUC5Concept uses. The WCVP fixture carries no exotic rank.
 func seedOtherRankSynonym(t *testing.T, db *sqlite.DB) {
 	t.Helper()
@@ -562,8 +562,8 @@ func seedOtherRankSynonym(t *testing.T, db *sqlite.DB) {
 		t.Fatalf("BeginIngest: unexpected error: %v", err)
 	}
 	accepted := domain.Name{ID: "other:name:accepted", Canonical: "Corynephorus divaricatus", Authorship: "(Pourr.) Breistr.", Rank: domain.RankSpecies}
-	proles := domain.Name{ID: "other:name:proles", Canonical: "Corynephorus articulatus", Authorship: "Desf.", Rank: domain.RankOther, RankVerbatim: "proles"}
-	for _, n := range []domain.Name{accepted, proles} {
+	lusus := domain.Name{ID: "other:name:lusus", Canonical: "Corynephorus articulatus", Authorship: "Desf.", Rank: domain.RankOther, RankVerbatim: "lusus"}
+	for _, n := range []domain.Name{accepted, lusus} {
 		if err := tx.UpsertName(n); err != nil {
 			t.Fatalf("UpsertName(%q): unexpected error: %v", n.ID, err)
 		}
@@ -575,7 +575,7 @@ func seedOtherRankSynonym(t *testing.T, db *sqlite.DB) {
 	if err := tx.LinkName(concept.ID, accepted.ID, "accepted", nil); err != nil {
 		t.Fatalf("LinkName(accepted): unexpected error: %v", err)
 	}
-	if err := tx.LinkName(concept.ID, proles.ID, "synonym", nil); err != nil {
+	if err := tx.LinkName(concept.ID, lusus.ID, "synonym", nil); err != nil {
 		t.Fatalf("LinkName(synonym): unexpected error: %v", err)
 	}
 	if err := tx.Finalize(); err != nil {

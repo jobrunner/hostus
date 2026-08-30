@@ -236,6 +236,22 @@ type MatchResult struct {
 	// for a plain species). See MatchInSpace.
 	TargetSpaceName string
 	AggregatePolicy domain.AggregatePolicy
+
+	// Classification and AggregateResolution are populated by
+	// matchNamesFiltered (Task 10), so BOTH MatchNames and MatchInSpace carry
+	// them — unlike TargetSpaceName/AggregatePolicy above, these are not
+	// UC4-only.
+	//
+	// Classification is always set once ConceptID resolves (Family/OrderName/
+	// ClassName from Repository.Concept, possibly all-empty if the backbone
+	// never carried them).
+	//
+	// AggregateResolution is nil unless the query is an aggregate/collective
+	// name (domain.IsAggregateName) or the resolved concept itself carries a
+	// collective rank (isCollectiveRank) — nil rather than a zero value so
+	// its JSON absence is unambiguous.
+	Classification      domain.Classification
+	AggregateResolution *domain.AggregateResolution
 }
 
 // MatchNames resolves every req against repo, in order, per §B.2:
@@ -276,9 +292,196 @@ func matchNamesFiltered(ctx context.Context, repo output.Repository, reqs []Matc
 		if err != nil {
 			return nil, err
 		}
+		if res.ConceptID != "" {
+			concept, _, _, _, err := repo.Concept(ctx, res.ConceptID)
+			if err != nil {
+				return nil, err
+			}
+			res.Classification = domain.Classification{Family: concept.Family, OrderName: concept.OrderName, ClassName: concept.ClassName}
+			if domain.IsAggregateName(req.Verbatim) || isCollectiveRank(concept.Rank) {
+				canonical, _ := splitVerbatim(req.Verbatim)
+				res.AggregateResolution, err = buildAggregateResolution(ctx, repo, canonical, res.ConceptID)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
 		results = append(results, res)
 	}
 	return results, nil
+}
+
+// nativeAggregateNameSpaces is the fixed, ordered list of Task 10's
+// aggregate-resolution name spaces — deliberately NOT
+// Repository.NameSpaces(ctx), which reads the ingested name_space table and
+// never carries "wcvp" (a backbone, not a name space in the SP9 sense).
+// wcvp is included anyway, always with AggregatePolicy "" (absent)/no
+// concept id/0 members, since WCVP structurally carries no native aggregate
+// concepts — see domain.AggregateResolution's doc comment.
+var nativeAggregateNameSpaces = []string{"eurosl", "germansl", "wcvp"}
+
+// collectiveRanks are the Fall-B collective/aggregate ranks (design spec
+// §6): a concept resolved to one of these is itself a collective, even when
+// the QUERY string carried no aggregate marker at all — e.g. a verbatim
+// "Taraxacum sect. Palustria" resolving straight to a SECTION concept.
+var collectiveRanks = map[domain.Rank]bool{
+	domain.RankSpeciesAggregate: true,
+	domain.RankGenusAggregate:   true,
+	domain.RankSection:          true,
+	domain.RankSubsection:       true,
+	domain.RankSubgenus:         true,
+}
+
+// isCollectiveRank reports whether r is one of collectiveRanks.
+func isCollectiveRank(r domain.Rank) bool {
+	return collectiveRanks[r]
+}
+
+// aggregateResolutionRanks is collectiveRanks as the []domain.Rank slice
+// Repository.AggregateConcepts takes.
+//
+// KNOWN ASYMMETRY (final-review Minor-11 finding): this list (5 ranks) is
+// wider than concept_agreement.go's aggregateRanks (2 ranks:
+// SPECIES_AGGREGATE/GENUS_AGGREGATE only). resolveAggregateOption below uses
+// THIS list, so aggregate_resolution.options[]'s per-name-space known/
+// unresolvable lookup works for all 5 collective ranks. But
+// buildAggregateResolution's Agreement field is populated by
+// Repository.ConceptAgreement, which only ever has rows for the 2 ranks
+// ComputeConceptAgreement (concept_agreement.go) actually compares — so a
+// SECTION/SUBSECTION/SUBGENUS match's aggregate_resolution.agreement stays
+// permanently empty in the live /v1/match path, even though its
+// options[].status resolves correctly. Widening ComputeConceptAgreement to
+// all 5 ranks (so the two lists agree) is a separate, larger follow-up, not
+// fixed in this round — see openapi.yaml's
+// AggregateResolution.agreement description for the client-facing version
+// of this note.
+var aggregateResolutionRanks = []domain.Rank{
+	domain.RankSpeciesAggregate, domain.RankGenusAggregate,
+	domain.RankSection, domain.RankSubsection, domain.RankSubgenus,
+}
+
+// aggregateMatchKey is the ONE name-matching key both call sites in this
+// file use to decide whether two aggregate/collective-rank spellings name
+// the same taxon, regardless of aggregate-marker SPELLING (agg./aggr./
+// s.l./...) — resolveAggregateOption applies it to a repo.AggregateConcepts
+// summary's stored canonical, buildAggregateResolution applies it to the
+// query's split verbatim, and a single shared function is what guarantees
+// the two can never independently drift onto different orders (they used
+// to: see git history / task-10-report.md's fix-round-1 entry).
+//
+// It canonicalizes BEFORE stripping the marker — the ORDER deliberately
+// differs from Task 7's application.ComputeConceptAgreement
+// (concept_agreement.go's indexAggregatesByMatchKey strips first, then
+// canonicalizes). That order is harmless for BACKBONE-ingested canonical
+// names, which by taxonomic convention always spell markers lowercase, but
+// domain.StripAggregateMarkers itself does a case-SENSITIVE map lookup
+// against lowercase-only marker spellings (its own doc comment: "peels the
+// trailing aggregate markers off an ALREADY-CANONICALIZED name") — stripping
+// BEFORE canonicalizing silently fails to strip a marker typed in
+// non-lowercase case. Verified directly:
+// StripAggregateMarkers("Festuca ovina AGGR.") returns the string
+// UNCHANGED (marker still attached), while
+// StripAggregateMarkers(Canonicalize("Festuca ovina AGGR.")) correctly
+// yields "festuca ovina". The query side here processes RAW user-typed
+// verbatim (via splitVerbatim), which carries no lowercase guarantee —
+// canonicalizing first is what keeps a query like "Salsola kali AGG."
+// resolving to the same key as a stored "Salsola kali agg.", consistent
+// with domain.IsAggregateName/this package's own isAggregate, which already
+// canonicalize before checking for a marker. See
+// TestAggregateMatchKey_MixedCaseMarkerRegression.
+func aggregateMatchKey(canonical string) string {
+	return domain.StripAggregateMarkers(domain.Canonicalize(canonical))
+}
+
+// resolveAggregateOption is buildAggregateResolution's per-name-space
+// lookup: ns's native aggregate concepts (Repository.AggregateConcepts),
+// name-matched against prefix (an aggregateMatchKey value) by the same key
+// application.ComputeConceptAgreement's own name-matching logic follows in
+// intent (see aggregateMatchKey's doc comment for the order it deliberately
+// does NOT share with concept_agreement.go). wcvp always gets the absent/
+// zero option unconditionally — it structurally carries no native aggregate
+// concepts, so there is nothing to look up.
+func resolveAggregateOption(ctx context.Context, repo output.Repository, ns, prefix string) (domain.AggregateResolutionOption, error) {
+	opt := domain.AggregateResolutionOption{NameSpace: ns}
+	if ns == "wcvp" {
+		return opt, nil
+	}
+	summaries, err := repo.AggregateConcepts(ctx, ns, aggregateResolutionRanks)
+	if err != nil {
+		return domain.AggregateResolutionOption{}, err
+	}
+	found := ""
+	for _, s := range summaries {
+		if aggregateMatchKey(s.Canonical) == prefix {
+			found = s.ConceptID
+			break
+		}
+	}
+	if found == "" {
+		opt.Status = domain.AggregatePolicyUnresolvable
+		return opt, nil
+	}
+	opt.Status = domain.AggregatePolicyKnown
+	opt.AggregateConceptID = found
+	members, err := repo.AggregateMembers(ctx, found)
+	if err != nil {
+		return domain.AggregateResolutionOption{}, err
+	}
+	opt.MemberCount = len(members)
+	return opt, nil
+}
+
+// buildAggregateResolution builds the per-match AggregateResolution for an
+// aggregate/collective-rank result (Task 10): for eurosl and germansl, it
+// looks up that space's native aggregate concepts (Repository.
+// AggregateConcepts, the concept_aggregate-table mechanism — a DIFFERENT,
+// newer mechanism than domain.ResolveTargetSpace/NameSpaceEntry.Aggregate's
+// Fall-A alias, which MatchInSpace uses unchanged) and matches them against
+// canonical by aggregateMatchKey — the SAME function resolveAggregateOption
+// applies to each candidate's stored canonical, so the two sides can never
+// drift onto different normalization orders. wcvp always gets the absent/
+// zero option, since it structurally carries no native aggregate concepts.
+//
+// RequestedNameSpace/its own Status/MemberCount reflect the space of
+// resolvedConceptID itself (its "<space>:concept:" id prefix); Agreement is
+// populated only when BOTH eurosl and germansl resolved Known, via
+// Repository.ConceptAgreement keyed on eurosl's aggregate concept id.
+func buildAggregateResolution(ctx context.Context, repo output.Repository, canonical, resolvedConceptID string) (*domain.AggregateResolution, error) {
+	prefix := aggregateMatchKey(canonical)
+
+	options := make(map[string]domain.AggregateResolutionOption, len(nativeAggregateNameSpaces))
+	for _, ns := range nativeAggregateNameSpaces {
+		opt, err := resolveAggregateOption(ctx, repo, ns, prefix)
+		if err != nil {
+			return nil, err
+		}
+		options[ns] = opt
+	}
+
+	res := &domain.AggregateResolution{
+		RequestedNameSpace: strings.SplitN(resolvedConceptID, ":", 2)[0],
+	}
+	res.Options = make([]domain.AggregateResolutionOption, len(nativeAggregateNameSpaces))
+	for i, ns := range nativeAggregateNameSpaces {
+		opt := options[ns]
+		res.Options[i] = opt
+		if ns == res.RequestedNameSpace {
+			res.Status = opt.Status
+			res.MemberCount = opt.MemberCount
+		}
+	}
+
+	eurosl, germansl := options["eurosl"], options["germansl"]
+	if eurosl.Status == domain.AggregatePolicyKnown && germansl.Status == domain.AggregatePolicyKnown {
+		pair, err := repo.ConceptAgreement(ctx, eurosl.AggregateConceptID)
+		if err != nil {
+			return nil, err
+		}
+		if pair != nil {
+			res.Agreement = pair.Agreement
+		}
+	}
+	return res, nil
 }
 
 // MatchInSpace resolves reqs exactly as MatchNames and then, for the ingested

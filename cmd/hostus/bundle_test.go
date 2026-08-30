@@ -74,7 +74,7 @@ func TestBundleCommand_WritesNonEmptyBundleAndPrintsReport(t *testing.T) {
 }
 
 // ingestRestrictedFixtureDB runs "hostus ingest" against
-// testdata/dataset-restricted.yaml (eive pinned redistribution: unknown)
+// testdata/dataset-restricted.yaml (floraveg pinned redistribution: unknown)
 // into a fresh temp-file database, so bundle tests can exercise the
 // redistribution gate against a database that genuinely has a non-allowed
 // contributing source.
@@ -93,11 +93,11 @@ func ingestRestrictedFixtureDB(t *testing.T) string {
 
 // TestBundleCommand_RestrictedSource_FailsByDefaultThenSucceedsWithForce is
 // the real CLI smoke test the redistribution gate exists for: "hostus
-// bundle" against a database whose eive trait vocabulary is pinned
-// redistribution: unknown must FAIL by default, naming "eive" and its
+// bundle" against a database whose floraveg name space is pinned
+// redistribution: unknown must FAIL by default, naming "floraveg" and its
 // redistribution value; the identical invocation with
 // --force-include-restricted must then SUCCEED, and the resulting bundle's
-// bundle_meta.restricted_sources must record exactly "eive" — proving the
+// bundle_meta.restricted_sources must record exactly "floraveg" — proving the
 // bundle can never silently carry unclearable data even when the operator
 // overrides the gate.
 func TestBundleCommand_RestrictedSource_FailsByDefaultThenSucceedsWithForce(t *testing.T) {
@@ -112,8 +112,8 @@ func TestBundleCommand_RestrictedSource_FailsByDefaultThenSucceedsWithForce(t *t
 	if err == nil {
 		t.Fatal("Execute (no --force-include-restricted): want an error, got nil")
 	}
-	if !strings.Contains(err.Error(), "eive") {
-		t.Errorf("error = %q, want it to name the offending source %q", err, "eive")
+	if !strings.Contains(err.Error(), "floraveg") {
+		t.Errorf("error = %q, want it to name the offending source %q", err, "floraveg")
 	}
 	if !strings.Contains(err.Error(), "unknown") {
 		t.Errorf("error = %q, want it to state the redistribution value %q", err, "unknown")
@@ -140,8 +140,8 @@ func TestBundleCommand_RestrictedSource_FailsByDefaultThenSucceedsWithForce(t *t
 	if err := raw.QueryRow(`SELECT restricted_sources FROM bundle_meta`).Scan(&restrictedSources); err != nil {
 		t.Fatalf("reading bundle_meta.restricted_sources: %v", err)
 	}
-	if restrictedSources != "eive" {
-		t.Errorf("bundle_meta.restricted_sources = %q, want %q", restrictedSources, "eive")
+	if restrictedSources != "floraveg" {
+		t.Errorf("bundle_meta.restricted_sources = %q, want %q", restrictedSources, "floraveg")
 	}
 }
 

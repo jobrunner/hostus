@@ -31,7 +31,7 @@ type BundleOpts struct {
 	Now func() time.Time
 	// AllowRestricted opts out of the redistribution gate (see
 	// findRestrictedSources): without it, ExportBundle refuses to export
-	// when any contributing backbone/trait-vocabulary/xref source is not
+	// when any contributing backbone/xref/name-space source is not
 	// domain.RedistributionAllowed. With it, the export succeeds AND the
 	// offending sources are recorded in bundle_meta.restricted_sources, so
 	// a bundle can never silently carry unclearable data. Surfaced as
@@ -47,10 +47,9 @@ type BundleReport struct {
 	Path     string
 }
 
-// restrictedSource is one non-domain.RedistributionAllowed backbone,
-// trait-vocabulary or xref source that contributed data (a taxon_concept, a
-// trait_value row, or a source-attributed xref row) to a bundle's export
-// scope.
+// restrictedSource is one non-domain.RedistributionAllowed backbone or xref
+// source that contributed data (a taxon_concept, or a source-attributed xref
+// row) to a bundle's export scope.
 type restrictedSource struct {
 	ID             string
 	Redistribution string
@@ -71,8 +70,7 @@ func formatRestrictedSources(rs []restrictedSource) string {
 // restrictedSourceIDs renders rs into bundle_meta.restricted_sources' stable,
 // deterministic representation: a comma-joined, sorted list of ids only (no
 // redistribution values — the value is already recoverable from the
-// original source database's backbone_version/trait_vocabulary/xref_source
-// rows).
+// original source database's backbone_version/xref_source rows).
 func restrictedSourceIDs(rs []restrictedSource) string {
 	if len(rs) == 0 {
 		return ""
@@ -104,12 +102,11 @@ func marshalIDs(ids []string) (string, error) {
 	return string(b), nil
 }
 
-// findRestrictedSources reports every backbone, trait-vocabulary or
-// xref source that contributes data to conceptIDs' scope (a taxon_concept
-// belonging to it, a trait_value row on one of conceptIDs, or an xref row on
-// one of conceptIDs attributed to it via xref.source) and whose
-// redistribution is not domain.RedistributionAllowed, sorted by id for a
-// deterministic result. An empty conceptIDs (nothing in scope) trivially
+// findRestrictedSources reports every backbone or xref source that
+// contributes data to conceptIDs' scope (a taxon_concept belonging to it, or
+// an xref row on one of conceptIDs attributed to it via xref.source) and
+// whose redistribution is not domain.RedistributionAllowed, sorted by id for
+// a deterministic result. An empty conceptIDs (nothing in scope) trivially
 // contributes no sources.
 //
 // The xref query deliberately joins on xref.source, so it covers exactly the
@@ -137,16 +134,6 @@ func findRestrictedSources(ctx context.Context, src *DB, conceptIDs []string) ([
 	}
 	out = append(out, backbones...)
 
-	vocabs, err := queryNonAllowedSources(ctx, src, `
-		SELECT DISTINCT tv.vocab, tv.redistribution
-		FROM trait_vocabulary tv
-		JOIN trait_value v ON v.vocab = tv.vocab AND v.vocab_version = tv.version
-		WHERE v.concept_id IN (SELECT value FROM json_each(?))`, []any{idsJSON})
-	if err != nil {
-		return nil, fmt.Errorf("sqlite: bundle: checking trait vocabulary redistribution: %w", err)
-	}
-	out = append(out, vocabs...)
-
 	xrefSources, err := queryNonAllowedSources(ctx, src, `
 		SELECT DISTINCT xs.id, xs.redistribution
 		FROM xref_source xs
@@ -173,35 +160,23 @@ func findRestrictedSources(ctx context.Context, src *DB, conceptIDs []string) ([
 
 	out = dedupeRestrictedSourcesByID(out)
 
-	// out[i].ID < out[j].ID vs. <=: a provable-equivalence-class boundary,
-	// same as sortedSample's len(all) > cap in traits_ingest.go. This is
-	// true ONLY because of the dedupeRestrictedSourcesByID call directly
-	// above: trait_vocabulary's primary key is (vocab, version), not vocab
-	// alone, and IngestTraits never deletes an older version's row when a
-	// vocabulary is re-ingested at a new version — so the raw `vocabs`
-	// query above CAN legitimately return the same vocab id twice (once
-	// per version) with two different redistribution values, and the
-	// backbone query's ids could in principle collide with a vocab id too.
-	// dedupeRestrictedSourcesByID collapses all of that to one entry per
-	// id first, so by the time this sort runs, every element of out is
-	// guaranteed distinct by construction — no two ever compare equal, so
-	// <= would only produce a different result from < for equal keys,
-	// which cannot occur here.
+	// out[i].ID < out[j].ID vs. <=: a provable-equivalence-class boundary.
+	// This is true ONLY because of the dedupeRestrictedSourcesByID call
+	// directly above, which collapses out to one entry per id first — so by
+	// the time this sort runs, every element of out is guaranteed distinct
+	// by construction, no two ever compare equal, and <= would only produce
+	// a different result from < for equal keys, which cannot occur here.
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
 
 // dedupeRestrictedSourcesByID collapses in to exactly one restrictedSource
-// per distinct ID, keeping the MOST SEVERE Redistribution value observed
-// for that id (restricted outranks unknown). This is necessary — not just
-// tidying — because trait_vocabulary's primary key is (vocab, version):
-// re-ingesting a vocabulary at a new version leaves the prior version's row
-// (and its trait_value rows) in place, so a bundle's scope can genuinely
-// include trait_value rows from TWO versions of the same vocab id with two
-// different redistribution values (e.g. eive 1.0 unknown, eive 2.0
-// restricted). Without this dedup, findRestrictedSources' caller-visible
-// list would name that id twice — undermining the gate's core promise that
-// an offending source is named, and recorded into
+// per distinct ID, keeping the MOST SEVERE Redistribution value observed for
+// that id (restricted outranks unknown). Defensive: backbone_version,
+// xref_source and name_space each key their own id uniquely, but nothing
+// stops an id from the same being reused across those three tables, and a
+// caller-visible list naming such an id twice would undermine the gate's
+// core promise that an offending source is named, and recorded into
 // bundle_meta.restricted_sources, EXACTLY once.
 func dedupeRestrictedSourcesByID(in []restrictedSource) []restrictedSource {
 	bySeverity := func(r string) int {
@@ -215,8 +190,7 @@ func dedupeRestrictedSourcesByID(in []restrictedSource) []restrictedSource {
 			// queryNonAllowedSources, which already filters out
 			// RedistributionAllowed rows. Kept as an explicit case (not
 			// folded into default) so the exhaustive linter enforces this
-			// switch covers every domain.Redistribution value, the same
-			// convention domain.ScaleFor's per-vocabulary switches use.
+			// switch covers every domain.Redistribution value.
 			return 0
 		default: // any value outside the three known constants (should not occur past ParseRedistribution)
 			return 0
@@ -259,8 +233,8 @@ func dedupeRestrictedSourcesByID(in []restrictedSource) []restrictedSource {
 // queryNonAllowedSources runs query (with args) against src, expecting two
 // columns (id, redistribution), and returns every row whose redistribution
 // is not domain.RedistributionAllowed — the shared scan loop
-// findRestrictedSources' three queries (backbone_version, trait_vocabulary,
-// xref_source) all use.
+// findRestrictedSources' queries (backbone_version, xref_source, name_space)
+// all use.
 func queryNonAllowedSources(ctx context.Context, src *DB, query string, args []any) ([]restrictedSource, error) {
 	rows, err := src.sql.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -297,8 +271,8 @@ func queryNonAllowedSources(ctx context.Context, src *DB, query string, args []a
 //
 // Before copying anything, ExportBundle checks findRestrictedSources: by
 // default (opts.AllowRestricted == false), a bundle whose scope includes
-// data (concepts, trait values or cross-references) from any source that is
-// not domain.RedistributionAllowed is refused
+// data (concepts or cross-references) from any source that is not
+// domain.RedistributionAllowed is refused
 // outright, naming the offending source(s) and their redistribution value
 // — local ingest of those sources is never affected, only export. With
 // opts.AllowRestricted, the export proceeds AND the offending source ids
@@ -421,7 +395,7 @@ const scopeByAreaQuery = `
 	ORDER BY tc.id`
 
 // placeholdersFor returns n comma-joined "?" placeholders for a SQL IN
-// clause. Still used by traits.go (a small, caller-bounded vocab list);
+// clause. Still used by namespace.go (small, caller-bounded lists);
 // bundle.go's own concept/area-code id lists moved to marshalIDs'
 // json_each pattern precisely because they are NOT caller-bounded (an
 // un-scoped export's conceptIDs can be 440k+ — see marshalIDs' doc
@@ -519,13 +493,13 @@ func populateBundle(ctx context.Context, src, bundle *DB, conceptIDs, areaScope 
 }
 
 // copyConceptScopedTables copies every remaining concept_id-keyed table
-// (concept_name, xref, distribution, vernacular, trait_value) scoped by
-// idsJSON, plus xref_source and trait_vocabulary in full (metadata, not concept-scoped —
-// the offline field app needs the Taxonomy/license/source provenance for
-// every trait_value row copied above). Split out of populateBundle purely
-// to keep that function's cyclomatic complexity down; it carries no logic
-// of its own beyond sequencing copyRows calls (copyDistribution is the one
-// exception — see its own doc comment for the area-scoping it does).
+// (concept_name, xref, distribution, vernacular) scoped by idsJSON, plus
+// xref_source in full (metadata, not concept-scoped — the offline field app
+// needs the license/version/source provenance for every xref row copied
+// above). Split out of populateBundle purely to keep that function's
+// cyclomatic complexity down; it carries no logic of its own beyond
+// sequencing copyRows calls (copyDistribution is the one exception — see its
+// own doc comment for the area-scoping it does).
 func copyConceptScopedTables(ctx context.Context, src, bundle *DB, idsJSON string, areaScope []string) error {
 	if err := copyRows(ctx, src, bundle,
 		`SELECT concept_id, name_id, role, homotypic FROM concept_name WHERE concept_id IN (SELECT value FROM json_each(?))`, []any{idsJSON},
@@ -535,9 +509,8 @@ func copyConceptScopedTables(ctx context.Context, src, bundle *DB, idsJSON strin
 
 	// xref_source before xref: xref.source is an FK onto it, and the bundle
 	// connection enforces foreign keys. Copied in full (metadata, not
-	// concept-scoped) for the same reason trait_vocabulary is — the bundle
-	// must carry the license/version/manifest_sha provenance of every xref
-	// row it holds.
+	// concept-scoped) — the bundle must carry the license/version/
+	// manifest_sha provenance of every xref row it holds.
 	if err := copyRows(ctx, src, bundle,
 		`SELECT id, version, license, source_url, ingested_at, manifest_sha, redistribution FROM xref_source`, nil,
 		`INSERT INTO xref_source (id, version, license, source_url, ingested_at, manifest_sha, redistribution) VALUES (?,?,?,?,?,?,?)`); err != nil {
@@ -563,32 +536,20 @@ func copyConceptScopedTables(ctx context.Context, src, bundle *DB, idsJSON strin
 		return err
 	}
 
-	if err := copyRows(ctx, src, bundle,
-		`SELECT concept_id, vocab, vocab_version, dim, value, niche_width, n_systems, resolution FROM trait_value WHERE concept_id IN (SELECT value FROM json_each(?))`, []any{idsJSON},
-		`INSERT INTO trait_value (concept_id, vocab, vocab_version, dim, value, niche_width, n_systems, resolution) VALUES (?,?,?,?,?,?,?,?)`); err != nil {
-		return err
-	}
-
-	if err := copyRows(ctx, src, bundle,
-		`SELECT vocab, version, taxonomy, license, source_url, ingested_at, redistribution FROM trait_vocabulary`, nil,
-		`INSERT INTO trait_vocabulary (vocab, version, taxonomy, license, source_url, ingested_at, redistribution) VALUES (?,?,?,?,?,?,?)`); err != nil {
-		return err
-	}
-
 	// sec_reference SCOPED to the reference spaces the copied concepts
-	// actually name — deliberately NOT copied in full the way xref_source and
-	// trait_vocabulary above are.
+	// actually name — deliberately NOT copied in full the way xref_source
+	// above is.
 	//
-	// The difference is what the rows contain. xref_source and
-	// trait_vocabulary hold provenance ABOUT a source (id, version, license,
-	// source url); sec_reference.title holds harvested CONTENT — the citation
-	// strings lifted out of the source itself. Copying all of them unscoped
-	// would ship 18 citations from a redistribution=unknown source into an
-	// area-scoped bundle whose gate never fired, because CDM concepts carry
-	// no distribution rows and so fall out of scopeConceptIDs entirely: no
-	// refusal, and nothing recorded in bundle_meta.restricted_sources either.
-	// Scoping closes that, and it closes it structurally — a bundle can only
-	// carry a citation for a concept it also carries.
+	// The difference is what the rows contain. xref_source holds provenance
+	// ABOUT a source (id, version, license, source url); sec_reference.title
+	// holds harvested CONTENT — the citation strings lifted out of the
+	// source itself. Copying all of them unscoped would ship 18 citations
+	// from a redistribution=unknown source into an area-scoped bundle whose
+	// gate never fired, because CDM concepts carry no distribution rows and
+	// so fall out of scopeConceptIDs entirely: no refusal, and nothing
+	// recorded in bundle_meta.restricted_sources either. Scoping closes
+	// that, and it closes it structurally — a bundle can only carry a
+	// citation for a concept it also carries.
 	//
 	// Note this applies to a WHOLE-DATABASE export too, not just an
 	// area-scoped one: a sec_reference row that no concept names is dropped
@@ -598,11 +559,10 @@ func copyConceptScopedTables(ctx context.Context, src, bundle *DB, idsJSON strin
 	// Unreachable in practice today, since the CDM ingest only ever writes a
 	// sec_reference it is about to attach to a concept.
 	//
-	// The analogous unscoped copy of xref_source/trait_vocabulary is left
-	// as-is: it is the same SHAPE of leak but only of source metadata, those
-	// tables predate this task, and narrowing them is a change to SP3/SP4
-	// behavior that belongs with its own measurement rather than smuggled in
-	// here.
+	// The analogous unscoped copy of xref_source is left as-is: it is the
+	// same SHAPE of leak but only of source metadata, predates this task,
+	// and narrowing it is a change to SP4 behavior that belongs with its
+	// own measurement rather than smuggled in here.
 	if err := copyRows(ctx, src, bundle,
 		`SELECT id, title FROM sec_reference
 		 WHERE id IN (
@@ -615,8 +575,8 @@ func copyConceptScopedTables(ctx context.Context, src, bundle *DB, idsJSON strin
 	}
 
 	// name_space + name_space_entry (SP9), both SCOPED — deliberately NOT
-	// the unscoped copy xref_source and trait_vocabulary get, for exactly
-	// the reason sec_reference is scoped above: name_space_entry.name holds
+	// the unscoped copy xref_source gets, for exactly the reason
+	// sec_reference is scoped above: name_space_entry.name holds
 	// harvested CONTENT (the spellings lifted out of the source), not
 	// provenance about a source. Scoping it by concept is what makes the
 	// redistribution gate structurally honest — the gate joins through the

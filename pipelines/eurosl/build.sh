@@ -11,7 +11,8 @@
 # EVALUATION USE ONLY, never redistributed in an exported bundle
 # (enforced by the redistribution gate, Task 1).
 #
-# Emits pipe-delimited canonical CSV: taxon|rank|status|accepted_taxon|source_id
+# Emits pipe-delimited canonical CSV:
+# taxon|rank|status|accepted_taxon|source_id|parent_id|parent_rank
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

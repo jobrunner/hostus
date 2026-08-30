@@ -28,6 +28,21 @@ type fakeTranslateRepo struct {
 	fuzzy     []output.MatchCandidate
 	edgesErr  error
 	gotTarget string
+
+	// nameSpaces and nameSpaceEntries back Task 11's target_space=<name
+	// space> branch. Left nil by every other fixture, which is fine:
+	// NameSpaces returning an empty slice makes the new branch a no-op, so
+	// pre-existing tests are unaffected.
+	nameSpaces       []domain.NameSpaceMeta
+	nameSpaceEntries map[string][]domain.NameSpaceEntry
+}
+
+func (f *fakeTranslateRepo) NameSpaces(_ context.Context) ([]domain.NameSpaceMeta, error) {
+	return f.nameSpaces, nil
+}
+
+func (f *fakeTranslateRepo) NameSpaceEntries(_ context.Context, conceptID string, _ []string) ([]domain.NameSpaceEntry, error) {
+	return f.nameSpaceEntries[conceptID], nil
 }
 
 func (f *fakeTranslateRepo) SecReferenceByID(_ context.Context, id string) (domain.SecReference, error) {
@@ -55,6 +70,19 @@ func (f *fakeTranslateRepo) MatchExact(_ context.Context, canon string) ([]outpu
 
 func (f *fakeTranslateRepo) MatchFuzzyCandidates(context.Context, string, int, string, string) ([]output.MatchCandidate, error) {
 	return f.fuzzy, nil
+}
+
+// Concept is a minimal stub satisfying Task 10's matchNamesFiltered, which
+// now calls Repository.Concept for every resolved match to fill in
+// Classification. This fake's Translate-only concepts carry none, so
+// Family/OrderName/ClassName stay their zero value — irrelevant here, since
+// no Translate test asserts on Classification.
+func (f *fakeTranslateRepo) Concept(_ context.Context, id string) (*domain.Concept, []output.SynonymName, []domain.Xref, []domain.Distribution, error) {
+	c, ok := f.concepts[id]
+	if !ok {
+		return nil, nil, nil, nil, fmt.Errorf("concept %q: %w", id, domain.ErrNotFound)
+	}
+	return &c, nil, nil, nil, nil
 }
 
 // --- fixtures --------------------------------------------------------------
@@ -575,5 +603,117 @@ func TestTranslateSurfacesRepositoryErrors(t *testing.T) {
 	repo.edgesErr = sentinel
 	if _, err := application.Translate(context.Background(), repo, byConceptID(t)); !errors.Is(err, sentinel) {
 		t.Errorf("error = %v, want the repository error", err)
+	}
+}
+
+// --- Task 11: target_space as a NAME SPACE (eurosl/germansl/wcvp) ---------
+
+// TestTranslate_AcceptsNameSpaceAsTargetSpace pins that target_space="germansl"
+// is answered from name_space_entry, not treated as an unknown
+// sec_reference — the ordering bug the task exists to fix: Translate used to
+// call SecReferenceByID("germansl") first and 404 immediately.
+func TestTranslate_AcceptsNameSpaceAsTargetSpace(t *testing.T) {
+	repo := translateRepo()
+	repo.nameSpaces = []domain.NameSpaceMeta{{ID: "germansl"}}
+	repo.nameSpaceEntries = map[string][]domain.NameSpaceEntry{
+		"cdm:concept:roth": {
+			{Space: "germansl", ExtID: "1", Name: "Weiß-Tanne", Status: domain.NameSpaceStatusAccepted},
+		},
+	}
+
+	res := translate(t, repo, application.TranslateRequest{ConceptID: "cdm:concept:roth", TargetSec: "germansl"})
+
+	if res.Entry.Mode != application.EntryModeConceptID {
+		t.Errorf("Entry.Mode = %q, want %q", res.Entry.Mode, application.EntryModeConceptID)
+	}
+	if res.NameSpaceTranslation == nil {
+		t.Fatal("NameSpaceTranslation = nil, want set")
+	}
+	if res.NameSpaceTranslation.NameSpace != "germansl" {
+		t.Errorf("NameSpace = %q, want %q", res.NameSpaceTranslation.NameSpace, "germansl")
+	}
+	if res.NameSpaceTranslation.Name != "Weiß-Tanne" {
+		t.Errorf("Name = %q, want %q", res.NameSpaceTranslation.Name, "Weiß-Tanne")
+	}
+	if res.NameSpaceTranslation.AggregatePolicy != "" {
+		t.Errorf("AggregatePolicy = %q, want empty (plain species query)", res.NameSpaceTranslation.AggregatePolicy)
+	}
+	// A namespace comparison has no concept_relation edge to render: no
+	// is_equality/relation_from_source in this shape at all, so Candidates
+	// stays empty and TargetSec stays the zero value.
+	if len(res.Candidates) != 0 {
+		t.Errorf("Candidates = %v, want empty for a name-space target", res.Candidates)
+	}
+	if res.TargetSec != (domain.SecReference{}) {
+		t.Errorf("TargetSec = %+v, want zero value for a name-space target", res.TargetSec)
+	}
+}
+
+// TestTranslate_NameSpaceTargetCarriesAggregatePolicy pins that an aggregate
+// query into a name space runs through domain.ResolveTargetSpace exactly as
+// UC4 specifies, surfacing AggregatePolicyKnown alongside the aggregate
+// spelling.
+func TestTranslate_NameSpaceTargetCarriesAggregatePolicy(t *testing.T) {
+	repo := translateRepo()
+	repo.concepts["cdm:concept:roth"] = conceptIn("cdm:concept:roth", "Festuca ovina aggr.", secRothmaler)
+	repo.nameSpaces = []domain.NameSpaceMeta{{ID: "germansl"}}
+	repo.nameSpaceEntries = map[string][]domain.NameSpaceEntry{
+		"cdm:concept:roth": {
+			{Space: "germansl", ExtID: "1", Name: "Festuca ovina", Status: domain.NameSpaceStatusAccepted},
+			{Space: "germansl", ExtID: "2", Name: "Festuca ovina aggr.", Aggregate: true, Status: domain.NameSpaceStatusAccepted},
+		},
+	}
+
+	res := translate(t, repo, application.TranslateRequest{ConceptID: "cdm:concept:roth", TargetSec: "germansl"})
+
+	if res.NameSpaceTranslation == nil {
+		t.Fatal("NameSpaceTranslation = nil, want set")
+	}
+	if res.NameSpaceTranslation.Name != "Festuca ovina aggr." {
+		t.Errorf("Name = %q, want the aggregate spelling", res.NameSpaceTranslation.Name)
+	}
+	if res.NameSpaceTranslation.AggregatePolicy != domain.AggregatePolicyKnown {
+		t.Errorf("AggregatePolicy = %q, want %q", res.NameSpaceTranslation.AggregatePolicy, domain.AggregatePolicyKnown)
+	}
+}
+
+// TestTranslate_WCVPTargetIsTrivialIdentityForAWCVPSource pins the
+// documented "wcvp" special case (§9 names it as valid, but
+// Repository.NameSpaces never lists it — it's a backbone, not a name
+// space): a source that is ALREADY a WCVP concept translates to itself.
+func TestTranslate_WCVPTargetIsTrivialIdentityForAWCVPSource(t *testing.T) {
+	repo := translateRepo()
+	wcvp := conceptIn("wcvp:concept:1", "Salsola kali", "")
+	repo.concepts[wcvp.ID] = wcvp
+
+	res := translate(t, repo, application.TranslateRequest{ConceptID: wcvp.ID, TargetSec: "wcvp"})
+
+	if res.NameSpaceTranslation == nil {
+		t.Fatal("NameSpaceTranslation = nil, want set")
+	}
+	if res.NameSpaceTranslation.NameSpace != "wcvp" {
+		t.Errorf("NameSpace = %q, want %q", res.NameSpaceTranslation.NameSpace, "wcvp")
+	}
+	if res.NameSpaceTranslation.Name != "Salsola kali" {
+		t.Errorf("Name = %q, want %q", res.NameSpaceTranslation.Name, "Salsola kali")
+	}
+}
+
+// TestTranslate_WCVPTargetFromNativeNameSpaceConceptIsNotFound documents the
+// scope gap the task deliberately leaves open: name_space_entry.concept_id
+// is structurally always a WCVP concept (Fall A only attaches namespace
+// spellings TO WCVP concepts), so there is no reverse lookup from a native
+// eurosl/germansl concept back to WCVP today. The request falls through to
+// the existing "unknown target space" NOT_FOUND, unchanged.
+func TestTranslate_WCVPTargetFromNativeNameSpaceConceptIsNotFound(t *testing.T) {
+	repo := translateRepo()
+	native := conceptIn("eurosl:concept:1", "Salsola kali aggr.", "")
+	repo.concepts[native.ID] = native
+
+	_, err := application.Translate(context.Background(), repo, application.TranslateRequest{
+		ConceptID: native.ID, TargetSec: "wcvp",
+	})
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("error = %v, want domain.ErrNotFound", err)
 	}
 }

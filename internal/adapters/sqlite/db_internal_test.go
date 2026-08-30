@@ -21,11 +21,23 @@ var wantTables = []string{
 	"xref_source",
 	"vernacular",
 	"distribution",
-	"trait_value",
-	"trait_vocabulary",
 	"concept_relation",
 	"fts_name_map",
 	"fts_name",
+}
+
+// seedBackboneVersion is the exact domain.BackboneVersion testdata/seed.sql
+// writes for "wcvp" via raw SQL. Tests that need to go through BeginIngest
+// (e.g. to reach other ingestTx writers) pass this so the INSERT OR REPLACE
+// it issues for backbone_version is a byte-for-byte no-op against the seeded
+// row, rather than silently mutating it.
+var seedBackboneVersion = domain.BackboneVersion{
+	ID:          "wcvp",
+	Version:     "2026-06-15",
+	License:     "CC-BY-4.0",
+	SourceURL:   "https://example.org/wcvp.zip",
+	IngestedAt:  "2026-07-31T00:00:00Z",
+	ManifestSHA: "deadbeef",
 }
 
 func openTestDB(t *testing.T) *DB {
@@ -300,12 +312,12 @@ func TestIngestTx_UpsertNameConceptLinkXrefDistribution(t *testing.T) {
 }
 
 // TestIngestTx_UpsertNameConceptWithOtherRank_PersistsRankVerbatim is the
-// fix-round-1 regression: an OTHER-ranked Name/Concept (WCVP's "proles",
+// fix-round-1 regression: an OTHER-ranked Name/Concept (WCVP's "lusus",
 // via domain.ParseRankLenient) must land its RankVerbatim in the raw
 // name.rank_verbatim/taxon_concept.rank_verbatim columns, not just live in
 // the in-process domain.Name/Concept for the duration of the ingest run —
 // otherwise the moment the process exits, hostus can no longer tell
-// "proles" from "lusus", only "OTHER" (spec §A.1: a nomenclature service
+// "lusus" from "stirps", only "OTHER" (spec §A.1: a nomenclature service
 // must not lose which name/rank something actually is).
 func TestIngestTx_UpsertNameConceptWithOtherRank_PersistsRankVerbatim(t *testing.T) {
 	db := openTestDB(t)
@@ -316,8 +328,8 @@ func TestIngestTx_UpsertNameConceptWithOtherRank_PersistsRankVerbatim(t *testing
 		t.Fatalf("BeginIngest: unexpected error: %v", err)
 	}
 
-	name := domain.Name{ID: "n-proles", Canonical: "Paeonia corallina proles ovatifolia", Rank: domain.RankOther, RankVerbatim: "proles"}
-	concept := domain.Concept{ID: "c-proles", BackboneID: "wcvp", AcceptedName: name, Rank: domain.RankOther, RankVerbatim: "proles", Status: domain.StatusSynonym}
+	name := domain.Name{ID: "n-lusus", Canonical: "Paeonia corallina lusus ovatifolia", Rank: domain.RankOther, RankVerbatim: "lusus"}
+	concept := domain.Concept{ID: "c-lusus", BackboneID: "wcvp", AcceptedName: name, Rank: domain.RankOther, RankVerbatim: "lusus", Status: domain.StatusSynonym}
 
 	if err := tx.UpsertName(name); err != nil {
 		t.Fatalf("UpsertName: unexpected error: %v", err)
@@ -330,17 +342,17 @@ func TestIngestTx_UpsertNameConceptWithOtherRank_PersistsRankVerbatim(t *testing
 	}
 
 	var nameVerbatim, conceptVerbatim string
-	if err := db.sql.QueryRow(`SELECT rank_verbatim FROM name WHERE id = ?`, "n-proles").Scan(&nameVerbatim); err != nil {
+	if err := db.sql.QueryRow(`SELECT rank_verbatim FROM name WHERE id = ?`, "n-lusus").Scan(&nameVerbatim); err != nil {
 		t.Fatalf("reading name.rank_verbatim: unexpected error: %v", err)
 	}
-	if nameVerbatim != "proles" {
-		t.Errorf("name.rank_verbatim = %q, want %q", nameVerbatim, "proles")
+	if nameVerbatim != "lusus" {
+		t.Errorf("name.rank_verbatim = %q, want %q", nameVerbatim, "lusus")
 	}
-	if err := db.sql.QueryRow(`SELECT rank_verbatim FROM taxon_concept WHERE id = ?`, "c-proles").Scan(&conceptVerbatim); err != nil {
+	if err := db.sql.QueryRow(`SELECT rank_verbatim FROM taxon_concept WHERE id = ?`, "c-lusus").Scan(&conceptVerbatim); err != nil {
 		t.Fatalf("reading taxon_concept.rank_verbatim: unexpected error: %v", err)
 	}
-	if conceptVerbatim != "proles" {
-		t.Errorf("taxon_concept.rank_verbatim = %q, want %q", conceptVerbatim, "proles")
+	if conceptVerbatim != "lusus" {
+		t.Errorf("taxon_concept.rank_verbatim = %q, want %q", conceptVerbatim, "lusus")
 	}
 }
 
@@ -500,49 +512,6 @@ func TestOpen_ReaderSeesCommittedRowAlongsideOpenWriter(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].ID != "wcvp" {
 		t.Fatalf("BackboneVersions() = %+v, want exactly the committed %q row (uncommitted 'wfo' must stay invisible)", got, "wcvp")
-	}
-}
-
-// TestBeginTraitIngest_WritesNoBackboneVersion pins the adapter half of the
-// trait/backbone separation: BeginIngest records its argument in
-// backbone_version, BeginTraitIngest must record nothing there — a trait
-// vocabulary is not a taxonomic backbone, and backbone_version is served as
-// API provenance and gates /health/ready.
-func TestBeginTraitIngest_WritesNoBackboneVersion(t *testing.T) {
-	db := openTestDB(t)
-	ctx := context.Background()
-
-	tx, err := db.BeginTraitIngest(ctx)
-	if err != nil {
-		t.Fatalf("BeginTraitIngest: unexpected error: %v", err)
-	}
-	meta := domain.TraitVocabMeta{Vocab: domain.VocabEIVE, Version: "1.0", Taxonomy: "euromed-via-eurosl", License: "CC-BY-4.0"}
-	if err := tx.UpsertTraitVocabulary(meta); err != nil {
-		t.Fatalf("UpsertTraitVocabulary: unexpected error: %v", err)
-	}
-	// Finalize must be a harmless no-op here: this transaction has no
-	// backbone, so there are no concepts of its own to FTS-index.
-	if err := tx.Finalize(); err != nil {
-		t.Fatalf("Finalize: unexpected error: %v", err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatalf("Commit: unexpected error: %v", err)
-	}
-
-	got, err := db.BackboneVersions(ctx)
-	if err != nil {
-		t.Fatalf("BackboneVersions: unexpected error: %v", err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("BackboneVersions() = %v, want empty after a trait-only ingest", got)
-	}
-
-	vocabs, err := db.TraitVocabularies(ctx)
-	if err != nil {
-		t.Fatalf("TraitVocabularies: unexpected error: %v", err)
-	}
-	if len(vocabs) != 1 {
-		t.Fatalf("len(TraitVocabularies) = %d, want 1 — the vocabulary itself must still be recorded", len(vocabs))
 	}
 }
 
@@ -742,4 +711,51 @@ func TestOpen_MigratesXrefSourceColumnOntoAPreExistingDatabase(t *testing.T) {
 		t.Fatalf("Open(already-migrated): unexpected error: %v", err)
 	}
 	_ = again.Close()
+}
+
+// TestSchema_ClassificationColumnsExist proves taxon_concept carries the
+// three classification columns above family (Fall B — see schema.sql's doc
+// comment on taxon_concept). verifySchemaColumns already guards this at
+// startup, but this test pins the exact column names down independently of
+// that generic mechanism.
+func TestSchema_ClassificationColumnsExist(t *testing.T) {
+	db := openTestDB(t)
+	rows, err := db.sql.Query(`PRAGMA table_info(taxon_concept)`)
+	if err != nil {
+		t.Fatalf("PRAGMA table_info: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	cols := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		cols[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterating table_info rows: %v", err)
+	}
+	for _, want := range []string{"family", "order_name", "class_name"} {
+		if !cols[want] {
+			t.Errorf("taxon_concept missing column %q", want)
+		}
+	}
+}
+
+// TestSchema_ConceptAggregateAndAgreementTablesExist proves the two new
+// tables for Fall B aggregate membership (concept_aggregate) and the
+// precomputed namespace comparison (concept_agreement) are created by Open.
+func TestSchema_ConceptAggregateAndAgreementTablesExist(t *testing.T) {
+	db := openTestDB(t)
+	for _, table := range []string{"concept_aggregate", "concept_agreement"} {
+		var name string
+		err := db.sql.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name)
+		if err != nil {
+			t.Errorf("table %q not found: %v", table, err)
+		}
+	}
 }

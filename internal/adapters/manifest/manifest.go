@@ -41,11 +41,17 @@ type Backbone struct {
 	Redistribution string `yaml:"redistribution" json:"redistribution"`
 }
 
-// TraitVocabulary is one pinned trait-vocabulary entry (spec §D.2): an
-// immutable version/license/source-URL identity plus the local filesystem
-// path to its canonical trait CSV (see internal/adapters/traits), resolved
-// to an absolute path relative to the manifest file by Parse, exactly like
-// Backbone.Path.
+// TraitVocabulary is one pinned trait-vocabulary manifest entry (spec §D.2):
+// an immutable version/license/source-URL identity plus the local
+// filesystem path to its canonical trait CSV, resolved to an absolute path
+// relative to the manifest file by Parse, exactly like Backbone.Path.
+//
+// The traits subsystem itself (reader, ingest use case, HTTP endpoint) was
+// removed and transferred to situs (Teilprojekt 2) — see CHANGELOG.md
+// "Traits-Subsystem entfernt". This struct and Dataset.TraitVocabularies
+// deliberately remain: a manifest may still declare a trait_vocabularies
+// section (it is schema-valid and parses), but nothing in hostus reads it
+// anymore — internal/app.Ingest simply never iterates it.
 type TraitVocabulary struct {
 	ID        string `yaml:"id" json:"id"`
 	Version   string `yaml:"version" json:"version"`

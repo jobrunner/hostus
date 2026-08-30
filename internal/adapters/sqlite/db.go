@@ -73,6 +73,10 @@ func Open(path string) (*DB, error) {
 		_ = sqlDB.Close()
 		return nil, err
 	}
+	if err := migrateTaxonConceptClassification(context.Background(), sqlDB); err != nil {
+		_ = sqlDB.Close()
+		return nil, err
+	}
 	if err := verifySchemaColumns(context.Background(), sqlDB); err != nil {
 		_ = sqlDB.Close()
 		return nil, err
@@ -554,6 +558,28 @@ func migrateNameSpaceEntryStatus(ctx context.Context, sqlDB *sql.DB) error {
 	return addColumnIfMissing(ctx, sqlDB, "name_space_entry", "status", "TEXT NOT NULL DEFAULT ''")
 }
 
+// migrateTaxonConceptClassification adds taxon_concept.family/order_name/
+// class_name to an index built before they existed. Without it
+// verifySchemaColumns would refuse to open such a database at all, since the
+// embedded schema now declares the columns and CREATE TABLE IF NOT EXISTS
+// never adds a column to an existing table.
+//
+// Existing rows keep NULL — "classification not recorded" — which mirrors
+// the schema's own NULL-means-unknown rule for these columns (never guessed).
+// Only a re-ingest fills them.
+func migrateTaxonConceptClassification(ctx context.Context, sqlDB *sql.DB) error {
+	if err := addColumnIfMissing(ctx, sqlDB, "taxon_concept", "family", "TEXT"); err != nil {
+		return fmt.Errorf("sqlite: migrating taxon_concept.family: %w", err)
+	}
+	if err := addColumnIfMissing(ctx, sqlDB, "taxon_concept", "order_name", "TEXT"); err != nil {
+		return fmt.Errorf("sqlite: migrating taxon_concept.order_name: %w", err)
+	}
+	if err := addColumnIfMissing(ctx, sqlDB, "taxon_concept", "class_name", "TEXT"); err != nil {
+		return fmt.Errorf("sqlite: migrating taxon_concept.class_name: %w", err)
+	}
+	return nil
+}
+
 // Close releases the underlying database handle.
 func (db *DB) Close() error {
 	return db.sql.Close()
@@ -658,6 +684,21 @@ func nullString(s string) any {
 		return nil
 	}
 	return s
+}
+
+// conceptExists reports whether id is a known taxon_concept, so a reader can
+// distinguish "concept exists but has none of what was asked for" (empty
+// slice, nil error) from "concept unknown" (domain.ErrNotFound).
+func (db *DB) conceptExists(ctx context.Context, id string) (bool, error) {
+	var one int
+	err := db.sql.QueryRowContext(ctx, `SELECT 1 FROM taxon_concept WHERE id = ?`, id).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (t *ingestTx) UpsertName(n domain.Name) error {
@@ -806,61 +847,6 @@ func (t *ingestTx) Finalize() error {
 	return nil
 }
 
-// nullableFloat converts an optional *float64 into a driver value SQLite
-// treats as NULL when the pointer is nil. This is the write-side of the nil
-// vs 0.0 distinction domain.TraitValue documents: a nil NicheWidth must
-// become SQL NULL, never a literal 0.0.
-func nullableFloat(f *float64) any {
-	if f == nil {
-		return nil
-	}
-	return *f
-}
-
-// nullableInt converts an optional *int into a driver value SQLite treats
-// as NULL when the pointer is nil (the int counterpart of nullableFloat,
-// for TraitValue.NSystems).
-func nullableInt(i *int) any {
-	if i == nil {
-		return nil
-	}
-	return *i
-}
-
-// AddTraitValue writes one trait_value row for conceptID. tv.NicheWidth and
-// tv.NSystems are written as SQL NULL when nil, per the pointer semantics
-// domain.TraitValue documents — never coerced to 0/0.0. tv.Resolution
-// follows the same "absence is information" rule via nullString: an empty
-// Resolution (an exact canonical match) is stored as NULL, not as ”.
-func (t *ingestTx) AddTraitValue(conceptID string, tv domain.TraitValue) error {
-	_, err := t.tx.ExecContext(t.ctx, `
-		INSERT OR REPLACE INTO trait_value (concept_id, vocab, vocab_version, dim, value, niche_width, n_systems, resolution)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		conceptID, string(tv.Vocab), tv.VocabVersion, string(tv.Dim), tv.Value, nullableFloat(tv.NicheWidth), nullableInt(tv.NSystems), nullString(tv.Resolution),
-	)
-	if err != nil {
-		return fmt.Errorf("sqlite: adding trait value %s/%s/%s for concept %q: %w", tv.Vocab, tv.VocabVersion, tv.Dim, conceptID, err)
-	}
-	return nil
-}
-
-// UpsertTraitVocabulary records one (vocab, version) metadata row. ingested_at
-// is stamped with the current time here rather than taken from meta (which
-// carries no such field) — this mirrors ExportBundle's bundle_meta pattern,
-// where provenance/timing metadata is orthogonal to the domain-level fields
-// callers construct.
-func (t *ingestTx) UpsertTraitVocabulary(meta domain.TraitVocabMeta) error {
-	_, err := t.tx.ExecContext(t.ctx, `
-		INSERT OR REPLACE INTO trait_vocabulary (vocab, version, taxonomy, license, source_url, ingested_at, redistribution)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		string(meta.Vocab), meta.Version, meta.Taxonomy, meta.License, meta.SourceURL, time.Now().UTC().Format(time.RFC3339), string(meta.Redistribution),
-	)
-	if err != nil {
-		return fmt.Errorf("sqlite: upserting trait vocabulary %s/%s: %w", meta.Vocab, meta.Version, err)
-	}
-	return nil
-}
-
 // UpsertSecReference records one sec. reference space (SP5). The title is
 // written verbatim; there is no normalisation, because a citation IS its
 // spelling.
@@ -895,10 +881,9 @@ func (t *ingestTx) AddConceptRelation(fromID, toID string, rel domain.Relation, 
 	return nil
 }
 
-// UpsertXrefSource records one xref-source provenance row, the xref
-// counterpart of UpsertTraitVocabulary. ingested_at is stamped with the
-// current time here for the same reason it is there: provenance/timing
-// metadata is orthogonal to the domain-level fields callers construct.
+// UpsertXrefSource records one xref-source provenance row. ingested_at is
+// stamped with the current time here rather than taken from meta: provenance/
+// timing metadata is orthogonal to the domain-level fields callers construct.
 func (t *ingestTx) UpsertXrefSource(meta domain.XrefSourceMeta) error {
 	_, err := t.tx.ExecContext(t.ctx, `
 		INSERT OR REPLACE INTO xref_source (id, version, license, source_url, ingested_at, manifest_sha, redistribution)

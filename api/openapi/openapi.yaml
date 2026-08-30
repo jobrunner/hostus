@@ -14,16 +14,18 @@
 # SP1 adds the local SQLite/FTS5-backed `/v1/concept/{id}`, `/v1/xref` and
 # `/v1/match` endpoints on top of the SP0 health/metrics skeleton. SP2 adds
 # the area-/rank-filtered, priority-ranked `GET /v1/suggest` autosuggest
-# endpoint. SP3 adds `GET /v1/concept/{id}/traits` (EIVE/Tichý/Midolo
-# ecological indicator values, grouped per vocabulary, per-value scale).
-# Their shapes below mirror internal/adapters/http's DTOs exactly — no
-# aspirational fields.
+# endpoint. Their shapes below mirror internal/adapters/http's DTOs exactly
+# — no aspirational fields.
+#
+# GET /v1/concept/{id}/traits (SP3's EIVE/Tichý/Midolo ecological indicator
+# values) was removed — traits subsystem transferred to situs (Teilprojekt
+# 2), see CHANGELOG "Traits-Subsystem entfernt".
 openapi: 3.0.3
 info:
   title: hostus API
   description: >-
-    Multi-Backbone-Namens- und Merkmalsdienst für Gefäßpflanzen-Taxonomie.
-    Lokaler, schreibgeschützter Namens- und Merkmalsdienst für ein
+    Multi-Backbone-Namensdienst für Gefäßpflanzen-Taxonomie.
+    Lokaler, schreibgeschützter Namensdienst für ein
     Frontend-Autosuggest-Feld, gespeist aus einem eigenen SQLite/FTS5-Index
     (aktuell: WCVP/POWO; COL XR, Euro+Med, FloraVeg.EU folgen). GBIF ist
     höchstens eine von mehreren Ingest-/Enrichment-Quellen, kein
@@ -271,6 +273,22 @@ paths:
             verdrängen. Eine nicht ingestierte Backbone liefert 400.
           schema:
             type: string
+        - name: match_mode
+          in: query
+          required: false
+          description: >-
+            Steuert, wie streng ein Kandidatenname `q` treffen muss. `` und
+            `name_start` (Standard, gleichwertig) verlangen, dass mindestens
+            eines der Namenstoken MIT `q` beginnt — die ursprüngliche,
+            engere Autosuggest-Semantik. `anywhere` stellt das reine FTS5-
+            Präfix-Verhalten wieder her, das `q` irgendwo im indexierten
+            Text (nicht nur am Tokenanfang) treffen lässt und dadurch mehr,
+            aber weniger präzise Treffer liefert. Jeder andere Wert liefert
+            400 und nennt den Wert.
+          schema:
+            type: string
+            enum: [name_start, anywhere]
+            default: name_start
       responses:
         '200':
           description: Priorisierte, gekürzte Liste von Autosuggest-Kandidaten.
@@ -280,63 +298,6 @@ paths:
                 $ref: '#/components/schemas/SuggestResponse'
         '400':
           description: '`q` fehlt/leer, ein `rank`-Token ist unbekannt, oder `limit` ist nicht numerisch.'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /v1/concept/{id}/traits:
-    get:
-      operationId: getConceptTraits
-      summary: Merkmalswerte (Traits) eines Concepts
-      description: >-
-        Liefert alle für ein Concept ingestierten Merkmalswerte, gruppiert
-        PRO Vokabular (EIVE, Tichý et al. 2023, Midolo et al. 2023) — nie
-        vokabularübergreifend zusammengeführt, da die Taxonomie-Namensräume
-        der Vokabulare nachweislich divergieren. Jeder Wert trägt seine
-        eigene `scale` (Minimum, Maximum, ob normalisiert), da selbst
-        innerhalb eines Vokabulars die Skalen pro Dimension abweichen
-        können (Tichý: T 1–12, L 1–9) — ein einzelnes Set-weites `scale`
-        wäre für mindestens eine Dimension falsch. Ein unbekanntes Concept
-        liefert 404; ein bekanntes Concept ohne Merkmalswerte liefert 200
-        mit leerem `traits`-Array (kein 404).
-      tags:
-        - traits
-      parameters:
-        - name: id
-          in: path
-          required: true
-          description: >-
-            Concept-ID im Format `<backbone-id>:concept:<taxon-id>`, z. B.
-            `wcvp:concept:405825`.
-          schema:
-            type: string
-        - name: vocab
-          in: query
-          required: false
-          description: >-
-            Kommagetrennte Liste von Vokabular-Token (`eive`, `tichy2023`,
-            `midolo2023`). Leer bedeutet alle ingestierten Vokabulare für
-            dieses Concept. Ein unbekanntes Token liefert 400.
-          schema:
-            type: string
-      responses:
-        '200':
-          description: >-
-            Merkmalswerte des Concepts, gruppiert pro Vokabular (ggf. ein
-            leeres `traits`-Array).
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TraitsResponse'
-        '400':
-          description: Ein `vocab`-Token ist unbekannt.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: Unbekannte Concept-ID.
           content:
             application/json:
               schema:
@@ -509,9 +470,11 @@ paths:
       responses:
         '200':
           description: >-
-            Übersetzungsergebnis. `result` ist `translated` oder
-            `no_relation_recorded`; im zweiten Fall ist `candidates` ein
-            leeres Array (nicht weggelassen).
+            Übersetzungsergebnis. `result` ist `translated`,
+            `no_relation_recorded` oder `name_space_translation`; bei
+            `no_relation_recorded` ist `candidates` ein leeres Array
+            (nicht weggelassen), bei `name_space_translation` liegt die
+            Antwort in `name_space_translation` statt in `candidates`.
           content:
             application/json:
               schema:
@@ -653,10 +616,6 @@ tags:
     description: >-
       Taxonomie-Auflösung gegen den lokalen SQLite/FTS5-Index (Concept-
       Lookup, Cross-Reference-Auflösung, Batch-Namensabgleich, Autosuggest).
-  - name: traits
-    description: >-
-      Ökologische Merkmalswerte (EIVE, Tichý et al. 2023, Midolo et al.
-      2023), pro Vokabular gruppiert und nie zusammengeführt.
 
 components:
   schemas:
@@ -769,17 +728,27 @@ components:
             type: array
             items:
               type: string
-        classification:
+        parent_chain:
           type: array
           description: >-
-            Übergeordnete Klassifikationskette, ROOT-FIRST (Index 0 = oberste
+            Übergeordnete Vorfahren-Kette, ROOT-FIRST (Index 0 = oberste
             erreichte Vorfahren-Ebene, letztes Element = direktes Elternteil
             dieses Concepts). Wird durch Verfolgen von `parent_id` ermittelt,
             bis zu einer festen Tiefenbegrenzung (10 Hops), damit eine
             zyklische/korrupte Kette nie hängen bleibt. Fehlt/leer, wenn kein
-            Eltern-Concept ingestiert wurde.
+            Eltern-Concept ingestiert wurde. Heißt bewusst NICHT
+            `classification` — dieser Schlüssel ist seit dem Namensraum-/
+            Klassifikations-Redesign das neue `classification`-Objekt unten.
           items:
             $ref: '#/components/schemas/ClassificationEntry'
+        classification:
+          allOf:
+            - $ref: '#/components/schemas/ClassificationInfo'
+          description: >-
+            Familie/Ordnung/Klasse oberhalb von Family (aus dem
+            Namensraum-Crosswalk, Task 4). Fehlt vollständig, wenn keines der
+            drei Felder bekannt ist — nie ein Objekt mit lauter leeren
+            Strings.
         synonyms:
           type: array
           items:
@@ -800,6 +769,93 @@ components:
             sec-tragendes (CDM-)Concept present — so sind zwei gleichnamige
             Konzepte unterscheidbar (SP5). Fehlt bei einem WCVP-Concept ohne
             `sec_reference` (SP1-Form unverändert).
+        vernacular_names:
+          type: array
+          description: >-
+            Alle ingestierten Vernakularnamen. Ergänzt (ersetzt nicht)
+            `vernacular_de` oben. Fehlt/leer, wenn keine ingestiert wurden.
+          items:
+            $ref: '#/components/schemas/VernacularNameEntry'
+        members:
+          type: array
+          description: >-
+            WCVP-Mitglieder eines Fall-B-Sammel-/Aggregat-Concepts (Rang
+            `SPECIES_AGGREGATE`, `GENUS_AGGREGATE`, `SECTION`, `SUBSECTION`
+            oder `SUBGENUS`). Nur bei einem dieser Ränge present, sonst
+            weggelassen — niemals gleichzeitig mit `aggregate_memberships`.
+          items:
+            $ref: '#/components/schemas/AggregateMember'
+        aggregate_memberships:
+          type: array
+          description: >-
+            Fall-A-Rückverweis: jeder Namensraum, dessen Sammel-Concept
+            dieses SPECIES-Concept einschließt. Nur für Rang `SPECIES`
+            present, wenn mindestens ein `NameSpaceEntry` mit `aggregate =
+            true` existiert; sonst weggelassen.
+          items:
+            $ref: '#/components/schemas/AggregateMembership'
+
+    ClassificationInfo:
+      type: object
+      description: >-
+        Familie/Ordnung/Klasse oberhalb von Family. Jedes Unterfeld ist
+        einzeln optional (z. B. nur `family` bekannt).
+      properties:
+        family:
+          type: string
+          example: Asteraceae
+        order:
+          type: string
+          example: Asterales
+        class:
+          type: string
+          example: Magnoliopsida
+
+    VernacularNameEntry:
+      type: object
+      required: [language, name]
+      properties:
+        language:
+          type: string
+          example: de
+        name:
+          type: string
+          example: Rauhaariges Alant
+        source:
+          type: string
+          description: >-
+            Herkunft dieses Vernakularnamens. Aktuell hartkodiert
+            `"germansl"` — der GermanSL-Ingest ist derzeit der einzige
+            Schreiber der `vernacular`-Tabelle.
+          example: germansl
+
+    AggregateMember:
+      type: object
+      required: [concept_id, name]
+      properties:
+        concept_id:
+          type: string
+          example: 'wcvp:concept:123'
+        name:
+          type: string
+          example: Salsola kali
+
+    AggregateMembership:
+      type: object
+      required: [name_space]
+      properties:
+        name_space:
+          type: string
+          example: eurosl
+        aggregate_concept_id:
+          type: string
+          description: >-
+            Fehlt, wenn sich das Sammel-Concept dieses Namensraums nicht
+            auflösen ließ (bekannte Lücke, siehe Task 9's Report).
+          example: 'eurosl:concept:258049b6...'
+        aggregate_name:
+          type: string
+          example: Salsola kali aggr.
 
     SynonymDetail:
       type: object
@@ -1017,7 +1073,17 @@ components:
             verbatim-Pfad). Bei `concept_id` ignoriert. Unbekannt → `400`.
         target_space:
           type: string
-          description: Id des Ziel-`sec.`-Referenzraums.
+          description: >-
+            Id des Ziel-`sec.`-Referenzraums ODER eines ingestierten
+            NAME SPACE (`eurosl`, `germansl`, ...) ODER `wcvp`. Ein
+            Namensraum-Ziel liefert `name_space_translation` statt
+            `candidates`/`is_equality` — dort gibt es keine
+            `concept_relation`-Kante, die diese CDM-spezifischen Felder
+            sinnvoll füllen könnte. `wcvp` als Ziel ist nur für eine Quelle
+            aufgelöst, die selbst schon ein WCVP-Konzept ist (triviale
+            Identität); aus einem nativen `eurosl`/`germansl`-Konzept
+            zurück nach `wcvp` gibt es aktuell keinen Pfad im Schema
+            (`404`).
         max_hops:
           type: integer
           description: >-
@@ -1271,12 +1337,14 @@ components:
           description: Immer 1 — die Ein-Hop-Grenze wird ausgesprochen, nicht angenommen.
         result:
           type: string
-          enum: [translated, no_relation_recorded]
+          enum: [translated, no_relation_recorded, name_space_translation]
         candidates:
           type: array
           description: >-
             Bei `no_relation_recorded` ein LEERES Array, nie weggelassen —
-            die leere Antwort ist die Antwort.
+            die leere Antwort ist die Antwort. Bei
+            `result: name_space_translation` ebenfalls leer: dort steht die
+            Antwort in `name_space_translation`, nicht hier.
           items:
             $ref: '#/components/schemas/TranslateCandidate'
         unrelated_name_candidates:
@@ -1287,6 +1355,8 @@ components:
             `candidates` iteriert, nie einen Namensraten sieht.
           items:
             $ref: '#/components/schemas/TranslateNameCandidate'
+        name_space_translation:
+          $ref: '#/components/schemas/NameSpaceTranslation'
         requires_review:
           type: boolean
         note:
@@ -1295,6 +1365,32 @@ components:
           type: object
           additionalProperties:
             type: string
+    NameSpaceTranslation:
+      type: object
+      description: >-
+        Nur vorhanden, wenn `target_space` (siehe TranslateRequest) einen
+        ingestierten NAME SPACE oder `wcvp` benannt hat statt eines CDM
+        `sec.`-Referenzraums. Kein `is_equality`, keine Relation — diese
+        Konzepte ergeben für einen Namensraum-Vergleich keinen Sinn.
+      required: [name_space, name]
+      properties:
+        name_space:
+          type: string
+          example: germansl
+        name:
+          type: string
+          description: >-
+            Die Schreibweise des Ziel-Namensraums für das Quellkonzept.
+            Leer, wenn `aggregate_policy: unresolvable`.
+          example: Weiß-Tanne
+        aggregate_policy:
+          type: string
+          enum: [known, unresolvable]
+          description: >-
+            Nur gesetzt, wenn die Quelle eine Sammelart/ein Aggregat ist
+            (UC4). `known`: der Zielraum führt das Aggregat als eigenen
+            Taxon. `unresolvable`: der Zielraum kennt nur Mikrospezies
+            darunter — NICHT gleichbedeutend mit "nicht erfüllt".
     ErrorResponse:
       type: object
       required: [error]
@@ -1470,6 +1566,28 @@ components:
             gelesen werden — genau dieser Fehlschluss ist der von UC4 gefürchtete
             False Negative.
           example: not_determinable
+        classification:
+          allOf:
+            - $ref: '#/components/schemas/ClassificationInfo'
+          description: >-
+            Familie/Ordnung/Klasse oberhalb von Family (Task 10, dieselbe Form
+            wie `Concept.classification`). Present sobald `concept_id` gesetzt
+            ist und mindestens eines der drei Unterfelder bekannt ist — nie
+            ein Objekt mit lauter leeren Strings, und UNABHÄNGIG von
+            `target_space` (anders als `target_space_name`/`aggregate_policy`/
+            `esy_diagnostic_relevance` oben).
+        aggregate_resolution:
+          allOf:
+            - $ref: '#/components/schemas/AggregateResolution'
+          description: >-
+            Nur present, wenn die Anfrage ein Aggregat-/Sammelrang-Name war
+            ODER das aufgelöste Concept selbst einen Sammelrang trägt
+            (SPECIES_AGGREGATE/GENUS_AGGREGATE/SECTION/SUBSECTION/SUBGENUS,
+            Spec Abschnitt 6). Nutzt Task 5/6/7s NATIVE Aggregat-Konzepte
+            (`concept_aggregate`-Tabelle, echte Mitgliederlisten) — ein
+            ANDERER, neuerer Mechanismus als `aggregate_policy`/
+            `target_space_name` oben, die den älteren Namensraum-Alias
+            (`NameSpaceEntry.Aggregate`) beschreiben.
 
     MatchResponse:
       type: object
@@ -1484,6 +1602,84 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/MatchResult'
+
+    AggregateResolutionOption:
+      type: object
+      required: [name_space]
+      description: >-
+        Ein Namensraum-Eintrag von `AggregateResolution.options[]` (Task 10):
+        das Ergebnis der Suche nach einem namensgleichen nativen
+        Aggregat-Konzept (`concept_aggregate`-Tabelle) in diesem Namensraum.
+      properties:
+        name_space:
+          type: string
+          enum: [eurosl, germansl, wcvp]
+        status:
+          type: string
+          enum: [known, unresolvable]
+          description: >-
+            Tri-State. `known`: ein namensgleiches natives Aggregat-Concept
+            wurde in diesem Namensraum gefunden. `unresolvable`: der
+            Namensraum wurde geprüft, aber keines gefunden. FEHLT (dritter
+            Zustand) für `wcvp`: WCVP führt strukturell keine nativen
+            Aggregat-Concepts, es gibt hier nichts nachzuschlagen.
+        aggregate_concept_id:
+          type: string
+          description: 'Nur gesetzt bei `status: known`.'
+        member_count:
+          type: integer
+          description: >-
+            Anzahl WCVP-Mitglieder des gefundenen Aggregat-Concepts. `0`
+            sowohl bei `unresolvable`/fehlendem `status` als auch bei einem
+            `known` Aggregat ohne (ingestierte) Mitglieder — nicht
+            unterscheidbar über dieses Feld allein.
+
+    AggregateResolution:
+      type: object
+      required: [requested_name_space, options]
+      description: >-
+        Task 10s Antwort auf „wie löst jeder Namensraum diese Aggregat-/
+        Sammelrang-Anfrage auf" — siehe `MatchResult.aggregate_resolution`.
+      properties:
+        requested_name_space:
+          type: string
+          description: >-
+            Namensraum des BEREITS aufgelösten Concepts (`concept_id`s
+            `<namespace>:concept:`-Präfix) — der Raum, in dem die Anfrage
+            tatsächlich gelandet ist, im Unterschied zu `options[]`, das für
+            jeden bekannten Namensraum berechnet wird.
+          example: eurosl
+        status:
+          type: string
+          enum: [known, unresolvable]
+          description: >-
+            Spiegelt den `options[]`-Eintrag von `requested_name_space`.
+            Bleibt leer, wenn `requested_name_space` keinen der drei
+            bekannten Namensräume nennt (z. B. ein `cdm:`-Concept).
+        member_count:
+          type: integer
+          description: Spiegelt den `options[]`-Eintrag von `requested_name_space`.
+        options:
+          type: array
+          description: Immer genau drei Einträge, in fester Reihenfolge — eurosl, germansl, wcvp.
+          items:
+            $ref: '#/components/schemas/AggregateResolutionOption'
+        agreement:
+          type: string
+          enum: [identical, subset, superset, overlap, disjoint, one_sided]
+          description: >-
+            Nur gesetzt, wenn SOWOHL eurosl ALS AUCH germansl `status: known`
+            sind — der vorberechnete Mitgliederlisten-Vergleich
+            (`concept_agreement`-Tabelle, Task 7) zwischen ihren beiden
+            Aggregat-Concepts. Fehlt, wenn 0 oder 1 Namensraum das Aggregat
+            kennt (nichts zu vergleichen) oder kein Vergleich vorberechnet
+            wurde. BEKANNTE EINSCHRÄNKUNG: der `concept_agreement`-Vergleich
+            läuft nur über die Ränge SPECIES_AGGREGATE/GENUS_AGGREGATE
+            (application.ComputeConceptAgreement) — für einen SECTION/
+            SUBSECTION/SUBGENUS-Treffer (die drei anderen Sammelränge, für
+            die `options[]` selbst korrekt auflöst) bleibt `agreement` daher
+            aktuell IMMER leer, auch wenn beide Namensräume `status: known`
+            melden.
 
     SuggestItem:
       type: object
@@ -1564,130 +1760,3 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/SuggestItem'
-
-    Scale:
-      type: object
-      required: [min, max, normalized]
-      description: >-
-        Wertebereich und Normalisierungsstatus einer (Vokabular, Dimension)-
-        Kombination. `normalized: false` bedeutet nicht zwingend "unbounded"
-        — Tichý-Dimensionen sind z. B. begrenzt (T: 1–12, L: 1–9), aber
-        nicht auf eine gemeinsame 0–1- oder 0–10-Skala normalisiert. Ein
-        `{"min": 0, "max": 0, "normalized": false}`-Ergebnis ist ein
-        Sentinel für "keine feste Skala definiert" (z. B. Midolo), nicht
-        "der Wert ist exakt 0".
-      properties:
-        min:
-          type: number
-          format: double
-          example: 0
-        max:
-          type: number
-          format: double
-          example: 10
-        normalized:
-          type: boolean
-          example: true
-
-    TraitValue:
-      type: object
-      required: [dim, value, scale]
-      properties:
-        dim:
-          type: string
-          description: 'Indikator-Dimension, z. B. `M` (Feuchte), `L` (Licht), `T` (Temperatur).'
-          example: M
-        value:
-          type: number
-          format: double
-          example: 4.2
-        niche_width:
-          type: number
-          format: double
-          description: >-
-            Nischenbreite. Nur bei EIVE gesetzt; bei Tichý/Midolo fehlt das
-            Feld ganz (nicht `0`) — die Vokabulare liefern diesen Wert
-            schlicht nicht.
-        n_systems:
-          type: integer
-          description: >-
-            Anzahl Quellsysteme. Nur bei EIVE gesetzt; bei Tichý/Midolo
-            fehlt das Feld ganz (nicht `0`), aus demselben Grund wie
-            `niche_width`.
-        resolution:
-          type: string
-          enum:
-            - hybrid_spacing
-            - hybrid_marker_dropped
-            - hybrid_marker_added
-            - aggregate
-            - aggregate_to_nominate
-            - autonym
-            - orthography_genitive
-          description: >-
-            Deterministische Normalisierungsregel, über die der Taxonname des
-            Vokabulars auf dieses Concept aufgelöst wurde. **Fehlt das Feld
-            ganz, war es ein exakter Namenstreffer** — das ist der Normalfall
-            und die positive Aussage "keine Umschreibung nötig", kein
-            "unbekannt" (gleiches Ehrlichkeitsmuster wie `niche_width`/
-            `rank_verbatim`).
-
-            Zwei der Regeln setzen Umgrenzungen gleich, die **nicht**
-            identisch sind, und sind deshalb für Konsumenten entscheidend:
-            `aggregate_to_nominate` (eine Sammelart ist WEITER als ihre
-            Nominatart — der Wert ist ein Kollektivmittel, das das Vokabular
-            nie über diese eine Art ausgesagt hat) und `autonym` (ein Autonym
-            ist ENGER als seine Art; das Rückgrat führt die infraspezifische
-            Gliederung hier gar nicht). Wer diese Näherung nicht akzeptieren
-            kann, filtert auf genau diese beiden Werte. Die übrigen Regeln
-            sind reine Schreibweisen-Korrekturen (Hybridmarker,
-            `-ii`/`-i`-Genitiv) und ändern die Umgrenzung nicht.
-          example: aggregate_to_nominate
-        scale:
-          $ref: '#/components/schemas/Scale'
-          description: >-
-            Pro Wert (nicht pro Set) gerendert: selbst innerhalb eines
-            Vokabulars unterscheiden sich die Skalen zwischen Dimensionen
-            (Tichý T vs. L), sodass ein Set-weites `scale`-Feld für
-            mindestens eine Dimension irreführend wäre.
-
-    TraitSet:
-      type: object
-      required: [vocab, vocab_version, values]
-      properties:
-        vocab:
-          type: string
-          enum: [eive, tichy2023, midolo2023]
-          example: eive
-        vocab_version:
-          type: string
-          example: '1.0'
-        taxonomy:
-          type: string
-          description: >-
-            Taxonomie-Namensraum, gegen den dieses Vokabular harmonisiert
-            wurde (z. B. `euromed-aligned` für EIVE, `floraveg-eunis-
-            aligned` für Tichý/Midolo). Fehlt das Feld ganz, konnte keine
-            Vokabular-Metadatenzeile zugeordnet werden — wird nicht als
-            leerer String vorgetäuscht.
-          example: euromed-aligned
-        values:
-          type: array
-          items:
-            $ref: '#/components/schemas/TraitValue'
-
-    TraitsResponse:
-      type: object
-      required: [concept_id, traits]
-      properties:
-        concept_id:
-          type: string
-          example: 'wcvp:concept:405825'
-        traits:
-          type: array
-          description: >-
-            Ein Element pro (Vokabular, Version) — nie über Vokabulare
-            hinweg zusammengeführt. Leer, wenn für dieses (existierende)
-            Concept keine Merkmalswerte ingestiert wurden.
-          items:
-            $ref: '#/components/schemas/TraitSet'

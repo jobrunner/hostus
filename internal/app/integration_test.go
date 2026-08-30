@@ -805,69 +805,32 @@ func TestIntegration_OfflineBundleServesSuggestOffline(t *testing.T) {
 	}
 }
 
-// traitsIntegrationResponse mirrors internal/adapters/http.traitsResponseDTO
-// (see traits.go), trimmed to the fields this test asserts on.
-type traitsIntegrationResponse struct {
-	ConceptID string                `json:"concept_id"`
-	Traits    []traitSetIntegration `json:"traits"`
-}
-
-type traitSetIntegration struct {
-	Vocab        string                  `json:"vocab"`
-	VocabVersion string                  `json:"vocab_version"`
-	Values       []traitValueIntegration `json:"values"`
-}
-
-type traitValueIntegration struct {
-	Dim   string  `json:"dim"`
-	Value float64 `json:"value"`
-	Scale struct {
-		Min        float64 `json:"min"`
-		Max        float64 `json:"max"`
-		Normalized bool    `json:"normalized"`
-	} `json:"scale"`
-}
-
-// TestIntegration_TraitsFuzzyClassification is SP3's end-to-end proof: it
-// ingests the WCVP fixture together with the EIVE and Tichý trait fixtures
-// (testdata/dataset-traits.yaml — a manifest dedicated to this test so the
-// SP1/SP4 fixture manifest testdata/dataset.yaml, shared with
-// internal/app/ingest_test.go's len(reports.Traits)==1 assertion, stays
-// untouched) through the real CLI/app path, then drives three real-HTTP
-// guarantees SP3 added on top of SP1/SP2:
+// TestIntegration_FuzzyMatchAndClassification is SP3's end-to-end proof
+// (minus the traits half, removed and transferred to situs — see
+// docs/superpowers/specs/2026-08-27-hostus-namensraum-redesign-design.md
+// Abschnitt 8): it ingests the WCVP fixture (testdata/dataset.yaml) through
+// the real CLI/app path, then drives two real-HTTP guarantees SP3 added on
+// top of SP1/SP2:
 //
-//  1. GET /v1/concept/{id}/traits returns BOTH ingested vocabularies with
-//     distinct vocab_version strings, and Tichý's T and L dimensions carry
-//     DIFFERENT scale ranges in the same response — the per-value-scale
-//     honesty guarantee (domain.ScaleFor's doc comment: Tichý T is 1-12,
-//     L is 1-9, so one Set-wide scale would misrepresent one of them).
-//  2. POST /v1/match with a single-letter typo of a name the fixture
+//  1. POST /v1/match with a single-letter typo of a name the fixture
 //     actually carries (Corynephorus canescens -> "canescans") resolves
 //     match_type:"fuzzy" with requires_review:true — mandatory on every
 //     fuzzy hit regardless of how high the similarity score is.
-//  3. GET /v1/concept/{id} renders a non-empty classification chain: the
+//  2. GET /v1/concept/{id} renders a non-empty classification chain: the
 //     WCVP fixture's Corynephorus canescens (405825) has parent_id ==
 //     Corynephorus (451295), a genus-level concept the fixture also
 //     carries.
-func TestIntegration_TraitsFuzzyClassification(t *testing.T) {
+func TestIntegration_FuzzyMatchAndClassification(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "hostus.sqlite")
 
 	ctx := context.Background()
-	reports, err := app.Ingest(ctx, "testdata/dataset-traits.yaml", dbPath)
+	reports, err := app.Ingest(ctx, "testdata/dataset.yaml", dbPath)
 	if err != nil {
 		t.Fatalf("app.Ingest: unexpected error: %v", err)
 	}
 	if len(reports.Backbone.Backbones) == 0 {
 		t.Fatal("app.Ingest: empty backbone report, want at least the wcvp backbone")
-	}
-	if len(reports.Traits) != 2 {
-		t.Fatalf("len(reports.Traits) = %d, want 2 (eive, tichy2023)", len(reports.Traits))
-	}
-	for _, tr := range reports.Traits {
-		if tr.Matched == 0 {
-			t.Errorf("trait vocab %q: Matched = 0, want the fixture's WCVP-resolvable rows to have been written", tr.Vocab)
-		}
 	}
 
 	cfg := testConfig()
@@ -882,104 +845,8 @@ func TestIntegration_TraitsFuzzyClassification(t *testing.T) {
 	defer ts.Close()
 	client := ts.Client()
 
-	assertTraitsEndToEnd(t, client, ts.URL)
 	assertFuzzyMatch(t, client, ts.URL)
 	assertClassificationEndToEnd(t, client, ts.URL)
-}
-
-// assertTraitsEndToEnd drives GET /v1/concept/{corynephorus}/traits over
-// real HTTP and checks both fixture vocabularies are present with distinct
-// versions, and that Tichý's T and L dimensions carry different scales in
-// the very same response — proving the per-VALUE (not per-set) scale
-// rendering end to end, not just at the in-process handler-test level
-// internal/adapters/http/traits_test.go already covers.
-func assertTraitsEndToEnd(t *testing.T, client *http.Client, baseURL string) {
-	t.Helper()
-	resp, err := client.Get(baseURL + "/v1/concept/" + corynephorusConceptID + "/traits")
-	if err != nil {
-		t.Fatalf("GET /v1/concept/{id}/traits: %v", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET /v1/concept/{id}/traits: status = %d, want 200", resp.StatusCode)
-	}
-	var body traitsIntegrationResponse
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		t.Fatalf("decoding /v1/concept/{id}/traits response: %v", err)
-	}
-	_ = resp.Body.Close()
-
-	if body.ConceptID != corynephorusConceptID {
-		t.Errorf("concept_id = %q, want %q", body.ConceptID, corynephorusConceptID)
-	}
-	if len(body.Traits) != 2 {
-		t.Fatalf("len(traits) = %d, want 2 (eive, tichy2023)", len(body.Traits))
-	}
-
-	eive, tichy := assertTraitVocabsPresent(t, body.Traits)
-	assertTraitVocabVersions(t, eive, tichy)
-	assertTichyScales(t, tichy)
-}
-
-// assertTraitVocabsPresent locates the eive and tichy2023 trait sets within
-// traits by vocab name, failing fast if either vocabulary is missing.
-func assertTraitVocabsPresent(t *testing.T, traits []traitSetIntegration) (eive, tichy traitSetIntegration) {
-	t.Helper()
-	byVocab := make(map[string]int, len(traits))
-	for i, ts := range traits {
-		byVocab[ts.Vocab] = i
-	}
-	eiveIdx, haveEive := byVocab["eive"]
-	tichyIdx, haveTichy := byVocab["tichy2023"]
-	if !haveEive || !haveTichy {
-		t.Fatalf("traits = %+v, want both %q and %q vocabularies", traits, "eive", "tichy2023")
-	}
-	return traits[eiveIdx], traits[tichyIdx]
-}
-
-// assertTraitVocabVersions checks eive and tichy2023 carry distinct,
-// fixture-pinned vocab_version strings.
-func assertTraitVocabVersions(t *testing.T, eive, tichy traitSetIntegration) {
-	t.Helper()
-	if eive.VocabVersion == tichy.VocabVersion {
-		t.Errorf("eive.vocab_version == tichy2023.vocab_version == %q, want distinct versions", eive.VocabVersion)
-	}
-	if eive.VocabVersion != "1.0" {
-		t.Errorf("eive.vocab_version = %q, want %q", eive.VocabVersion, "1.0")
-	}
-	if tichy.VocabVersion != "2.0" {
-		t.Errorf("tichy2023.vocab_version = %q, want %q", tichy.VocabVersion, "2.0")
-	}
-}
-
-// assertTichyScales checks Tichý's T and L dimensions carry different scale
-// ranges in the same response (domain.ScaleFor: T is 1-12, L is 1-9).
-func assertTichyScales(t *testing.T, tichy traitSetIntegration) {
-	t.Helper()
-	var tScale, lScale struct {
-		Min, Max   float64
-		Normalized bool
-		found      bool
-	}
-	for _, v := range tichy.Values {
-		switch v.Dim {
-		case "T":
-			tScale.Min, tScale.Max, tScale.Normalized, tScale.found = v.Scale.Min, v.Scale.Max, v.Scale.Normalized, true
-		case "L":
-			lScale.Min, lScale.Max, lScale.Normalized, lScale.found = v.Scale.Min, v.Scale.Max, v.Scale.Normalized, true
-		}
-	}
-	if !tScale.found || !lScale.found {
-		t.Fatalf("tichy2023.values = %+v, want both T and L dims present", tichy.Values)
-	}
-	if tScale.Max == lScale.Max {
-		t.Errorf("Tichý T.scale.max == L.scale.max == %v, want them to differ (T: 1-12, L: 1-9 — domain.ScaleFor)", tScale.Max)
-	}
-	if tScale.Max != 12 {
-		t.Errorf("Tichý T.scale.max = %v, want 12", tScale.Max)
-	}
-	if lScale.Max != 9 {
-		t.Errorf("Tichý L.scale.max = %v, want 9", lScale.Max)
-	}
 }
 
 // assertFuzzyMatch posts a single-letter typo of the fixture's
@@ -1019,10 +886,13 @@ func assertFuzzyMatch(t *testing.T, client *http.Client, baseURL string) {
 }
 
 // assertClassificationEndToEnd drives GET /v1/concept/{corynephorus} over
-// real HTTP and checks the classification chain the WCVP fixture actually
+// real HTTP and checks the ancestor chain the WCVP fixture actually
 // carries: Corynephorus canescens' (405825) parent is the genus concept
 // Corynephorus (451295), also present in the fixture — see
 // wcvp_taxon.csv's parentNameUsageID column.
+//
+// The field was renamed from "classification" (array) to "parent_chain" by
+// Task 9 — "classification" is now a distinct object ({family,order,class}).
 func assertClassificationEndToEnd(t *testing.T, client *http.Client, baseURL string) {
 	t.Helper()
 	resp, err := client.Get(baseURL + "/v1/concept/" + corynephorusConceptID)
@@ -1033,50 +903,53 @@ func assertClassificationEndToEnd(t *testing.T, client *http.Client, baseURL str
 		t.Fatalf("GET /v1/concept: status = %d, want 200", resp.StatusCode)
 	}
 	var body struct {
-		Classification []struct {
+		ParentChain []struct {
 			ConceptID string `json:"concept_id"`
 			Canonical string `json:"canonical"`
 			Rank      string `json:"rank"`
-		} `json:"classification"`
+		} `json:"parent_chain"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decoding /v1/concept response: %v", err)
 	}
 	_ = resp.Body.Close()
 
-	if len(body.Classification) == 0 {
-		t.Fatal("classification is empty, want at least the Corynephorus genus ancestor")
+	if len(body.ParentChain) == 0 {
+		t.Fatal("parent_chain is empty, want at least the Corynephorus genus ancestor")
 	}
-	parent := body.Classification[len(body.Classification)-1]
+	parent := body.ParentChain[len(body.ParentChain)-1]
 	if parent.Canonical != "Corynephorus" {
-		t.Errorf("classification's last (immediate parent) entry canonical = %q, want %q", parent.Canonical, "Corynephorus")
+		t.Errorf("parent_chain's last (immediate parent) entry canonical = %q, want %q", parent.Canonical, "Corynephorus")
 	}
 	if parent.Rank != "GENUS" {
-		t.Errorf("classification's last entry rank = %q, want %q", parent.Rank, "GENUS")
+		t.Errorf("parent_chain's last entry rank = %q, want %q", parent.Rank, "GENUS")
 	}
 }
 
-// TestIntegration_OfflineBundleConceptSuggestTraitsOffline is the SP2
-// landmine (see internal/app/integration_test.go's CHANGELOG entry on
-// ExportBundle's self-referencing FK handling), now covered end to end
-// WITH the traits SP3 added: it exports an area=AUT bundle from a database
-// carrying both WCVP and the trait fixtures, where Corynephorus canescens'
-// parent (the genus concept, 451295) is deliberately OUT OF SCOPE — the
-// WCVP fixture never gives the genus-level concept its own AUT distribution
-// row — and then opens ONLY that bundle file (never touching the source
-// database again) to prove Concept, Classification, Suggest and Traits all
-// still work against it standalone. If ExportBundle's out-of-scope
+// TestIntegration_OfflineBundleConceptSuggestOffline is the SP2 landmine
+// (see internal/app/integration_test.go's CHANGELOG entry on ExportBundle's
+// self-referencing FK handling), covered end to end: it exports an area=AUT
+// bundle from a database carrying the WCVP fixture, where Corynephorus
+// canescens' parent (the genus concept, 451295) is deliberately OUT OF
+// SCOPE — the WCVP fixture never gives the genus-level concept its own AUT
+// distribution row — and then opens ONLY that bundle file (never touching
+// the source database again) to prove Concept, Classification and Suggest
+// all still work against it standalone. If ExportBundle's out-of-scope
 // self-reference nulling (T7) ever regressed, Concept/Classification would
 // either 500 (dangling FK) or the bundle write itself would fail a FK
 // constraint — this test would catch either.
-func TestIntegration_OfflineBundleConceptSuggestTraitsOffline(t *testing.T) {
+func TestIntegration_OfflineBundleConceptSuggestOffline(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "hostus.sqlite")
 	bundlePath := filepath.Join(dir, "bundle.sqlite")
 	genusConceptID := "wcvp:concept:451295"
 
-	if _, err := app.Ingest(ctx, "testdata/dataset-traits.yaml", dbPath); err != nil {
+	// dataset-no-namespace.yaml, not dataset.yaml: this test exports
+	// WITHOUT --force-include-restricted, so every ingested source must be
+	// redistribution=allowed (dataset.yaml's floraveg name space is
+	// deliberately "unknown" — see TestBundle_RefusesNameSpaceByDefault).
+	if _, err := app.Ingest(ctx, "testdata/dataset-no-namespace.yaml", dbPath); err != nil {
 		t.Fatalf("app.Ingest: unexpected error: %v", err)
 	}
 
@@ -1093,7 +966,6 @@ func TestIntegration_OfflineBundleConceptSuggestTraitsOffline(t *testing.T) {
 	assertBundleConceptSurvivesExport(t, bundle)
 	assertBundleClassificationEmptyAfterExport(t, bundle)
 	assertBundleSuggestFindsCorynephorus(t, bundle)
-	assertBundleTraitsSurviveExport(t, bundle)
 }
 
 // exportOfflineBundleWithGenusPrecondition opens the source db, confirms the
@@ -1197,21 +1069,6 @@ func assertBundleSuggestFindsCorynephorus(t *testing.T, bundle *sqlite.DB) {
 		}
 	}
 	t.Fatalf("bundle suggest results = %+v, want an entry for %q", suggestResp.Results, corynephorusConceptID)
-}
-
-// assertBundleTraitsSurviveExport checks the bundle carries both trait
-// vocabularies for the AUT-scoped Corynephorus canescens concept
-// (sqlite.copyConceptScopedTables copies trait_value scoped by the same
-// concept id set, plus trait_vocabulary in full).
-func assertBundleTraitsSurviveExport(t *testing.T, bundle *sqlite.DB) {
-	t.Helper()
-	traitSets, err := bundle.Traits(context.Background(), corynephorusConceptID, nil)
-	if err != nil {
-		t.Fatalf("bundle: Traits(%q): unexpected error: %v", corynephorusConceptID, err)
-	}
-	if len(traitSets) != 2 {
-		t.Fatalf("bundle: len(traitSets) = %d, want 2 (eive, tichy2023) — traits must survive the offline bundle export", len(traitSets))
-	}
 }
 
 // The three CDM fixture concepts and the two sec. reference spaces SP5's
@@ -1566,7 +1423,6 @@ var apiProbesAcrossToggle = []consoleProbe{
 	{http.MethodGet, "/health/ready", ""},
 	{http.MethodGet, "/metrics", ""},
 	{http.MethodGet, "/v1/concept/" + festucaOvinaConceptID, ""},
-	{http.MethodGet, "/v1/concept/" + festucaOvinaConceptID + "/traits", ""},
 	{http.MethodGet, "/v1/concept/" + festucaOvinaConceptID + "/synonyms", ""},
 	{http.MethodGet, "/v1/concept/gibt-es-nicht", ""},
 	{http.MethodGet, "/v1/suggest?q=Festuca&limit=5", ""},

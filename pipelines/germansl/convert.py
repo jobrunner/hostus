@@ -24,6 +24,14 @@ Canonical mapping:
   status         = "synonym" if SYNONYM (boolean) else "accepted"
   accepted_taxon = TaxonConcept, but only emitted for synonym rows
   source_id      = TaxonUsageID
+  parent_id      = IsChildTaxonOfID
+  parent_rank    = "" (GermanSL has no per-row parent-rank join, analogous
+                   to EuroSL; the Go ingest resolves it from the
+                   already-read row map)
+  vernacular_de  = VernacularName (German common name; empty if the source
+                   row carries none — GermanSL is the ONLY pipeline that
+                   emits this column, see internal/adapters/namelist's
+                   reader doc comment)
 """
 import csv
 import re
@@ -101,9 +109,7 @@ def iter_rows(xlsx_path, sheet_name):
             yield [cells.get(i) for i in range(max_idx + 1)]
 
 
-def main():
-    in_path, out_path = sys.argv[1:3]
-
+def convert(in_path, out_path):
     rows = iter_rows(in_path, "TCS")
     header = next(rows)
     idx = {name: i for i, name in enumerate(header)}
@@ -113,10 +119,13 @@ def main():
     ranks = {}
     accepted_n = 0
     synonym_n = 0
+    with_parent = 0
+    has_parent_col = "IsChildTaxonOfID" in idx
 
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f, delimiter="|")
-        w.writerow(["taxon", "rank", "status", "accepted_taxon", "source_id"])
+        w.writerow(["taxon", "rank", "status", "accepted_taxon", "source_id",
+                     "parent_id", "parent_rank", "vernacular_de"])
         for r in rows:
             if len(r) <= idx["TaxonName"] or not r[idx["TaxonName"]]:
                 continue
@@ -129,8 +138,20 @@ def main():
                 accepted_taxon = r[idx["TaxonConcept"]] or ""
             source_id = r[idx["TaxonUsageID"]]
             source_id = "" if source_id is None else str(source_id)
+            parent_id = ""
+            if has_parent_col and len(r) > idx["IsChildTaxonOfID"]:
+                parent_id = r[idx["IsChildTaxonOfID"]]
+                parent_id = "" if parent_id is None else str(parent_id)
+            vernacular_de = ""
+            if len(r) > idx["VernacularName"]:
+                vernacular_de = r[idx["VernacularName"]] or ""
 
-            w.writerow([taxon, rank, status, accepted_taxon, source_id])
+            # parent_rank stays empty here, analogous to EuroSL: GermanSL
+            # gives only the OWN rank per row, not the parent's, without a
+            # self-join. The Go ingest resolves parent_rank via the
+            # already-read row map (see internal/adapters/namelist).
+            w.writerow([taxon, rank, status, accepted_taxon, source_id,
+                        parent_id, "", vernacular_de])
             row_count += 1
             taxa.add(taxon)
             ranks[rank] = ranks.get(rank, 0) + 1
@@ -138,9 +159,16 @@ def main():
                 synonym_n += 1
             else:
                 accepted_n += 1
+            if parent_id:
+                with_parent += 1
 
-    print(f"rows={row_count} taxa={len(taxa)} accepted={accepted_n} synonym={synonym_n}")
+    print(f"rows={row_count} taxa={len(taxa)} accepted={accepted_n} synonym={synonym_n} with_parent_id={with_parent}")
     print("ranks=" + ",".join(f"{k}:{v}" for k, v in sorted(ranks.items(), key=lambda kv: -kv[1])))
+
+
+def main():
+    in_path, out_path = sys.argv[1:3]
+    convert(in_path, out_path)
 
 
 if __name__ == "__main__":

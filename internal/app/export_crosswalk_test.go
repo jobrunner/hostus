@@ -13,7 +13,7 @@ import (
 // readCSV reads path as a parsed CSV, failing the test on any error.
 func readCSV(t *testing.T, path string) [][]string {
 	t.Helper()
-	f, err := os.Open(path)
+	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
 		t.Fatalf("opening %q: %v", path, err)
 	}
@@ -59,11 +59,21 @@ func TestExportCrosswalk_WritesBothCSVsAndReportsCollisions(t *testing.T) {
 	if len(report.NameCollisions) != 2 {
 		t.Fatalf("len(report.NameCollisions) = %d, want 2, got %+v", len(report.NameCollisions), report.NameCollisions)
 	}
+	assertWantedCollisions(t, report.NameCollisions)
+
+	assertCrosswalkCSV(t, filepath.Join(outDir, "eurosl_crosswalk.csv"))
+	assertAggregateMembersCSV(t, filepath.Join(outDir, "aggregate_members.csv"))
+}
+
+// assertWantedCollisions checks got against the two collisions this
+// fixture is known to produce (see the test's doc comment).
+func assertWantedCollisions(t *testing.T, got []app.CrosswalkCollision) {
+	t.Helper()
 	wantCollisions := map[string][2]string{
 		"Festuca":            {"wcvp:concept:451511", "eurosl:concept:e-gen1"},
 		"Festuca ovina agg.": {"wcvp:concept:415853", "eurosl:concept:e-agg1"},
 	}
-	for _, c := range report.NameCollisions {
+	for _, c := range got {
 		want, ok := wantCollisions[c.Name]
 		if !ok {
 			t.Errorf("unexpected collision name %q", c.Name)
@@ -73,16 +83,25 @@ func TestExportCrosswalk_WritesBothCSVsAndReportsCollisions(t *testing.T) {
 			t.Errorf("collision %q = (%q, %q), want (%q, %q)", c.Name, c.FallAConceptID, c.FallBConceptID, want[0], want[1])
 		}
 	}
+}
 
-	rows := readCSV(t, filepath.Join(outDir, "eurosl_crosswalk.csv"))
+// assertCrosswalkCSV checks eurosl_crosswalk.csv's header and row count.
+func assertCrosswalkCSV(t *testing.T, path string) {
+	t.Helper()
+	rows := readCSV(t, path)
 	if len(rows) != 6 { // header + 5 data rows
 		t.Fatalf("eurosl_crosswalk.csv has %d rows (incl. header), want 6: %+v", len(rows), rows)
 	}
 	if rows[0][0] != "name" || rows[0][1] != "concept_id" {
 		t.Errorf("eurosl_crosswalk.csv header = %v, want [name concept_id]", rows[0])
 	}
+}
 
-	memberRows := readCSV(t, filepath.Join(outDir, "aggregate_members.csv"))
+// assertAggregateMembersCSV checks aggregate_members.csv's header, row
+// count, and the eurosl aggregate's member row.
+func assertAggregateMembersCSV(t *testing.T, path string) {
+	t.Helper()
+	memberRows := readCSV(t, path)
 	if len(memberRows) != 3 { // header + 2 data rows
 		t.Fatalf("aggregate_members.csv has %d rows (incl. header), want 3: %+v", len(memberRows), memberRows)
 	}

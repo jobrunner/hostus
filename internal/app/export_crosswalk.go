@@ -44,7 +44,7 @@ func ExportCrosswalk(ctx context.Context, dbPath, outDir string) (ExportCrosswal
 	}
 	defer func() { _ = src.Close() }()
 
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	if err := os.MkdirAll(outDir, 0o750); err != nil {
 		return ExportCrosswalkReport{}, fmt.Errorf("app: creating output directory %q: %w", outDir, err)
 	}
 
@@ -103,7 +103,7 @@ func detectCrosswalkCollisions(fallA, fallB []sqlite.CrosswalkEntry) []Crosswalk
 // Fall A row, then every Fall B row — a plain concatenation (spec's
 // UNION), never a merge that would hide a collision.
 func writeCrosswalkCSV(path string, fallA, fallB []sqlite.CrosswalkEntry) error {
-	f, err := os.Create(path)
+	f, err := os.Create(filepath.Clean(path))
 	if err != nil {
 		return fmt.Errorf("app: creating %q: %w", path, err)
 	}
@@ -135,7 +135,7 @@ func writeCrosswalkCSV(path string, fallA, fallB []sqlite.CrosswalkEntry) error 
 // aggregate ingest ran) writes only the header — not an error (spec's
 // error table).
 func writeAggregateMembersCSV(path string, members []sqlite.AggregateMemberRow) error {
-	f, err := os.Create(path)
+	f, err := os.Create(filepath.Clean(path))
 	if err != nil {
 		return fmt.Errorf("app: creating %q: %w", path, err)
 	}

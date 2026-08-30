@@ -31,3 +31,6 @@
 
 # MkDocs build output
 /site/
+
+# git worktrees (superpowers:using-git-worktrees)
+.worktrees/

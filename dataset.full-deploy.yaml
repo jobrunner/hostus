@@ -1,0 +1,54 @@
+# dataset.full-deploy.yaml — vollständiges Real-Ingest-Manifest für ein
+# Deployment (2026-08-30, hostus 3.0.0-alpha.0). Nutzt ausschließlich
+# Artefakte, die bereits lokal auf der Platte liegen (kein Download nötig).
+# Trait-Vokabulare fehlen absichtlich — das Traits-Subsystem wurde entfernt
+# (siehe CHANGELOG "Traits-Subsystem entfernt", Transfer nach situs); ein
+# manifest darf sie noch deklarieren (schema-valide), aber nichts liest sie
+# mehr, also spart dieses Manifest sie sich gleich ganz.
+
+backbones:
+  - id: wcvp
+    version: "2026-06-15"
+    license: CC-BY-4.0
+    source: https://sftp.kew.org/pub/data-repositories/WCVP/
+    path: poc/data/wcvp_dwca
+    redistribution: allowed
+
+name_spaces:
+  - id: floraveg
+    version: "2023-01-03"
+    source: https://files.ibot.cas.cz/cevs/downloads/floraveg/Life_form.xlsx
+    path: pipelines/floraveg/output/floraveg-canonical.csv
+    note: "ESy-Namensraum"
+    redistribution: unknown
+
+  - id: eurosl
+    version: "2024-11-03"
+    source: https://eurosl.infinitenature.org/EuroSL/latest/EuroSL.sqlite
+    path: pipelines/eurosl/output/eurosl-canonical.csv
+    note: "Euro+Med-Checkliste via EuroSL — Fall A + Fall B (native Aggregate/Sektionen/Familien)"
+    redistribution: unknown
+
+  - id: germansl
+    version: "1.5.6"
+    source: https://germansl.infinitenature.org/GermanSL/1.5/GermanSL.zip
+    path: pipelines/germansl/output/germansl-canonical.csv
+    note: "GermanSL — Fall A + Fall B, Grundlage für concept_agreement mit eurosl"
+    redistribution: unknown
+
+xref_sources:
+  - id: wikidata
+    version: "2026-08-02"
+    license: CC0
+    source: https://query.wikidata.org/sparql
+    path: pipelines/wikidata/output/wikidata-xref-canonical.csv
+    redistribution: allowed
+
+concept_sources:
+  - id: cdm
+    version: "2026-08-02"
+    source: https://api.cybertaxonomy.org/rl_standardliste
+    concepts: pipelines/cdm/output/cdm-concepts-canonical.csv
+    relations: pipelines/cdm/output/cdm-relations-canonical.csv
+    note: "Standardliste der Farn- und Blütenpflanzen Deutschlands, 18 sec.-Referenzräume"
+    redistribution: unknown

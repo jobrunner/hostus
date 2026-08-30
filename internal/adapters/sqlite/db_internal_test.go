@@ -407,9 +407,16 @@ func TestIngestTx_UpsertNameWithDanglingBasionymFKFails(t *testing.T) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// BeginIngest sets PRAGMA defer_foreign_keys=ON (real native-space data
+	// is not reliably parent-before-child ordered), so a dangling reference
+	// no longer fails on the offending statement itself — it fails at
+	// Commit, once every statement in the transaction has run.
 	n := domain.Name{ID: "n1", Canonical: "x", Rank: domain.RankSpecies, BasionymID: "does-not-exist"}
-	if err := tx.UpsertName(n); err == nil {
-		t.Fatal("UpsertName with a dangling basionym_id: expected a foreign-key error, got nil")
+	if err := tx.UpsertName(n); err != nil {
+		t.Fatalf("UpsertName: unexpected error (should be deferred to Commit): %v", err)
+	}
+	if err := tx.Commit(); err == nil {
+		t.Fatal("Commit with a dangling basionym_id: expected a foreign-key error, got nil")
 	}
 }
 

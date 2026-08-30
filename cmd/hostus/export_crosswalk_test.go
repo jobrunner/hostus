@@ -45,6 +45,50 @@ func TestExportCrosswalkCommand_WritesBothFilesAndPrintsReport(t *testing.T) {
 	}
 }
 
+// TestExportCrosswalkCommand_PrintsCollisionLines drives the CLI against
+// testdata/dataset-agreement.yaml — copied from internal/app/testdata
+// (same fixture, adjusted --db path prefix; see that package's
+// TestExportCrosswalk_WritesBothCSVsAndReportsCollisions for the exact
+// concept ids, already verified against this fixture) — which produces two
+// real Fall-A/Fall-B name collisions ("Festuca" and "Festuca ovina agg.").
+// Every other CLI test uses dataset-no-namespace.yaml, which by
+// construction has zero collisions, so printExportCrosswalkReport's
+// "  collision: ..." branch was previously dead code as far as this
+// package's test suite was concerned.
+func TestExportCrosswalkCommand_PrintsCollisionLines(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "hostus.sqlite")
+	ingestCmd := newIngestCmd()
+	ingestCmd.SetOut(new(bytes.Buffer))
+	ingestCmd.SetArgs([]string{"--dataset=testdata/dataset-agreement.yaml", "--db=" + dbPath})
+	if err := ingestCmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("ingesting fixture: unexpected error: %v", err)
+	}
+	outDir := filepath.Join(t.TempDir(), "out")
+
+	cmd := newExportCrosswalkCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--db=" + dbPath, "--out-dir=" + outDir})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("Execute: unexpected error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "collisions=2") {
+		t.Errorf("report %q, want it to mention collisions=2", got)
+	}
+	wantLines := []string{
+		`collision: "Festuca" -> fall_a=wcvp:concept:451511 fall_b=eurosl:concept:e-gen1`,
+		`collision: "Festuca ovina agg." -> fall_a=wcvp:concept:415853 fall_b=eurosl:concept:e-agg1`,
+	}
+	for _, line := range wantLines {
+		if !strings.Contains(got, line) {
+			t.Errorf("report %q, want it to contain %q", got, line)
+		}
+	}
+}
+
 // TestExportCrosswalkCommand_MissingDBFlag_ReturnsError confirms --db is
 // required.
 func TestExportCrosswalkCommand_MissingDBFlag_ReturnsError(t *testing.T) {

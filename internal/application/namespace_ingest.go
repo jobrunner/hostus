@@ -129,10 +129,12 @@ type NameSpaceIngestReport struct {
 //
 //  1. the first candidate key the index answers decides the outcome;
 //  2. no key answered -> Unmatched, nothing written;
-//  3. the answering key resolves to two or more DISTINCT concepts ->
-//     Ambiguous, skipped entirely. This path passes policyRefuseAmbiguity, so
-//     the policyResolveGenuineBearer homonym tie-break does NOT apply here —
-//     see the call site for why that is deliberate.
+//  3. the answering key resolves to two or more DISTINCT concepts (after
+//     dropping sec.-space-only candidates when a backbone concept shares the
+//     name — see policyPreferBackbone) -> Ambiguous, skipped entirely. This
+//     path passes policyPreferBackbone, so the policyResolveGenuineBearer
+//     homonym tie-break does NOT apply here — see the call site for why
+//     that is deliberate.
 //
 // It is deliberately not a second name-resolution path. SP3's crosswalk only
 // reached 98,0 % after normalisation rules nobody predicted from the raw hit
@@ -287,15 +289,32 @@ func resolveNameSpaceNames(ctx context.Context, repo output.Repository, rows []N
 		if _, seen := resolved[canon]; seen {
 			continue
 		}
-		// policyRefuseAmbiguity, explicitly: the homonym tie-break the trait
-		// crosswalk uses is measured for trait vocabularies, not for name
-		// spaces. Inheriting it here would be invisible (this report has no
-		// tiebroken counter and the CLI prints none) and it would let a space
-		// gain a SECOND entry for one concept, which is what
-		// domain.ResolveTargetSpace picks a target-space spelling from — so
-		// /v1/translate would start choosing between two spellings on evidence
-		// nobody gathered. See TestIngestNameSpace_HomonymStaysAmbiguousHere.
-		res, err := resolveTraitName(ctx, repo, canon, policyRefuseAmbiguity)
+		// policyPreferBackbone, explicitly: the homonym TIE-BREAK the trait
+		// crosswalk uses (genuineBearerWinner) is measured for trait
+		// vocabularies, not for name spaces. Inheriting it here would be
+		// invisible (this report has no tiebroken counter and the CLI prints
+		// none) and it would let a space gain a SECOND entry for one concept,
+		// which is what domain.ResolveTargetSpace picks a target-space
+		// spelling from — so /v1/translate would start choosing between two
+		// spellings on evidence nobody gathered. See
+		// TestIngestNameSpace_HomonymStaysAmbiguousHere.
+		//
+		// The sec.-space FILTER (preferBackboneConcepts) is a separate,
+		// safe-by-construction step that DOES apply here, unlike the
+		// tie-break: a sec.-reference concept (e.g. one of CDM's ~18
+		// Standardliste sec. spaces) is an attribution detail of a concept
+		// SOURCE distinct from the eurosl/germansl name space being
+		// crosswalked, not a second genuine claimant on that spelling.
+		// Counting it as one inflates "ambiguous" on well-known species.
+		// Measured on a real full ingest that also loads CDM (2026-08-31,
+		// rows/matched/ambiguous):
+		//   eurosl:   before 139039/102916/19402 -> after 139039/113733/8585
+		//   germansl: before  26599/ 3370/ 9934   -> after  26599/10436/2868
+		// — matching (within noise) an ingest with CDM dropped entirely
+		// (eurosl 113607/8194, germansl 10393/2586), while keeping CDM (and
+		// /v1/translate) in the database. See policyPreferBackbone's doc
+		// comment.
+		res, err := resolveTraitName(ctx, repo, canon, policyPreferBackbone)
 		if err != nil {
 			return nil, fmt.Errorf("name %q: %w", row.Taxon, err)
 		}

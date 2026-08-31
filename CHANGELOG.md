@@ -5,6 +5,24 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [Unreleased]
+
+### Fixed
+
+* **Namensraum-Crosswalk (`hostus ingest`):** ein `sec.`-Referenzraum-Konzept
+  (z. B. eines der ~18 CDM-Standardliste-Räume) mit demselben Namen wie ein
+  echtes WCVP-Konzept zählte bislang wie ein zweiter Anspruch auf diesen
+  Namen und ließ die eurosl/germansl-Namensraum-Zeile als `ambiguous`
+  liegen — obwohl der WCVP-Treffer eindeutig ist. Gemessen an einem
+  vollständigen Real-Ingest (WCVP+CDM+eurosl+germansl+floraveg+wikidata):
+  eurosl matched 102.916 → **113.733**, germansl matched 3.370 →
+  **10.436** — praktisch gleichauf mit einem Ingest ganz ohne CDM, aber
+  ohne auf CDM (und `/v1/translate`) verzichten zu müssen. Neue Policy
+  `policyPreferBackbone` im Crosswalk: filtert `sec.`-Konzepte weg, bevor
+  auf Mehrdeutigkeit geprüft wird, führt aber — anders als der
+  Trait-Crosswalk-Tiebreak — keinen Rateentscheid zwischen mehreren
+  echten Backbone-Konzepten herbei.
+
 ## [3.0.1-alpha.0](https://github.com/jobrunner/hostus/compare/v3.0.0-alpha.0...v3.0.1-alpha.0) (2026-08-31)
 
 

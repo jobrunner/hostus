@@ -5,6 +5,14 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [3.0.2-alpha.0](https://github.com/jobrunner/hostus/compare/v3.0.1-alpha.0...v3.0.2-alpha.0) (2026-08-31)
+
+
+### Bug Fixes
+
+* **crosswalk:** sec.-space concepts no longer count toward name-space ambiguity ([4b1f1ad](https://github.com/jobrunner/hostus/commit/4b1f1ad4a685fbad68a091d05805345ff3d3d506))
+* **crosswalk:** sec.-space concepts no longer count toward name-space ambiguity ([53e9bf6](https://github.com/jobrunner/hostus/commit/53e9bf6d9e8382240862e5c273bb35a0ee08a2fc))
+
 ## [Unreleased]
 
 ### Fixed

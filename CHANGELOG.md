@@ -96,6 +96,18 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   docs/superpowers/specs/2026-08-27-hostus-namensraum-redesign-design.md
   Abschnitt 8.
 
+### Security
+
+* **`Dockerfile`-Builder-Stage:** Base-Image `golang:1.26.5-alpine` →
+  `golang:1.26.6-alpine`. Behebt acht von Trivy im gebauten Container-Image
+  gemeldete High-Severity-Schwachstellen in der Go-Standardbibliothek
+  (CVE-2026-56862, CVE-2026-56860, CVE-2026-56859, CVE-2026-56858,
+  CVE-2026-56853, CVE-2026-33818, CVE-2026-39821, CVE-2026-46600), alle
+  bereits in 1.26.6 gefixt. `go.mod` (`toolchain go1.26.6`) und `flake.nix`
+  waren bereits korrekt; nur die Builder-Stage im Dockerfile hing noch auf
+  1.26.5, da sie `go.mod` nicht liest. Kein Code-Change, kein Effekt auf
+  `go build`/`go vet`/Testsuite.
+
 ## [2.6.1-alpha.0](https://github.com/jobrunner/hostus/compare/v2.6.0-alpha.0...v2.6.1-alpha.0) (2026-08-24)
 
 

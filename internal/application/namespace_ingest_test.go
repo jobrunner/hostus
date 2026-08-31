@@ -769,3 +769,35 @@ func TestIngestNameSpace_HomonymStaysAmbiguousHere(t *testing.T) {
 		t.Errorf("wrote %+v, want nothing", repo.tx.entries)
 	}
 }
+
+// TestIngestNameSpace_SecReferenceCandidateDoesNotCauseAmbiguous pins the
+// policyPreferBackbone fix: a sec.-reference-space concept (e.g. one of
+// CDM's Standardliste sec. spaces) sharing a name with a backbone (WCVP)
+// concept must NOT count toward "this name is ambiguous" — the sec.
+// candidate is dropped and the backbone concept wins outright, with no
+// tie-break involved (contrast with TestIngestNameSpace_HomonymStaysAmbiguousHere
+// just above, whose two candidates are BOTH backbone concepts and must stay
+// ambiguous).
+func TestIngestNameSpace_SecReferenceCandidateDoesNotCauseAmbiguous(t *testing.T) {
+	repo := &fakeNameSpaceRepo{
+		matches: map[string][]output.MatchCandidate{
+			"festuca ovina": {
+				{Concept: domain.Concept{ID: "wcvp:concept:415853"}, Role: "accepted"},
+				{Concept: domain.Concept{ID: "cdm:concept:x", SecReference: "cdm-sec-1"}, Role: "accepted"},
+			},
+		},
+	}
+	src := sliceRowSource{{Taxon: "Festuca ovina", SourceID: "1"}}
+
+	report, err := application.IngestNameSpace(context.Background(), repo, src, floravegMeta)
+	if err != nil {
+		t.Fatalf("IngestNameSpace: unexpected error: %v", err)
+	}
+	if report.Matched != 1 || report.Ambiguous != 0 {
+		t.Errorf("Matched/Ambiguous = %d/%d, want 1/0: the sec.-reference candidate must be dropped, not counted",
+			report.Matched, report.Ambiguous)
+	}
+	if len(repo.tx.entries) != 1 || repo.tx.entries[0].conceptID != "wcvp:concept:415853" {
+		t.Errorf("wrote %+v, want a single entry attached to wcvp:concept:415853", repo.tx.entries)
+	}
+}

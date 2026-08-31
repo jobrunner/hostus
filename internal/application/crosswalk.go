@@ -54,18 +54,38 @@ type traitResolution struct {
 type crosswalkPolicy int
 
 const (
-	// policyRefuseAmbiguity is the behavior that existed before the homonym
-	// tie-break: several distinct concepts means ambiguous, full stop, and a
-	// sec.-space concept counts like any other candidate. Used by name-space
-	// ingest, deliberately — see IngestNameSpace.
-	policyRefuseAmbiguity crosswalkPolicy = iota
+	// policyPreferBackbone drops sec.-space-only candidates whenever a
+	// backbone concept holds the same name (preferBackboneConcepts), but
+	// still refuses to guess among whatever remains — it does NOT run
+	// genuineBearerWinner. Used by name-space ingest (see
+	// resolveNameSpaceNames in namespace_ingest.go): a sec.-space reference
+	// concept (e.g. one of CDM's ~18 Standardliste sec. spaces) is an
+	// attribution detail of a SEPARATE concept source, not a second genuine
+	// claimant on a eurosl/germansl spelling, so it must not count toward
+	// "this name is ambiguous" once a real backbone (WCVP) concept already
+	// carries it. Measured on a full real ingest (2026-08-31, rows/matched/
+	// ambiguous — see resolveNameSpaceNames' call site for the exact
+	// before/after-fix figures): loading CDM alongside eurosl/germansl in
+	// the same database, this filter recovers essentially the same match
+	// rate as dropping CDM's concept_sources entry entirely (eurosl
+	// 113733 vs 113607 matched, germansl 10436 vs 10393) while keeping CDM
+	// — and /v1/translate — in the database. CDM was the dominant source of
+	// "ambiguous" here, not genuine eurosl/germansl homonymy. Unlike
+	// policyResolveGenuineBearer, this stays SILENT (no tieBroken, no report
+	// counter) precisely because it resolves nothing on its own — it only
+	// narrows the candidate set before the normal single-candidate/ambiguous
+	// decision runs, so it needs no new report field and carries none of the
+	// "was this measured for name spaces" risk the tie-break's own doc
+	// comment warns about.
+	policyPreferBackbone crosswalkPolicy = iota
 	// policyResolveGenuineBearer prefers backbone concepts over sec.-space
-	// ones and resolves a homonym to the concept that genuinely bears the
-	// name. Introduced for the trait-vocabulary crosswalk (see
-	// docs/research/reality-check.md and the CHANGELOG entry for the
-	// measured recovery), which has since been removed and transferred to
-	// situs — no current caller passes this value, but the policy stays
-	// available for any future crosswalk that needs the same tie-break.
+	// ones AND resolves a remaining homonym to the concept that genuinely
+	// bears the name (genuineBearerWinner). Introduced for the
+	// trait-vocabulary crosswalk (see docs/research/reality-check.md and the
+	// CHANGELOG entry for the measured recovery), which has since been
+	// removed and transferred to situs — no current caller passes this
+	// value, but the policy stays available for any future crosswalk that
+	// needs the same tie-break.
 	policyResolveGenuineBearer
 )
 
@@ -74,12 +94,17 @@ const (
 // the index answers at all, classified into exactly one of: matched to a
 // single concept id, matched=false (no key answered), or ambiguous=true.
 //
-// What counts as ambiguous depends on policy. Under policyRefuseAmbiguity any
-// key answering with two or more distinct concepts is ambiguous and no concept
-// is picked. Under policyResolveGenuineBearer the tie-break runs first (see
-// preferBackboneConcepts and genuineBearerWinner) and only a key with no
-// single genuine bearer is ambiguous — the outcome then carries tieBroken so
-// the caller can report it.
+// What counts as ambiguous depends on policy. The base rule, under both
+// policies this package defines: a key answering with two or more distinct
+// concepts is ambiguous and no concept is picked. Under policyPreferBackbone,
+// sec.-space-only candidates are dropped first (preferBackboneConcepts)
+// whenever a backbone concept shares the name, but whatever remains still
+// follows that base rule — no tie-break runs, so this outcome never carries
+// tieBroken. Under policyResolveGenuineBearer the SAME preferBackboneConcepts
+// filter runs, and additionally a remaining tie is broken by
+// genuineBearerWinner — only a key with no single genuine bearer is
+// ambiguous, and the outcome then carries tieBroken so the caller can report
+// it.
 //
 // Two properties matter and are worth stating explicitly:
 //
@@ -100,7 +125,7 @@ func resolveTraitName(ctx context.Context, repo output.Repository, canon string,
 		if err != nil {
 			return traitResolution{}, err
 		}
-		if policy == policyResolveGenuineBearer {
+		if policy == policyResolveGenuineBearer || policy == policyPreferBackbone {
 			candidates = preferBackboneConcepts(candidates)
 		}
 		if len(candidates) == 0 {

@@ -64,17 +64,36 @@ func TestConceptAgreementDecodesBothSidesAndLists(t *testing.T) {
 	// promises "conceptID on either side", and both branches of that WHERE
 	// clause need their own assertion (Copilot review, PR #92).
 	for _, lookupID := range []string{want.EuroslConceptID, want.GermanslConceptID} {
-		got, err := db.ConceptAgreement(context.Background(), lookupID)
-		if err != nil || got == nil || got.EuroslConceptID != want.EuroslConceptID || got.GermanslConceptID != want.GermanslConceptID || got.Agreement != want.Agreement || got.AgreementText != want.AgreementText {
-			t.Fatalf("ConceptAgreement(%q) = %+v, %v; want %+v, nil", lookupID, got, err, want)
-		}
-		if len(got.OnlyInEurosl) != 2 || got.OnlyInEurosl[0] != "e1" || got.OnlyInEurosl[1] != "e2" || len(got.OnlyInGermansl) != 1 || got.OnlyInGermansl[0] != "g1" {
-			t.Fatalf("ConceptAgreement(%q) lists = %+v, %+v; want [e1 e2], [g1]", lookupID, got.OnlyInEurosl, got.OnlyInGermansl)
-		}
+		assertConceptAgreementMatches(t, db, lookupID, want)
 	}
 	missing, err := db.ConceptAgreement(context.Background(), "missing")
 	if err != nil || missing != nil {
 		t.Fatalf("ConceptAgreement(missing) = %+v, %v; want nil, nil", missing, err)
+	}
+}
+
+// assertConceptAgreementMatches looks up lookupID and fails t unless the
+// decoded pair (fields and lists) matches want exactly. Shared by both legs
+// of TestConceptAgreementDecodesBothSidesAndLists's either-side lookup,
+// keeping that test's own cyclomatic complexity within the linter's bound.
+func assertConceptAgreementMatches(t *testing.T, db *DB, lookupID string, want domain.ConceptAgreementPair) {
+	t.Helper()
+	got, err := db.ConceptAgreement(context.Background(), lookupID)
+	if err != nil || got == nil || got.EuroslConceptID != want.EuroslConceptID || got.GermanslConceptID != want.GermanslConceptID || got.Agreement != want.Agreement || got.AgreementText != want.AgreementText {
+		t.Fatalf("ConceptAgreement(%q) = %+v, %v; want %+v, nil", lookupID, got, err, want)
+	}
+	if len(got.OnlyInEurosl) != len(want.OnlyInEurosl) || len(got.OnlyInGermansl) != len(want.OnlyInGermansl) {
+		t.Fatalf("ConceptAgreement(%q) lists = %+v, %+v; want %+v, %+v", lookupID, got.OnlyInEurosl, got.OnlyInGermansl, want.OnlyInEurosl, want.OnlyInGermansl)
+	}
+	for i := range want.OnlyInEurosl {
+		if got.OnlyInEurosl[i] != want.OnlyInEurosl[i] {
+			t.Fatalf("ConceptAgreement(%q).OnlyInEurosl = %+v, want %+v", lookupID, got.OnlyInEurosl, want.OnlyInEurosl)
+		}
+	}
+	for i := range want.OnlyInGermansl {
+		if got.OnlyInGermansl[i] != want.OnlyInGermansl[i] {
+			t.Fatalf("ConceptAgreement(%q).OnlyInGermansl = %+v, want %+v", lookupID, got.OnlyInGermansl, want.OnlyInGermansl)
+		}
 	}
 }
 

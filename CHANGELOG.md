@@ -5,6 +5,17 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [3.0.1-alpha.0](https://github.com/jobrunner/hostus/compare/v3.0.0-alpha.0...v3.0.1-alpha.0) (2026-08-31)
+
+
+### Bug Fixes
+
+* **docker:** bump builder base image to golang:1.26.6-alpine ([d76f595](https://github.com/jobrunner/hostus/commit/d76f59534549fa7bdfc673645e33b5eb73741e9b))
+* **docker:** bump builder base image to golang:1.26.6-alpine ([a3c2c23](https://github.com/jobrunner/hostus/commit/a3c2c23e5777fdb1acf978ae7f87395fc91a8913))
+* **sqlite:** defer FK checks in ingest transactions, fixing native-space ingest on real GermanSL data ([725de6d](https://github.com/jobrunner/hostus/commit/725de6d3c3814e86454ebe3e7c84b93e05314a51))
+* **sqlite:** FK-Reihenfolgen-Bug im nativen Fall-B-Ingest bei echten GermanSL-Daten ([2731b00](https://github.com/jobrunner/hostus/commit/2731b00b8e27cc11652372935496b05a58c1bedd))
+* **sqlite:** reduce cyclomatic complexity of TestConceptAgreementDecodesBothSidesAndLists ([406d0f2](https://github.com/jobrunner/hostus/commit/406d0f28d8685db20b67cdfd7375f65b814cbc5c))
+
 ## [3.0.0-alpha.0](https://github.com/jobrunner/hostus/compare/v2.6.1-alpha.0...v3.0.0-alpha.0) (2026-08-30)
 
 

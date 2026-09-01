@@ -97,12 +97,15 @@ const (
 // What counts as ambiguous depends on policy. The base rule, under both
 // policies this package defines: a key answering with two or more distinct
 // concepts is ambiguous and no concept is picked. Under policyPreferBackbone,
-// sec.-space-only candidates are dropped first (preferBackboneConcepts)
-// whenever a backbone concept shares the name, but whatever remains still
-// follows that base rule — no tie-break runs, so this outcome never carries
-// tieBroken. Under policyResolveGenuineBearer the SAME preferBackboneConcepts
-// filter runs, and additionally a remaining tie is broken by
-// genuineBearerWinner — only a key with no single genuine bearer is
+// candidates are narrowed first by preferGenuineClaimants — Stufe 1
+// (preferBackboneConcepts) drops sec.-space-only candidates whenever a
+// backbone concept shares the name, and Stufe 2 then drops name-space-NATIVE
+// candidates (nativeSpaces) whenever a genuine backbone concept remains
+// (spec 2026-09-01 B2, preferGenuineClaimants' doc comment) — but whatever
+// remains still follows that base rule — no tie-break runs, so this outcome
+// never carries tieBroken. Under policyResolveGenuineBearer the SAME
+// preferGenuineClaimants filter runs, and additionally a remaining tie is
+// broken by genuineBearerWinner — only a key with no single genuine bearer is
 // ambiguous, and the outcome then carries tieBroken so the caller can report
 // it.
 //
@@ -119,14 +122,14 @@ const (
 //     meant; continuing down the ladder until some rule happens to produce
 //     a single-concept key would be guessing, which is precisely what the
 //     rest of this crosswalk refuses to do.
-func resolveTraitName(ctx context.Context, repo output.Repository, canon string, policy crosswalkPolicy) (traitResolution, error) {
+func resolveTraitName(ctx context.Context, repo output.Repository, canon string, policy crosswalkPolicy, nativeSpaces map[string]bool) (traitResolution, error) {
 	for _, cand := range domain.NameCandidates(canon) {
 		candidates, err := repo.MatchExact(ctx, cand.Key)
 		if err != nil {
 			return traitResolution{}, err
 		}
 		if policy == policyResolveGenuineBearer || policy == policyPreferBackbone {
-			candidates = preferBackboneConcepts(candidates)
+			candidates = preferGenuineClaimants(candidates, nativeSpaces)
 		}
 		if len(candidates) == 0 {
 			continue
@@ -171,6 +174,58 @@ func preferBackboneConcepts(candidates []output.MatchCandidate) []output.MatchCa
 		return candidates
 	}
 	return backbone
+}
+
+// preferGenuineClaimants is the shared two-tier claimant preference both the
+// ingest crosswalk (resolveTraitName) and the serving path (match.go) apply
+// before counting distinct concepts:
+//
+//	tier 1: preferBackboneConcepts — sec.-space candidates are dropped when a
+//	        non-sec candidate holds the name (PR #94, see that function).
+//	tier 2: name-space-NATIVE candidates (Fall B concepts eurosl/germansl
+//	        write for ranks above SPECIES, nativespace_ingest.go) are dropped
+//	        when a genuine taxonomic-backbone concept remains. A native
+//	        concept carries SecReference == "" and is therefore invisible to
+//	        tier 1 — measured on a full real ingest (2026-09-01, spec B2):
+//	        2866 GENUS + 319 FAMILY folds held both a WCVP and a native
+//	        concept, costing germansl ~544 genus entries purely by ingest
+//	        order. nativeSpaces is the set of name_space ids (Repository.
+//	        NameSpaces) — floraveg is in it and harmless (it writes no
+//	        native concepts, so no candidate ever carries its id).
+//
+// Both tiers share the same fallback: a name that ONLY the filtered class
+// carries keeps its candidates (single native -> matched, several -> the
+// base ambiguity rule), so bryophyte genera existing solely as native
+// concepts (Abietinella) keep resolving.
+func preferGenuineClaimants(candidates []output.MatchCandidate, nativeSpaces map[string]bool) []output.MatchCandidate {
+	candidates = preferBackboneConcepts(candidates)
+	if len(nativeSpaces) == 0 {
+		return candidates
+	}
+	genuine := make([]output.MatchCandidate, 0, len(candidates))
+	for _, c := range candidates {
+		if !nativeSpaces[c.Concept.BackboneID] {
+			genuine = append(genuine, c)
+		}
+	}
+	if len(genuine) == 0 {
+		return candidates
+	}
+	return genuine
+}
+
+// nativeSpaceSet loads the name-space id set preferGenuineClaimants consults,
+// exactly once per crosswalk run / match batch — never per name.
+func nativeSpaceSet(ctx context.Context, repo output.Repository) (map[string]bool, error) {
+	spaces, err := repo.NameSpaces(ctx)
+	if err != nil {
+		return nil, err
+	}
+	set := make(map[string]bool, len(spaces))
+	for _, s := range spaces {
+		set[s.ID] = true
+	}
+	return set, nil
 }
 
 // traitBearers adapts repository candidates to what genuineBearerWinner reads.

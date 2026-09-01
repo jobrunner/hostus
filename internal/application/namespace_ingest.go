@@ -281,8 +281,14 @@ func resolutionFor(rule domain.NormalizationRule) string {
 // IngestNameSpace's doc comment.
 //
 // The per-name resolution is resolveTraitName, unchanged: this is the SP3
-// crosswalk, not a copy of it.
+// crosswalk, not a copy of it. nativeSpaceSet is loaded ONCE here, before the
+// loop, not per name — it never changes within one ingest run.
 func resolveNameSpaceNames(ctx context.Context, repo output.Repository, rows []NameRow) (map[string]traitResolution, error) {
+	nativeSpaces, err := nativeSpaceSet(ctx, repo)
+	if err != nil {
+		return nil, fmt.Errorf("application: loading name-space set: %w", err)
+	}
+
 	resolved := make(map[string]traitResolution)
 	for _, row := range rows {
 		canon := domain.Canonicalize(row.Taxon)
@@ -299,11 +305,11 @@ func resolveNameSpaceNames(ctx context.Context, repo output.Repository, rows []N
 		// spellings on evidence nobody gathered. See
 		// TestIngestNameSpace_HomonymStaysAmbiguousHere.
 		//
-		// The sec.-space FILTER (preferBackboneConcepts) is a separate,
+		// The two-tier FILTER (preferGenuineClaimants) is a separate,
 		// safe-by-construction step that DOES apply here, unlike the
-		// tie-break: a sec.-reference concept (e.g. one of CDM's ~18
-		// Standardliste sec. spaces) is an attribution detail of a concept
-		// SOURCE distinct from the eurosl/germansl name space being
+		// tie-break. Stufe 1: a sec.-reference concept (e.g. one of CDM's
+		// ~18 Standardliste sec. spaces) is an attribution detail of a
+		// concept SOURCE distinct from the eurosl/germansl name space being
 		// crosswalked, not a second genuine claimant on that spelling.
 		// Counting it as one inflates "ambiguous" on well-known species.
 		// Measured on a real full ingest that also loads CDM (2026-08-31,
@@ -312,9 +318,16 @@ func resolveNameSpaceNames(ctx context.Context, repo output.Repository, rows []N
 		//   germansl: before  26599/ 3370/ 9934   -> after  26599/10436/2868
 		// — matching (within noise) an ingest with CDM dropped entirely
 		// (eurosl 113607/8194, germansl 10393/2586), while keeping CDM (and
-		// /v1/translate) in the database. See policyPreferBackbone's doc
-		// comment.
-		res, err := resolveTraitName(ctx, repo, canon, policyPreferBackbone)
+		// /v1/translate) in the database. Stufe 2: a name-space-NATIVE
+		// concept (Fall B, nativespace_ingest.go) is dropped the same way
+		// whenever a genuine backbone concept remains — see
+		// preferGenuineClaimants' doc comment (spec 2026-09-01 B2) for the
+		// measured genus/family fold counts this recovers. Self-shadowing
+		// note: on a re-ingest of the SAME name space, that space is already
+		// in nativeSpaces (loaded above), so its own Fall-B concepts from the
+		// prior run are correctly demoted too — no special case needed for
+		// idempotent re-ingest.
+		res, err := resolveTraitName(ctx, repo, canon, policyPreferBackbone, nativeSpaces)
 		if err != nil {
 			return nil, fmt.Errorf("name %q: %w", row.Taxon, err)
 		}

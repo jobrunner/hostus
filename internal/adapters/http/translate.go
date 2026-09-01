@@ -12,6 +12,10 @@ import (
 	"github.com/jobrunner/hostus/internal/ports/output"
 )
 
+// maxTranslateBodyBytes is the maximum request body size for POST /v1/translate.
+// Set to 64 KiB to prevent DoS-scale sequential processing (see spec B4).
+const maxTranslateBodyBytes = 64 << 10
+
 // Wire values for TranslateResult's outcome. They are rendered as an
 // explicit enum rather than being inferred from an empty array, so a client
 // cannot read "no relation recorded" as a transport hiccup or a truncated
@@ -184,6 +188,7 @@ type translateResponseDTO struct {
 // truthful answer about the data, not a failure of the request.
 func handleTranslate(repo output.Repository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxTranslateBodyBytes)
 		var body translateRequestDTO
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			httperr.InvalidQueryError(w, "malformed request body")

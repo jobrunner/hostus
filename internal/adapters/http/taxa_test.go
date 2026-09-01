@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1104,6 +1105,90 @@ func TestHandleConcept_VernacularNamesRenderWithHardcodedSource(t *testing.T) {
 	name, ok := names[0].(map[string]any)
 	if !ok || name["language"] != "de" || name["name"] != "Kali-Salzkraut" || name["source"] != "germansl" {
 		t.Fatalf("vernacular_names[0] = %v, want {language: de, name: Kali-Salzkraut, source: germansl}", names[0])
+	}
+}
+
+// TestHandleMatch_RejectsOversizedBatch verifies DoS protection: a batch
+// exceeding maxMatchNames is rejected with 400 INVALID_QUERY rather than
+// sequentially processed (each name up to 20k-candidate Levenshtein calls).
+func TestHandleMatch_RejectsOversizedBatch(t *testing.T) {
+	repo := seededRepo(t)
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	names := make([]map[string]string, 1001)
+	for i := range names {
+		names[i] = map[string]string{"id": strconv.Itoa(i), "verbatim": "x"}
+	}
+	body, _ := json.Marshal(map[string]any{"names": names})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/match", bytes.NewReader(body))
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body: %s)", rr.Code, rr.Body.String())
+	}
+	assertJSONContentType(t, rr)
+
+	got := decodeJSON[errorEnvelope](t, rr.Body)
+	if got.Error.Code != "INVALID_QUERY" {
+		t.Errorf("error.code = %q, want %q", got.Error.Code, "INVALID_QUERY")
+	}
+	if !strings.Contains(got.Error.Message, "1000") {
+		t.Errorf("error.message = %q, want to mention limit 1000", got.Error.Message)
+	}
+}
+
+// TestHandleMatch_ExactlyAtLimitStillServed verifies the boundary: exactly
+// 1000 names returns 200 (kills the CONDITIONALS_BOUNDARY mutant).
+func TestHandleMatch_ExactlyAtLimitStillServed(t *testing.T) {
+	repo := seededRepo(t)
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	names := make([]map[string]string, 1000)
+	for i := range names {
+		names[i] = map[string]string{"id": strconv.Itoa(i), "verbatim": "Corynephorus canescens"}
+	}
+	body, _ := json.Marshal(map[string]any{"names": names})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/match", bytes.NewReader(body))
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	assertJSONContentType(t, rr)
+
+	got := decodeJSON[matchResponse](t, rr.Body)
+	if len(got.Results) != 1000 {
+		t.Errorf("len(results) = %d, want 1000", len(got.Results))
+	}
+}
+
+// TestHandleMatch_RejectsOversizedBody verifies MaxBytesReader rejection:
+// a body exceeding 1 MiB is rejected with 400 during decoding.
+func TestHandleMatch_RejectsOversizedBody(t *testing.T) {
+	repo := seededRepo(t)
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	// Create a body > 1 MiB
+	oversizedBody := make([]byte, (1<<20)+1)
+	oversizedBody[0] = '{'
+	oversizedBody[len(oversizedBody)-1] = '}'
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/match", bytes.NewReader(oversizedBody))
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body: %s)", rr.Code, rr.Body.String())
+	}
+	assertJSONContentType(t, rr)
+
+	got := decodeJSON[errorEnvelope](t, rr.Body)
+	if got.Error.Code != "INVALID_QUERY" {
+		t.Errorf("error.code = %q, want %q", got.Error.Code, "INVALID_QUERY")
 	}
 }
 

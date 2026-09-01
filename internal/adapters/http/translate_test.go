@@ -552,6 +552,41 @@ func TestTranslateWCVPTargetFromNativeConceptIs404OverHTTP(t *testing.T) {
 	}
 }
 
+// TestHandleTranslate_RejectsOversizedBody verifies MaxBytesReader rejection:
+// a body exceeding 64 KiB is rejected with 400 during decoding.
+func TestHandleTranslate_RejectsOversizedBody(t *testing.T) {
+	// Use a minimal test database; we only need to get past the handler
+	// to verify the MaxBytesReader rejects the body before decoding.
+	db := translateRepoDB(t)
+	r := httpx.NewRouter(httpx.Deps{Repo: db})
+
+	// Create a body > 64 KiB
+	oversizedBody := make([]byte, (64<<10)+1)
+	oversizedBody[0] = '{'
+	oversizedBody[len(oversizedBody)-1] = '}'
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/translate", bytes.NewReader(oversizedBody))
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	var got struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decoding JSON response: %v", err)
+	}
+	if got.Error.Code != "INVALID_QUERY" {
+		t.Errorf("error.code = %q, want %q", got.Error.Code, "INVALID_QUERY")
+	}
+}
+
 // decodeTranslateOn is decodeTranslate for a caller that built its own
 // router (the sqlite-backed tests in this file share one via postTranslate,
 // but the stub-repo tests above need a router per stubTranslateNSRepo

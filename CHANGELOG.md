@@ -5,6 +5,18 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [3.0.4-alpha.0](https://github.com/jobrunner/hostus/compare/v3.0.3-alpha.0...v3.0.4-alpha.0) (2026-09-01)
+
+
+### Bug Fixes
+
+* Ambiguitäts-Konsistenz — gemeinsame Claimant-Präferenz für Ingest- und Serving-Pfad, CDM-sec-Synthese, Match-Limits ([3ca03ca](https://github.com/jobrunner/hostus/commit/3ca03cac4ad9ed3efc08cb5c6fa9f4357f1d29cc))
+* **cdm:** Konzepte ohne sec_uuid bekommen synthetische sec-Referenz statt Backbone-Status ([57557a7](https://github.com/jobrunner/hostus/commit/57557a76728bcce18e32d8cb99923dbb20f765a3))
+* **crosswalk:** Fall-B-native Konzepte verschatten Backbone-Konzepte nicht mehr ([3966260](https://github.com/jobrunner/hostus/commit/39662603c07a4da8d8a515cfd4aa89c8e3824e7a))
+* **http:** Body- und Batch-Limits für /v1/match und /v1/translate (DoS-Härtung) ([4897548](https://github.com/jobrunner/hostus/commit/489754874a71e23839e8943fb7ccc1c7874e0083))
+* **match:** Fuzzy-Präferenz pro Schreibweise statt pro Pool ([f04daf6](https://github.com/jobrunner/hostus/commit/f04daf658cc8b10207ec5fd3f7faba9590e1add9))
+* **match:** Serving-Pfad wendet dieselbe Claimant-Präferenz an wie der Ingest-Crosswalk ([01aa57c](https://github.com/jobrunner/hostus/commit/01aa57cfe0dfac70ab3598304af2c5d6698a3ba7))
+
 ## [3.0.3-alpha.0](https://github.com/jobrunner/hostus/compare/v3.0.2-alpha.0...v3.0.3-alpha.0) (2026-09-01)
 
 

@@ -162,6 +162,61 @@ func TestIngest_WCVPFixture_ReportCounts(t *testing.T) {
 	}
 }
 
+// TestIngest_MisappliedRow_NeverLinkedAsSynonym is a synthetic (non-WCVP-
+// fixture) case pinning the fix for a real ingest finding (2026-09-01): a
+// WCVP row whose taxonomicstatus is "Misapplied" — e.g. the real
+// "Pinus sylvestris Thunb., sensu auct." row, historically misapplied to
+// Pinus thunbergii — must NOT be linked into concept_name. Doing so let it
+// participate in MatchExact, so the eurosl/germansl name-space crosswalk
+// (internal/application/namespace_ingest.go) saw two DISTINCT WCVP concepts
+// for the bare string "Pinus sylvestris" (the real species, and the
+// concept the misapplied usage points at) and refused to resolve either —
+// even though preferBackboneConcepts correctly can't distinguish them,
+// since BOTH are genuine backbone (non-sec.) concepts. Measured on the real
+// WCVP dump: 468 such collisions exist.
+//
+// Two rows sharing the target concept "acc1": one an ordinary synonym
+// ("Old Spelling"), one status="Misapplied" ("Wrongly Used Name") — the
+// ordinary synonym must still be linked normally, contrasting the two.
+func TestIngest_MisappliedRow_NeverLinkedAsSynonym(t *testing.T) {
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "test", Version: "v1"}}, ManifestSHA: "x"}
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+
+	taxa := []application.TaxonRow{
+		{TaxonID: "acc1", AcceptedTaxonID: "acc1", Accepted: true, Canonical: "Real Species", Rank: "SPECIES", Status: "Accepted"},
+		{TaxonID: "syn1", AcceptedTaxonID: "acc1", Accepted: false, Canonical: "Old Spelling", Rank: "SPECIES", Status: "Synonym"},
+		{TaxonID: "mis1", AcceptedTaxonID: "acc1", Accepted: false, Canonical: "Wrongly Used Name", Rank: "SPECIES", Status: "Misapplied"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) {
+		return fakeRowSource{taxa: taxa}, nil
+	}
+	report, err := application.Ingest(ctx, ds, readerFor, repo)
+	if err != nil {
+		t.Fatalf("Ingest: unexpected error: %v", err)
+	}
+
+	if got, want := report.Backbones[0].Synonyms, 1; got != want {
+		t.Errorf("report.Backbones[0].Synonyms = %d, want %d (the misapplied row must not count as a synonym)", got, want)
+	}
+	if got, want := report.Backbones[0].Misapplied, 1; got != want {
+		t.Errorf("report.Backbones[0].Misapplied = %d, want %d", got, want)
+	}
+
+	synonyms := mustSynonyms(ctx, t, repo, "test:concept:acc1")
+	if len(synonyms) != 1 || synonyms[0].Canonical != "Old Spelling" {
+		t.Fatalf("synonyms of test:concept:acc1 = %+v, want exactly [Old Spelling] — the misapplied row must never appear here", synonyms)
+	}
+
+	candidates, err := repo.MatchExact(ctx, "Wrongly Used Name")
+	if err != nil {
+		t.Fatalf("MatchExact(%q): unexpected error: %v", "Wrongly Used Name", err)
+	}
+	if len(candidates) != 0 {
+		t.Errorf("MatchExact(%q) = %+v, want no candidates — a misapplied name must not be crosswalk-matchable", "Wrongly Used Name", candidates)
+	}
+}
+
 func TestIngest_WCVPFixture_GroupsSynonymsUnderAcceptedConcept(t *testing.T) {
 	ds := loadDataset(t)
 	repo := openMemoryRepo(t)

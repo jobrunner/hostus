@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/jobrunner/hostus/internal/domain"
@@ -101,6 +102,21 @@ type BackboneReport struct {
 	Concepts int
 	Synonyms int
 	Orphaned int // synonym rows whose accepted target was never ingested (dangling reference in the source data)
+	// Misapplied counts non-accepted rows whose WCVP taxonomicstatus is
+	// "Misapplied" — a statement that a name was historically used WRONGLY
+	// for this concept's circumscription (e.g. "Pinus sylvestris Thunb.,
+	// sensu auct." misapplied to Pinus thunbergii), not a legitimate
+	// alternate spelling of it. These rows are deliberately NOT linked into
+	// concept_name (see pass2Synonyms): CDM's own ingest already drops the
+	// analogous "is misapplied name for" relation for exactly this reason
+	// (domain.Relation.IsConceptRelation's doc comment) — a misapplied name
+	// participating in MatchExact would make the CORRECT concept for that
+	// name (here, the true Pinus sylvestris L.) collide with the
+	// misapplied-to concept on every eurosl/germansl name-space crosswalk
+	// lookup, wrongly reporting the name as ambiguous. Measured on a real
+	// WCVP dump (2026-08-31): 1091 Misapplied rows, 468 of which collide
+	// with an unrelated Accepted concept's own canonical name.
+	Misapplied int
 	// NomStatusAbsent/Acceptable/Disqualifying/Unclassified tally the
 	// publication judgement (domain.ClassifyNomStatus) of every NON-ACCEPTED
 	// (synonym) row's nom_status. This deliberately includes ORPHANED synonyms
@@ -507,11 +523,18 @@ func (st *ingestState) linkSelfReferences(taxa []TaxonRow) error {
 // AcceptedTaxonID resolves to — grouping synonyms under the accepted taxon
 // rather than giving them a concept of their own. Rows whose accepted
 // target was never ingested in pass 1 (a dangling reference in the source
-// data) are skipped and counted, not treated as fatal.
+// data) are skipped and counted, not treated as fatal. A row whose Status is
+// "Misapplied" is skipped too (counted as report.Misapplied, see its doc
+// comment) — it is never linked into concept_name at all, matching how
+// IngestCDM already drops the analogous relation.
 func (st *ingestState) pass2Synonyms(taxa []TaxonRow, report *BackboneReport) error {
 	b := st.backbone
 	for _, row := range taxa {
 		if row.Accepted {
+			continue
+		}
+		if strings.EqualFold(row.Status, "misapplied") {
+			report.Misapplied++
 			continue
 		}
 		if !st.accepted[row.AcceptedTaxonID] {

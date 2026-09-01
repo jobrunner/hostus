@@ -5,6 +5,25 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [Unreleased]
+
+### Fixed
+
+* **WCVP-Ingest:** eine Zeile mit `taxonomicstatus=Misapplied` (ein Name,
+  der historisch FÄLSCHLICH für ein anderes Konzept verwendet wurde, z. B.
+  „Pinus sylvestris Thunb., sensu auct." tatsächlich gemeint als *Pinus
+  thunbergii*) wurde bislang wie ein gewöhnliches Synonym in
+  `concept_name` verknüpft und war damit über `MatchExact` auffindbar.
+  Dadurch kollidierte der Name bei jedem eurosl/germansl-Namensraum-
+  Crosswalk-Lookup mit dem eigentlich korrekten Konzept und wurde
+  fälschlich als mehrdeutig gemeldet — betraf u. a. `Pinus sylvestris`,
+  `Adonis vernalis`, `Aconitum lycoctonum` (gemessen: 468 solcher
+  Kollisionen im realen WCVP-Datensatz). `Misapplied`-Zeilen werden jetzt
+  gar nicht mehr in `concept_name` verknüpft — analog dazu, wie
+  `IngestCDM` die entsprechende `is misapplied name for`-Relation bereits
+  verwirft. Neues `BackboneReport.Misapplied`-Feld zählt die
+  übersprungenen Zeilen (1091 im realen WCVP-Dump).
+
 ## [3.0.2-alpha.0](https://github.com/jobrunner/hostus/compare/v3.0.1-alpha.0...v3.0.2-alpha.0) (2026-08-31)
 
 

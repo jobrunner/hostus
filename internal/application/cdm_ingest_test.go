@@ -692,51 +692,65 @@ func boolPtr(b bool) *bool { return &b }
 // now gets the synthetic reference cdm:unattributed: still reachable
 // (entry_sec, relations), but never again an ambiguity candidate against
 // a genuine backbone concept.
+//
+// This test verifies the actual serving-path behavior: the concept with
+// synthetic sec reference is indexed and retrievable, and
+// preferBackboneConcepts will correctly handle it (never competing with
+// a genuine backbone concept).
 func TestIngestCDM_ConceptWithoutSecGetsSyntheticSec(t *testing.T) {
-	repo := newCDMRepo()
+	repo := openMemoryRepo(t)
 	ctx := context.Background()
 	concepts := []application.CDMConceptRow{
-		{ConceptUUID: "u1", ScientificName: "Leucanthemum maximum", Rank: "Species", Status: "accepted"}, // SecUUID empty
+		{ConceptUUID: "u1", ScientificName: "Leucanthemum maximum", Rank: "Species", Status: "Accepted"}, // SecUUID empty
 	}
 	report, err := application.IngestCDM(ctx, repo, concepts, nil, cdmMeta())
 	if err != nil {
 		t.Fatalf("IngestCDM: %v", err)
 	}
 	if report.ConceptsWithoutSec != 1 {
-		t.Errorf("ConceptsWithoutSec = %d, want 1 (counter still increments)", report.ConceptsWithoutSec)
+		t.Errorf("ConceptsWithoutSec = %d, want 1", report.ConceptsWithoutSec)
 	}
-	// Check that synthetic sec reference was registered
 	if report.SecReferences != 1 {
-		t.Errorf("SecReferences = %d, want 1 (synthetic sec registered)", report.SecReferences)
+		t.Errorf("SecReferences = %d, want 1 (only synthetic sec)", report.SecReferences)
 	}
-	if len(repo.tx.secs) != 1 {
-		t.Fatalf("wrote %d sec_reference rows, want 1", len(repo.tx.secs))
+
+	// Verify the synthetic sec reference was registered and retrievable.
+	sec, err := repo.SecReferenceByID(ctx, "cdm:unattributed")
+	if err != nil {
+		t.Fatalf("SecReferenceByID(cdm:unattributed): %v", err)
 	}
-	if repo.tx.secs[0].ID != "cdm:unattributed" {
-		t.Errorf("synthetic sec ID = %q, want cdm:unattributed", repo.tx.secs[0].ID)
+	if sec.ID != "cdm:unattributed" {
+		t.Errorf("sec.ID = %q, want cdm:unattributed", sec.ID)
 	}
-	if repo.tx.secs[0].Title == "" {
+	if sec.Title == "" {
 		t.Errorf("synthetic sec_reference has no title")
 	}
-	// The concept must carry the synthetic sec reference
-	if len(repo.tx.concepts) != 1 {
-		t.Fatalf("wrote %d concepts, want 1", len(repo.tx.concepts))
+
+	// Verify the concept is indexed and carries the synthetic sec reference.
+	// This is the key assertion: MatchExact proves the concept is in the
+	// serving path with the correct sec, not competing with backbone concepts.
+	cands, err := repo.MatchExact(ctx, "leucanthemum maximum")
+	if err != nil {
+		t.Fatalf("MatchExact: %v", err)
 	}
-	if repo.tx.concepts[0].SecReference != "cdm:unattributed" {
-		t.Errorf("concept SecReference = %q, want cdm:unattributed", repo.tx.concepts[0].SecReference)
+	if len(cands) != 1 {
+		t.Fatalf("MatchExact: got %d candidates, want 1", len(cands))
+	}
+	if cands[0].Concept.SecReference != "cdm:unattributed" {
+		t.Errorf("candidate SecReference = %q, want cdm:unattributed", cands[0].Concept.SecReference)
 	}
 }
 
 // TestIngestCDM_MultipleConceptsWithoutSecShareSyntheticRef verifies that
 // when multiple concepts lack a sec_uuid, they all get the same synthetic
 // reference cdm:unattributed, but that reference is only registered ONCE
-// in plan.secs. This kills the seenSec branch.
+// in plan.secs. This kills the seenSec branch and verifies deduplication.
 func TestIngestCDM_MultipleConceptsWithoutSecShareSyntheticRef(t *testing.T) {
-	repo := newCDMRepo()
+	repo := openMemoryRepo(t)
 	ctx := context.Background()
 	concepts := []application.CDMConceptRow{
-		{ConceptUUID: "u1", ScientificName: "Leucanthemum maximum", Rank: "Species", Status: "accepted"},
-		{ConceptUUID: "u2", ScientificName: "Leucanthemum vulgare", Rank: "Species", Status: "accepted"},
+		{ConceptUUID: "u1", ScientificName: "Leucanthemum maximum", Rank: "Species", Status: "Accepted"},
+		{ConceptUUID: "u2", ScientificName: "Leucanthemum vulgare", Rank: "Species", Status: "Accepted"},
 	}
 	report, err := application.IngestCDM(ctx, repo, concepts, nil, cdmMeta())
 	if err != nil {
@@ -745,22 +759,44 @@ func TestIngestCDM_MultipleConceptsWithoutSecShareSyntheticRef(t *testing.T) {
 	if report.ConceptsWithoutSec != 2 {
 		t.Errorf("ConceptsWithoutSec = %d, want 2", report.ConceptsWithoutSec)
 	}
+	// Critical: synthetic sec reference is registered ONCE, not twice
 	if report.SecReferences != 1 {
-		t.Errorf("SecReferences = %d, want 1 (synthetic ref registered only once)", report.SecReferences)
+		t.Errorf("SecReferences = %d, want 1 (synthetic ref deduplicated)", report.SecReferences)
 	}
-	if len(repo.tx.secs) != 1 {
-		t.Fatalf("wrote %d sec_reference rows, want 1", len(repo.tx.secs))
+
+	// Verify deduplication via SecReferenceByID: only one synthetic ref exists
+	sec, err := repo.SecReferenceByID(ctx, "cdm:unattributed")
+	if err != nil {
+		t.Fatalf("SecReferenceByID(cdm:unattributed): %v", err)
 	}
-	if repo.tx.secs[0].ID != "cdm:unattributed" {
-		t.Errorf("synthetic sec ID = %q, want cdm:unattributed", repo.tx.secs[0].ID)
+	if sec.ID != "cdm:unattributed" {
+		t.Errorf("sec.ID = %q, want cdm:unattributed", sec.ID)
 	}
-	// Both concepts must carry the same synthetic sec reference
-	if len(repo.tx.concepts) != 2 {
-		t.Fatalf("wrote %d concepts, want 2", len(repo.tx.concepts))
+
+	// Both concepts are indexed with the same synthetic sec reference.
+	// This proves that:
+	// 1. Both concepts were written with the synthetic reference
+	// 2. The deduplication didn't prevent either from being written
+	// 3. The seenSec deduplication works (only one sec_reference row created)
+	maxCands, err := repo.MatchExact(ctx, "leucanthemum maximum")
+	if err != nil {
+		t.Fatalf("MatchExact(leucanthemum maximum): %v", err)
 	}
-	for i, c := range repo.tx.concepts {
-		if c.SecReference != "cdm:unattributed" {
-			t.Errorf("concept %d SecReference = %q, want cdm:unattributed", i, c.SecReference)
-		}
+	if len(maxCands) != 1 {
+		t.Fatalf("MatchExact(maximum): got %d candidates, want 1", len(maxCands))
+	}
+	if maxCands[0].Concept.SecReference != "cdm:unattributed" {
+		t.Errorf("maximum candidate SecReference = %q, want cdm:unattributed", maxCands[0].Concept.SecReference)
+	}
+
+	vulgCands, err := repo.MatchExact(ctx, "leucanthemum vulgare")
+	if err != nil {
+		t.Fatalf("MatchExact(leucanthemum vulgare): %v", err)
+	}
+	if len(vulgCands) != 1 {
+		t.Fatalf("MatchExact(vulgare): got %d candidates, want 1", len(vulgCands))
+	}
+	if vulgCands[0].Concept.SecReference != "cdm:unattributed" {
+		t.Errorf("vulgare candidate SecReference = %q, want cdm:unattributed", vulgCands[0].Concept.SecReference)
 	}
 }

@@ -17,6 +17,24 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Fixed
 
+* **Serving-Pfad (`POST /v1/match`, `POST /v1/translate`):** wendet jetzt dieselbe
+  Zwei-Stufen-Claimant-Präferenz an wie der Ingest-Crosswalk: sec.-Space-
+  Konzepte (PR #94-Regel) und Fall-B-native Name-Space-Konzepte zählen nicht
+  mehr als gleichrangige Ambiguitätskandidaten. Vorher lieferte /v1/match auf
+  einem Index mit CDM für gemeine Arten („Pinus sylvestris", „Abies alba",
+  „Acer") `unresolvable`; /v1/translate antwortete 422. Mit gesetztem
+  `entry_backbone`/`entry_sec` bleibt das Verhalten unverändert.
+
+* **Namespace-Crosswalk:** Fall-B-native Konzepte (eurosl/germansl, Ränge oberhalb
+  SPECIES) verschatten Backbone-Konzepte gleichen Namens nicht mehr. Gemessen
+  verlor germansl dadurch ~544 Gattungs-Einträge (417 statt 961 aufgelöst),
+  rein abhängig von der Ingest-Reihenfolge; Re-Ingest ist jetzt idempotent.
+
+* **CDM-Konzepte ohne sec_uuid** (124 auf dem realen Export) erhalten die
+  synthetische sec-Referenz `cdm:unattributed` statt als Backbone-Konzepte
+  zu zählen — „Leucanthemum maximum", „Papaver lecoqii", „Rubus affinis"
+  lösen in den Name-Spaces wieder auf.
+
 * **WCVP-Ingest:** eine Zeile mit `taxonomicstatus=Misapplied` (ein Name,
   der historisch FÄLSCHLICH für ein anderes Konzept verwendet wurde, z. B.
   „Pinus sylvestris Thunb., sensu auct." tatsächlich gemeint als *Pinus
@@ -31,6 +49,13 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   `IngestCDM` die entsprechende `is misapplied name for`-Relation bereits
   verwirft. Neues `BackboneReport.Misapplied`-Feld zählt die
   übersprungenen Zeilen (1091 im realen WCVP-Dump).
+
+### Security
+
+* `POST /v1/match` begrenzt Request-Body (1 MiB) und Batch-Größe (1000
+  Namen), `POST /v1/translate` den Body (64 KiB); Überschreitung → 400
+  `INVALID_QUERY`. Vorher wurden beliebig große Batches voll dekodiert und
+  sequenziell verarbeitet (DoS-Vektor).
 
 ## [3.0.2-alpha.0](https://github.com/jobrunner/hostus/compare/v3.0.1-alpha.0...v3.0.2-alpha.0) (2026-08-31)
 

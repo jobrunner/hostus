@@ -29,8 +29,18 @@ func TestPreferGenuineClaimants(t *testing.T) {
 	nativeSpaces := map[string]bool{nativeSpaceID: true}
 
 	backboneCandidate := output.MatchCandidate{Concept: domain.Concept{ID: backboneSpaceID + ":concept:g1", BackboneID: backboneSpaceID}}
+	// otherBackboneCandidate is a SECOND genuine (non-sec, non-native)
+	// backbone concept — distinct from backboneCandidate, sharing no
+	// BackboneID/space with either it or nativeSpaceID.
+	otherBackboneCandidate := output.MatchCandidate{Concept: domain.Concept{ID: "fixture-other-backbone:concept:g2", BackboneID: "fixture-other-backbone"}}
 	nativeCandidate := output.MatchCandidate{Concept: domain.Concept{ID: nativeSpaceID + ":concept:e1", BackboneID: nativeSpaceID}}
 	secCandidate := output.MatchCandidate{Concept: domain.Concept{ID: secSpaceID + ":concept:x", BackboneID: secSpaceID, SecReference: secSpaceID + "-sec-1"}}
+	// secAndNativeCandidate carries BOTH traits at once: its BackboneID is a
+	// native space AND it has a SecReference set (a shape that should not
+	// occur in practice — a native concept never carries SecReference — but
+	// preferGenuineClaimants must still resolve it correctly: tier 1 already
+	// drops it via SecReference, before tier 2's native check ever runs).
+	secAndNativeCandidate := output.MatchCandidate{Concept: domain.Concept{ID: nativeSpaceID + ":concept:secnative", BackboneID: nativeSpaceID, SecReference: secSpaceID + "-sec-2"}}
 
 	cases := []struct {
 		name         string
@@ -61,6 +71,35 @@ func TestPreferGenuineClaimants(t *testing.T) {
 			candidates:   []output.MatchCandidate{backboneCandidate, nativeCandidate},
 			nativeSpaces: map[string]bool{},
 			want:         []output.MatchCandidate{backboneCandidate, nativeCandidate},
+		},
+		{
+			// M4: two GENUINE backbone candidates (neither sec-bearing nor
+			// native) must stay ambiguous — the preference only ever narrows
+			// a sec./native shadow away, never picks between two real
+			// claimants.
+			name:         "two genuine backbone candidates -> both kept, tie stands",
+			candidates:   []output.MatchCandidate{backboneCandidate, otherBackboneCandidate},
+			nativeSpaces: nativeSpaces,
+			want:         []output.MatchCandidate{backboneCandidate, otherBackboneCandidate},
+		},
+		{
+			// M4: nil is matchNamesFiltered's actual value on the filtered
+			// path (see matchNamesFiltered's lazy load) — must behave
+			// exactly like the already-covered empty-map case, not panic or
+			// diverge.
+			name:         "nil nativeSpaces map -> identical to preferBackboneConcepts",
+			candidates:   []output.MatchCandidate{backboneCandidate, nativeCandidate},
+			nativeSpaces: nil,
+			want:         []output.MatchCandidate{backboneCandidate, nativeCandidate},
+		},
+		{
+			// M4: a candidate that is simultaneously sec-bearing AND native
+			// is dropped by tier 1 already (SecReference != ""), regardless
+			// of also being native — tier 2 never gets a say.
+			name:         "candidate both sec-bearing and native -> dropped by tier 1 already",
+			candidates:   []output.MatchCandidate{backboneCandidate, secAndNativeCandidate},
+			nativeSpaces: nativeSpaces,
+			want:         []output.MatchCandidate{backboneCandidate},
 		},
 	}
 

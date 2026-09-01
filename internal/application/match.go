@@ -286,9 +286,20 @@ func MatchNames(ctx context.Context, repo output.Repository, reqs []MatchRequest
 // matchNamesFiltered is MatchNames with an optional resolution filter applied
 // to every entry. A zero filter makes it byte-for-byte MatchNames.
 func matchNamesFiltered(ctx context.Context, repo output.Repository, reqs []MatchRequest, filter MatchFilter) ([]MatchResult, error) {
-	nativeSpaces, err := nativeSpaceSet(ctx, repo)
-	if err != nil {
-		return nil, err
+	// Loaded only when the filter is empty: preferGenuineClaimants is never
+	// invoked on the filtered path (every call site below is itself gated by
+	// filter.empty()), so a caller pinning entry_backbone/entry_sec costs no
+	// extra DB round trip for a set it will never consult. nativeSpaces stays
+	// nil then, which preferGenuineClaimants/preferGenuineClaimantsPerSpelling
+	// already tolerate (len(nil map) == 0) — but that code path is simply
+	// never reached with a non-empty filter.
+	var nativeSpaces map[string]bool
+	if filter.empty() {
+		var err error
+		nativeSpaces, err = nativeSpaceSet(ctx, repo)
+		if err != nil {
+			return nil, err
+		}
 	}
 	results := make([]MatchResult, 0, len(reqs))
 	for _, req := range reqs {
@@ -552,12 +563,12 @@ func matchOne(ctx context.Context, repo output.Repository, req MatchRequest, fil
 	}
 	candidates = filter.apply(candidates)
 	if filter.empty() {
-		// Dieselbe Zwei-Stufen-Präferenz wie der Ingest-Crosswalk
-		// (preferGenuineClaimants, Spec Entscheidung 1+2): ein sec.-Space-
-		// oder Fall-B-natives Konzept ist kein zweiter Claimant. Mit
-		// gesetztem entry_backbone/entry_sec hat der Caller den Raum
-		// gepinnt — dann läuft KEINE Präferenz, das Ergebnis bleibt
-		// byte-identisch zum bisherigen gefilterten Pfad.
+		// Same two-tier claimant preference the ingest crosswalk applies
+		// (preferGenuineClaimants, spec 2026-09-01 Entscheidung 1+2): a
+		// sec.-space or Fall-B-native concept is not a second claimant. With
+		// entry_backbone/entry_sec set, the caller has already pinned the
+		// space — no preference runs then, so the filtered path stays
+		// byte-identical to what it was before this fix.
 		candidates = preferGenuineClaimants(candidates, nativeSpaces)
 	}
 	res, unresolved := classify(req, queryCanon, queryAuthor, candidates)
@@ -710,10 +721,15 @@ func matchFuzzy(ctx context.Context, repo output.Repository, req MatchRequest, q
 	// hints.
 	candidates = filter.apply(candidates)
 	if filter.empty() {
-		// Same claimant preference as matchOne, applied here BEFORE scoring
-		// (on the prefilter pool) so near-miss lists and winner ties see the
-		// same candidate base.
-		candidates = preferGenuineClaimants(candidates, nativeSpaces)
+		// The PER-SPELLING variant, not the plain one matchOne/matchAggregate
+		// use: this pool is heterogeneous (many DIFFERENT names within the
+		// prefilter's prefix+length window), and applying preferGenuineClaimants
+		// directly across it silently dropped every sec-/native-only candidate
+		// pool-wide as soon as ANY unrelated backbone name shared the pool —
+		// see preferGenuineClaimantsPerSpelling's doc comment for the measured
+		// regression this fixes. Applied BEFORE scoring so near-miss lists and
+		// winner ties see the narrowed candidate base.
+		candidates = preferGenuineClaimantsPerSpelling(candidates, nativeSpaces)
 	}
 
 	best := 0.0
@@ -1107,7 +1123,10 @@ func classify(req MatchRequest, queryCanon, queryAuthor string, candidates []out
 const roleAccepted = "accepted"
 
 // genuineBearerWinner breaks a match tie by nomenclatural type, or reports
-// that the tie stands.
+// that the tie stands. Called from two places: classify below (this file,
+// squarely on the serving path — every /v1/match exact-tie goes through it)
+// and crosswalk.go's resolveTraitName under policyResolveGenuineBearer (no
+// current caller passes that policy — see its own doc comment).
 //
 // The two claims a candidate can make are TIERED, not interchangeable:
 //

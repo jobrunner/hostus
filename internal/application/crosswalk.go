@@ -97,9 +97,9 @@ const (
 // What counts as ambiguous depends on policy. The base rule, under both
 // policies this package defines: a key answering with two or more distinct
 // concepts is ambiguous and no concept is picked. Under policyPreferBackbone,
-// candidates are narrowed first by preferGenuineClaimants — Stufe 1
+// candidates are narrowed first by preferGenuineClaimants — tier 1
 // (preferBackboneConcepts) drops sec.-space-only candidates whenever a
-// backbone concept shares the name, and Stufe 2 then drops name-space-NATIVE
+// backbone concept shares the name, and tier 2 then drops name-space-NATIVE
 // candidates (nativeSpaces) whenever a genuine backbone concept remains
 // (spec 2026-09-01 B2, preferGenuineClaimants' doc comment) — but whatever
 // remains still follows that base rule — no tie-break runs, so this outcome
@@ -212,6 +212,60 @@ func preferGenuineClaimants(candidates []output.MatchCandidate, nativeSpaces map
 		return candidates
 	}
 	return genuine
+}
+
+// preferGenuineClaimantsPerSpelling applies preferGenuineClaimants WITHIN
+// each spelling group of a heterogeneous candidate pool (grouped by
+// domain.Canonicalize(MatchedName.Canonical)), preserving the pool's
+// original order.
+//
+// preferGenuineClaimants itself is defined for candidates sharing ONE
+// spelling — "two claimants on the same name". Applying it directly across a
+// fuzzy prefilter pool of DIFFERENT names (match.go's matchFuzzy) silently
+// dropped every sec-/native-only name from the pool as soon as ANY unrelated
+// backbone name shared the pool: measured, a query "Abietinela" against a
+// pool holding the native-only concept "Abietinella" plus the unrelated WCVP
+// name "Abies alba" (both matching the prefilter's prefix+length window)
+// resolved to nothing, because tier 1 saw "Abies alba" (no SecReference) and
+// dropped every sec./native candidate pool-wide — including "Abietinella",
+// which has no accepted backbone spelling at all. That killed both fuzzy
+// resolution and the curator-facing near-miss list for exactly the names the
+// fallback invariant (preferGenuineClaimants' own doc comment) exists to
+// protect. Grouping by spelling first — so the preference only ever competes
+// candidates that actually name the same taxon — fixes that without
+// weakening the preference where it does apply (see
+// TestMatchFuzzy_PreferenceAppliesPerSpellingNotAcrossThePool).
+func preferGenuineClaimantsPerSpelling(candidates []output.MatchCandidate, nativeSpaces map[string]bool) []output.MatchCandidate {
+	if len(candidates) == 0 {
+		return candidates
+	}
+	groups := make(map[string][]output.MatchCandidate, len(candidates))
+	order := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		key := domain.Canonicalize(c.MatchedName.Canonical)
+		if _, seen := groups[key]; !seen {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], c)
+	}
+	// survive is a multiset (candidate value -> remaining count), not a plain
+	// set: two structurally identical candidates in the pool must both
+	// survive if the group-local filter keeps both. output.MatchCandidate
+	// has no slice/map fields, so it is a valid map key.
+	survive := make(map[output.MatchCandidate]int, len(candidates))
+	for _, key := range order {
+		for _, c := range preferGenuineClaimants(groups[key], nativeSpaces) {
+			survive[c]++
+		}
+	}
+	out := make([]output.MatchCandidate, 0, len(candidates))
+	for _, c := range candidates {
+		if survive[c] > 0 {
+			survive[c]--
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // nativeSpaceSet loads the name-space id set preferGenuineClaimants consults,

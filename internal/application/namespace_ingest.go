@@ -307,7 +307,7 @@ func resolveNameSpaceNames(ctx context.Context, repo output.Repository, rows []N
 		//
 		// The two-tier FILTER (preferGenuineClaimants) is a separate,
 		// safe-by-construction step that DOES apply here, unlike the
-		// tie-break. Stufe 1: a sec.-reference concept (e.g. one of CDM's
+		// tie-break. Tier 1: a sec.-reference concept (e.g. one of CDM's
 		// ~18 Standardliste sec. spaces) is an attribution detail of a
 		// concept SOURCE distinct from the eurosl/germansl name space being
 		// crosswalked, not a second genuine claimant on that spelling.
@@ -318,7 +318,7 @@ func resolveNameSpaceNames(ctx context.Context, repo output.Repository, rows []N
 		//   germansl: before  26599/ 3370/ 9934   -> after  26599/10436/2868
 		// — matching (within noise) an ingest with CDM dropped entirely
 		// (eurosl 113607/8194, germansl 10393/2586), while keeping CDM (and
-		// /v1/translate) in the database. Stufe 2: a name-space-NATIVE
+		// /v1/translate) in the database. Tier 2: a name-space-NATIVE
 		// concept (Fall B, nativespace_ingest.go) is dropped the same way
 		// whenever a genuine backbone concept remains — see
 		// preferGenuineClaimants' doc comment (spec 2026-09-01 B2) for the

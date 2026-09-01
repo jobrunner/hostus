@@ -78,6 +78,23 @@ zu 20k-Kandidaten-Levenshtein). Suggest/Synonyms haben Caps, Match nicht.
    siehe Audit-Memo): genuineBearerWinner-Tie-Break im Namespace-Crosswalk
    (4716 Folds, Abies-alba-Klasse); „Provisionally Accepted"-Behandlung;
    Suggest-Ranking; Performance-Overfetch (`repo.Concept` im Batch).
+6. **Stufe 2 demotet native Fall-B-Aggregate im Nominate-Fallback, bewusst
+   und ohne Rang-Ausnahme.** `matchAggregateNominate` peelt bei einer
+   nicht direkt gefundenen Aggregat-Anfrage die Marker schichtweise ab
+   (`domain.AggregateBases`) und wendet dieselbe Präferenz auf jede so
+   erreichte Basis an. Trägt eine dieser Basen — typischerweise der nackte
+   Binomialname — sowohl ein eurosl/germansl-Fall-B-Aggregat
+   (SPECIES_AGGREGATE, aber ohne „agg."-Marker im gespeicherten Namen) als
+   auch eine gleichnamige WCVP-Art, gewinnt Stufe 2 die WCVP-Art (echtes
+   Taxonomie-Backbone-Konzept schlägt natives Konzept) und das Ergebnis ist
+   `MatchAggregateNominate` statt des Fall-B-Aggregats. Das ist GEWOLLT:
+   vor Entscheidung 1 war diese Basis für genau diese Fälle ambiguous (zwei
+   gleichrangige Kandidaten) und löste GAR NICHT auf — eine Rang-Ausnahme
+   für SPECIES_AGGREGATE würde also nicht den Status quo wiederherstellen,
+   sondern nur den germansl-Crosswalk-Fix (Entscheidung 1, Stufe 2, B2)
+   selektiv für den Nominate-Fallback rückgängig machen, ohne die
+   ursprüngliche Ambiguität zu beheben. Gepinnt durch
+   `TestMatchNames_AggregateNominateDemotesNativeFallBAggregate`.
 
 ## Projektweite Anforderungen
 

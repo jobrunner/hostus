@@ -515,6 +515,44 @@ func TestTranslateAmbiguousVerbatimNameIsUnresolvable(t *testing.T) {
 	}
 }
 
+// TestTranslate_VerbatimResolvesDespiteSecSpaces pinnt Audit-Befund B1 für
+// /v1/translate: der Verbatim-Einstieg läuft durch matchNamesFiltered und
+// erbt dessen Zwei-Stufen-Präferenz — ein Backbone-Konzept (kein
+// SecReference) plus ein gleichnamiges sec.-Space-Konzept ist keine
+// Ambiguität. Vorher: 422 ErrUnresolvableName trotz eines eindeutigen
+// Backbone-Trägers.
+func TestTranslate_VerbatimResolvesDespiteSecSpaces(t *testing.T) {
+	backbone := domain.Concept{
+		ID: "wcvp:concept:ps1", BackboneID: "wcvp", Rank: domain.RankSpecies, Status: domain.StatusAccepted,
+		AcceptedName: domain.Name{ID: "wcvp:concept:ps1:name", Canonical: "Pinus sylvestris", Authorship: "L.", Rank: domain.RankSpecies},
+	}
+	secConcept := domain.Concept{
+		ID: "cdm:concept:ps-sec", BackboneID: "cdm", Rank: domain.RankSpecies, Status: domain.StatusAccepted, SecReference: secWH98,
+		AcceptedName: domain.Name{ID: "cdm:concept:ps-sec:name", Canonical: "Pinus sylvestris", Authorship: "L.", Rank: domain.RankSpecies},
+	}
+	repo := &fakeTranslateRepo{
+		secs:     map[string]domain.SecReference{secWH98: {ID: secWH98, Title: "Wisskirchen & Haeupler 1998"}},
+		concepts: map[string]domain.Concept{backbone.ID: backbone, secConcept.ID: secConcept},
+		edges:    map[string][]output.ConceptRelationEdge{},
+		exact: map[string][]output.MatchCandidate{
+			domain.Canonicalize("Pinus sylvestris"): {
+				{Concept: backbone, MatchedName: backbone.AcceptedName, Role: "accepted"},
+				{Concept: secConcept, MatchedName: secConcept.AcceptedName, Role: "accepted"},
+			},
+		},
+	}
+
+	_, err := application.Translate(context.Background(), repo, application.TranslateRequest{
+		Verbatim: "Pinus sylvestris L.", TargetSec: secWH98,
+	})
+	if errors.Is(err, application.ErrUnresolvableName) {
+		t.Fatalf("Translate: got ErrUnresolvableName, want the backbone concept to win despite the sec-space concept")
+	}
+	if err != nil {
+		t.Fatalf("Translate: unexpected error: %v", err)
+	}
+}
+
 // TestTranslateFuzzyVerbatimEntryRequiresReview: entry by name reuses
 // /v1/match's resolution with the same discipline — a fuzzy hit ALWAYS
 // requires review, and the entry record says it was fuzzy.

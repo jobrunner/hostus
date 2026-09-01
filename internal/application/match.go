@@ -286,9 +286,24 @@ func MatchNames(ctx context.Context, repo output.Repository, reqs []MatchRequest
 // matchNamesFiltered is MatchNames with an optional resolution filter applied
 // to every entry. A zero filter makes it byte-for-byte MatchNames.
 func matchNamesFiltered(ctx context.Context, repo output.Repository, reqs []MatchRequest, filter MatchFilter) ([]MatchResult, error) {
+	// Loaded only when the filter is empty: preferGenuineClaimants is never
+	// invoked on the filtered path (every call site below is itself gated by
+	// filter.empty()), so a caller pinning entry_backbone/entry_sec costs no
+	// extra DB round trip for a set it will never consult. nativeSpaces stays
+	// nil then, which preferGenuineClaimants/preferGenuineClaimantsPerSpelling
+	// already tolerate (len(nil map) == 0) — but that code path is simply
+	// never reached with a non-empty filter.
+	var nativeSpaces map[string]bool
+	if filter.empty() {
+		var err error
+		nativeSpaces, err = nativeSpaceSet(ctx, repo)
+		if err != nil {
+			return nil, err
+		}
+	}
 	results := make([]MatchResult, 0, len(reqs))
 	for _, req := range reqs {
-		res, err := matchOne(ctx, repo, req, filter)
+		res, err := matchOne(ctx, repo, req, filter, nativeSpaces)
 		if err != nil {
 			return nil, err
 		}
@@ -532,11 +547,11 @@ func MatchInSpace(ctx context.Context, repo output.Repository, reqs []MatchReque
 	return results, nil
 }
 
-func matchOne(ctx context.Context, repo output.Repository, req MatchRequest, filter MatchFilter) (MatchResult, error) {
+func matchOne(ctx context.Context, repo output.Repository, req MatchRequest, filter MatchFilter, nativeSpaces map[string]bool) (MatchResult, error) {
 	canonical, author := splitVerbatim(req.Verbatim)
 
 	if isAggregate(canonical) {
-		return matchAggregate(ctx, repo, req, canonical, filter)
+		return matchAggregate(ctx, repo, req, canonical, filter, nativeSpaces)
 	}
 
 	queryCanon := domain.Canonicalize(canonical)
@@ -547,6 +562,15 @@ func matchOne(ctx context.Context, repo output.Repository, req MatchRequest, fil
 		return MatchResult{}, err
 	}
 	candidates = filter.apply(candidates)
+	if filter.empty() {
+		// Same two-tier claimant preference the ingest crosswalk applies
+		// (preferGenuineClaimants, spec 2026-09-01 Entscheidung 1+2): a
+		// sec.-space or Fall-B-native concept is not a second claimant. With
+		// entry_backbone/entry_sec set, the caller has already pinned the
+		// space — no preference runs then, so the filtered path stays
+		// byte-identical to what it was before this fix.
+		candidates = preferGenuineClaimants(candidates, nativeSpaces)
+	}
 	res, unresolved := classify(req, queryCanon, queryAuthor, candidates)
 	if !unresolved {
 		return res, nil
@@ -562,7 +586,7 @@ func matchOne(ctx context.Context, repo output.Repository, req MatchRequest, fil
 		return res, nil
 	}
 
-	fuzzy, err := matchFuzzy(ctx, repo, req, queryCanon, filter)
+	fuzzy, err := matchFuzzy(ctx, repo, req, queryCanon, filter, nativeSpaces)
 	if err != nil {
 		return MatchResult{}, err
 	}
@@ -686,7 +710,7 @@ func nearMissNames(candidates []output.MatchCandidate, scores []float64) []strin
 //     Candidates lists the tied names — silently picking one would hide a
 //     genuine ambiguity from the caller, same principle as classify's own
 //     ambiguity handling.
-func matchFuzzy(ctx context.Context, repo output.Repository, req MatchRequest, queryCanon string, filter MatchFilter) (*MatchResult, error) {
+func matchFuzzy(ctx context.Context, repo output.Repository, req MatchRequest, queryCanon string, filter MatchFilter, nativeSpaces map[string]bool) (*MatchResult, error) {
 	candidates, err := repo.MatchFuzzyCandidates(ctx, queryCanon, fuzzyCandidateCap, filter.Backbone, filter.Sec)
 	if err != nil {
 		return nil, err
@@ -696,6 +720,17 @@ func matchFuzzy(ctx context.Context, repo output.Repository, req MatchRequest, q
 	// no-op on a correct repo, and still filters a fake repo that ignores the
 	// hints.
 	candidates = filter.apply(candidates)
+	if filter.empty() {
+		// The PER-SPELLING variant, not the plain one matchOne/matchAggregate
+		// use: this pool is heterogeneous (many DIFFERENT names within the
+		// prefilter's prefix+length window), and applying preferGenuineClaimants
+		// directly across it silently dropped every sec-/native-only candidate
+		// pool-wide as soon as ANY unrelated backbone name shared the pool —
+		// see preferGenuineClaimantsPerSpelling's doc comment for the measured
+		// regression this fixes. Applied BEFORE scoring so near-miss lists and
+		// winner ties see the narrowed candidate base.
+		candidates = preferGenuineClaimantsPerSpelling(candidates, nativeSpaces)
+	}
 
 	best := 0.0
 	scores := make([]float64, len(candidates))
@@ -841,27 +876,31 @@ func matchFuzzy(ctx context.Context, repo output.Repository, req MatchRequest, q
 // is invented, RequiresReview is set and every candidate name is listed.
 // Picking candidates[0] there would silently answer a question hostus
 // cannot answer, which is precisely what the other two paths refuse to do.
-func matchAggregate(ctx context.Context, repo output.Repository, req MatchRequest, canonical string, filter MatchFilter) (MatchResult, error) {
+func matchAggregate(ctx context.Context, repo output.Repository, req MatchRequest, canonical string, filter MatchFilter, nativeSpaces map[string]bool) (MatchResult, error) {
 	queryCanon := domain.Canonicalize(canonical)
 	candidates, err := repo.MatchExact(ctx, queryCanon)
 	if err != nil {
 		return MatchResult{}, err
 	}
 	candidates = filter.apply(candidates)
+	if filter.empty() {
+		// Same claimant preference as matchOne — see that call site's comment.
+		candidates = preferGenuineClaimants(candidates, nativeSpaces)
+	}
 	if len(candidates) == 0 {
 		// No aggregate taxon for the marked name. Before giving up, try the
 		// name WITHOUT the marker: a data set writing "X aggr." against a
 		// backbone that carries only X used to lose the whole row (issue #67,
 		// 96 names), even though X itself resolves exactly. The nominate
 		// concept plus a type saying it is coarser beats no answer at all.
-		nominate, err := matchAggregateNominate(ctx, repo, req, queryCanon, filter)
+		nominate, err := matchAggregateNominate(ctx, repo, req, queryCanon, filter, nativeSpaces)
 		if err != nil {
 			return MatchResult{}, err
 		}
 		if nominate != nil {
 			return *nominate, nil
 		}
-		fuzzy, err := matchFuzzy(ctx, repo, req, queryCanon, filter)
+		fuzzy, err := matchFuzzy(ctx, repo, req, queryCanon, filter, nativeSpaces)
 		if err != nil {
 			return MatchResult{}, err
 		}
@@ -923,7 +962,7 @@ func matchAggregate(ctx context.Context, repo output.Repository, req MatchReques
 // ConceptID — so a resolved concept is the condition to check. Stamping a
 // match type onto an ambiguous tie would produce the worst possible answer: a
 // confident-looking type and confidence with no concept behind them.
-func matchAggregateNominate(ctx context.Context, repo output.Repository, req MatchRequest, queryCanon string, filter MatchFilter) (*MatchResult, error) {
+func matchAggregateNominate(ctx context.Context, repo output.Repository, req MatchRequest, queryCanon string, filter MatchFilter, nativeSpaces map[string]bool) (*MatchResult, error) {
 	for _, base := range domain.AggregateBases(queryCanon) {
 		if base == "" {
 			continue
@@ -933,6 +972,11 @@ func matchAggregateNominate(ctx context.Context, repo output.Repository, req Mat
 			return nil, err
 		}
 		candidates = filter.apply(candidates)
+		if filter.empty() {
+			// Same claimant preference as matchOne — see that call site's
+			// comment.
+			candidates = preferGenuineClaimants(candidates, nativeSpaces)
+		}
 		if len(candidates) == 0 {
 			continue
 		}
@@ -1079,7 +1123,10 @@ func classify(req MatchRequest, queryCanon, queryAuthor string, candidates []out
 const roleAccepted = "accepted"
 
 // genuineBearerWinner breaks a match tie by nomenclatural type, or reports
-// that the tie stands.
+// that the tie stands. Called from two places: classify below (this file,
+// squarely on the serving path — every /v1/match exact-tie goes through it)
+// and crosswalk.go's resolveTraitName under policyResolveGenuineBearer (no
+// current caller passes that policy — see its own doc comment).
 //
 // The two claims a candidate can make are TIERED, not interchangeable:
 //
@@ -1098,9 +1145,14 @@ const roleAccepted = "accepted"
 // floras all accepting "Inula hirta" stay ambiguous at tier 1.
 //
 // Scope worth knowing: the candidates are whatever the caller's filter left in
-// play. Without entry_backbone, two backbones can each hold the name as
-// accepted and the tie legitimately stands — measured on the real index, that
-// is 983 of the 10260 names tier 1 decides within WCVP alone.
+// play — narrowed, when the filter is empty, by preferGenuineClaimants
+// BEFORE this function ever sees them (spec 2026-09-01 Entscheidung 1+2), so
+// a sec.-space or Fall-B-native concept sharing the name with a genuine
+// backbone concept has already been dropped and never reaches this tie-break
+// at all. What remains here and legitimately ties is two GENUINE claimants:
+// e.g. two distinct backbones (or two sec. spaces with no backbone
+// candidate) each holding the name as accepted — measured on the real index
+// pre-fix, that was 983 of the 10260 names tier 1 decides within WCVP alone.
 func genuineBearerWinner(winners []classifiedHit) (string, bool) {
 	// The two claims are TIERED, not equivalent. Treating them as one set was
 	// measured wrong (issue #67): "Beckmannia eruciformis" is the accepted name

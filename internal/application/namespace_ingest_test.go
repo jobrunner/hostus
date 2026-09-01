@@ -32,6 +32,14 @@ type sliceRowSource []application.NameRow
 
 func (s sliceRowSource) Rows() []application.NameRow { return s }
 
+// eurosBackboneVersion/eurosMeta name the real "eurosl" native space once,
+// shared by the Stufe-2 tests below — not repeated per test, so goconst
+// (whole-package, both test and non-test files) does not correlate this
+// literal with match.go's unrelated "eurosl" occurrences and misreport an
+// issue there.
+var eurosBackboneVersion = domain.BackboneVersion{ID: "eurosl", Version: "v1"}
+var eurosMeta = domain.NameSpaceMeta{ID: "eurosl", Version: "v1"}
+
 var floravegMeta = domain.NameSpaceMeta{
 	ID:             "floraveg",
 	Version:        "2023-01-03",
@@ -425,6 +433,41 @@ func TestIngestNameSpace_ResolveFailureOpensNoTransaction(t *testing.T) {
 	}
 }
 
+// TestIngestNameSpace_NameSpacesFailureIsWrappedAndOpensNoTransaction pins
+// nativeSpaceSet's error path (Stufe 2, spec 2026-09-01 B2): a failing
+// Repository.NameSpaces call is the FIRST thing resolveNameSpaceNames does,
+// before MatchExact ever runs — so it must surface, wrapped, through
+// IngestNameSpace, exactly like the phase-1 MatchExact failure above, and
+// cost no transaction either.
+func TestIngestNameSpace_NameSpacesFailureIsWrappedAndOpensNoTransaction(t *testing.T) {
+	repo := &fakeNameSpaceRepo{namespacesErr: errors.New("boom")}
+	src := sliceRowSource{{Taxon: "Festuca ovina", SourceID: "1"}}
+
+	_, err := application.IngestNameSpace(context.Background(), repo, src, floravegMeta)
+	if err == nil {
+		t.Fatal("IngestNameSpace: want error, got nil")
+	}
+	// IngestNameSpace wraps resolveNameSpaceNames' own error
+	// ("application: resolving names for name space %q: %w"), which in turn
+	// wraps nativeSpaceSet's ("application: loading name-space set: %w") —
+	// both wrap layers must be present, not just "an error happened".
+	if !strings.Contains(err.Error(), "resolving names for name space") {
+		t.Errorf("err = %q, want it to contain %q", err.Error(), "resolving names for name space")
+	}
+	if !strings.Contains(err.Error(), "loading name-space set") {
+		t.Errorf("err = %q, want it to contain %q", err.Error(), "loading name-space set")
+	}
+	if !errors.Is(err, repo.namespacesErr) {
+		t.Errorf("err = %v, want it to wrap %v", err, repo.namespacesErr)
+	}
+	if repo.txOpened {
+		t.Error("an ingest transaction was opened despite a NameSpaces failure")
+	}
+	if repo.matchCalls != 0 {
+		t.Errorf("matchCalls = %d, want 0 — NameSpaces must fail before MatchExact ever runs", repo.matchCalls)
+	}
+}
+
 // TestIngestNameSpace_BeginFailureIsSurfaced pins the remaining error path.
 func TestIngestNameSpace_BeginFailureIsSurfaced(t *testing.T) {
 	repo := &fakeNameSpaceRepo{beginErr: errors.New("boom")}
@@ -533,10 +576,15 @@ func (t *fakeNameSpaceTx) ResolveNameSpaceMember(string, string) (string, error)
 // many lookups happened and how many of them happened while the ingest
 // transaction was open (which must stay zero — see the two-phase test).
 type fakeNameSpaceRepo struct {
-	tx              fakeNameSpaceTx
-	matches         map[string][]output.MatchCandidate
-	matchErr        error
-	beginErr        error
+	tx       fakeNameSpaceTx
+	matches  map[string][]output.MatchCandidate
+	matchErr error
+	beginErr error
+	// namespacesErr, when set, is what NameSpaces returns instead of its
+	// default nil,nil — the fake's only way to exercise nativeSpaceSet's
+	// error path (resolveNameSpaceNames wraps it before any repository read
+	// or transaction is attempted).
+	namespacesErr   error
 	failOn          string
 	matchCalls      int
 	readsAfterBegin int
@@ -629,6 +677,9 @@ func (r *fakeNameSpaceRepo) ConceptAgreement(context.Context, string) (*domain.C
 	return nil, nil
 }
 func (r *fakeNameSpaceRepo) NameSpaces(context.Context) ([]domain.NameSpaceMeta, error) {
+	if r.namespacesErr != nil {
+		return nil, r.namespacesErr
+	}
 	return nil, nil
 }
 func (r *fakeNameSpaceRepo) Suggest(context.Context, string, output.SuggestOpts) ([]domain.SuggestItem, error) {
@@ -799,5 +850,86 @@ func TestIngestNameSpace_SecReferenceCandidateDoesNotCauseAmbiguous(t *testing.T
 	}
 	if len(repo.tx.entries) != 1 || repo.tx.entries[0].conceptID != "wcvp:concept:415853" {
 		t.Errorf("wrote %+v, want a single entry attached to wcvp:concept:415853", repo.tx.entries)
+	}
+}
+
+// TestIngestNameSpace_NativeConceptDoesNotShadowBackboneGenus pinnt den
+// Fall-B-Befund des Audits (2026-09-01, Spec B2): eurosl legt native
+// GENUS-Konzepte auch für Gattungen an, die WCVP führt ("Abies", "Acer",
+// 2866 gemessene Folds). Ein danach gecrosswalkter Name-Space (germansl)
+// muss die Gattung trotzdem auf das WCVP-Konzept auflösen — gemessen
+// verlor germansl ~544 Gattungs-Einträge (417 vs. 961 auf identischer
+// Liste), rein reihenfolgeabhängig.
+func TestIngestNameSpace_NativeConceptDoesNotShadowBackboneGenus(t *testing.T) {
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+
+	// 1. WCVP-artiges Backbone mit der Gattung.
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "wcvp", Version: "v1"}}, ManifestSHA: "x"}
+	taxa := []application.TaxonRow{
+		{TaxonID: "g1", AcceptedTaxonID: "g1", Accepted: true, Canonical: "Abies", Rank: "GENUS", Status: "Accepted"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) {
+		return fakeRowSource{taxa: taxa}, nil
+	}
+	if _, err := application.Ingest(ctx, ds, readerFor, repo); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	// 2. eurosl Fall B: natives GENUS-Konzept gleichen Namens.
+	native := staticNativeRows{
+		{Taxon: "Abies", SourceID: "e1", Rank: "Genus", Status: "accepted"},
+	}
+	if _, err := application.IngestNativeSpace(ctx, repo, native, eurosBackboneVersion, domain.RankRoot, noMemberLinks); err != nil {
+		t.Fatalf("IngestNativeSpace: %v", err)
+	}
+	// eurosl muss auch als name_space registriert sein, damit nativeSpaceSet
+	// es kennt — im echten Ingest passiert das durch eurosls eigenen
+	// Fall-A-Lauf (IngestNameSpace -> UpsertNameSpace).
+	if _, err := application.IngestNameSpace(ctx, repo, sliceRowSource{}, eurosMeta); err != nil {
+		t.Fatalf("IngestNameSpace(eurosl): %v", err)
+	}
+
+	// 3. germansl Fall A: "Abies" muss aufs WCVP-Konzept auflösen, nicht
+	//    ambiguous sein.
+	report, err := application.IngestNameSpace(ctx, repo,
+		sliceRowSource{{Taxon: "Abies", SourceID: "g-1", Status: "accepted"}},
+		domain.NameSpaceMeta{ID: "germansl", Version: "v1"})
+	if err != nil {
+		t.Fatalf("IngestNameSpace(germansl): %v", err)
+	}
+	if report.Ambiguous != 0 || report.Matched != 1 {
+		t.Fatalf("report = matched %d / ambiguous %d, want 1/0", report.Matched, report.Ambiguous)
+	}
+	entries, err := repo.NameSpaceEntries(ctx, "wcvp:concept:g1", []string{"germansl"})
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("NameSpaceEntries(wcvp:concept:g1) = %v, %v — der Eintrag muss am WCVP-Konzept hängen", entries, err)
+	}
+}
+
+// TestIngestNameSpace_NativeOnlyNameStillResolves pinnt die
+// Fallback-Invariante: eine Gattung, die NUR als natives Konzept existiert
+// (Moos-Gattung "Abietinella" — WCVP führt keine Moose), muss weiterhin auf
+// dieses native Konzept auflösen; Stufe 2 darf sie nicht verwerfen.
+func TestIngestNameSpace_NativeOnlyNameStillResolves(t *testing.T) {
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+	native := staticNativeRows{
+		{Taxon: "Abietinella", SourceID: "e2", Rank: "Genus", Status: "accepted"},
+	}
+	if _, err := application.IngestNativeSpace(ctx, repo, native, eurosBackboneVersion, domain.RankRoot, noMemberLinks); err != nil {
+		t.Fatalf("IngestNativeSpace: %v", err)
+	}
+	if _, err := application.IngestNameSpace(ctx, repo, sliceRowSource{}, eurosMeta); err != nil {
+		t.Fatalf("IngestNameSpace(eurosl): %v", err)
+	}
+	report, err := application.IngestNameSpace(ctx, repo,
+		sliceRowSource{{Taxon: "Abietinella", SourceID: "g-2", Status: "accepted"}},
+		domain.NameSpaceMeta{ID: "germansl", Version: "v1"})
+	if err != nil {
+		t.Fatalf("IngestNameSpace(germansl): %v", err)
+	}
+	if report.Matched != 1 {
+		t.Fatalf("report.Matched = %d, want 1 — native-only Namen müssen weiter auflösen", report.Matched)
 	}
 }

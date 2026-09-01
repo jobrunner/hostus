@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,6 +16,16 @@ import (
 	"github.com/jobrunner/hostus/internal/httperr"
 	"github.com/jobrunner/hostus/internal/ports/output"
 )
+
+// maxMatchBodyBytes is the maximum request body size for POST /v1/match.
+// Set to 1 MiB to prevent DoS-scale sequential processing (see spec B4).
+const maxMatchBodyBytes = 1 << 20
+
+// maxMatchNames is the maximum batch size for POST /v1/match.
+// Suggest and Synonyms endpoints have caps; Match had none, allowing unbounded
+// sequential processing of up to 20k-candidate Levenshtein calls per name.
+// Spec B4 identifies this as a DoS vector; 1000 is a reasonable batch size.
+const maxMatchNames = 1000
 
 // matchTypeUnresolvable is the wire value used for a MatchResult whose
 // domain.MatchType is the zero value (application.MatchNames' encoding of
@@ -542,9 +553,14 @@ func handleXref(repo output.Repository) http.HandlerFunc {
 // error; only a malformed request body is a (400 INVALID_QUERY) HTTP error.
 func handleMatch(repo output.Repository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxMatchBodyBytes)
 		var body matchRequestDTO
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			httperr.InvalidQueryError(w, "malformed request body")
+			return
+		}
+		if len(body.Names) > maxMatchNames {
+			httperr.InvalidQueryError(w, fmt.Sprintf("too many names: %d (limit %d)", len(body.Names), maxMatchNames))
 			return
 		}
 

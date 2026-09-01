@@ -29,9 +29,11 @@ func TestIngestCDMFixtureEndToEnd(t *testing.T) {
 		t.Errorf("concepts read/written = %d/%d, want 18/18", r.Concepts, r.ConceptsWritten)
 	}
 	// 17 of the 18 fixture concepts carry a sec.; one (Sisymbrium
-	// pyrenaicum) has none, which is honest absence, not an error.
-	if r.SecReferences != 10 {
-		t.Errorf("SecReferences = %d, want 10", r.SecReferences)
+	// pyrenaicum) has none. Since spec decision 3 (cdmUnattributedSecID),
+	// it gets the synthetic reference "cdm:unattributed", so the total is
+	// 10 real secs + 1 synthetic = 11.
+	if r.SecReferences != 11 {
+		t.Errorf("SecReferences = %d, want 11 (10 real + 1 synthetic cdm:unattributed)", r.SecReferences)
 	}
 	if r.ConceptsWithoutSec != 1 {
 		t.Errorf("ConceptsWithoutSec = %d, want 1", r.ConceptsWithoutSec)

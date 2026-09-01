@@ -5,6 +5,14 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [3.0.3-alpha.0](https://github.com/jobrunner/hostus/compare/v3.0.2-alpha.0...v3.0.3-alpha.0) (2026-09-01)
+
+
+### Bug Fixes
+
+* **wcvp:** Misapplied-Status-Zeilen nicht mehr als Synonym verknüpfen ([099bd1b](https://github.com/jobrunner/hostus/commit/099bd1b7ff4c2cddc9f4e8a88aaa6692fb8961c0))
+* **wcvp:** never link a Misapplied-status row into concept_name ([c92b79b](https://github.com/jobrunner/hostus/commit/c92b79b3641e5dc855ed0784aad3c9185fc5668b))
+
 ## [Unreleased]
 
 ### Fixed

@@ -433,6 +433,41 @@ func TestIngestNameSpace_ResolveFailureOpensNoTransaction(t *testing.T) {
 	}
 }
 
+// TestIngestNameSpace_NameSpacesFailureIsWrappedAndOpensNoTransaction pins
+// nativeSpaceSet's error path (Stufe 2, spec 2026-09-01 B2): a failing
+// Repository.NameSpaces call is the FIRST thing resolveNameSpaceNames does,
+// before MatchExact ever runs — so it must surface, wrapped, through
+// IngestNameSpace, exactly like the phase-1 MatchExact failure above, and
+// cost no transaction either.
+func TestIngestNameSpace_NameSpacesFailureIsWrappedAndOpensNoTransaction(t *testing.T) {
+	repo := &fakeNameSpaceRepo{namespacesErr: errors.New("boom")}
+	src := sliceRowSource{{Taxon: "Festuca ovina", SourceID: "1"}}
+
+	_, err := application.IngestNameSpace(context.Background(), repo, src, floravegMeta)
+	if err == nil {
+		t.Fatal("IngestNameSpace: want error, got nil")
+	}
+	// IngestNameSpace wraps resolveNameSpaceNames' own error
+	// ("application: resolving names for name space %q: %w"), which in turn
+	// wraps nativeSpaceSet's ("application: loading name-space set: %w") —
+	// both wrap layers must be present, not just "an error happened".
+	if !strings.Contains(err.Error(), "resolving names for name space") {
+		t.Errorf("err = %q, want it to contain %q", err.Error(), "resolving names for name space")
+	}
+	if !strings.Contains(err.Error(), "loading name-space set") {
+		t.Errorf("err = %q, want it to contain %q", err.Error(), "loading name-space set")
+	}
+	if !errors.Is(err, repo.namespacesErr) {
+		t.Errorf("err = %v, want it to wrap %v", err, repo.namespacesErr)
+	}
+	if repo.txOpened {
+		t.Error("an ingest transaction was opened despite a NameSpaces failure")
+	}
+	if repo.matchCalls != 0 {
+		t.Errorf("matchCalls = %d, want 0 — NameSpaces must fail before MatchExact ever runs", repo.matchCalls)
+	}
+}
+
 // TestIngestNameSpace_BeginFailureIsSurfaced pins the remaining error path.
 func TestIngestNameSpace_BeginFailureIsSurfaced(t *testing.T) {
 	repo := &fakeNameSpaceRepo{beginErr: errors.New("boom")}
@@ -541,10 +576,15 @@ func (t *fakeNameSpaceTx) ResolveNameSpaceMember(string, string) (string, error)
 // many lookups happened and how many of them happened while the ingest
 // transaction was open (which must stay zero — see the two-phase test).
 type fakeNameSpaceRepo struct {
-	tx              fakeNameSpaceTx
-	matches         map[string][]output.MatchCandidate
-	matchErr        error
-	beginErr        error
+	tx       fakeNameSpaceTx
+	matches  map[string][]output.MatchCandidate
+	matchErr error
+	beginErr error
+	// namespacesErr, when set, is what NameSpaces returns instead of its
+	// default nil,nil — the fake's only way to exercise nativeSpaceSet's
+	// error path (resolveNameSpaceNames wraps it before any repository read
+	// or transaction is attempted).
+	namespacesErr   error
 	failOn          string
 	matchCalls      int
 	readsAfterBegin int
@@ -637,6 +677,9 @@ func (r *fakeNameSpaceRepo) ConceptAgreement(context.Context, string) (*domain.C
 	return nil, nil
 }
 func (r *fakeNameSpaceRepo) NameSpaces(context.Context) ([]domain.NameSpaceMeta, error) {
+	if r.namespacesErr != nil {
+		return nil, r.namespacesErr
+	}
 	return nil, nil
 }
 func (r *fakeNameSpaceRepo) Suggest(context.Context, string, output.SuggestOpts) ([]domain.SuggestItem, error) {

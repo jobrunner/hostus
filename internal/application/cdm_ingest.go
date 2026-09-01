@@ -106,6 +106,15 @@ type CDMIngestReport struct {
 	ReaderErrors int
 }
 
+// cdmUnattributedSecID is the SYNTHETIC sec reference assigned to CDM rows
+// whose sec_uuid is empty (124 rows on the real export, spec B3). Writing
+// them with SecReference=="" made them indistinguishable from backbone
+// concepts for preferBackboneConcepts — the exact ambiguity class PR #94
+// fixed, in residual form: "Leucanthemum maximum" was lost in every name
+// space. The synthetic space keeps them reachable (entry_sec, relations)
+// without letting them claim a spelling against a genuine backbone concept.
+const cdmUnattributedSecID = "cdm:unattributed"
+
 // cdmConceptID / cdmNameID key CDM's rows into hostus' id space. CDM
 // concepts are a SECOND BACKBONE, deliberately separate rows from the WCVP
 // concepts for the same name: WCVP says "Abies alba Mill." with no sec., CDM
@@ -308,6 +317,11 @@ func planCDMConcepts(concepts []CDMConceptRow, resolvable map[string]bool, plan 
 		}
 		if row.SecUUID == "" {
 			report.ConceptsWithoutSec++
+			row.SecUUID = cdmUnattributedSecID
+			if !seenSec[cdmUnattributedSecID] {
+				seenSec[cdmUnattributedSecID] = true
+				plan.secs = append(plan.secs, domain.SecReference{ID: cdmUnattributedSecID, Title: "CDM ohne sec-Referenz (synthetisch)"})
+			}
 		} else if !seenSec[row.SecUUID] {
 			seenSec[row.SecUUID] = true
 			plan.secs = append(plan.secs, domain.SecReference{ID: row.SecUUID, Title: row.SecTitle})

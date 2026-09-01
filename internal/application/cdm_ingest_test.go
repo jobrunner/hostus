@@ -639,8 +639,11 @@ func TestIngestCDMDeduplicatesSecReferences(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IngestCDM: %v", err)
 	}
-	if rep.SecReferences != 1 || len(repo.tx.secs) != 1 {
-		t.Errorf("SecReferences=%d rows=%d, want 1/1", rep.SecReferences, len(repo.tx.secs))
+	// SecReferences now includes the synthetic "cdm:unattributed" for the
+	// concept without sec_uuid, so 2 expected (s1 deduplicated from two rows,
+	// plus cdm:unattributed).
+	if rep.SecReferences != 2 || len(repo.tx.secs) != 2 {
+		t.Errorf("SecReferences=%d rows=%d, want 2/2 (s1 + synthetic cdm:unattributed)", rep.SecReferences, len(repo.tx.secs))
 	}
 	if rep.ConceptsWithoutSec != 1 {
 		t.Errorf("ConceptsWithoutSec = %d, want 1", rep.ConceptsWithoutSec)
@@ -681,3 +684,83 @@ func TestIngestCDMPropagatesBeginAndResolveFailures(t *testing.T) {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// TestIngestCDM_ConceptWithoutSecGetsSyntheticSec pins audit finding B3:
+// 124 CDM rows without sec_uuid were written with SecReference=="" and
+// thus counted as Backbone claimants — "Leucanthemum maximum" was missing
+// in ALL three name spaces as a result. Without a sec annotation, a concept
+// now gets the synthetic reference cdm:unattributed: still reachable
+// (entry_sec, relations), but never again an ambiguity candidate against
+// a genuine backbone concept.
+func TestIngestCDM_ConceptWithoutSecGetsSyntheticSec(t *testing.T) {
+	repo := newCDMRepo()
+	ctx := context.Background()
+	concepts := []application.CDMConceptRow{
+		{ConceptUUID: "u1", ScientificName: "Leucanthemum maximum", Rank: "Species", Status: "accepted"}, // SecUUID empty
+	}
+	report, err := application.IngestCDM(ctx, repo, concepts, nil, cdmMeta())
+	if err != nil {
+		t.Fatalf("IngestCDM: %v", err)
+	}
+	if report.ConceptsWithoutSec != 1 {
+		t.Errorf("ConceptsWithoutSec = %d, want 1 (counter still increments)", report.ConceptsWithoutSec)
+	}
+	// Check that synthetic sec reference was registered
+	if report.SecReferences != 1 {
+		t.Errorf("SecReferences = %d, want 1 (synthetic sec registered)", report.SecReferences)
+	}
+	if len(repo.tx.secs) != 1 {
+		t.Fatalf("wrote %d sec_reference rows, want 1", len(repo.tx.secs))
+	}
+	if repo.tx.secs[0].ID != "cdm:unattributed" {
+		t.Errorf("synthetic sec ID = %q, want cdm:unattributed", repo.tx.secs[0].ID)
+	}
+	if repo.tx.secs[0].Title == "" {
+		t.Errorf("synthetic sec_reference has no title")
+	}
+	// The concept must carry the synthetic sec reference
+	if len(repo.tx.concepts) != 1 {
+		t.Fatalf("wrote %d concepts, want 1", len(repo.tx.concepts))
+	}
+	if repo.tx.concepts[0].SecReference != "cdm:unattributed" {
+		t.Errorf("concept SecReference = %q, want cdm:unattributed", repo.tx.concepts[0].SecReference)
+	}
+}
+
+// TestIngestCDM_MultipleConceptsWithoutSecShareSyntheticRef verifies that
+// when multiple concepts lack a sec_uuid, they all get the same synthetic
+// reference cdm:unattributed, but that reference is only registered ONCE
+// in plan.secs. This kills the seenSec branch.
+func TestIngestCDM_MultipleConceptsWithoutSecShareSyntheticRef(t *testing.T) {
+	repo := newCDMRepo()
+	ctx := context.Background()
+	concepts := []application.CDMConceptRow{
+		{ConceptUUID: "u1", ScientificName: "Leucanthemum maximum", Rank: "Species", Status: "accepted"},
+		{ConceptUUID: "u2", ScientificName: "Leucanthemum vulgare", Rank: "Species", Status: "accepted"},
+	}
+	report, err := application.IngestCDM(ctx, repo, concepts, nil, cdmMeta())
+	if err != nil {
+		t.Fatalf("IngestCDM: %v", err)
+	}
+	if report.ConceptsWithoutSec != 2 {
+		t.Errorf("ConceptsWithoutSec = %d, want 2", report.ConceptsWithoutSec)
+	}
+	if report.SecReferences != 1 {
+		t.Errorf("SecReferences = %d, want 1 (synthetic ref registered only once)", report.SecReferences)
+	}
+	if len(repo.tx.secs) != 1 {
+		t.Fatalf("wrote %d sec_reference rows, want 1", len(repo.tx.secs))
+	}
+	if repo.tx.secs[0].ID != "cdm:unattributed" {
+		t.Errorf("synthetic sec ID = %q, want cdm:unattributed", repo.tx.secs[0].ID)
+	}
+	// Both concepts must carry the same synthetic sec reference
+	if len(repo.tx.concepts) != 2 {
+		t.Fatalf("wrote %d concepts, want 2", len(repo.tx.concepts))
+	}
+	for i, c := range repo.tx.concepts {
+		if c.SecReference != "cdm:unattributed" {
+			t.Errorf("concept %d SecReference = %q, want cdm:unattributed", i, c.SecReference)
+		}
+	}
+}

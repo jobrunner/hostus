@@ -1056,3 +1056,69 @@ func TestIngestNameSpace_TwoAcceptedBearersStayAmbiguous(t *testing.T) {
 		t.Errorf("TieBroken = %d, want 0", report.TieBroken)
 	}
 }
+
+// TestIngestNameSpace_TieBrokenAcceptedSpellingWinsTargetSpaceChoice pins a
+// consequence of the tier-1 tie-break (spec 2026-09-04, "Risiko &
+// Rückholbarkeit"): a concept that already carries a name-space entry from a
+// PLAIN match — the source's own status "synonym", so
+// NameSpaceEntry.AcceptedInSpace() is false — can gain a SECOND entry via
+// the accepted-bearer tie-break whose source status IS "accepted". Since
+// domain.ResolveTargetSpace/pickSpelling prefers AcceptedInSpace() and never
+// looks at Resolution, that tie-broken entry now wins the target-space
+// spelling domain.ResolveTargetSpace hands to /v1/translate, /v1/match
+// (target_space) and /v1/suggest — changing a spelling choice that used to
+// be arbitrary-but-stable into one the accepted-bearer tie-break can move.
+// This is the source's own accepted spelling winning, which is intended
+// (see the spec's risk section) — this test is what makes that outcome an
+// asserted decision rather than an unpinned side effect.
+func TestIngestNameSpace_TieBrokenAcceptedSpellingWinsTargetSpaceChoice(t *testing.T) {
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "wcvp", Version: "v1"}}, ManifestSHA: "x"}
+	taxa := []application.TaxonRow{
+		// Concept A: accepted under "Abies alba"...
+		{TaxonID: "a1", AcceptedTaxonID: "a1", Accepted: true, Canonical: "Abies alba", Rank: "SPECIES", Status: "Accepted"},
+		// ...and also carrying an ordinary synonym, "Abies pectinata".
+		{TaxonID: "as1", AcceptedTaxonID: "a1", Accepted: false, Canonical: "Abies pectinata", Rank: "SPECIES", Status: "Synonym"},
+		// Concept B: a different accepted taxon...
+		{TaxonID: "b1", AcceptedTaxonID: "b1", Accepted: true, Canonical: "Picea otherica", Rank: "SPECIES", Status: "Accepted"},
+		// ...that holds "Abies alba" (the later homonym) only as a SYNONYM —
+		// the tie-break class from TestIngestNameSpace_AcceptedBearerTieBreakResolvesHomonym.
+		{TaxonID: "s1", AcceptedTaxonID: "b1", Accepted: false, Canonical: "Abies alba", Rank: "SPECIES", Status: "Illegitimate"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) { return fakeRowSource{taxa: taxa}, nil }
+	if _, err := application.Ingest(ctx, ds, readerFor, repo); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	// Row 1: an ORDINARY single-candidate match, source status "synonym" —
+	// lands on concept A directly, no tie-break involved.
+	// Row 2: the homonym "Abies alba", source status "accepted" — resolves
+	// to concept A via the tier-1 tie-break, giving concept A a SECOND
+	// eurosl entry whose Status IS "accepted".
+	report, err := application.IngestNameSpace(ctx, repo,
+		sliceRowSource{
+			{Taxon: "Abies pectinata", SourceID: "e1", Status: "synonym"},
+			{Taxon: "Abies alba", SourceID: "e2", Status: "accepted"},
+		},
+		domain.NameSpaceMeta{ID: "eurosl", Version: "v1"})
+	if err != nil {
+		t.Fatalf("IngestNameSpace: %v", err)
+	}
+	if report.Matched != 2 || report.TieBroken != 1 {
+		t.Fatalf("Matched/TieBroken = %d/%d, want 2/1", report.Matched, report.TieBroken)
+	}
+
+	entries, err := repo.NameSpaceEntries(ctx, "wcvp:concept:a1", []string{"eurosl"})
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("NameSpaceEntries(a1) = %v, %v — want both entries on the tie-broken bearer", entries, err)
+	}
+
+	name, policy := domain.ResolveTargetSpace(false, entries)
+	if name != "Abies alba" {
+		t.Errorf("ResolveTargetSpace name = %q, want %q (the tie-broken, source-accepted spelling)", name, "Abies alba")
+	}
+	if policy != "" {
+		t.Errorf("ResolveTargetSpace policy = %q, want empty (plain species)", policy)
+	}
+}

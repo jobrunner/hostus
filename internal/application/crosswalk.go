@@ -87,6 +87,20 @@ const (
 	// value, but the policy stays available for any future crosswalk that
 	// needs the same tie-break.
 	policyResolveGenuineBearer
+	// policyResolveAcceptedBearer prefers backbone concepts over sec.-space
+	// ones (the same preferGenuineClaimants filter as policyResolveGenuineBearer)
+	// and resolves a remaining homonym with acceptedBearerWinner — tier 1
+	// of genuineBearerWinner ALONE, deliberately without tier 2 (homotypic
+	// synonym bearer). Used by the name-space crosswalk (resolveNameSpaceNames
+	// in namespace_ingest.go): tier 1 is the nomenclaturally grounded case —
+	// a later homonym is illegitimate BECAUSE it duplicates a legitimate
+	// name's spelling — measured 2026-09-01 on the real eurosl index:
+	// Illegitimate rows collide with a foreign accepted canonical at 17.3%
+	// vs 0.16% for ordinary synonyms (4716 folds this tier decides). Tier 2
+	// is not yet measured for name spaces and stays serving-path-only (spec
+	// 2026-09-04, decision 1) — do not add it here without a measurement of
+	// its own, the same way tier 1 got one.
+	policyResolveAcceptedBearer
 )
 
 // resolveTraitName walks domain.NameCandidates' deterministic ladder for
@@ -128,7 +142,7 @@ func resolveTraitName(ctx context.Context, repo output.Repository, canon string,
 		if err != nil {
 			return traitResolution{}, err
 		}
-		if policy == policyResolveGenuineBearer || policy == policyPreferBackbone {
+		if policy == policyResolveGenuineBearer || policy == policyPreferBackbone || policy == policyResolveAcceptedBearer {
 			candidates = preferGenuineClaimants(candidates, nativeSpaces)
 		}
 		if len(candidates) == 0 {
@@ -140,11 +154,10 @@ func resolveTraitName(ctx context.Context, repo output.Repository, canon string,
 		}
 		if len(distinct) > 1 {
 			// Several concepts hold this spelling — but "several concepts" is
-			// not the same as "undecidable". genuineBearerWinner is the
-			// tiered rule the serving path already applies to exactly this
-			// case (issue #67 class 2) — accepted bearer first, homotypic
-			// bearer second, tie stands otherwise.
-			if id, ok := genuineBearerWinner(traitBearers(candidates)); ok && policy == policyResolveGenuineBearer {
+			// not the same as "undecidable". resolveHomonymTie applies
+			// whichever tiered tie-break policy selects, or reports the tie
+			// stands.
+			if id, ok := resolveHomonymTie(candidates, policy); ok {
 				return traitResolution{conceptID: id, matched: true, tieBroken: true, rule: cand.Rule}, nil
 			}
 			return traitResolution{ambiguous: true, rule: cand.Rule}, nil
@@ -152,6 +165,26 @@ func resolveTraitName(ctx context.Context, repo output.Repository, canon string,
 		return traitResolution{conceptID: candidates[0].Concept.ID, matched: true, rule: cand.Rule}, nil
 	}
 	return traitResolution{}, nil
+}
+
+// resolveHomonymTie applies policy's tie-break to candidates, which several
+// distinct concepts hold: policyResolveGenuineBearer runs genuineBearerWinner
+// (accepted bearer first, homotypic bearer second — the serving path's
+// full two-tier rule, issue #67 class 2); policyResolveAcceptedBearer runs
+// acceptedBearerWinner (tier 1 alone, no tier 2 — spec 2026-09-04, decision
+// 1); any other policy (policyPreferBackbone) never breaks a tie. ok is
+// false — the tie stands — whenever the selected tie-break decides nothing.
+func resolveHomonymTie(candidates []output.MatchCandidate, policy crosswalkPolicy) (string, bool) {
+	switch policy {
+	case policyResolveGenuineBearer:
+		return genuineBearerWinner(traitBearers(candidates))
+	case policyResolveAcceptedBearer:
+		return acceptedBearerWinner(traitBearers(candidates))
+	case policyPreferBackbone:
+		return "", false
+	default:
+		return "", false
+	}
 }
 
 // preferBackboneConcepts drops candidates living inside a sec. reference space

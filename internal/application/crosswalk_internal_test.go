@@ -117,3 +117,26 @@ func TestPreferGenuineClaimants(t *testing.T) {
 		})
 	}
 }
+
+// TestResolutionWithTieBreak pins resolutionWithTieBreak's rendering: the
+// base rule (empty for domain.RuleExact) with the tie-break marker appended
+// only when tieBroken is set — the SQL-greppable audit trail spec 2026-09-04
+// requires (resolution LIKE '%accepted_bearer_tiebreak%').
+func TestResolutionWithTieBreak(t *testing.T) {
+	cases := []struct {
+		name      string
+		rule      domain.NormalizationRule
+		tieBroken bool
+		want      string
+	}{
+		{"exact ohne tie-break", domain.RuleExact, false, ""},
+		{"exact mit tie-break", domain.RuleExact, true, "accepted_bearer_tiebreak"},
+		{"rule ohne tie-break", domain.RuleHybridSpacing, false, string(domain.RuleHybridSpacing)},
+		{"rule mit tie-break", domain.RuleHybridSpacing, true, string(domain.RuleHybridSpacing) + "+accepted_bearer_tiebreak"},
+	}
+	for _, c := range cases {
+		if got := resolutionWithTieBreak(c.rule, c.tieBroken); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+}

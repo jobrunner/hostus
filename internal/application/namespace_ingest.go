@@ -109,6 +109,13 @@ type NameSpaceIngestReport struct {
 	// Redistribution is this space's manifest-pinned redistribution value.
 	// Local ingest is never gated by it; EXPORT is (see ExportBundle).
 	Redistribution string
+	// TieBroken counts the matched rows whose concept was decided by the
+	// tier-1 accepted-bearer tie-break (policyResolveAcceptedBearer) rather
+	// than by a single-candidate key; TieBrokenSample is its bounded,
+	// deterministic name sample. Subset of Matched — the report invariant
+	// Matched+Unmatched+Ambiguous == Rows is untouched. See spec 2026-09-04.
+	TieBroken       int
+	TieBrokenSample []string
 }
 
 // IngestNameSpace resolves every name src provides against repo's name index
@@ -226,6 +233,10 @@ func writeNameSpaceRow(
 	}
 
 	report.Matched++
+	if res.tieBroken {
+		report.TieBroken++
+		tally.countTieBroken(row.Taxon)
+	}
 	if aggregate {
 		report.AggregatesMatched++
 	}
@@ -240,7 +251,7 @@ func writeNameSpaceRow(
 		ExtID:      row.SourceID,
 		Name:       row.Taxon,
 		Aggregate:  aggregate,
-		Resolution: resolutionFor(res.rule),
+		Resolution: resolutionWithTieBreak(res.rule, res.tieBroken),
 		// The source list already carries its own status; dropping it here was
 		// what made a target-space name arbitrary for every concept a space
 		// maps several of its names onto.
@@ -275,6 +286,23 @@ func resolutionFor(rule domain.NormalizationRule) string {
 	return string(rule)
 }
 
+// resolutionWithTieBreak renders the stored resolution for one entry: the
+// normalisation rule as before (empty for the exact key), suffixed with the
+// tie-break marker when acceptedBearerWinner decided the concept — so every
+// tie-broken row stays identifiable in SQL
+// (resolution LIKE '%accepted_bearer_tiebreak%'), which is the audit trail
+// the spec makes mandatory.
+func resolutionWithTieBreak(rule domain.NormalizationRule, tieBroken bool) string {
+	base := resolutionFor(rule)
+	if !tieBroken {
+		return base
+	}
+	if base == "" {
+		return "accepted_bearer_tiebreak"
+	}
+	return base + "+accepted_bearer_tiebreak"
+}
+
 // resolveNameSpaceNames is IngestNameSpace's phase 1: it maps every DISTINCT
 // canonical name occurring in rows to its outcome, querying repo exactly once
 // per distinct name. It must be called with no ingest transaction open — see
@@ -295,15 +323,28 @@ func resolveNameSpaceNames(ctx context.Context, repo output.Repository, rows []N
 		if _, seen := resolved[canon]; seen {
 			continue
 		}
-		// policyPreferBackbone, explicitly: the homonym TIE-BREAK the trait
-		// crosswalk uses (genuineBearerWinner) is measured for trait
-		// vocabularies, not for name spaces. Inheriting it here would be
-		// invisible (this report has no tiebroken counter and the CLI prints
-		// none) and it would let a space gain a SECOND entry for one concept,
-		// which is what domain.ResolveTargetSpace picks a target-space
-		// spelling from — so /v1/translate would start choosing between two
-		// spellings on evidence nobody gathered. See
-		// TestIngestNameSpace_HomonymStaysAmbiguousHere.
+		// policyResolveAcceptedBearer, explicitly: spec 2026-09-04 activates
+		// tier 1 of the homonym tie-break (acceptedBearerWinner) for name
+		// spaces too — a spelling held ACCEPTED by exactly one concept and
+		// only as a synonym by others resolves to that accepted bearer,
+		// measured on the real eurosl index (2026-09-01): Illegitimate rows
+		// collide with a foreign accepted canonical at 17.3% vs 0.16% for
+		// ordinary synonyms (4716 folds this tier decides; a further 4580
+		// carry no accepted bearer at all and stay genuinely ambiguous). The
+		// outcome is no longer invisible: NameSpaceIngestReport.TieBroken/
+		// TieBrokenSample count it and every tie-broken name_space_entry.
+		// Resolution carries the "accepted_bearer_tiebreak" marker
+		// (resolutionWithTieBreak), so "SELECT resolution, COUNT(*) FROM
+		// name_space_entry" and domain.ResolveTargetSpace's callers can both
+		// see and filter it. Tier 2 (homotypic synonym bearer) is
+		// DELIBERATELY still excluded — it is not yet measured for name
+		// spaces (spec 2026-09-04, decision 1) — so genuineBearerWinner's
+		// full two-tier rule (policyResolveGenuineBearer) is not used here;
+		// see acceptedBearerWinner's doc comment (match.go) for the tier-1-
+		// only cut. See TestIngestNameSpace_AcceptedBearerTieBreakResolvesHomonym,
+		// TestIngestNameSpace_SynonymOnlyHomonymStaysAmbiguous and
+		// TestIngestNameSpace_TwoAcceptedBearersStayAmbiguous for the three
+		// boundaries this call site pins.
 		//
 		// The two-tier FILTER (preferGenuineClaimants) is a separate,
 		// safe-by-construction step that DOES apply here, unlike the
@@ -327,7 +368,7 @@ func resolveNameSpaceNames(ctx context.Context, repo output.Repository, rows []N
 		// in nativeSpaces (loaded above), so its own Fall-B concepts from the
 		// prior run are correctly demoted too — no special case needed for
 		// idempotent re-ingest.
-		res, err := resolveTraitName(ctx, repo, canon, policyPreferBackbone, nativeSpaces)
+		res, err := resolveTraitName(ctx, repo, canon, policyResolveAcceptedBearer, nativeSpaces)
 		if err != nil {
 			return nil, fmt.Errorf("name %q: %w", row.Taxon, err)
 		}
@@ -344,6 +385,7 @@ type nameSpaceTally struct {
 	ambiguous map[string]bool
 	duplicate map[string]bool
 	flagged   map[string]bool
+	tieBroken map[string]bool
 	concepts  map[string]bool
 	extIDs    map[string]bool
 	ruleRows  map[domain.NormalizationRule]int
@@ -356,6 +398,7 @@ func newNameSpaceTally() *nameSpaceTally {
 		ambiguous: map[string]bool{},
 		duplicate: map[string]bool{},
 		flagged:   map[string]bool{},
+		tieBroken: map[string]bool{},
 		concepts:  map[string]bool{},
 		extIDs:    map[string]bool{},
 		ruleRows:  map[domain.NormalizationRule]int{},
@@ -366,6 +409,7 @@ func newNameSpaceTally() *nameSpaceTally {
 func (t *nameSpaceTally) countUnmatched(name string)  { t.unmatched[name] = true }
 func (t *nameSpaceTally) countAmbiguous(name string)  { t.ambiguous[name] = true }
 func (t *nameSpaceTally) countDuplicate(extID string) { t.duplicate[extID] = true }
+func (t *nameSpaceTally) countTieBroken(name string)  { t.tieBroken[name] = true }
 
 // claimed reports whether extID has already been written in this run — the
 // (space, ext_id) primary key, checked before the write rather than after,
@@ -402,6 +446,7 @@ func (t *nameSpaceTally) report(r *NameSpaceIngestReport) {
 	r.AmbiguousSample = sortedSample(t.ambiguous)
 	r.DuplicateSample = sortedSample(t.duplicate)
 	r.FlaggedSample = sortedSample(t.flagged)
+	r.TieBrokenSample = sortedSample(t.tieBroken)
 	r.Concepts = len(t.concepts)
 	r.Normalized = ruleCounts(t.ruleRows, t.ruleTaxa)
 }

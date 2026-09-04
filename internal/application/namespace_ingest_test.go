@@ -785,19 +785,17 @@ func TestIngestNameSpace_WritesVernacularNameOntoMatchedConcept(t *testing.T) {
 	}
 }
 
-// TestIngestNameSpace_HomonymStaysAmbiguousHere is a boundary on a change made
-// elsewhere. The trait crosswalk resolves a homonym to its genuine bearer
-// (accepted, then homotypic) instead of dropping it — measured, and worth it
-// there. Name-space ingest shares the same resolver, so it would have inherited
-// that silently: no counter in NameSpaceIngestReport, no line in the CLI
-// report, and no measurement of what it does to the entries
-// domain.ResolveTargetSpace picks a target-space SPELLING from (a space could
-// gain a second entry for one concept, and /v1/translate would then have to
-// choose between "Inula hirta" and "Pentanema hirtum").
-//
-// So this path keeps refusing, deliberately, until someone measures it. The
-// test exists to make that a decision rather than an oversight.
-func TestIngestNameSpace_HomonymStaysAmbiguousHere(t *testing.T) {
+// TestIngestNameSpace_AcceptedBearerHomonymNowTieBreaksHere replaces the
+// former TestIngestNameSpace_HomonymStaysAmbiguousHere. That test's own
+// fixture — one candidate holding the name as ACCEPTED (c-bearer), the other
+// only as a synonym (c-other) — is exactly the accepted+synonym class spec
+// 2026-09-04 decided to rescue: resolveNameSpaceNames now runs under
+// policyResolveAcceptedBearer, so this name resolves to c-bearer via the
+// tier-1 tie-break instead of staying ambiguous. This is the SPEC-INTENDED
+// behavior change (decision 1: tier 1 activated, tier 2 stays out), not a
+// silent inheritance — see acceptedBearerWinner's and
+// policyResolveAcceptedBearer's doc comments for the measured evidence.
+func TestIngestNameSpace_AcceptedBearerHomonymNowTieBreaksHere(t *testing.T) {
 	repo := &fakeNameSpaceRepo{
 		matches: map[string][]output.MatchCandidate{
 			"homonymus testicus": {
@@ -812,12 +810,18 @@ func TestIngestNameSpace_HomonymStaysAmbiguousHere(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IngestNameSpace: unexpected error: %v", err)
 	}
-	if report.Ambiguous != 1 || report.Matched != 0 {
-		t.Errorf("Ambiguous/Matched = %d/%d, want 1/0: the tie-break is the trait crosswalk's, not this path's",
+	if report.Ambiguous != 0 || report.Matched != 1 {
+		t.Errorf("Ambiguous/Matched = %d/%d, want 0/1: tier 1 (accepted bearer) resolves this now",
 			report.Ambiguous, report.Matched)
 	}
-	if len(repo.tx.entries) != 0 {
-		t.Errorf("wrote %+v, want nothing", repo.tx.entries)
+	if report.TieBroken != 1 {
+		t.Errorf("TieBroken = %d, want 1", report.TieBroken)
+	}
+	if len(repo.tx.entries) != 1 || repo.tx.entries[0].conceptID != "c-bearer" {
+		t.Fatalf("entries = %+v, want exactly one entry on c-bearer", repo.tx.entries)
+	}
+	if repo.tx.entries[0].entry.Resolution != "accepted_bearer_tiebreak" {
+		t.Errorf("Resolution = %q, want accepted_bearer_tiebreak", repo.tx.entries[0].entry.Resolution)
 	}
 }
 
@@ -826,9 +830,10 @@ func TestIngestNameSpace_HomonymStaysAmbiguousHere(t *testing.T) {
 // CDM's Standardliste sec. spaces) sharing a name with a backbone (WCVP)
 // concept must NOT count toward "this name is ambiguous" — the sec.
 // candidate is dropped and the backbone concept wins outright, with no
-// tie-break involved (contrast with TestIngestNameSpace_HomonymStaysAmbiguousHere
-// just above, whose two candidates are BOTH backbone concepts and must stay
-// ambiguous).
+// tie-break involved (contrast with
+// TestIngestNameSpace_AcceptedBearerHomonymNowTieBreaksHere just above,
+// whose two candidates are BOTH backbone concepts and now resolve via the
+// tier-1 accepted-bearer tie-break instead).
 func TestIngestNameSpace_SecReferenceCandidateDoesNotCauseAmbiguous(t *testing.T) {
 	repo := &fakeNameSpaceRepo{
 		matches: map[string][]output.MatchCandidate{
@@ -931,5 +936,123 @@ func TestIngestNameSpace_NativeOnlyNameStillResolves(t *testing.T) {
 	}
 	if report.Matched != 1 {
 		t.Fatalf("report.Matched = %d, want 1 — native-only Namen müssen weiter auflösen", report.Matched)
+	}
+}
+
+// TestIngestNameSpace_AcceptedBearerTieBreakResolvesHomonym pins the spec's
+// core decision (2026-09-04): a spelling held as ACCEPTED by exactly one
+// concept and as a mere synonym by others resolves to the accepted bearer —
+// the Abies-alba class (4716 eurosl folds measured 2026-09-01). The outcome
+// must be fully auditable: report counter, sample, and resolution marker.
+func TestIngestNameSpace_AcceptedBearerTieBreakResolvesHomonym(t *testing.T) {
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "wcvp", Version: "v1"}}, ManifestSHA: "x"}
+	taxa := []application.TaxonRow{
+		// Concept A: bears "Abies alba" as its ACCEPTED name.
+		{TaxonID: "a1", AcceptedTaxonID: "a1", Accepted: true, Canonical: "Abies alba", Rank: "SPECIES", Status: "Accepted"},
+		// Concept B: a different accepted taxon...
+		{TaxonID: "b1", AcceptedTaxonID: "b1", Accepted: true, Canonical: "Picea otherica", Rank: "SPECIES", Status: "Accepted"},
+		// ...that holds "Abies alba" (the later homonym) only as a SYNONYM.
+		{TaxonID: "s1", AcceptedTaxonID: "b1", Accepted: false, Canonical: "Abies alba", Rank: "SPECIES", Status: "Illegitimate"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) { return fakeRowSource{taxa: taxa}, nil }
+	if _, err := application.Ingest(ctx, ds, readerFor, repo); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	report, err := application.IngestNameSpace(ctx, repo,
+		sliceRowSource{{Taxon: "Abies alba", SourceID: "e1", Status: "accepted"}},
+		domain.NameSpaceMeta{ID: "eurosl", Version: "v1"})
+	if err != nil {
+		t.Fatalf("IngestNameSpace: %v", err)
+	}
+	if report.Matched != 1 || report.Ambiguous != 0 {
+		t.Fatalf("matched/ambiguous = %d/%d, want 1/0", report.Matched, report.Ambiguous)
+	}
+	if report.TieBroken != 1 {
+		t.Errorf("TieBroken = %d, want 1", report.TieBroken)
+	}
+	if len(report.TieBrokenSample) != 1 || report.TieBrokenSample[0] != "Abies alba" {
+		t.Errorf("TieBrokenSample = %v, want [Abies alba]", report.TieBrokenSample)
+	}
+	entries, err := repo.NameSpaceEntries(ctx, "wcvp:concept:a1", []string{"eurosl"})
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("NameSpaceEntries(a1) = %v, %v — der Eintrag muss am accepted-Träger hängen", entries, err)
+	}
+	if entries[0].Resolution != "accepted_bearer_tiebreak" {
+		t.Errorf("Resolution = %q, want accepted_bearer_tiebreak", entries[0].Resolution)
+	}
+}
+
+// TestIngestNameSpace_SynonymOnlyHomonymStaysAmbiguous pins the tie-break's
+// lower boundary: a spelling NO candidate bears as accepted stays ambiguous
+// (4580 measured eurosl folds are this genuinely undecidable class).
+func TestIngestNameSpace_SynonymOnlyHomonymStaysAmbiguous(t *testing.T) {
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "wcvp", Version: "v1"}}, ManifestSHA: "x"}
+	taxa := []application.TaxonRow{
+		// Concept A: accepted under a DIFFERENT name...
+		{TaxonID: "a1", AcceptedTaxonID: "a1", Accepted: true, Canonical: "Alpha genuina", Rank: "SPECIES", Status: "Accepted"},
+		// ...carrying "Shared synonymum" only as a synonym.
+		{TaxonID: "as1", AcceptedTaxonID: "a1", Accepted: false, Canonical: "Shared synonymum", Rank: "SPECIES", Status: "Synonym"},
+		// Concept B: accepted under yet another different name...
+		{TaxonID: "b1", AcceptedTaxonID: "b1", Accepted: true, Canonical: "Beta genuina", Rank: "SPECIES", Status: "Accepted"},
+		// ...also carrying "Shared synonymum" only as a synonym.
+		{TaxonID: "bs1", AcceptedTaxonID: "b1", Accepted: false, Canonical: "Shared synonymum", Rank: "SPECIES", Status: "Synonym"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) { return fakeRowSource{taxa: taxa}, nil }
+	if _, err := application.Ingest(ctx, ds, readerFor, repo); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	report, err := application.IngestNameSpace(ctx, repo,
+		sliceRowSource{{Taxon: "Shared synonymum", SourceID: "e1", Status: "synonym"}},
+		domain.NameSpaceMeta{ID: "eurosl", Version: "v1"})
+	if err != nil {
+		t.Fatalf("IngestNameSpace: %v", err)
+	}
+	if report.Ambiguous != 1 || report.Matched != 0 {
+		t.Fatalf("matched/ambiguous = %d/%d, want 0/1", report.Matched, report.Ambiguous)
+	}
+	if report.TieBroken != 0 {
+		t.Errorf("TieBroken = %d, want 0", report.TieBroken)
+	}
+	entries, err := repo.NameSpaceEntries(ctx, "wcvp:concept:a1", []string{"eurosl"})
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("NameSpaceEntries(a1) = %v, %v — kein Eintrag erwartet", entries, err)
+	}
+}
+
+// TestIngestNameSpace_TwoAcceptedBearersStayAmbiguous pins the upper
+// boundary: several accepted bearers must NOT be rescued (no tier 2 in the
+// crosswalk — spec decision 1) and stay ambiguous.
+func TestIngestNameSpace_TwoAcceptedBearersStayAmbiguous(t *testing.T) {
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "wcvp", Version: "v1"}}, ManifestSHA: "x"}
+	taxa := []application.TaxonRow{
+		// Both concepts hold "Duplex nomen" as their own ACCEPTED name — a
+		// genuine, undecidable ambiguity with two real claimants.
+		{TaxonID: "a1", AcceptedTaxonID: "a1", Accepted: true, Canonical: "Duplex nomen", Rank: "SPECIES", Status: "Accepted"},
+		{TaxonID: "b1", AcceptedTaxonID: "b1", Accepted: true, Canonical: "Duplex nomen", Rank: "SPECIES", Status: "Accepted"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) { return fakeRowSource{taxa: taxa}, nil }
+	if _, err := application.Ingest(ctx, ds, readerFor, repo); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	report, err := application.IngestNameSpace(ctx, repo,
+		sliceRowSource{{Taxon: "Duplex nomen", SourceID: "e1", Status: "accepted"}},
+		domain.NameSpaceMeta{ID: "eurosl", Version: "v1"})
+	if err != nil {
+		t.Fatalf("IngestNameSpace: %v", err)
+	}
+	if report.Ambiguous != 1 || report.Matched != 0 {
+		t.Fatalf("matched/ambiguous = %d/%d, want 0/1", report.Matched, report.Ambiguous)
+	}
+	if report.TieBroken != 0 {
+		t.Errorf("TieBroken = %d, want 0", report.TieBroken)
 	}
 }

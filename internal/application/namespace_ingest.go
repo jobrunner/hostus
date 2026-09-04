@@ -114,6 +114,11 @@ type NameSpaceIngestReport struct {
 	// than by a single-candidate key; TieBrokenSample is its bounded,
 	// deterministic name sample. Subset of Matched — the report invariant
 	// Matched+Unmatched+Ambiguous == Rows is untouched. See spec 2026-09-04.
+	// Counted at classification time (Matched++), BEFORE the duplicate-ExtID
+	// skip that can still drop the row from being WRITTEN — so this counter
+	// can run marginally ahead of "SELECT COUNT(*) FROM name_space_entry
+	// WHERE resolution LIKE '%accepted_bearer_tiebreak%'" on a source with
+	// duplicate ext_ids, the same way Matched itself already can.
 	TieBroken       int
 	TieBrokenSample []string
 }
@@ -294,7 +299,11 @@ func resolutionFor(rule domain.NormalizationRule) string {
 // tie-break marker when acceptedBearerWinner decided the concept — so every
 // tie-broken row stays identifiable in SQL
 // (resolution LIKE '%accepted_bearer_tiebreak%'), which is the audit trail
-// the spec makes mandatory.
+// the spec makes mandatory. The composed form ("<rule>+accepted_bearer_
+// tiebreak", e.g. "hybrid_spacing+accepted_bearer_tiebreak") records TWO
+// independent judgement calls made on the same row — a normalisation
+// rewrite AND a homonym tie-break — both greppable individually via a LIKE
+// on the relevant substring.
 func resolutionWithTieBreak(rule domain.NormalizationRule, tieBroken bool) string {
 	base := resolutionFor(rule)
 	if !tieBroken {

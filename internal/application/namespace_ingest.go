@@ -138,10 +138,13 @@ type NameSpaceIngestReport struct {
 //  2. no key answered -> Unmatched, nothing written;
 //  3. the answering key resolves to two or more DISTINCT concepts (after
 //     dropping sec.-space-only candidates when a backbone concept shares the
-//     name — see policyPreferBackbone) -> Ambiguous, skipped entirely. This
-//     path passes policyPreferBackbone, so the policyResolveGenuineBearer
-//     homonym tie-break does NOT apply here — see the call site for why
-//     that is deliberate.
+//     name — see preferGenuineClaimants) -> either a tier-1 accepted-bearer
+//     tie-break (policyResolveAcceptedBearer, spec 2026-09-04) resolves it
+//     — recorded in TieBroken/TieBrokenSample and marked on the written
+//     entry's Resolution — or, with no single accepted bearer, Ambiguous,
+//     skipped entirely. This path deliberately stops at tier 1: the
+//     homotypic-synonym tier (policyResolveGenuineBearer's second tier) does
+//     NOT apply here — see the call site for why that is deliberate.
 //
 // It is deliberately not a second name-resolution path. SP3's crosswalk only
 // reached 98,0 % after normalisation rules nobody predicted from the raw hit

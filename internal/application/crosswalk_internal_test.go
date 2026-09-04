@@ -140,3 +140,51 @@ func TestResolutionWithTieBreak(t *testing.T) {
 		}
 	}
 }
+
+// TestResolveHomonymTie pins resolveTraitName's policy dispatch directly at
+// resolveHomonymTie, since after switching resolveNameSpaceNames to
+// policyResolveAcceptedBearer no test or production path exercises the
+// function with policyPreferBackbone or policyResolveGenuineBearer any
+// more — those branches (and the default case) would otherwise be
+// mutation-uncovered as a direct consequence of this task.
+//
+// The tier-2 case is the boundary that actually distinguishes
+// policyResolveAcceptedBearer from policyResolveGenuineBearer: with no
+// accepted bearer but one homotypic-synonym bearer, tier 2 decides under
+// policyResolveGenuineBearer (the serving path's full rule) but must NOT
+// decide under policyResolveAcceptedBearer (spec 2026-09-04, decision 1 —
+// tier 2 stays out of the name-space crosswalk).
+func TestResolveHomonymTie(t *testing.T) {
+	tru := true
+	oneAcceptedBearer := []output.MatchCandidate{
+		{Concept: domain.Concept{ID: "c-accepted"}, Role: roleAccepted},
+		{Concept: domain.Concept{ID: "c-synonym"}, Role: "synonym"},
+	}
+	onlyHomotypicBearer := []output.MatchCandidate{
+		{Concept: domain.Concept{ID: "c-heterotypic"}, Role: "synonym"},
+		{Concept: domain.Concept{ID: "c-homotypic"}, Role: "synonym", Homotypic: &tru},
+	}
+
+	cases := []struct {
+		name       string
+		candidates []output.MatchCandidate
+		policy     crosswalkPolicy
+		wantID     string
+		wantOK     bool
+	}{
+		{"acceptedBearer policy, sole accepted bearer -> wins", oneAcceptedBearer, policyResolveAcceptedBearer, "c-accepted", true},
+		{"preferBackbone policy, sole accepted bearer -> tie stands", oneAcceptedBearer, policyPreferBackbone, "", false},
+		{"genuineBearer policy, sole accepted bearer -> wins via tier 1", oneAcceptedBearer, policyResolveGenuineBearer, "c-accepted", true},
+		{"genuineBearer policy, only homotypic bearer -> wins via tier 2", onlyHomotypicBearer, policyResolveGenuineBearer, "c-homotypic", true},
+		{"acceptedBearer policy, only homotypic bearer -> tie stands (no tier 2 here)", onlyHomotypicBearer, policyResolveAcceptedBearer, "", false},
+		{"preferBackbone policy, only homotypic bearer -> tie stands", onlyHomotypicBearer, policyPreferBackbone, "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			id, ok := resolveHomonymTie(c.candidates, c.policy)
+			if id != c.wantID || ok != c.wantOK {
+				t.Errorf("resolveHomonymTie() = (%q, %v), want (%q, %v)", id, ok, c.wantID, c.wantOK)
+			}
+		})
+	}
+}

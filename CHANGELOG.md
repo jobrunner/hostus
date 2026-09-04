@@ -27,6 +27,24 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Added
+
+* **Namespace-Crosswalk:** Tier-1-Tie-Break — trägt genau EIN Konzept eine
+  Schreibweise als accepted-Namen (und andere nur als Synonym, typisch
+  illegitime spätere Homonyme wie „Abies alba"), löst der
+  eurosl/germansl/floraveg-Crosswalk jetzt auf den accepted-Träger auf,
+  statt die Zeile als mehrdeutig zu verwerfen (gemessen: 4716 betroffene
+  eurosl-Namen). Voll auditierbar: `hostus ingest` meldet
+  `tie-broken (accepted bearer)` samt Namens-Sample, und jede so
+  entstandene Zeile trägt den `resolution`-Marker
+  `accepted_bearer_tiebreak`. Tier 2 (homotypischer Träger) bleibt dem
+  Serving-Pfad vorbehalten. Wirkt erst nach Re-Ingest. Nebenwirkung: ein
+  tie-broken Eintrag mit Quell-Status „accepted" kann die Ziel-Schreibweise
+  eines Konzepts ändern, das zuvor nur einen synonym-Status-Eintrag im
+  Namespace trug (`domain.ResolveTargetSpace` bevorzugt jeden
+  `AcceptedInSpace()`-Eintrag unabhängig vom `resolution`-Marker) — wirkt
+  auf `/v1/translate`, `/v1/match?target_space` und `/v1/suggest`.
+
 ### Fixed
 
 * **Serving-Pfad (`POST /v1/match`, `POST /v1/translate`):** wendet jetzt dieselbe
@@ -84,19 +102,6 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   `IngestCDM` die entsprechende `is misapplied name for`-Relation bereits
   verwirft. Neues `BackboneReport.Misapplied`-Feld zählt die
   übersprungenen Zeilen (1091 im realen WCVP-Dump).
-
-### Added
-
-* **Namespace-Crosswalk:** Tier-1-Tie-Break — trägt genau EIN Konzept eine
-  Schreibweise als accepted-Namen (und andere nur als Synonym, typisch
-  illegitime spätere Homonyme wie „Abies alba"), löst der
-  eurosl/germansl/floraveg-Crosswalk jetzt auf den accepted-Träger auf,
-  statt die Zeile als mehrdeutig zu verwerfen (gemessen: 4716 betroffene
-  eurosl-Namen). Voll auditierbar: `hostus ingest` meldet
-  `tie-broken (accepted bearer)` samt Namens-Sample, und jede so
-  entstandene Zeile trägt den `resolution`-Marker
-  `accepted_bearer_tiebreak`. Tier 2 (homotypischer Träger) bleibt dem
-  Serving-Pfad vorbehalten. Wirkt erst nach Re-Ingest.
 
 ### Security
 

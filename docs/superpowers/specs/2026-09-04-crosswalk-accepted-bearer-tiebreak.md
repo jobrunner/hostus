@@ -78,6 +78,21 @@ resolution-Marker macht jede tie-broken Zeile per SQL identifizierbar
 Umfang und Beispiele bei jedem Ingest sichtbar, und ein Policy-Rollback
 ist eine Ein-Zeilen-Änderung am Call-Site.
 
+Zweite, spezifischere Konsequenz: `domain.ResolveTargetSpace`/`pickSpelling`
+bevorzugt jeden Eintrag mit `AcceptedInSpace() == true` und prüft
+`Resolution` nicht — ein tie-broken Eintrag mit Quell-Status "accepted"
+kann daher die Ziel-Schreibweise eines Konzepts ändern, das bisher nur
+einen synonym-Status-Eintrag trug, und das wirkt auf `/v1/translate`,
+`/v1/match?target_space` und `/v1/suggest`. Akzeptiert, weil es exakt die
+Quell-Wahrheit widerspiegelt, die die Entscheidung oben rechtfertigt: die
+Quelle nennt diese Schreibweise selbst ihre accepted — pinnt an
+`TestIngestNameSpace_TieBrokenAcceptedSpellingWinsTargetSpaceChoice`
+(internal/application). Mögliche Folge-Entscheidung, falls sich das als
+zu aggressiv erweist: `pickSpelling` depriorisiert tie-broken Einträge
+gegenüber einem bereits vorhandenen, nicht tie-broken accepted-Eintrag
+(bräuchte `Resolution` in `NameSpaceEntry` sichtbar für `domain`, aktuell
+nur als String getragen) — nicht Teil dieser Spec.
+
 ## Projektweite Anforderungen
 
 - `internal/application` und `cmd/hostus` sind mutation-gated

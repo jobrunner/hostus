@@ -5,6 +5,21 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [3.1.0-alpha.0](https://github.com/jobrunner/hostus/compare/v3.0.4-alpha.0...v3.1.0-alpha.0) (2026-09-04)
+
+
+### Features
+
+* **cli:** tie-broken-Zähler und Sample im Ingest-Report ausgeben ([6d67a51](https://github.com/jobrunner/hostus/commit/6d67a5121c93b898ae58861bb7c4b6417cc78035))
+* **crosswalk:** Tier-1-Tie-Break (accepted bearer) für Name-Space-Homonyme ([c533305](https://github.com/jobrunner/hostus/commit/c533305f026093c51644472356cc022c704ed1b1))
+* **crosswalk:** Tier-1-Tie-Break (accepted bearer) für Name-Space-Homonyme ([a12793b](https://github.com/jobrunner/hostus/commit/a12793b267b47b04bf8614f62e669286fab630b3))
+
+
+### Bug Fixes
+
+* **crosswalk:** Doc-Kommentare und Filter-Aufruf an Drei-Policy-Zustand angleichen ([2d925f5](https://github.com/jobrunner/hostus/commit/2d925f533bd553557957ad90b3e8194ef60022a5))
+* **crosswalk:** stale IngestNameSpace doc + mutation-Lücke in resolveHomonymTie ([fdbdf41](https://github.com/jobrunner/hostus/commit/fdbdf414f762229b8d442ab29514d9d1a7363cf6))
+
 ## [3.0.4-alpha.0](https://github.com/jobrunner/hostus/compare/v3.0.3-alpha.0...v3.0.4-alpha.0) (2026-09-01)
 
 

@@ -105,6 +105,10 @@ func printNameSpaceReports(w io.Writer, reports []application.NameSpaceIngestRep
 		printSampleLine(w, "unmatched sample", r.UnmatchedSample)
 		printSampleLine(w, "ambiguous sample", r.AmbiguousSample)
 		printSampleLine(w, "duplicate ext_id sample", r.DuplicateSample)
+		if r.TieBroken > 0 {
+			_, _ = fmt.Fprintf(w, "    tie-broken (accepted bearer)=%d\n", r.TieBroken)
+		}
+		printSampleLine(w, "tie-broken sample", r.TieBrokenSample)
 		printRedistributionNotice(w, r.Space, r.Redistribution)
 	}
 }

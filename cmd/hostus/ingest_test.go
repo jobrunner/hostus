@@ -387,6 +387,49 @@ func TestPrintNameSpaceReports_CleanSpacePrintsNoSampleLines(t *testing.T) {
 	}
 }
 
+// TestPrintNameSpaceReports_TieBrokenCountAndSampleVisible pins that when
+// TieBroken > 0, a "tie-broken (accepted bearer)=N" line and a sample line
+// appear; when TieBroken == 0, they do not (covering both branches for
+// mutation testing).
+func TestPrintNameSpaceReports_TieBrokenCountAndSampleVisible(t *testing.T) {
+	reports := []application.NameSpaceIngestReport{
+		{
+			Space: "eurosl", Rows: 10, Matched: 10, Concepts: 8,
+			TieBroken:       2,
+			TieBrokenSample: []string{"Abies alba", "Aconitum napellus"},
+			Redistribution:  "allowed",
+		},
+		{
+			Space: "clean", Rows: 5, Matched: 5, Concepts: 5,
+			TieBroken:       0,
+			TieBrokenSample: []string{},
+			Redistribution:  "allowed",
+		},
+	}
+
+	var buf bytes.Buffer
+	printNameSpaceReports(&buf, reports)
+	got := buf.String()
+
+	// eurosl space with TieBroken > 0 must print the count line and sample line
+	if !strings.Contains(got, "tie-broken (accepted bearer)=2") {
+		t.Errorf("report %q, want a \"tie-broken (accepted bearer)=2\" line", got)
+	}
+	if !strings.Contains(got, "tie-broken sample: Abies alba, Aconitum napellus") {
+		t.Errorf("report %q, want a \"tie-broken sample: Abies alba, Aconitum napellus\" line", got)
+	}
+
+	// clean space with TieBroken == 0 must print no tie-broken line at all
+	cleanIdx := strings.Index(got, "clean:")
+	if cleanIdx == -1 {
+		t.Fatalf("report %q, want it to mention space %q", got, "clean")
+	}
+	cleanSection := got[cleanIdx:]
+	if strings.Contains(cleanSection, "tie-broken") {
+		t.Errorf("report %q, want no \"tie-broken\" line for a space with TieBroken == 0", cleanSection)
+	}
+}
+
 // TestIngestCommand_NameSpace_PrintsReport drives the whole CLI against the
 // fixture manifest (which pins the FloraVeg name space) and asserts the
 // name-space section reaches stdout.

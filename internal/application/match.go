@@ -1122,6 +1122,21 @@ func classify(req MatchRequest, queryCanon, queryAuthor string, candidates []out
 // roleAccepted is the concept_name.role value for a concept's accepted name.
 const roleAccepted = "accepted"
 
+// acceptedBearerWinner is genuineBearerWinner's tier 1 alone: exactly one
+// candidate holding the name as its ACCEPTED name wins; no accepted bearer,
+// or several, resolves nothing — and no weaker tier runs. The name-space
+// crosswalk uses this (policyResolveAcceptedBearer) instead of the full
+// two-tier rule: tier 1 is the nomenclaturally grounded case (a later
+// homonym is illegitimate BECAUSE it duplicates a legitimate name's
+// spelling — measured 2026-09-01: Illegitimate rows collide with a foreign
+// accepted canonical at 17.3% vs 0.16% for ordinary synonyms), while
+// tier 2 (homotypic synonym bearer) is not yet measured for name spaces
+// and stays serving-path-only (spec 2026-09-04, decision 1).
+func acceptedBearerWinner(winners []classifiedHit) (string, bool) {
+	id, present := soleConcept(winners, func(w classifiedHit) bool { return w.role == roleAccepted })
+	return id, present && id != ""
+}
+
 // genuineBearerWinner breaks a match tie by nomenclatural type, or reports
 // that the tie stands. Called from two places: classify below (this file,
 // squarely on the serving path — every /v1/match exact-tie goes through it)

@@ -57,26 +57,26 @@ const (
 	// policyPreferBackbone drops sec.-space-only candidates whenever a
 	// backbone concept holds the same name (preferBackboneConcepts), but
 	// still refuses to guess among whatever remains — it does NOT run
-	// genuineBearerWinner. Used by name-space ingest (see
-	// resolveNameSpaceNames in namespace_ingest.go): a sec.-space reference
-	// concept (e.g. one of CDM's ~18 Standardliste sec. spaces) is an
-	// attribution detail of a SEPARATE concept source, not a second genuine
-	// claimant on a eurosl/germansl spelling, so it must not count toward
-	// "this name is ambiguous" once a real backbone (WCVP) concept already
-	// carries it. Measured on a full real ingest (2026-08-31, rows/matched/
-	// ambiguous — see resolveNameSpaceNames' call site for the exact
-	// before/after-fix figures): loading CDM alongside eurosl/germansl in
-	// the same database, this filter recovers essentially the same match
-	// rate as dropping CDM's concept_sources entry entirely (eurosl
-	// 113733 vs 113607 matched, germansl 10436 vs 10393) while keeping CDM
-	// — and /v1/translate — in the database. CDM was the dominant source of
-	// "ambiguous" here, not genuine eurosl/germansl homonymy. Unlike
-	// policyResolveGenuineBearer, this stays SILENT (no tieBroken, no report
-	// counter) precisely because it resolves nothing on its own — it only
-	// narrows the candidate set before the normal single-candidate/ambiguous
-	// decision runs, so it needs no new report field and carries none of the
-	// "was this measured for name spaces" risk the tie-break's own doc
-	// comment warns about.
+	// genuineBearerWinner. Measured on a full real ingest (2026-08-31,
+	// rows/matched/ambiguous — see resolveNameSpaceNames' call site history
+	// for the exact before/after-fix figures) when name-space ingest still
+	// used this policy: a sec.-space reference concept (e.g. one of CDM's
+	// ~18 Standardliste sec. spaces) is an attribution detail of a SEPARATE
+	// concept source, not a second genuine claimant on a eurosl/germansl
+	// spelling, so it must not count toward "this name is ambiguous" once a
+	// real backbone (WCVP) concept already carries it — this filter
+	// recovered essentially the same match rate as dropping CDM's
+	// concept_sources entry entirely (eurosl 113733 vs 113607 matched,
+	// germansl 10436 vs 10393) while keeping CDM — and /v1/translate — in
+	// the database. Name-space ingest has since moved to
+	// policyResolveAcceptedBearer (spec 2026-09-04), which applies the same
+	// preferGenuineClaimants filter AND breaks the accepted-bearer tie —
+	// so this policy currently has no production caller, exactly like
+	// policyResolveGenuineBearer below, and stays available as the
+	// filter-only rollback target (and for any future crosswalk that wants
+	// the narrowing without a tie-break). Unlike policyResolveGenuineBearer/
+	// policyResolveAcceptedBearer, this stays SILENT (no tieBroken, no
+	// report counter) precisely because it resolves nothing on its own.
 	policyPreferBackbone crosswalkPolicy = iota
 	// policyResolveGenuineBearer prefers backbone concepts over sec.-space
 	// ones AND resolves a remaining homonym to the concept that genuinely
@@ -87,6 +87,20 @@ const (
 	// value, but the policy stays available for any future crosswalk that
 	// needs the same tie-break.
 	policyResolveGenuineBearer
+	// policyResolveAcceptedBearer prefers backbone concepts over sec.-space
+	// ones (the same preferGenuineClaimants filter as policyResolveGenuineBearer)
+	// and resolves a remaining homonym with acceptedBearerWinner — tier 1
+	// of genuineBearerWinner ALONE, deliberately without tier 2 (homotypic
+	// synonym bearer). Used by the name-space crosswalk (resolveNameSpaceNames
+	// in namespace_ingest.go): tier 1 is the nomenclaturally grounded case —
+	// a later homonym is illegitimate BECAUSE it duplicates a legitimate
+	// name's spelling — measured 2026-09-01 on the real eurosl index:
+	// Illegitimate rows collide with a foreign accepted canonical at 17.3%
+	// vs 0.16% for ordinary synonyms (4716 folds this tier decides). Tier 2
+	// is not yet measured for name spaces and stays serving-path-only (spec
+	// 2026-09-04, decision 1) — do not add it here without a measurement of
+	// its own, the same way tier 1 got one.
+	policyResolveAcceptedBearer
 )
 
 // resolveTraitName walks domain.NameCandidates' deterministic ladder for
@@ -94,20 +108,28 @@ const (
 // the index answers at all, classified into exactly one of: matched to a
 // single concept id, matched=false (no key answered), or ambiguous=true.
 //
-// What counts as ambiguous depends on policy. The base rule, under both
+// What counts as ambiguous depends on policy. The base rule, under all three
 // policies this package defines: a key answering with two or more distinct
-// concepts is ambiguous and no concept is picked. Under policyPreferBackbone,
-// candidates are narrowed first by preferGenuineClaimants — tier 1
-// (preferBackboneConcepts) drops sec.-space-only candidates whenever a
-// backbone concept shares the name, and tier 2 then drops name-space-NATIVE
-// candidates (nativeSpaces) whenever a genuine backbone concept remains
-// (spec 2026-09-01 B2, preferGenuineClaimants' doc comment) — but whatever
-// remains still follows that base rule — no tie-break runs, so this outcome
-// never carries tieBroken. Under policyResolveGenuineBearer the SAME
-// preferGenuineClaimants filter runs, and additionally a remaining tie is
-// broken by genuineBearerWinner — only a key with no single genuine bearer is
-// ambiguous, and the outcome then carries tieBroken so the caller can report
-// it.
+// concepts is ambiguous and no concept is picked. Candidates are always
+// narrowed first by preferGenuineClaimants — tier 1 (preferBackboneConcepts)
+// drops sec.-space-only candidates whenever a backbone concept shares the
+// name, and tier 2 then drops name-space-NATIVE candidates (nativeSpaces)
+// whenever a genuine backbone concept remains (spec 2026-09-01 B2,
+// preferGenuineClaimants' doc comment). The policies differ only in what
+// happens to a tie that filter leaves behind:
+//
+//   - policyPreferBackbone never breaks it — whatever remains still follows
+//     the base rule, so this outcome never carries tieBroken.
+//   - policyResolveGenuineBearer breaks a remaining tie with
+//     genuineBearerWinner's full two tiers (accepted bearer, then homotypic
+//     synonym bearer) — only a key with no single genuine bearer stays
+//     ambiguous, and the outcome then carries tieBroken.
+//   - policyResolveAcceptedBearer breaks a remaining tie with
+//     acceptedBearerWinner — genuineBearerWinner's tier 1 ALONE, no tier 2
+//     (spec 2026-09-04, decision 1) — so a key with no single ACCEPTED
+//     bearer stays ambiguous even when a single homotypic bearer exists.
+//
+// (resolveHomonymTie is where this three-way dispatch actually lives.)
 //
 // Two properties matter and are worth stating explicitly:
 //
@@ -128,9 +150,13 @@ func resolveTraitName(ctx context.Context, repo output.Repository, canon string,
 		if err != nil {
 			return traitResolution{}, err
 		}
-		if policy == policyResolveGenuineBearer || policy == policyPreferBackbone {
-			candidates = preferGenuineClaimants(candidates, nativeSpaces)
-		}
+		// Every policy this package defines narrows the claimant set the same
+		// way; the policies differ only in the tie-break that runs afterward
+		// (resolveHomonymTie) — so this call is unconditional, not gated on
+		// policy (a policy-gated condition covering all three values would be
+		// tautological and mutation-blind: no test could ever observe it
+		// change).
+		candidates = preferGenuineClaimants(candidates, nativeSpaces)
 		if len(candidates) == 0 {
 			continue
 		}
@@ -140,11 +166,10 @@ func resolveTraitName(ctx context.Context, repo output.Repository, canon string,
 		}
 		if len(distinct) > 1 {
 			// Several concepts hold this spelling — but "several concepts" is
-			// not the same as "undecidable". genuineBearerWinner is the
-			// tiered rule the serving path already applies to exactly this
-			// case (issue #67 class 2) — accepted bearer first, homotypic
-			// bearer second, tie stands otherwise.
-			if id, ok := genuineBearerWinner(traitBearers(candidates)); ok && policy == policyResolveGenuineBearer {
+			// not the same as "undecidable". resolveHomonymTie applies
+			// whichever tiered tie-break policy selects, or reports the tie
+			// stands.
+			if id, ok := resolveHomonymTie(candidates, policy); ok {
 				return traitResolution{conceptID: id, matched: true, tieBroken: true, rule: cand.Rule}, nil
 			}
 			return traitResolution{ambiguous: true, rule: cand.Rule}, nil
@@ -152,6 +177,31 @@ func resolveTraitName(ctx context.Context, repo output.Repository, canon string,
 		return traitResolution{conceptID: candidates[0].Concept.ID, matched: true, rule: cand.Rule}, nil
 	}
 	return traitResolution{}, nil
+}
+
+// resolveHomonymTie applies policy's tie-break to candidates, which several
+// distinct concepts hold: policyResolveGenuineBearer runs genuineBearerWinner
+// (accepted bearer first, homotypic bearer second — the serving path's
+// full two-tier rule, issue #67 class 2); policyResolveAcceptedBearer runs
+// acceptedBearerWinner (tier 1 alone, no tier 2 — spec 2026-09-04, decision
+// 1); any other policy (policyPreferBackbone) never breaks a tie. ok is
+// false — the tie stands — whenever the selected tie-break decides nothing.
+func resolveHomonymTie(candidates []output.MatchCandidate, policy crosswalkPolicy) (string, bool) {
+	switch policy {
+	case policyResolveGenuineBearer:
+		return genuineBearerWinner(traitBearers(candidates))
+	case policyResolveAcceptedBearer:
+		return acceptedBearerWinner(traitBearers(candidates))
+	// policyPreferBackbone is spelled out explicitly, not left to fall into
+	// default, so a future fourth policy cannot land here silently — adding
+	// one without a matching case here should be a visible gap (exhaustive
+	// lint won't catch a plain default), not an accidental "never breaks a
+	// tie" behavior nobody decided.
+	case policyPreferBackbone:
+		return "", false
+	default:
+		return "", false
+	}
 }
 
 // preferBackboneConcepts drops candidates living inside a sec. reference space

@@ -117,3 +117,74 @@ func TestPreferGenuineClaimants(t *testing.T) {
 		})
 	}
 }
+
+// TestResolutionWithTieBreak pins resolutionWithTieBreak's rendering: the
+// base rule (empty for domain.RuleExact) with the tie-break marker appended
+// only when tieBroken is set — the SQL-greppable audit trail spec 2026-09-04
+// requires (resolution LIKE '%accepted_bearer_tiebreak%').
+func TestResolutionWithTieBreak(t *testing.T) {
+	cases := []struct {
+		name      string
+		rule      domain.NormalizationRule
+		tieBroken bool
+		want      string
+	}{
+		{"exact ohne tie-break", domain.RuleExact, false, ""},
+		{"exact mit tie-break", domain.RuleExact, true, "accepted_bearer_tiebreak"},
+		{"rule ohne tie-break", domain.RuleHybridSpacing, false, string(domain.RuleHybridSpacing)},
+		{"rule mit tie-break", domain.RuleHybridSpacing, true, string(domain.RuleHybridSpacing) + "+accepted_bearer_tiebreak"},
+	}
+	for _, c := range cases {
+		if got := resolutionWithTieBreak(c.rule, c.tieBroken); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestResolveHomonymTie pins resolveTraitName's policy dispatch directly at
+// resolveHomonymTie, since after switching resolveNameSpaceNames to
+// policyResolveAcceptedBearer no test or production path exercises the
+// function with policyPreferBackbone or policyResolveGenuineBearer any
+// more — those branches (and the default case) would otherwise be
+// mutation-uncovered as a direct consequence of this task.
+//
+// The tier-2 case is the boundary that actually distinguishes
+// policyResolveAcceptedBearer from policyResolveGenuineBearer: with no
+// accepted bearer but one homotypic-synonym bearer, tier 2 decides under
+// policyResolveGenuineBearer (the serving path's full rule) but must NOT
+// decide under policyResolveAcceptedBearer (spec 2026-09-04, decision 1 —
+// tier 2 stays out of the name-space crosswalk).
+func TestResolveHomonymTie(t *testing.T) {
+	tru := true
+	oneAcceptedBearer := []output.MatchCandidate{
+		{Concept: domain.Concept{ID: "c-accepted"}, Role: roleAccepted},
+		{Concept: domain.Concept{ID: "c-synonym"}, Role: "synonym"},
+	}
+	onlyHomotypicBearer := []output.MatchCandidate{
+		{Concept: domain.Concept{ID: "c-heterotypic"}, Role: "synonym"},
+		{Concept: domain.Concept{ID: "c-homotypic"}, Role: "synonym", Homotypic: &tru},
+	}
+
+	cases := []struct {
+		name       string
+		candidates []output.MatchCandidate
+		policy     crosswalkPolicy
+		wantID     string
+		wantOK     bool
+	}{
+		{"acceptedBearer policy, sole accepted bearer -> wins", oneAcceptedBearer, policyResolveAcceptedBearer, "c-accepted", true},
+		{"preferBackbone policy, sole accepted bearer -> tie stands", oneAcceptedBearer, policyPreferBackbone, "", false},
+		{"genuineBearer policy, sole accepted bearer -> wins via tier 1", oneAcceptedBearer, policyResolveGenuineBearer, "c-accepted", true},
+		{"genuineBearer policy, only homotypic bearer -> wins via tier 2", onlyHomotypicBearer, policyResolveGenuineBearer, "c-homotypic", true},
+		{"acceptedBearer policy, only homotypic bearer -> tie stands (no tier 2 here)", onlyHomotypicBearer, policyResolveAcceptedBearer, "", false},
+		{"preferBackbone policy, only homotypic bearer -> tie stands", onlyHomotypicBearer, policyPreferBackbone, "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			id, ok := resolveHomonymTie(c.candidates, c.policy)
+			if id != c.wantID || ok != c.wantOK {
+				t.Errorf("resolveHomonymTie() = (%q, %v), want (%q, %v)", id, ok, c.wantID, c.wantOK)
+			}
+		})
+	}
+}

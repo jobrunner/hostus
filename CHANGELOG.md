@@ -5,6 +5,23 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [3.3.0-alpha.0](https://github.com/jobrunner/hostus/compare/v3.2.0-alpha.0...v3.3.0-alpha.0) (2026-09-05)
+
+
+### Features
+
+* **telemetry:** Span pro Repository-Aufruf auf dem Serve-Pfad ([fd25e86](https://github.com/jobrunner/hostus/commit/fd25e868fad150f127316fc427cd27807a359af3))
+
+
+### Bug Fixes
+
+* **suggest:** Backbone-Filter zwingt Planner nicht mehr in den Backbone-Scan ([93802fc](https://github.com/jobrunner/hostus/commit/93802fceba2166d6bfb947fd2459c29f27fe4c31))
+* **suggest:** SQLite-Planner-Fallen beim Backbone-/Space-Filter; feat(telemetry): Repository-Spans ([7b2cd4e](https://github.com/jobrunner/hostus/commit/7b2cd4e3b3ff03b97f3cc1abd607f2a843803d6d))
+* **suggest:** target_space-Lookup treibt über den Konzept-Index statt den Space-Scan ([710cb62](https://github.com/jobrunner/hostus/commit/710cb6213f9baa4a263bde8e01fafad78ad88f12))
+* **telemetry:** Client-Aborts erzeugen keine Error-Spans; Status-Text ohne Nutzereingabe ([b493184](https://github.com/jobrunner/hostus/commit/b4931840d159a2742d05d87416af14c45b6b56b7))
+* **telemetry:** if/else statt tag-losem switch für Mutation-Coverage-Attribution ([6943d27](https://github.com/jobrunner/hostus/commit/6943d27d4a3b9ca0de00338cfb3483f3af37b75e))
+* **telemetry:** Span-Ende per defer garantieren (Panic-Pfad) ([7b1b2c3](https://github.com/jobrunner/hostus/commit/7b1b2c37a6b1efac9848faf2587cc25e6b7fa390))
+
 ## [3.2.0-alpha.0](https://github.com/jobrunner/hostus/compare/v3.1.0-alpha.0...v3.2.0-alpha.0) (2026-09-05)
 
 

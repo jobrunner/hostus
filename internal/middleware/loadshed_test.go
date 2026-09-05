@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -90,5 +92,158 @@ func TestLoadShedder_PartialErrorsDoNotActivate(t *testing.T) {
 	}
 	if ls.ConsecutiveErrors() != 2 {
 		t.Errorf("expected 2 consecutive errors, got %d", ls.ConsecutiveErrors())
+	}
+}
+
+// TestLoadShed_Middleware_5xx_increments verifies that 5xx responses
+// increment the error counter.
+func TestLoadShed_Middleware_5xx_increments(t *testing.T) {
+	ls := NewLoadShedder(3, 10*time.Millisecond)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+	})
+
+	middleware := LoadShed(ls)
+	wrappedHandler := middleware(handler)
+
+	// Make 3 requests returning 500 each
+	for i := 0; i < 3; i++ {
+		resp := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/", nil)
+		wrappedHandler.ServeHTTP(resp, req)
+
+		if resp.Code != 500 {
+			t.Errorf("Request %d: expected 500, got %d", i+1, resp.Code)
+		}
+	}
+
+	if ls.ConsecutiveErrors() != 3 {
+		t.Errorf("expected 3 consecutive errors, got %d", ls.ConsecutiveErrors())
+	}
+	if !ls.IsShedding() {
+		t.Errorf("expected shedding after threshold reached")
+	}
+}
+
+// TestLoadShed_Middleware_non5xx_resets verifies that non-5xx responses
+// reset the error counter.
+func TestLoadShed_Middleware_non5xx_resets(t *testing.T) {
+	ls := NewLoadShedder(3, 10*time.Millisecond)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	})
+
+	middleware := LoadShed(ls)
+	wrappedHandler := middleware(handler)
+
+	// Record some errors manually
+	ls.RecordError()
+	ls.RecordError()
+	if ls.ConsecutiveErrors() != 2 {
+		t.Errorf("expected 2 errors before reset, got %d", ls.ConsecutiveErrors())
+	}
+
+	// Make request returning 200
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	wrappedHandler.ServeHTTP(resp, req)
+
+	if ls.ConsecutiveErrors() != 0 {
+		t.Errorf("expected 0 errors after 200 response, got %d", ls.ConsecutiveErrors())
+	}
+}
+
+// TestLoadShed_Middleware_4xx_success verifies that 4xx responses are
+// counted as success (not errors).
+func TestLoadShed_Middleware_4xx_success(t *testing.T) {
+	ls := NewLoadShedder(2, 10*time.Millisecond)
+
+	statusCodes := []int{500, 404}
+	idx := 0
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(statusCodes[idx])
+		idx++
+	})
+
+	middleware := LoadShed(ls)
+	wrappedHandler := middleware(handler)
+
+	// Request 1: 500 (error)
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	wrappedHandler.ServeHTTP(resp, req)
+	if ls.ConsecutiveErrors() != 1 {
+		t.Errorf("expected 1 error after 500, got %d", ls.ConsecutiveErrors())
+	}
+
+	// Request 2: 404 (success, not error)
+	resp = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/", nil)
+	wrappedHandler.ServeHTTP(resp, req)
+	if ls.ConsecutiveErrors() != 0 {
+		t.Errorf("expected 0 errors after 404, got %d", ls.ConsecutiveErrors())
+	}
+}
+
+// TestLoadShed_Middleware_shed_blocks verifies that shedding responses (503)
+// do not increment the error counter.
+func TestLoadShed_Middleware_shed_blocks(t *testing.T) {
+	ls := NewLoadShedder(1, 50*time.Millisecond)
+
+	statusCodes := []int{500, 200}
+	callIdx := 0
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if callIdx < len(statusCodes) {
+			w.WriteHeader(statusCodes[callIdx])
+			callIdx++
+		}
+	})
+
+	middleware := LoadShed(ls)
+	wrappedHandler := middleware(handler)
+
+	// Request 1: 500 (error) - activates shedding
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	wrappedHandler.ServeHTTP(resp, req)
+	if resp.Code != 500 {
+		t.Errorf("request 1: expected 500, got %d", resp.Code)
+	}
+	if ls.ConsecutiveErrors() != 1 {
+		t.Errorf("request 1: expected 1 error, got %d", ls.ConsecutiveErrors())
+	}
+
+	// Request 2: should be shed (503 short-circuit, no handler call)
+	resp = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/", nil)
+	wrappedHandler.ServeHTTP(resp, req)
+	if resp.Code != 503 {
+		t.Errorf("request 2 (shed): expected 503, got %d", resp.Code)
+	}
+	// Important: error count should NOT increase (short-circuit doesn't count as error)
+	if ls.ConsecutiveErrors() != 1 {
+		t.Errorf("request 2 (shed): errors should stay at 1, got %d", ls.ConsecutiveErrors())
+	}
+
+	// Wait for backoff to allow probe
+	time.Sleep(60 * time.Millisecond)
+
+	// Request 3: probe after backoff (should reach handler, returns 200)
+	resp = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/", nil)
+	wrappedHandler.ServeHTTP(resp, req)
+	if resp.Code != 200 {
+		t.Errorf("request 3 (probe): expected 200, got %d", resp.Code)
+	}
+	// 200 resets errors
+	if ls.ConsecutiveErrors() != 0 {
+		t.Errorf("request 3: expected 0 errors after 200, got %d", ls.ConsecutiveErrors())
+	}
+	if ls.IsShedding() {
+		t.Errorf("request 3: expected shedding to be off after probe success")
 	}
 }

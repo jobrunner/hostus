@@ -27,6 +27,16 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Added
 
+* **Repository-Tracing:** Jeder `output.Repository`-Aufruf auf dem
+  Serve-Pfad erzeugt jetzt einen eigenen Span (`repo.<Methode>`) unter dem
+  HTTP-Span — sichtbar im Debug-MCP (`get_trace`) und in jedem
+  OTLP-Export. Anlass war ein 7,9-s-`/v1/suggest`-Request, dessen Trace nur
+  EINEN Span enthielt (den otelmux-HTTP-Span); die Slow-Query-Analyse musste
+  deshalb auf `EXPLAIN` ausweichen statt auf einen echten Span-Breakdown.
+  Query-Text und -Parameter werden bewusst NICHT als Span-Attribute
+  mitgeschrieben (PII/Kardinalität). Ingest- und Bundle-Export-Pfade öffnen
+  SQLite weiterhin direkt und bleiben unverdrahtet (ein Span pro
+  Ingest-Aufruf wäre bei Millionen Zeilen reiner Overhead).
 * **Serve-Lese-Pool:** `hostus serve` liest jetzt mit bis zu
   `sqlite.max_read_conns` (Default 4, env `HOSTUS_SQLITE_MAX_READ_CONNS`)
   parallelen SQLite-Verbindungen statt einer einzigen — unter Tipp-Last
@@ -42,6 +52,18 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   beobachtet jetzt den Response-Status und öffnet den Breaker nach
   aufeinanderfolgenden 5xx-Antworten (Threshold unverändert 1000,
   Backoff 5 s; Sicherheitsventil, kein Latenz-Regler).
+* **suggest:** `entry_backbone` zwang den Planner auf dem Mehrheits-
+  Backbone in einen Backbone-Scan (`idx_taxon_concept_backbone_id`):
+  SQLite scannte JEDES Konzept des Backbones (440k für wcvp) und führte
+  die korrelierte name_start-EXISTS-Subquery pro Konzept aus, statt von
+  den ~40 FTS-Treffern zu treiben — auf der Synology-Instanz lief das in
+  den 30-s-Timeout (Proxy-502), lokal gemessen 6,96 s. Das unäre `+` vor
+  `tc.backbone_id` (dokumentiertes SQLite-Idiom, um Index-Nutzung für
+  genau einen Term abzuschalten) senkt das auf 0,0023 s bei identischem
+  Ergebnis. Dieselbe Falle traf `target_space` (Fix-Runde 1): der
+  `attachTargetSpaceNames`-Lookup trieb über den (space, ext_id)-PK-
+  Autoindex statt über `idx_name_space_entry_concept_id` (eurosl: 116k
+  Zeilen, 0,455 s); dasselbe `+` vor `space` senkt das auf 0,001 s.
 
 ## [3.1.0-alpha.0](https://github.com/jobrunner/hostus/compare/v3.0.4-alpha.0...v3.1.0-alpha.0) (2026-09-04)
 

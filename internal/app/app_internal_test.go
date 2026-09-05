@@ -5,10 +5,12 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jobrunner/hostus/internal/adapters/sqlite"
 	"github.com/jobrunner/hostus/internal/config"
 )
 
@@ -25,6 +27,42 @@ func whiteboxTestConfig() *config.Config {
 		},
 		Logging:   config.LoggingConfig{Level: "info", Format: "json"},
 		Telemetry: config.TelemetryConfig{Enabled: false, SampleRatio: 1.0},
+	}
+}
+
+// TestOpenRepo_UsesConfiguredMaxReadConns pins that openRepo opens the
+// database via sqlite.OpenPool with cfg.SQLite.MaxReadConns, not via the
+// single-connection sqlite.Open (or a hardcoded constant) — a mutant that
+// swapped the OpenPool call back to Open, or dropped the config value for a
+// literal, would previously have survived, since output.Repository exposes
+// no pool introspection. The assertion goes through *sqlite.DB.MaxOpenConns,
+// a test-only seam on the ADAPTER (not the port — see its doc comment).
+func TestOpenRepo_UsesConfiguredMaxReadConns(t *testing.T) {
+	cfg := whiteboxTestConfig()
+	cfg.SQLite.Path = filepath.Join(t.TempDir(), "openrepo.db")
+	cfg.SQLite.MaxReadConns = 3
+
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	repo, closeRepo := openRepo(cfg, logger)
+	if repo == nil {
+		t.Fatal("openRepo returned a nil repository for a valid path")
+	}
+	t.Cleanup(func() {
+		if closeRepo != nil {
+			_ = closeRepo()
+		}
+	})
+
+	if _, err := repo.BackboneVersions(context.Background()); err != nil {
+		t.Fatalf("BackboneVersions on a freshly opened repo: %v", err)
+	}
+
+	db, ok := repo.(*sqlite.DB)
+	if !ok {
+		t.Fatalf("openRepo returned %T, want *sqlite.DB", repo)
+	}
+	if got := db.MaxOpenConns(); got != cfg.SQLite.MaxReadConns {
+		t.Fatalf("MaxOpenConns() = %d, want cfg.SQLite.MaxReadConns = %d", got, cfg.SQLite.MaxReadConns)
 	}
 }
 

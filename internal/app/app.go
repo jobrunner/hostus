@@ -132,19 +132,25 @@ func New(cfg *config.Config, opts ...Option) (*App, error) {
 }
 
 // openRepo opens cfg.SQLite.Path as the output.Repository the HTTP router
-// serves reads from. An empty path or an open failure degrades to (nil,
-// nil) rather than failing New outright: `hostus serve` must still start
-// (and report itself live) even before a database has been ingested, with
-// /health/ready gating readiness on the repo's presence instead (see
+// serves reads from, via a pool of up to cfg.SQLite.MaxReadConns
+// connections (see sqlite.OpenPool and spec
+// 2026-09-05-serve-read-pool-loadshed.md) — serve's queries are read-only
+// against a WAL database, which is exactly the concurrent-reader case WAL
+// supports, so this is no longer pinned to Open's single connection. An
+// empty path or an open failure degrades to (nil, nil) rather than failing
+// New outright: `hostus serve` must still start (and report itself live)
+// even before a database has been ingested, with /health/ready gating
+// readiness on the repo's presence instead (see
 // internal/adapters/http.handleHealthReady). Read-write, not read-only:
-// modernc.org/sqlite has no read-only open mode, and Open's schema
-// application is idempotent (IF NOT EXISTS DDL) — serve itself never
-// issues any other write.
+// modernc.org/sqlite has no read-only open mode, and OpenPool's one-time
+// schema application (on the single connection it opens first) is
+// idempotent (IF NOT EXISTS DDL) regardless — serve itself never issues
+// any other write.
 func openRepo(cfg *config.Config, logger *slog.Logger) (output.Repository, func() error) {
 	if cfg.SQLite.Path == "" {
 		return nil, nil
 	}
-	db, err := sqlite.Open(cfg.SQLite.Path)
+	db, err := sqlite.OpenPool(cfg.SQLite.Path, cfg.SQLite.MaxReadConns)
 	if err != nil {
 		logger.Warn("opening sqlite database; readiness will stay unavailable until this is fixed",
 			"path", cfg.SQLite.Path, "error", err)

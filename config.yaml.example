@@ -54,6 +54,17 @@ telemetry:
 sqlite:
   # Pfad zur lokalen SQLite-Datenbankdatei (Cache/Persistenz).
   path: "./data/hostus.db"
+  # Größe des Lese-Verbindungspools, den `hostus serve` für den read-only
+  # HTTP-Pfad öffnet (WAL erlaubt parallele Leser). Betrifft NUR serve:
+  # Ingest/Bundle/Export bleiben unabhängig davon fest auf 1 Verbindung
+  # (Single-Writer-Kontrakt), unabhängig von diesem Wert.
+  #
+  # Betriebshinweis: Läuft parallel ein Ingest auf derselben Datenbankdatei,
+  # verzögern mehrere gleichzeitig offene Leser dessen WAL-Checkpoint — die
+  # Begleitdatei "<path>-wal" kann dadurch wachsen. Für die Dauer eines
+  # langen Ingests gegen eine live bediente Datenbank entweder serve stoppen
+  # oder diesen Wert senken.
+  max_read_conns: 4
 
 cors:
   # Erlaubte Ursprünge für Cross-Origin-Requests (leer = keine erlaubt).

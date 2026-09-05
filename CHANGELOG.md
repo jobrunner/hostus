@@ -5,6 +5,26 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [Unreleased]
+
+### Added
+
+* **Serve-Lese-Pool:** `hostus serve` liest jetzt mit bis zu
+  `sqlite.max_read_conns` (Default 4, env `HOSTUS_SQLITE_MAX_READ_CONNS`)
+  parallelen SQLite-Verbindungen statt einer einzigen — unter Tipp-Last
+  (Suggest) serialisierte bisher jeder Request hinter dem laufenden Query,
+  was ein vorgeschalteter Reverse-Proxy als 502 quittierte. Ingest,
+  Bundle-Export und `:memory:`-Betrieb bleiben unverändert bei einer
+  Verbindung.
+
+### Fixed
+
+* **Load-Shedding funktioniert wieder:** Der Load-Shedder war seit dem
+  v2-Umbau ein No-Op (kein Aufrufer von RecordError) — die Middleware
+  beobachtet jetzt den Response-Status und öffnet den Breaker nach
+  aufeinanderfolgenden 5xx-Antworten (Threshold unverändert 1000,
+  Backoff 5 s; Sicherheitsventil, kein Latenz-Regler).
+
 ## [3.1.0-alpha.0](https://github.com/jobrunner/hostus/compare/v3.0.4-alpha.0...v3.1.0-alpha.0) (2026-09-04)
 
 

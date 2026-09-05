@@ -25,11 +25,42 @@ type DB struct {
 
 var _ output.Repository = (*DB)(nil)
 
-// Open opens (or creates) the SQLite database at path and applies the
-// embedded schema (idempotent — every DDL statement is IF NOT EXISTS).
-// path may be ":memory:" for an ephemeral, in-process database, as used by
-// tests. Foreign-key enforcement is turned on for the returned connection.
-func Open(path string) (*DB, error) {
+// OpenPool opens path with a pool of up to maxConns connections. Open's
+// single-connection contract exists for WRITERS and for ":memory:" — the
+// serve path is read-only on a WAL database, which is exactly the
+// concurrent-reader case WAL supports, and one connection serialized every
+// request behind whichever query happened to run (measured 2026-09-05:
+// keystroke bursts on /v1/suggest queued on the single connection until the
+// reverse proxy answered 502; spec 2026-09-05-serve-read-pool-loadshed.md).
+// The per-connection pragmas (_journal_mode, _busy_timeout) come from the
+// DSN and therefore apply to every pooled connection.
+//
+// ":memory:" always uses ONE connection regardless of maxConns — each
+// physical connection gets its own private, empty in-memory database, so a
+// second connection would see a database missing every table the first one
+// just created. maxConns < 1 falls back to 1.
+//
+// The single-connection case (":memory:", or any WRITING caller via Open)
+// also matters for `PRAGMA foreign_keys=ON` (set by schema.sql, below):
+// enforcement is per-connection in SQLite, not database-wide, so with a
+// multi-connection pool only the connection that happened to run the
+// schema would have it on, and any other pooled connection would silently
+// accept FK-violating writes. Neither concern applies to a genuine
+// read-only pool: no pooled connection ever writes, so there is nothing for
+// FK enforcement to guard and no schema-application race to lose — but the
+// guard above still pins ":memory:" to one connection regardless of
+// caller, since a read-only pool against an ephemeral, never-ingested
+// database is not a real use case this codebase has.
+//
+// Operational note: if an ingest is running concurrently against the same
+// file, multiple open read cursors from this pool can delay ingest's WAL
+// checkpoint (the -wal file grows until every reader releases its
+// snapshot) — stop serve, or lower maxConns, for the duration of a long
+// ingest against a live serve database.
+func OpenPool(path string, maxConns int) (*DB, error) {
+	if path == ":memory:" || maxConns < 1 {
+		maxConns = 1
+	}
 	// journal_mode=WAL lets a concurrent READER (e.g. serve's Suggest/Match
 	// queries, opened via its own *DB) proceed while an ingest writer holds
 	// a write transaction open — the default rollback-journal mode instead
@@ -45,18 +76,16 @@ func Open(path string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: open %q: %w", path, err)
 	}
-	// SP1 is single-writer, so pin the pool to exactly one physical
-	// connection. This matters for two reasons beyond avoiding write
-	// contention: `PRAGMA foreign_keys=ON` (set by schema.sql, below) is
-	// per-connection in SQLite, not a database-wide setting — with a
-	// multi-connection pool, only the connection that happened to run the
-	// schema would have FK enforcement on, and any other pooled connection
-	// would silently accept FK-violating writes. And for path=":memory:",
-	// each physical connection gets its OWN private, empty in-memory
-	// database — a second connection would see a database missing every
-	// table the first one just created. Capping the pool at one connection
-	// makes both FK enforcement and :memory: state deterministic.
-	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxOpenConns(maxConns)
+	// database/sql's idle-pool default is 2: without raising it to match,
+	// a pool sized above 2 would open connections 3+ under a burst and then
+	// CLOSE them the moment they go idle, only to physically reopen (and
+	// reapply the DSN's per-connection pragmas) on the next burst — exactly
+	// the connection churn under keystroke-burst load a read pool exists to
+	// avoid. For maxConns==1 this is behaviorally neutral (an idle limit of
+	// 1 does not evict the one connection the pool ever holds), so it does
+	// not change Open's single-connection contract.
+	sqlDB.SetMaxIdleConns(maxConns)
 	if _, err := sqlDB.ExecContext(context.Background(), schemaSQL); err != nil {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("sqlite: applying schema: %w", err)
@@ -93,6 +122,11 @@ func Open(path string) (*DB, error) {
 	// that will not start.
 	return &DB{sql: sqlDB}, nil
 }
+
+// Open opens path pinned to exactly one physical connection — the contract
+// every WRITING caller (ingest, bundle, export) and every ":memory:" test
+// relies on. See OpenPool for the read-pool variant the serve path uses.
+func Open(path string) (*DB, error) { return OpenPool(path, 1) }
 
 // verifySchemaColumns fails Open if any table in the just-opened database is
 // missing a column the current embedded schema declares for it. It exists
@@ -583,6 +617,16 @@ func migrateTaxonConceptClassification(ctx context.Context, sqlDB *sql.DB) error
 // Close releases the underlying database handle.
 func (db *DB) Close() error {
 	return db.sql.Close()
+}
+
+// MaxOpenConns reports the connection pool size this *DB was opened with
+// (db.sql.Stats().MaxOpenConnections). It exists ONLY as a test seam for
+// asserting the app package's serve-side OpenPool wiring end to end — the
+// output.Repository port stays intentionally narrow and does not declare
+// this method; callers reach it via a type assertion to *sqlite.DB in a
+// test, never through the port.
+func (db *DB) MaxOpenConns() int {
+	return db.sql.Stats().MaxOpenConnections
 }
 
 // BackboneVersions lists every ingested backbone artifact.

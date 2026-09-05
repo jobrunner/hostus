@@ -55,6 +55,23 @@ Status: verabschiedet (Folge von Paket A, `2026-09-05-console-abort-stale-guards
    Latenz-Regler.
 5. **Metriken/Sichtbarkeit:** bestehende Gauge `LoadSheddingActive` bleibt;
    keine neuen Metriken in diesem Paket.
+6. **Was NICHT bewertet wird:** Folgende Request-Ergebnisse zählen NICHT zum
+   Fehler-Zähler und beeinflussen den Shedder nicht:
+   - **Health/Metrics-Pfade** (`/health/*`, `/metrics` exakt): Bypass alle
+     Shedding-Prüfungen und Records (weder Error noch Success). Grund:
+     Latched-Breaker mit Health-Probes führt zu Restart-Loops (Probe kehrt
+     503 → Orchestrator killt Container → Restart → Probe kehrt 503…);
+     `/metrics` wird unsichtbar genau dann, wenn man die Gauge braucht.
+   - **Requests mit abgebrochenem/abgelaufenem Context** (client abort,
+     timeout): Nach handler wird `r.Context().Err() != nil` geprüft;
+     solche Requests fallen aus dem Recording heraus. Grund: Client-Events
+     (Netzwerk, Timeout) haben keine Aussagekraft über Upstream-Health und
+     dürfen den Server-Breaker nicht füttern (s. a. Paket A spec).
+   - **Shed-Kurzschlüsse** (der 503 VOR next.ServeHTTP): zählen als 0
+     Fehler, sonst selbst-verriegelung.
+   - **Handler-Panics:** UND recorded als Error (consecutiveErrors++),
+     dann re-panickt zur Propagation an net/http-Panic-Handler; sr.status
+     bleibt http.StatusOK (Handler hat WriteHeader nie aufgerufen).
 
 ## Risiken & Grenzen
 

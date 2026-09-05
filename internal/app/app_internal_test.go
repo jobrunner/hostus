@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jobrunner/hostus/internal/adapters/sqlite"
 	"github.com/jobrunner/hostus/internal/config"
 )
 
@@ -30,16 +31,12 @@ func whiteboxTestConfig() *config.Config {
 }
 
 // TestOpenRepo_UsesConfiguredMaxReadConns pins that openRepo opens the
-// database via sqlite.OpenPool (not the single-connection sqlite.Open) when
-// a MaxReadConns value is configured. It cannot assert the pool SIZE itself
-// from this package: output.Repository (openRepo's return type) exposes no
-// Stats()/pool-introspection method, and *sqlite.DB's underlying *sql.DB is
-// unexported — reaching it would mean widening the port for a test, which
-// the brief for this task explicitly rules out. What this test DOES pin is
-// that openRepo succeeds and returns a live, queryable repo when
-// MaxReadConns is set to a pool size other than 1; the exact value's
-// passthrough to sqlite.OpenPool is covered by the controller's E2E run
-// (documented as a ⚠ in the task report).
+// database via sqlite.OpenPool with cfg.SQLite.MaxReadConns, not via the
+// single-connection sqlite.Open (or a hardcoded constant) — a mutant that
+// swapped the OpenPool call back to Open, or dropped the config value for a
+// literal, would previously have survived, since output.Repository exposes
+// no pool introspection. The assertion goes through *sqlite.DB.MaxOpenConns,
+// a test-only seam on the ADAPTER (not the port — see its doc comment).
 func TestOpenRepo_UsesConfiguredMaxReadConns(t *testing.T) {
 	cfg := whiteboxTestConfig()
 	cfg.SQLite.Path = filepath.Join(t.TempDir(), "openrepo.db")
@@ -58,6 +55,14 @@ func TestOpenRepo_UsesConfiguredMaxReadConns(t *testing.T) {
 
 	if _, err := repo.BackboneVersions(context.Background()); err != nil {
 		t.Fatalf("BackboneVersions on a freshly opened repo: %v", err)
+	}
+
+	db, ok := repo.(*sqlite.DB)
+	if !ok {
+		t.Fatalf("openRepo returned %T, want *sqlite.DB", repo)
+	}
+	if got := db.MaxOpenConns(); got != cfg.SQLite.MaxReadConns {
+		t.Fatalf("MaxOpenConns() = %d, want cfg.SQLite.MaxReadConns = %d", got, cfg.SQLite.MaxReadConns)
 	}
 }
 

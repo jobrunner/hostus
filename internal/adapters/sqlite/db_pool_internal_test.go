@@ -105,7 +105,13 @@ func TestOpenPoolServesConcurrentReaders(t *testing.T) {
 		t.Cleanup(func() { _ = single.Close() })
 		seedPoolTestTable(t, single) // cursor 1 stays open
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		// 300ms, not the pooled branch's timeout budget: cursor 1 is never
+		// released within this test, so the block never resolves on its own
+		// either way — a short timeout proves the same thing a long one
+		// would, just faster, which matters here because this package's
+		// mutation-testing run (gremlins-heavy) pays this wall-clock cost
+		// once per surviving mutant.
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 		defer cancel()
 		_, err = single.sql.QueryContext(ctx, `SELECT id, v FROM t ORDER BY id`)
 		if err == nil {

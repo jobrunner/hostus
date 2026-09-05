@@ -142,9 +142,10 @@ func New(cfg *config.Config, opts ...Option) (*App, error) {
 // even before a database has been ingested, with /health/ready gating
 // readiness on the repo's presence instead (see
 // internal/adapters/http.handleHealthReady). Read-write, not read-only:
-// modernc.org/sqlite has no read-only open mode, and the schema
-// application every pooled connection may run is idempotent (IF NOT
-// EXISTS DDL) — serve itself never issues any other write.
+// modernc.org/sqlite has no read-only open mode, and OpenPool's one-time
+// schema application (on the single connection it opens first) is
+// idempotent (IF NOT EXISTS DDL) regardless — serve itself never issues
+// any other write.
 func openRepo(cfg *config.Config, logger *slog.Logger) (output.Repository, func() error) {
 	if cfg.SQLite.Path == "" {
 		return nil, nil

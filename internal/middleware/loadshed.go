@@ -15,25 +15,19 @@ import (
 	"github.com/jobrunner/hostus/internal/httperr"
 )
 
-// statusCapturingWriter wraps http.ResponseWriter to capture the status code.
-type statusCapturingWriter struct {
+// statusRecorder wraps http.ResponseWriter to capture the HTTP response status.
+// It is shared across Metrics and LoadShed middleware to avoid duplication;
+// both need only the status code to drive their respective logic (metrics
+// buckets and circuit-breaker decisions). Logging middleware extends this
+// with size tracking via its own responseWriter type.
+type statusRecorder struct {
 	http.ResponseWriter
 	status int
 }
 
-func (scw *statusCapturingWriter) WriteHeader(status int) {
-	scw.status = status
-	scw.ResponseWriter.WriteHeader(status)
-}
-
-func (scw *statusCapturingWriter) Write(b []byte) (int, error) {
-	// Ensure WriteHeader is called before Write to capture status.
-	// If Write is called without WriteHeader, the ResponseWriter
-	// defaults to http.StatusOK (200).
-	if scw.status == 0 {
-		scw.status = http.StatusOK
-	}
-	return scw.ResponseWriter.Write(b)
+func (sr *statusRecorder) WriteHeader(status int) {
+	sr.status = status
+	sr.ResponseWriter.WriteHeader(status)
 }
 
 type LoadShedder struct {
@@ -112,11 +106,11 @@ func LoadShed(shedder *LoadShedder) func(http.Handler) http.Handler {
 				return
 			}
 
-			scw := &statusCapturingWriter{ResponseWriter: w, status: http.StatusOK}
-			next.ServeHTTP(scw, r)
+			sr := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+			next.ServeHTTP(sr, r)
 
 			// Record error for 5xx, success otherwise (including 4xx client errors).
-			if scw.status >= http.StatusInternalServerError {
+			if sr.status >= http.StatusInternalServerError {
 				shedder.RecordError()
 			} else {
 				shedder.RecordSuccess()

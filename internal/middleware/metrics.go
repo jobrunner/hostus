@@ -42,29 +42,19 @@ var (
 	)
 )
 
-type metricsResponseWriter struct {
-	http.ResponseWriter
-	status int
-}
-
-func (mrw *metricsResponseWriter) WriteHeader(status int) {
-	mrw.status = status
-	mrw.ResponseWriter.WriteHeader(status)
-}
-
 func Metrics(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
-		mrw := &metricsResponseWriter{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(mrw, r)
+		sr := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(sr, r)
 
 		duration := time.Since(start)
 
 		httpRequestsTotal.WithLabelValues(
 			r.Method,
 			r.URL.Path,
-			strconv.Itoa(mrw.status),
+			strconv.Itoa(sr.status),
 		).Inc()
 
 		httpRequestDuration.WithLabelValues(

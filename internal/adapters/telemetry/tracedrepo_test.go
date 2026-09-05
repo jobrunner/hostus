@@ -196,8 +196,15 @@ func TestTraceRepository_ErrorRecordedAndPassedThrough(t *testing.T) {
 	if name := span.Name(); name != "repo.MatchExact" {
 		t.Fatalf("span name = %q, want %q", name, "repo.MatchExact")
 	}
-	if code := span.Status().Code; code != codes.Error {
-		t.Fatalf("span status code = %v, want Error", code)
+	status := span.Status()
+	if status.Code != codes.Error {
+		t.Fatalf("span status code = %v, want Error", status.Code)
+	}
+	// Fixed text, NOT err.Error(): adapter errors can embed the caller's
+	// verbatim query (e.g. sqlite's "suggest %q: ..."), and the span status
+	// description is not where that value belongs — see end()'s doc comment.
+	if status.Description != "repository error" {
+		t.Fatalf("span status description = %q, want the fixed text %q (must not echo err.Error())", status.Description, "repository error")
 	}
 	found := false
 	for _, ev := range span.Events() {
@@ -207,6 +214,68 @@ func TestTraceRepository_ErrorRecordedAndPassedThrough(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no RecordError (exception) event found on the errored span")
+	}
+}
+
+// TestTraceRepository_ContextCanceledNotError pins the whole-branch-review
+// finding that a client abort (context.Canceled/DeadlineExceeded on the
+// request's own context — the ordinary case since the UI's suggest-abort
+// fix, not an upstream failure) must NOT be reported as a repository error:
+// same policy as middleware/loadshed.go's recordResponse, which treats a
+// canceled request as orthogonal to upstream health. The span still ends
+// and carries a canceled=true attribute for debugging, but gets neither
+// Error status nor a RecordError/exception event.
+func TestTraceRepository_ContextCanceledNotError(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"context.Canceled", context.Canceled},
+		{"context.DeadlineExceeded", context.DeadlineExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertClientAbortNotError(t, tc.err)
+		})
+	}
+}
+
+// assertClientAbortNotError drives one MatchExact call through the
+// decorator with abortErr (a context.Canceled/DeadlineExceeded stand-in)
+// and asserts the client-abort contract: error passed through unchanged,
+// span ended, no Error status, no exception event, canceled=true attribute
+// present. Split out of TestTraceRepository_ContextCanceledNotError so the
+// table-driven loop's t.Run body stays under this repo's gocognit budget.
+func assertClientAbortNotError(t *testing.T, abortErr error) {
+	t.Helper()
+	rec := setRecordingProvider(t)
+	repo := telemetry.TraceRepository(&fakeRepo{err: abortErr})
+
+	_, err := repo.MatchExact(context.Background(), "quercus robur")
+	if !errors.Is(err, abortErr) {
+		t.Fatalf("MatchExact error = %v, want %v unchanged", err, abortErr)
+	}
+
+	ended := rec.Ended()
+	if len(ended) != 1 {
+		t.Fatalf("got %d ended spans, want exactly 1 (span must still end)", len(ended))
+	}
+	span := ended[0]
+	if status := span.Status(); status.Code == codes.Error {
+		t.Fatalf("span status code = %v, want NOT Error for a client abort", status.Code)
+	}
+	for _, ev := range span.Events() {
+		if ev.Name == "exception" {
+			t.Fatal("RecordError (exception) event present for a client abort, want none")
+		}
+	}
+	canceled := false
+	for _, kv := range span.Attributes() {
+		if kv.Key == "canceled" && kv.Value.AsBool() {
+			canceled = true
+		}
+	}
+	if !canceled {
+		t.Fatal(`span is missing the canceled=true attribute`)
 	}
 }
 

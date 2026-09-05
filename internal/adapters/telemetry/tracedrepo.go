@@ -2,8 +2,10 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
@@ -22,13 +24,24 @@ import (
 // decisions 4+5).
 //
 // Deliberately NO query text or bind parameters are recorded as span
-// attributes: a verbatim species/concept-id/canon string is exactly the
+// ATTRIBUTES: a verbatim species/concept-id/canon string is exactly the
 // kind of high-cardinality, potentially sensitive value span attributes
 // should not carry (it would blow up cardinality in any real OTLP backend
 // and, for a genus/epithet query typed by a real user, is not something to
 // fan out to telemetry unreviewed). The span's presence, name, timing, and
 // error status already answer "was this call slow / did it fail" without
 // that cost — that is the question the MCP gap above needed answered.
+//
+// This promise is honest, not absolute, about the SPAN'S ERROR EVENT: end()
+// still calls RecordError(err) for a genuine (non-cancellation) repository
+// error, and some adapter errors DO embed the caller's verbatim query (e.g.
+// the sqlite adapter's "suggest %q: ..."), so exception.message in the
+// exported event can carry an input value — see end()'s doc comment for why
+// that trade-off was kept and what actually protects the common case
+// (client aborts, by far the most frequent "error" since the UI's abort
+// fix, export NOTHING at all, not even RecordError). Only SetStatus's
+// description is deliberately fixed text, precisely so it never repeats
+// that value into the widely-surfaced span status field.
 //
 // This decorator is wired ONLY on the serve path (see
 // internal/app/app.go's openRepo). Ingest and bundle-export code paths open
@@ -73,7 +86,30 @@ func (r *tracedRepository) Unwrap() output.Repository {
 // via `defer r.end(span, &err)` — a NAMED return, so the defer captures the
 // value the method is actually returning, including one set by a plain
 // `return` after the inner call, not a stale value read before the call
-// completed.
+// completed. errp is never nil (every call site passes &err), so it is
+// dereferenced unconditionally — an always-true `errp != nil` guard here
+// would be dead code a mutation test could remove without any test
+// noticing.
+//
+// context.Canceled/DeadlineExceeded get NEITHER RecordError NOR an Error
+// status: a client abort (the request's own ctx.Err(), not an upstream
+// failure) is the ordinary case since the UI's suggest-abort fix, and
+// marking it as a repository error would be noise the same way
+// middleware/loadshed.go's recordResponse already treats a canceled request
+// as orthogonal to upstream health, not a server-side failure to shed load
+// over. A `canceled=true` attribute is still set, so a debug session can
+// tell "this call never really failed" from "there is no error" at a
+// glance. This is also the main thing that keeps a verbatim query string
+// out of telemetry in practice: cancellation/timeout is the single most
+// common non-nil error on this path, and it now exports nothing at all.
+//
+// A genuine repository error still calls RecordError(err) — the sqlite
+// adapter's error text (occasionally including the caller's query, e.g.
+// "suggest %q: ...") is valuable for local debugging via the MemoryExporter
+// the debug MCP reads, and is kept. SetStatus's description, however, is a
+// FIXED string ("repository error"), never err.Error(): the span status is
+// the field most likely to be summarized/aggregated by any OTLP backend,
+// and is not where a verbatim user query belongs.
 //
 // Deliberately no recover() here: if r.inner panics, the panic propagates
 // unchanged past this defer to whatever the caller (ultimately net/http's
@@ -86,9 +122,15 @@ func (r *tracedRepository) Unwrap() output.Repository {
 // there is no error value to mark it Error with, since err was never
 // assigned before the panic. See TestTraceRepository_PanicStillEndsSpan.
 func (r *tracedRepository) end(span trace.Span, errp *error) {
-	if errp != nil && *errp != nil {
-		span.RecordError(*errp)
-		span.SetStatus(codes.Error, (*errp).Error())
+	err := *errp
+	switch {
+	case err == nil:
+		// ok — nothing to mark.
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		span.SetAttributes(attribute.Bool("canceled", true))
+	default:
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "repository error")
 	}
 	span.End()
 }

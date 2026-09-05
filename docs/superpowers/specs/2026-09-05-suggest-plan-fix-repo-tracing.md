@@ -49,17 +49,32 @@ Status: verabschiedet (User: „Ja, setze den Fix bitte um. Außerdem schließe 
    Kommentar als Ein-Satz-Abgrenzung festgehalten (damit niemand „zur
    Sicherheit" auch dort ein `+` streut oder umgekehrt einen rank-Index
    ergänzt, ohne die Falle zu kennen).
-4. **Repository-Tracing (eigener Commit):** Neuer Decorator
-   `telemetry.TracedRepository` (Paket `internal/adapters/telemetry`),
-   implementiert `output.Repository`, delegiert jede Methode und legt um
-   jeden Aufruf einen Span (`otel.Tracer("hostus/repository")`,
-   Span-Name `repo.<Methodenname>`; bei Fehler `RecordError` +
-   `SetStatus(codes.Error)`). Keine Query-Texte/Parameter als Attribute
-   (kein PII-/Kardinalitätsrisiko, Spans bleiben schlank); einzig
-   vertretbares Attribut: nichts in v1. Verdrahtung in `app.openRepo`:
-   das sqlite-Repo wird VOR der Rückgabe gewrappt — damit erscheinen die
-   Kind-Spans automatisch im MemoryExporter/Debug-MCP (gleicher
-   TracerProvider wie otelmux) und in jedem OTLP-Export.
+4. **Repository-Tracing (eigener Commit):** Neuer Konstruktor
+   `telemetry.TraceRepository(inner output.Repository) output.Repository`
+   (Paket `internal/adapters/telemetry`), dahinter ein unexportierter Typ
+   `tracedRepository`, der `output.Repository` implementiert, jede Methode
+   delegiert und um jeden Aufruf einen Span legt
+   (`otel.Tracer("hostus/repository")`, Span-Name `repo.<Methodenname>`;
+   bei Fehler grundsätzlich `RecordError` + `SetStatus(codes.Error, ...)`
+   — AUSSER `context.Canceled`/`context.DeadlineExceeded`: ein Client-Abort
+   ist keine Repository-Fehlfunktion (dieselbe Politik wie
+   `middleware/loadshed.go`s `recordResponse`) und bekommt stattdessen nur
+   ein `canceled=true`-Attribut, keinen Error-Status, kein RecordError.
+   `SetStatus`s Beschreibungstext ist bei einem echten Fehler bewusst fest
+   (`"repository error"`), NIE `err.Error()` — Adapterfehler können die
+   verbatim Nutzereingabe tragen (z. B. sqlites `"suggest %q: ..."`), und
+   die Span-Status-Beschreibung ist nicht der Ort dafür; `RecordError`
+   selbst bleibt mit dem vollen Fehlertext, da der MemoryExporter lokal ist
+   und der Fehlertext fürs Debugging wertvoll bleibt). Keine Query-Texte/
+   Parameter als eigene Attribute (kein PII-/Kardinalitätsrisiko, Spans
+   bleiben schlank); einzig vertretbares Attribut in v1: `canceled`.
+   Verdrahtung in `app.openRepo`: das sqlite-Repo wird VOR der Rückgabe
+   gewrappt — damit erscheinen die Kind-Spans automatisch im
+   MemoryExporter/Debug-MCP (gleicher TracerProvider wie otelmux) und in
+   jedem OTLP-Export. Voraussetzung: `telemetry.Setup` (installiert den
+   TracerProvider) muss VOR `openRepo` laufen, da `otel.Tracer(...)` an
+   den zur Konstruktionszeit aktuellen Provider bindet — `app.New` hält
+   diese Reihenfolge bereits ein.
 5. **Abgrenzung:** Kein Span pro SQL-Statement (das wäre ein
    driver-level Interceptor — Folgearbeit, falls Methoden-Granularität
    nicht reicht); keine Spans in Ingest-Pfaden (Batch-Läufe würden

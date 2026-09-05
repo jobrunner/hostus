@@ -91,6 +91,13 @@ func WithVersion(v string) Option {
 // HTTP router via httpx.NewRouter with Deps populated from cfg. It does not
 // start listening; call Serve for that, or read Router/Telemetry/Logger
 // directly (as the future mcp command does).
+//
+// telemetry.Setup MUST run (and call otel.SetTracerProvider) before
+// openRepo: openRepo wraps the repository in telemetry.TraceRepository,
+// whose constructor resolves its tracer via otel.Tracer(...) AT
+// CONSTRUCTION TIME — calling openRepo first would bind the decorator to
+// whatever no-op provider was current before Setup, and every repo.<Method>
+// span would silently go nowhere.
 func New(cfg *config.Config, opts ...Option) (*App, error) {
 	var o options
 	for _, apply := range opts {

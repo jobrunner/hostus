@@ -122,15 +122,19 @@ func (r *tracedRepository) Unwrap() output.Repository {
 // there is no error value to mark it Error with, since err was never
 // assigned before the panic. See TestTraceRepository_PanicStillEndsSpan.
 func (r *tracedRepository) end(span trace.Span, errp *error) {
-	err := *errp
-	switch {
-	case err == nil:
-		// ok — nothing to mark.
-	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		span.SetAttributes(attribute.Bool("canceled", true))
-	default:
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "repository error")
+	// Nested if instead of a tagless switch: the mutation gate cannot
+	// attribute coverage to case-arm conditions of a tagless switch
+	// (documented Makefile hint; measured here as a NOT COVERED mutant on
+	// the err==nil arm despite every branch having a test) — and gocritic's
+	// ifElseChain forbids the equivalent three-arm if/else-if chain, so the
+	// error/no-error split nests the abort/genuine-error split instead.
+	if err := *errp; err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			span.SetAttributes(attribute.Bool("canceled", true))
+		} else {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "repository error")
+		}
 	}
 	span.End()
 }

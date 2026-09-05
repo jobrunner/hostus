@@ -68,185 +68,202 @@ func (r *tracedRepository) Unwrap() output.Repository {
 	return r.inner
 }
 
-func (r *tracedRepository) finish(span trace.Span, err error) {
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
+// end marks span's outcome from *errp (nil until the deferring method's
+// named return is actually assigned) and ends the span. It is always called
+// via `defer r.end(span, &err)` — a NAMED return, so the defer captures the
+// value the method is actually returning, including one set by a plain
+// `return` after the inner call, not a stale value read before the call
+// completed.
+//
+// Deliberately no recover() here: if r.inner panics, the panic propagates
+// unchanged past this defer to whatever the caller (ultimately net/http's
+// per-request recoverer) does with it — this decorator does not turn a
+// panic into an error return, since that would be a silent behavior change
+// upstream code doesn't expect. What defer DOES buy here is that span.End()
+// still runs on the way out via the panicking goroutine's deferred call
+// stack, so the span is not left open/unexported (the exact failure mode
+// tracing exists to make visible) even though it ends with Status Unset —
+// there is no error value to mark it Error with, since err was never
+// assigned before the panic. See TestTraceRepository_PanicStillEndsSpan.
+func (r *tracedRepository) end(span trace.Span, errp *error) {
+	if errp != nil && *errp != nil {
+		span.RecordError(*errp)
+		span.SetStatus(codes.Error, (*errp).Error())
 	}
 	span.End()
 }
 
-func (r *tracedRepository) Concept(ctx context.Context, id string) (*domain.Concept, []output.SynonymName, []domain.Xref, []domain.Distribution, error) {
+func (r *tracedRepository) Concept(ctx context.Context, id string) (c *domain.Concept, syn []output.SynonymName, xrefs []domain.Xref, dist []domain.Distribution, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.Concept")
-	c, syn, xrefs, dist, err := r.inner.Concept(ctx, id)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	c, syn, xrefs, dist, err = r.inner.Concept(ctx, id)
 	return c, syn, xrefs, dist, err
 }
 
-func (r *tracedRepository) SynonymCandidates(ctx context.Context, conceptID string) ([]domain.SynonymCandidate, error) {
+func (r *tracedRepository) SynonymCandidates(ctx context.Context, conceptID string) (out []domain.SynonymCandidate, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.SynonymCandidates")
-	out, err := r.inner.SynonymCandidates(ctx, conceptID)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.SynonymCandidates(ctx, conceptID)
 	return out, err
 }
 
-func (r *tracedRepository) Classification(ctx context.Context, conceptID string) ([]domain.ClassificationEntry, error) {
+func (r *tracedRepository) Classification(ctx context.Context, conceptID string) (out []domain.ClassificationEntry, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.Classification")
-	out, err := r.inner.Classification(ctx, conceptID)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.Classification(ctx, conceptID)
 	return out, err
 }
 
-func (r *tracedRepository) ConceptByXref(ctx context.Context, authority, extID string) (*domain.Concept, error) {
+func (r *tracedRepository) ConceptByXref(ctx context.Context, authority, extID string) (out *domain.Concept, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.ConceptByXref")
-	out, err := r.inner.ConceptByXref(ctx, authority, extID)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.ConceptByXref(ctx, authority, extID)
 	return out, err
 }
 
-func (r *tracedRepository) ConceptIDsByXref(ctx context.Context, authority string, extIDs []string) (map[string]string, error) {
+func (r *tracedRepository) ConceptIDsByXref(ctx context.Context, authority string, extIDs []string) (out map[string]string, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.ConceptIDsByXref")
-	out, err := r.inner.ConceptIDsByXref(ctx, authority, extIDs)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.ConceptIDsByXref(ctx, authority, extIDs)
 	return out, err
 }
 
-func (r *tracedRepository) ExistingConceptIDs(ctx context.Context, ids []string) (map[string]bool, error) {
+func (r *tracedRepository) ExistingConceptIDs(ctx context.Context, ids []string) (out map[string]bool, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.ExistingConceptIDs")
-	out, err := r.inner.ExistingConceptIDs(ctx, ids)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.ExistingConceptIDs(ctx, ids)
 	return out, err
 }
 
-func (r *tracedRepository) SecReferences(ctx context.Context) ([]domain.SecReference, error) {
+func (r *tracedRepository) SecReferences(ctx context.Context) (out []domain.SecReference, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.SecReferences")
-	out, err := r.inner.SecReferences(ctx)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.SecReferences(ctx)
 	return out, err
 }
 
-func (r *tracedRepository) Areas(ctx context.Context) ([]domain.Area, error) {
+func (r *tracedRepository) Areas(ctx context.Context) (out []domain.Area, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.Areas")
-	out, err := r.inner.Areas(ctx)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.Areas(ctx)
 	return out, err
 }
 
-func (r *tracedRepository) SecReferenceByID(ctx context.Context, id string) (domain.SecReference, error) {
+func (r *tracedRepository) SecReferenceByID(ctx context.Context, id string) (out domain.SecReference, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.SecReferenceByID")
-	out, err := r.inner.SecReferenceByID(ctx, id)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.SecReferenceByID(ctx, id)
 	return out, err
 }
 
-func (r *tracedRepository) ConceptRelationsInSec(ctx context.Context, conceptID, targetSec string) (output.ConceptRelations, error) {
+func (r *tracedRepository) ConceptRelationsInSec(ctx context.Context, conceptID, targetSec string) (out output.ConceptRelations, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.ConceptRelationsInSec")
-	out, err := r.inner.ConceptRelationsInSec(ctx, conceptID, targetSec)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.ConceptRelationsInSec(ctx, conceptID, targetSec)
 	return out, err
 }
 
-func (r *tracedRepository) MatchExact(ctx context.Context, canon string) ([]output.MatchCandidate, error) {
+func (r *tracedRepository) MatchExact(ctx context.Context, canon string) (out []output.MatchCandidate, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.MatchExact")
-	out, err := r.inner.MatchExact(ctx, canon)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.MatchExact(ctx, canon)
 	return out, err
 }
 
-func (r *tracedRepository) MatchFuzzyCandidates(ctx context.Context, canon string, limit int, backbone, sec string) ([]output.MatchCandidate, error) {
+func (r *tracedRepository) MatchFuzzyCandidates(ctx context.Context, canon string, limit int, backbone, sec string) (out []output.MatchCandidate, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.MatchFuzzyCandidates")
-	out, err := r.inner.MatchFuzzyCandidates(ctx, canon, limit, backbone, sec)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.MatchFuzzyCandidates(ctx, canon, limit, backbone, sec)
 	return out, err
 }
 
-func (r *tracedRepository) BackboneVersions(ctx context.Context) ([]domain.BackboneVersion, error) {
+func (r *tracedRepository) BackboneVersions(ctx context.Context) (out []domain.BackboneVersion, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.BackboneVersions")
-	out, err := r.inner.BackboneVersions(ctx)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.BackboneVersions(ctx)
 	return out, err
 }
 
-func (r *tracedRepository) BuildDistributionClosure(ctx context.Context) error {
+func (r *tracedRepository) BuildDistributionClosure(ctx context.Context) (err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.BuildDistributionClosure")
-	err := r.inner.BuildDistributionClosure(ctx)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	err = r.inner.BuildDistributionClosure(ctx)
 	return err
 }
 
-func (r *tracedRepository) NameSpaceEntries(ctx context.Context, conceptID string, spaces []string) ([]domain.NameSpaceEntry, error) {
+func (r *tracedRepository) NameSpaceEntries(ctx context.Context, conceptID string, spaces []string) (out []domain.NameSpaceEntry, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.NameSpaceEntries")
-	out, err := r.inner.NameSpaceEntries(ctx, conceptID, spaces)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.NameSpaceEntries(ctx, conceptID, spaces)
 	return out, err
 }
 
-func (r *tracedRepository) NameSpaces(ctx context.Context) ([]domain.NameSpaceMeta, error) {
+func (r *tracedRepository) NameSpaces(ctx context.Context) (out []domain.NameSpaceMeta, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.NameSpaces")
-	out, err := r.inner.NameSpaces(ctx)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.NameSpaces(ctx)
 	return out, err
 }
 
-func (r *tracedRepository) AggregateMembers(ctx context.Context, aggregateConceptID string) ([]string, error) {
+func (r *tracedRepository) AggregateMembers(ctx context.Context, aggregateConceptID string) (out []string, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.AggregateMembers")
-	out, err := r.inner.AggregateMembers(ctx, aggregateConceptID)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.AggregateMembers(ctx, aggregateConceptID)
 	return out, err
 }
 
-func (r *tracedRepository) AggregatesByMember(ctx context.Context, memberConceptID string) ([]string, error) {
+func (r *tracedRepository) AggregatesByMember(ctx context.Context, memberConceptID string) (out []string, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.AggregatesByMember")
-	out, err := r.inner.AggregatesByMember(ctx, memberConceptID)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.AggregatesByMember(ctx, memberConceptID)
 	return out, err
 }
 
-func (r *tracedRepository) VernacularNames(ctx context.Context, conceptID string) ([]domain.VernacularName, error) {
+func (r *tracedRepository) VernacularNames(ctx context.Context, conceptID string) (out []domain.VernacularName, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.VernacularNames")
-	out, err := r.inner.VernacularNames(ctx, conceptID)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.VernacularNames(ctx, conceptID)
 	return out, err
 }
 
-func (r *tracedRepository) AggregateConcepts(ctx context.Context, backboneID string, ranks []domain.Rank) ([]output.AggregateConceptSummary, error) {
+func (r *tracedRepository) AggregateConcepts(ctx context.Context, backboneID string, ranks []domain.Rank) (out []output.AggregateConceptSummary, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.AggregateConcepts")
-	out, err := r.inner.AggregateConcepts(ctx, backboneID, ranks)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.AggregateConcepts(ctx, backboneID, ranks)
 	return out, err
 }
 
-func (r *tracedRepository) WriteConceptAgreement(ctx context.Context, pairs []domain.ConceptAgreementPair) error {
+func (r *tracedRepository) WriteConceptAgreement(ctx context.Context, pairs []domain.ConceptAgreementPair) (err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.WriteConceptAgreement")
-	err := r.inner.WriteConceptAgreement(ctx, pairs)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	err = r.inner.WriteConceptAgreement(ctx, pairs)
 	return err
 }
 
-func (r *tracedRepository) ConceptAgreement(ctx context.Context, conceptID string) (*domain.ConceptAgreementPair, error) {
+func (r *tracedRepository) ConceptAgreement(ctx context.Context, conceptID string) (out *domain.ConceptAgreementPair, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.ConceptAgreement")
-	out, err := r.inner.ConceptAgreement(ctx, conceptID)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.ConceptAgreement(ctx, conceptID)
 	return out, err
 }
 
-func (r *tracedRepository) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([]domain.SuggestItem, error) {
+func (r *tracedRepository) Suggest(ctx context.Context, q string, opts output.SuggestOpts) (out []domain.SuggestItem, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.Suggest")
-	out, err := r.inner.Suggest(ctx, q, opts)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.Suggest(ctx, q, opts)
 	return out, err
 }
 
-func (r *tracedRepository) BeginIngest(ctx context.Context, bv domain.BackboneVersion) (output.IngestTx, error) {
+func (r *tracedRepository) BeginIngest(ctx context.Context, bv domain.BackboneVersion) (out output.IngestTx, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.BeginIngest")
-	out, err := r.inner.BeginIngest(ctx, bv)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.BeginIngest(ctx, bv)
 	return out, err
 }
 
-func (r *tracedRepository) BeginTraitIngest(ctx context.Context) (output.IngestTx, error) {
+func (r *tracedRepository) BeginTraitIngest(ctx context.Context) (out output.IngestTx, err error) {
 	ctx, span := r.tracer.Start(ctx, "repo.BeginTraitIngest")
-	out, err := r.inner.BeginTraitIngest(ctx)
-	r.finish(span, err)
+	defer r.end(span, &err)
+	out, err = r.inner.BeginTraitIngest(ctx)
 	return out, err
 }

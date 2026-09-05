@@ -36,15 +36,23 @@ func setRecordingProvider(t *testing.T) *tracetest.SpanRecorder {
 	return rec
 }
 
-// fakeRepo is a permissive, panic-free stand-in for output.Repository: every
-// method returns zero values and errFake (or nil, controlled per-test via
-// the fields below), so both the happy-path and error-path tests can drive
-// it without a real database.
+// fakeRepo is a permissive stand-in for output.Repository: every method
+// returns zero values and errFake (or nil, controlled per-test via the
+// fields below), so both the happy-path and error-path tests can drive it
+// without a real database.
 type fakeRepo struct {
-	// err, when non-nil, is returned by matchExactErr (and any other method
-	// under errRepo test control) instead of nil.
+	// err, when non-nil, is returned by MatchExact instead of nil.
 	err error
+	// panic, when true, makes Suggest panic instead of returning — used by
+	// TestTraceRepository_PanicStillEndsSpan to exercise the decorator's
+	// panic path.
+	panic bool
 }
+
+// panicSentinel is what fakeRepo.Suggest panics with when f.panic is true;
+// a distinct type (not a plain string) so the test can assert recover()
+// actually saw THIS panic and not some unrelated one.
+type panicSentinel struct{}
 
 var errFake = errors.New("fake repository failure")
 
@@ -118,6 +126,9 @@ func (f *fakeRepo) ConceptAgreement(ctx context.Context, conceptID string) (*dom
 	return nil, nil
 }
 func (f *fakeRepo) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([]domain.SuggestItem, error) {
+	if f.panic {
+		panic(panicSentinel{})
+	}
 	return []domain.SuggestItem{{}}, nil
 }
 func (f *fakeRepo) BeginIngest(ctx context.Context, bv domain.BackboneVersion) (output.IngestTx, error) {
@@ -196,6 +207,41 @@ func TestTraceRepository_ErrorRecordedAndPassedThrough(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no RecordError (exception) event found on the errored span")
+	}
+}
+
+// TestTraceRepository_PanicStillEndsSpan pins the fix-round-1 finding: the
+// original implementation called span.End() synchronously AFTER the inner
+// call returned, so a panicking inner Repository method left its span open
+// forever (never exported) — exactly the failure mode tracing exists to
+// make visible. span.End() must run via `defer`, so it executes on the way
+// out even when the inner call panics. This test asserts BOTH halves: (a)
+// the panic propagates to the caller unchanged (no silent recover), and (b)
+// the span was nonetheless ended and recorded.
+func TestTraceRepository_PanicStillEndsSpan(t *testing.T) {
+	rec := setRecordingProvider(t)
+	repo := telemetry.TraceRepository(&fakeRepo{panic: true})
+
+	func() {
+		defer func() {
+			got := recover()
+			if got == nil {
+				t.Fatal("expected the panic to propagate out of Suggest, got none")
+			}
+			if _, ok := got.(panicSentinel); !ok {
+				t.Fatalf("recovered value = %#v, want panicSentinel{}", got)
+			}
+		}()
+		_, _ = repo.Suggest(context.Background(), "querc", output.SuggestOpts{})
+		t.Fatal("unreachable: Suggest should have panicked")
+	}()
+
+	ended := rec.Ended()
+	if len(ended) != 1 {
+		t.Fatalf("got %d ended spans after a panicking call, want exactly 1 (span.End() must still run)", len(ended))
+	}
+	if name := ended[0].Name(); name != "repo.Suggest" {
+		t.Fatalf("span name = %q, want %q", name, "repo.Suggest")
 	}
 }
 

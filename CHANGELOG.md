@@ -5,6 +5,12 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [Unreleased]
+
+### Features
+
+* **serve:** konfigurierbarer SQLite-Lese-Pool statt Einzelverbindung
+
 ## [3.1.0-alpha.0](https://github.com/jobrunner/hostus/compare/v3.0.4-alpha.0...v3.1.0-alpha.0) (2026-09-04)
 
 

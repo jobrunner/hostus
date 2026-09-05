@@ -19,6 +19,33 @@ func TestLoadPrefersEnvOverDefault(t *testing.T) {
 	}
 }
 
+// TestLoadSQLiteMaxReadConnsDefault pins sqlite.max_read_conns' built-in
+// default, kept in its own test (rather than folded into
+// TestLoadAppliesDefaultsWhenEnvUnset) so that test's cyclomatic complexity
+// stays under the linter's gocyclo threshold.
+func TestLoadSQLiteMaxReadConnsDefault(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SQLite.MaxReadConns != defaultSQLiteMaxReadConns {
+		t.Fatalf("got sqlite.max_read_conns %d, want default %d", cfg.SQLite.MaxReadConns, defaultSQLiteMaxReadConns)
+	}
+}
+
+// TestLoadSQLiteMaxReadConnsFromEnv pins the exact env-var spelling for the
+// new key: sqlite.max_read_conns -> HOSTUS_SQLITE_MAX_READ_CONNS.
+func TestLoadSQLiteMaxReadConnsFromEnv(t *testing.T) {
+	t.Setenv("HOSTUS_SQLITE_MAX_READ_CONNS", "8")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SQLite.MaxReadConns != 8 {
+		t.Fatalf("got sqlite.max_read_conns %d, want env override 8", cfg.SQLite.MaxReadConns)
+	}
+}
+
 func TestLoadAppliesDefaultsWhenEnvUnset(t *testing.T) {
 	cfg, err := Load("")
 	if err != nil {

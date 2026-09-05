@@ -26,6 +26,7 @@ const (
 	defaultTelemetryEnabled     = false
 	defaultTelemetrySampleRatio = 1.0
 	defaultSQLitePath           = "./data/hostus.db"
+	defaultSQLiteMaxReadConns   = 4
 	defaultUIEnabled            = true
 )
 
@@ -80,9 +81,14 @@ type TelemetryConfig struct {
 	SampleRatio float64 `mapstructure:"sample_ratio"`
 }
 
-// SQLiteConfig holds the on-disk cache database location.
+// SQLiteConfig holds the on-disk cache database location and the serve
+// path's read-connection pool size.
 type SQLiteConfig struct {
 	Path string `mapstructure:"path"`
+	// MaxReadConns bounds the connection pool `hostus serve` opens for its
+	// read-only path (see sqlite.OpenPool). Ingest/bundle/export always use
+	// a single connection regardless of this value — see sqlite.Open.
+	MaxReadConns int `mapstructure:"max_read_conns"`
 }
 
 // CORSConfig holds CORS configuration.
@@ -125,6 +131,7 @@ func Defaults() {
 	viper.SetDefault("telemetry.sample_ratio", defaultTelemetrySampleRatio)
 
 	viper.SetDefault("sqlite.path", defaultSQLitePath)
+	viper.SetDefault("sqlite.max_read_conns", defaultSQLiteMaxReadConns)
 
 	viper.SetDefault("cors.allowed_origins", []string{})
 

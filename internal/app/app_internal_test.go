@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,38 @@ func whiteboxTestConfig() *config.Config {
 		},
 		Logging:   config.LoggingConfig{Level: "info", Format: "json"},
 		Telemetry: config.TelemetryConfig{Enabled: false, SampleRatio: 1.0},
+	}
+}
+
+// TestOpenRepo_UsesConfiguredMaxReadConns pins that openRepo opens the
+// database via sqlite.OpenPool (not the single-connection sqlite.Open) when
+// a MaxReadConns value is configured. It cannot assert the pool SIZE itself
+// from this package: output.Repository (openRepo's return type) exposes no
+// Stats()/pool-introspection method, and *sqlite.DB's underlying *sql.DB is
+// unexported — reaching it would mean widening the port for a test, which
+// the brief for this task explicitly rules out. What this test DOES pin is
+// that openRepo succeeds and returns a live, queryable repo when
+// MaxReadConns is set to a pool size other than 1; the exact value's
+// passthrough to sqlite.OpenPool is covered by the controller's E2E run
+// (documented as a ⚠ in the task report).
+func TestOpenRepo_UsesConfiguredMaxReadConns(t *testing.T) {
+	cfg := whiteboxTestConfig()
+	cfg.SQLite.Path = filepath.Join(t.TempDir(), "openrepo.db")
+	cfg.SQLite.MaxReadConns = 3
+
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	repo, closeRepo := openRepo(cfg, logger)
+	if repo == nil {
+		t.Fatal("openRepo returned a nil repository for a valid path")
+	}
+	t.Cleanup(func() {
+		if closeRepo != nil {
+			_ = closeRepo()
+		}
+	})
+
+	if _, err := repo.BackboneVersions(context.Background()); err != nil {
+		t.Fatalf("BackboneVersions on a freshly opened repo: %v", err)
 	}
 }
 

@@ -312,6 +312,70 @@ func TestLoadShed_Middleware_health_metrics_allowlist(t *testing.T) {
 	}
 }
 
+// TestLoadShed_Middleware_allowlist_boundaries verifies exact vs prefix matching:
+// /metrics must match exactly (not /metricsx), /health/ must be a prefix.
+func TestLoadShed_Middleware_allowlist_boundaries(t *testing.T) {
+	ls := NewLoadShedder(1, 50*time.Millisecond)
+
+	// Artificially latch the breaker
+	ls.RecordError()
+	if !ls.IsShedding() {
+		t.Fatal("expected breaker to be latched")
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	})
+
+	middleware := LoadShed(ls)
+	wrappedHandler := middleware(handler)
+
+	// Test /metricsx (should NOT be allowlisted, should be shed with 503)
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/metricsx", nil)
+	wrappedHandler.ServeHTTP(resp, req)
+	if resp.Code != 503 {
+		t.Errorf("/metricsx: expected 503 (not allowlisted), got %d", resp.Code)
+	}
+	// Error count should remain 1 (shed short-circuit doesn't record)
+	if ls.ConsecutiveErrors() != 1 {
+		t.Errorf("/metricsx: errors should stay at 1, got %d", ls.ConsecutiveErrors())
+	}
+
+	// Test /health (without trailing slash, should NOT be allowlisted, should be shed)
+	resp = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/health", nil)
+	wrappedHandler.ServeHTTP(resp, req)
+	if resp.Code != 503 {
+		t.Errorf("/health: expected 503 (not allowlisted, needs /health/), got %d", resp.Code)
+	}
+	if ls.ConsecutiveErrors() != 1 {
+		t.Errorf("/health: errors should stay at 1, got %d", ls.ConsecutiveErrors())
+	}
+
+	// Test /metrics (exact match, should be allowlisted, no shed)
+	resp = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/metrics", nil)
+	wrappedHandler.ServeHTTP(resp, req)
+	if resp.Code != 200 {
+		t.Errorf("/metrics: expected 200 (allowlisted exactly), got %d", resp.Code)
+	}
+	if ls.ConsecutiveErrors() != 1 {
+		t.Errorf("/metrics: errors should stay at 1, got %d", ls.ConsecutiveErrors())
+	}
+
+	// Test /health/live (prefix match, should be allowlisted, no shed)
+	resp = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/health/live", nil)
+	wrappedHandler.ServeHTTP(resp, req)
+	if resp.Code != 200 {
+		t.Errorf("/health/live: expected 200 (allowlisted by prefix), got %d", resp.Code)
+	}
+	if ls.ConsecutiveErrors() != 1 {
+		t.Errorf("/health/live: errors should stay at 1, got %d", ls.ConsecutiveErrors())
+	}
+}
+
 // TestLoadShed_Middleware_context_abort verifies that client context aborts
 // do not contribute to error recording.
 func TestLoadShed_Middleware_context_abort(t *testing.T) {

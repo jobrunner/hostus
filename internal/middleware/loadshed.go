@@ -16,18 +16,6 @@ import (
 	"github.com/jobrunner/hostus/internal/httperr"
 )
 
-// healthMetricsAllowlist defines paths that bypass the load shedder and are
-// not recorded in error statistics. Health and metrics endpoints must remain
-// available even when the breaker is latched; including them in recording
-// statistics can create failure loops (probes fail → container killed →
-// restart → probe fails again). Metrics also becomes invisible just when
-// needed most. These paths bypass recording entirely (neither RecordError
-// nor RecordSuccess) to prevent probes from resetting the error counter.
-var healthMetricsAllowlist = []string{
-	"/metrics", // Exact match for Prometheus metrics
-	"/health/", // Prefix match for all health endpoints (/health/live, /health/ready, etc.)
-}
-
 // statusRecorder wraps http.ResponseWriter to capture the HTTP response status.
 // It is shared across Metrics and LoadShed middleware to avoid duplication;
 // both need only the status code to drive their respective logic (metrics
@@ -44,21 +32,24 @@ func (sr *statusRecorder) WriteHeader(status int) {
 }
 
 // isHealthMetricsPath checks if a request path should bypass load shedding
-// and error recording (health checks and metrics).
+// and error recording. Health checks and metrics endpoints must remain
+// available even when the breaker is latched; including them in recording
+// statistics can create failure loops (probes fail → container killed →
+// restart → probe fails again). Metrics also becomes invisible just when
+// needed most. These paths bypass recording entirely (neither RecordError
+// nor RecordSuccess) to prevent probes from resetting the error counter.
+// Path matching is exact for /metrics (not a prefix—prevents /metricsx, etc.)
+// and prefix-based for /health/ (covers /health/live, /health/ready, etc.).
+// Segment boundary precision matters; cf. ui.go:147.
 func isHealthMetricsPath(path string) bool {
-	for _, allowed := range healthMetricsAllowlist {
-		if allowed == path || strings.HasPrefix(path, allowed) {
-			return true
-		}
-	}
-	return false
+	return path == "/metrics" || strings.HasPrefix(path, "/health/")
 }
 
 // recordResponse evaluates the handler response and updates load shedder state.
 // It is called from a defer block to ensure panics are caught and recorded.
 func recordResponse(shedder *LoadShedder, sr *statusRecorder, r *http.Request, isHealthMetrics bool, panicRecovered bool) {
 	if panicRecovered {
-		// Handler panicked; we recorded it in the panic handler.
+		// Handler panicked; we recorded it in the panic handler; panic is the stronger upstream signal than context abort.
 		return
 	}
 

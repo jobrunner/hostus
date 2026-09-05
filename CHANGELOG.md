@@ -5,6 +5,24 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [3.2.0-alpha.0](https://github.com/jobrunner/hostus/compare/v3.1.0-alpha.0...v3.2.0-alpha.0) (2026-09-05)
+
+
+### Features
+
+* **serve:** konfigurierbarer SQLite-Lese-Pool statt Einzelverbindung ([435e248](https://github.com/jobrunner/hostus/commit/435e2480c2fd8fffd92df41b4c6cf7e16b2ecd3c))
+* **serve:** SQLite-Lese-Pool und funktionierender Load-Shedder ([e20f6c4](https://github.com/jobrunner/hostus/commit/e20f6c40e983262f6a1b72e8bc4dc323483922de))
+
+
+### Bug Fixes
+
+* **middleware:** /metrics exakt statt als Präfix allowlisten ([e69c6dc](https://github.com/jobrunner/hostus/commit/e69c6dc3da929f8c5346d51b186cafa3df8dc190))
+* **middleware:** Breaker verschont Health/Metrics, ignoriert Client-Aborts, sieht Panics ([1a55b18](https://github.com/jobrunner/hostus/commit/1a55b188fe76da8291c391b4b78082dc20c74785))
+* **middleware:** Load-Shedder beobachtet Response-Status statt nie zu feuern ([28deefe](https://github.com/jobrunner/hostus/commit/28deefe5495c08b0c41b05a63d840cdbe526892f))
+* **sqlite:** Idle-Pool angleichen, Wiring-Test-Seam, WAL-Betriebshinweis ([c0891a9](https://github.com/jobrunner/hostus/commit/c0891a94e599f5b76d7260e9a51f8d94ce451009))
+* **ui:** Suggest bricht veraltete Requests ab; Stale-Guards für Match/Translate ([3220864](https://github.com/jobrunner/hostus/commit/3220864b7aa2161a45f27055274562c12fc68290))
+* **ui:** Suggest bricht veraltete Requests ab; Stale-Guards für Match/Translate ([7096504](https://github.com/jobrunner/hostus/commit/70965047d3509406febd9864d593868cddc46ada))
+
 ## [Unreleased]
 
 ### Added

@@ -62,6 +62,16 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Fixed
 
+* **Testkonsole:** Beim Tippen im Suggest wird der laufende Request jetzt
+  abgebrochen (AbortController), statt jede Eingabepause als vollen Query
+  auf der einzigen SQLite-Verbindung auslaufen zu lassen — der Tipp-Stau,
+  den ein Reverse-Proxy vor hostus als 502 quittierte, entfällt clientseitig;
+  Debounce 150 ms → 250 ms. Zusätzlich: Match- und Translate-Panel verwerfen
+  veraltete Antworten jetzt per Sequenz-Guard (vorher gewann die zuletzt
+  EINTREFFENDE statt der zuletzt gesendeten Antwort), eine geleerte
+  Suggest-Eingabe verwirft noch offene Antworten, und eine 2xx-Antwort mit
+  ungültigem JSON wird als Fehler statt als „Keine Treffer." angezeigt.
+
 * **Serving-Pfad (`POST /v1/match`, `POST /v1/translate`):** wendet jetzt dieselbe
   Zwei-Stufen-Claimant-Präferenz an wie der Ingest-Crosswalk: sec.-Space-
   Konzepte (PR #94-Regel) und Fall-B-native Name-Space-Konzepte zählen nicht

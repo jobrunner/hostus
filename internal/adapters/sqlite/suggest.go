@@ -114,9 +114,46 @@ func ftsPrefixToken(q string) string {
 // output.Repository.Suggest doc comment for the full contract (unranked
 // results, the fetch-budget note, and the empty-q/empty-Area conventions).
 func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([]domain.SuggestItem, error) {
+	query, args, ok := buildSuggestQuery(q, opts)
+	if !ok {
+		return nil, nil
+	}
+
+	rows, err := db.sql.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: suggest %q: %w", q, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.SuggestItem
+	for rows.Next() {
+		item, err := scanSuggestItem(rows.Scan)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite: scanning suggest %q row: %w", q, err)
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: iterating suggest %q rows: %w", q, err)
+	}
+
+	if err := db.attachTargetSpaceNames(ctx, out, opts.TargetSpace, domain.IsAggregateName(q)); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// buildSuggestQuery constructs the SQL and positional args for Suggest's FTS5
+// prefix-match query. It is a pure function (no I/O) so the query plan can be
+// asserted against a seeded test DB without exercising QueryContext/Scan —
+// see TestSuggestQueryPlanDoesNotScanBackboneIndex. ok is false exactly when
+// q's canonicalized prefix is shorter than minQueryRunes (see
+// ftsPrefixToken), signaling Suggest to return an empty result without ever
+// touching FTS5.
+func buildSuggestQuery(q string, opts output.SuggestOpts) (query string, args []any, ok bool) {
 	match := ftsPrefixToken(q)
 	if match == "" {
-		return nil, nil
+		return "", nil, false
 	}
 
 	// args must be built in the same left-to-right order the placeholders
@@ -125,7 +162,7 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 	// in_area_rows, and the area codes for the in_area EXISTS (SELECT list),
 	// then the rank-filter codes (WHERE), the backbone id (WHERE), the
 	// name_start prefix (WHERE), then the LIMIT budget.
-	args := []any{match, suggestMatchPool}
+	args = []any{match, suggestMatchPool}
 
 	codes := areaCodes(opts.Area)
 
@@ -211,9 +248,12 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 	// with no backbone awareness, so a majority backbone can crowd out a
 	// minority one: for the prefix "ca" CDM has 4345 matching names but only
 	// 292 reach the 5000-row pool. Those 292 are still CDM's MOST relevant
-	// matches, which is more than a result page needs — measured on the real
-	// index, entry_backbone=cdm&q=ca returns a full, sensible page in 0.29s.
-	// Pushing the filter into the pool was tried and rejected: it requires
+	// matches, which is more than a result page needs — remeasured on the
+	// real index (spec 2026-09-05, `serve` against
+	// out/hostus-deploy-v3.1.0-alpha.0.sqlite): entry_backbone=cdm&q=ca
+	// returns a full, sensible page in ~0.13s steady-state (curl time_total;
+	// supersedes the earlier 0.29s measurement, same index shape). Pushing
+	// the filter into the pool was tried and rejected: it requires
 	// joining taxon_concept (a TEXT primary key) for every one of the ~104k
 	// matches BEFORE the cap applies, which measured 5-8x slower (0.29s ->
 	// 1.7-2.4s) — reintroducing exactly the 502 latency the pool prevents,
@@ -221,9 +261,33 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 	// The one case where relevance-truncation is not acceptable is in_area,
 	// which outranks bm25 — and the in-area union above already recovers those
 	// rows for every backbone (pinned by TestSuggest_BackboneKeepsInAreaBeyondPool).
+	//
+	// PLANNER TRAP (spec 2026-09-05, real 502 on the Synology instance): a
+	// plain `tc.backbone_id = ?` LOOKS selective — one predicate, one value —
+	// but is not on the MAJORITY backbone: wcvp alone holds ~440k of
+	// taxon_concept's rows, so "backbone = wcvp" only excludes a small
+	// minority of the table. SQLite's planner, seeing idx_taxon_concept_
+	// backbone_id and no ANALYZE statistics to tell it otherwise, still
+	// picked that index to DRIVE the join — scanning every one of those
+	// ~440k concepts and running the correlated nameStartFilter EXISTS
+	// subquery once per row, instead of starting from the ~40 rows the FTS5
+	// MATCH above already narrowed things down to. Measured on the real
+	// index (entry_backbone=wcvp&q=Inula+hirta): 6.96s driven by the index
+	// vs 0.0023s once suppressed — identical result set. The unary `+` on
+	// the column (`+tc.backbone_id = ?`) is SQLite's documented idiom for
+	// "do not use an index for this term": it makes the expression opaque
+	// to the index-selection analysis without changing its truth value, so
+	// the planner falls back to driving from `matches`/fts_name_map as it
+	// does without a backbone filter, and applies this predicate only as a
+	// post-join check.
+	//
+	// rankFilter (`tc.rank IN (...)`, above) does NOT need the same `+`:
+	// tc.rank carries no index (see schema.sql — no idx_taxon_concept_rank),
+	// so there is no index for the planner to mistakenly prefer here today;
+	// anyone adding one must re-read this comment first.
 	backboneFilter := ""
 	if opts.Backbone != "" {
-		backboneFilter = " AND tc.backbone_id = ?"
+		backboneFilter = " AND +tc.backbone_id = ?"
 		args = append(args, opts.Backbone)
 	}
 
@@ -285,7 +349,7 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 	// the outer query then aggregates the already-materialized score
 	// column (MIN(m.score), not MIN(bm25(...))) when collapsing a
 	// concept's several matching names (accepted + synonyms) into one row.
-	query := `WITH ` + cteClause + `
+	query = `WITH ` + cteClause + `
 		SELECT tc.id, an.canonical, an.rank, tc.status, MIN(m.score) AS score, ` + inAreaExpr + ` AS in_area, COALESCE(tc.sec_reference, '') AS sec_reference, MAX(fnm.is_aggregate) AS aggregate
 		FROM matches m
 		JOIN fts_name_map fnm ON fnm.rowid = m.rowid
@@ -296,28 +360,7 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 		ORDER BY in_area DESC, score ASC
 		LIMIT ?`
 
-	rows, err := db.sql.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("sqlite: suggest %q: %w", q, err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var out []domain.SuggestItem
-	for rows.Next() {
-		item, err := scanSuggestItem(rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("sqlite: scanning suggest %q row: %w", q, err)
-		}
-		out = append(out, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("sqlite: iterating suggest %q rows: %w", q, err)
-	}
-
-	if err := db.attachTargetSpaceNames(ctx, out, opts.TargetSpace, domain.IsAggregateName(q)); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return query, args, true
 }
 
 // attachTargetSpaceNames fills TargetSpaceName on every item that has a

@@ -42,6 +42,15 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   beobachtet jetzt den Response-Status und öffnet den Breaker nach
   aufeinanderfolgenden 5xx-Antworten (Threshold unverändert 1000,
   Backoff 5 s; Sicherheitsventil, kein Latenz-Regler).
+* **suggest:** `entry_backbone` zwang den Planner auf dem Mehrheits-
+  Backbone in einen Backbone-Scan (`idx_taxon_concept_backbone_id`):
+  SQLite scannte JEDES Konzept des Backbones (440k für wcvp) und führte
+  die korrelierte name_start-EXISTS-Subquery pro Konzept aus, statt von
+  den ~40 FTS-Treffern zu treiben — auf der Synology-Instanz lief das in
+  den 30-s-Timeout (Proxy-502), lokal gemessen 6,96 s. Das unäre `+` vor
+  `tc.backbone_id` (dokumentiertes SQLite-Idiom, um Index-Nutzung für
+  genau einen Term abzuschalten) senkt das auf 0,0023 s bei identischem
+  Ergebnis.
 
 ## [3.1.0-alpha.0](https://github.com/jobrunner/hostus/compare/v3.0.4-alpha.0...v3.1.0-alpha.0) (2026-09-04)
 

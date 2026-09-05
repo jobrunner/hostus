@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -245,5 +246,132 @@ func TestLoadShed_Middleware_shed_blocks(t *testing.T) {
 	}
 	if ls.IsShedding() {
 		t.Errorf("request 3: expected shedding to be off after probe success")
+	}
+}
+
+// TestLoadShed_Middleware_health_metrics_allowlist verifies that health and
+// metrics paths bypass the breaker and do not contribute to error recording.
+func TestLoadShed_Middleware_health_metrics_allowlist(t *testing.T) {
+	ls := NewLoadShedder(1, 50*time.Millisecond)
+
+	// Artificially latch the breaker
+	ls.RecordError()
+	if !ls.IsShedding() {
+		t.Fatal("expected breaker to be latched")
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	})
+
+	middleware := LoadShed(ls)
+	wrappedHandler := middleware(handler)
+
+	// Test /health/live: should reach handler and respond normally (not 503)
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/health/live", nil)
+	wrappedHandler.ServeHTTP(resp, req)
+	if resp.Code != 200 {
+		t.Errorf("/health/live: expected 200, got %d", resp.Code)
+	}
+	// Should not change error count
+	if ls.ConsecutiveErrors() != 1 {
+		t.Errorf("/health/live: errors should stay at 1, got %d", ls.ConsecutiveErrors())
+	}
+
+	// Test /health/ready: should reach handler and respond normally (not 503)
+	resp = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/health/ready", nil)
+	wrappedHandler.ServeHTTP(resp, req)
+	if resp.Code != 200 {
+		t.Errorf("/health/ready: expected 200, got %d", resp.Code)
+	}
+	// Should not change error count
+	if ls.ConsecutiveErrors() != 1 {
+		t.Errorf("/health/ready: errors should stay at 1, got %d", ls.ConsecutiveErrors())
+	}
+
+	// Test /metrics: should reach handler and respond normally (not 503)
+	resp = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/metrics", nil)
+	wrappedHandler.ServeHTTP(resp, req)
+	if resp.Code != 200 {
+		t.Errorf("/metrics: expected 200, got %d", resp.Code)
+	}
+	// Should not change error count
+	if ls.ConsecutiveErrors() != 1 {
+		t.Errorf("/metrics: errors should stay at 1, got %d", ls.ConsecutiveErrors())
+	}
+
+	// Test a normal path: should be shed (503)
+	resp = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/v1/suggest", nil)
+	wrappedHandler.ServeHTTP(resp, req)
+	if resp.Code != 503 {
+		t.Errorf("/v1/suggest: expected 503 when breaker is latched, got %d", resp.Code)
+	}
+}
+
+// TestLoadShed_Middleware_context_abort verifies that client context aborts
+// do not contribute to error recording.
+func TestLoadShed_Middleware_context_abort(t *testing.T) {
+	ls := NewLoadShedder(2, 10*time.Millisecond)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Simulate handler waiting on context and aborting
+		<-r.Context().Done()
+		w.WriteHeader(500) // Handler writes 500 after abort
+	})
+
+	middleware := LoadShed(ls)
+	wrappedHandler := middleware(handler)
+
+	// Create request with canceled context
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest("GET", "/", nil).WithContext(ctx)
+	cancel() // Cancel immediately
+
+	resp := httptest.NewRecorder()
+	wrappedHandler.ServeHTTP(resp, req)
+
+	// Even though handler wrote 500, the abort context means it shouldn't count
+	if ls.ConsecutiveErrors() != 0 {
+		t.Errorf("expected 0 errors after aborted context, got %d", ls.ConsecutiveErrors())
+	}
+}
+
+// TestLoadShed_Middleware_handler_panic verifies that handler panics are
+// recorded as errors.
+func TestLoadShed_Middleware_handler_panic(t *testing.T) {
+	ls := NewLoadShedder(2, 10*time.Millisecond)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic("handler panic")
+	})
+
+	middleware := LoadShed(ls)
+	wrappedHandler := middleware(handler)
+
+	// Wrap the call to catch the panic
+	didPanic := false
+	func() {
+		defer func() {
+			if recover() != nil {
+				didPanic = true
+			}
+		}()
+
+		resp := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/", nil)
+		wrappedHandler.ServeHTTP(resp, req)
+	}()
+
+	if !didPanic {
+		t.Error("expected panic to propagate")
+	}
+
+	// Panic should have been recorded as an error
+	if ls.ConsecutiveErrors() != 1 {
+		t.Errorf("expected 1 error after panic, got %d", ls.ConsecutiveErrors())
 	}
 }

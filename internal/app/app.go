@@ -146,6 +146,12 @@ func New(cfg *config.Config, opts ...Option) (*App, error) {
 // schema application (on the single connection it opens first) is
 // idempotent (IF NOT EXISTS DDL) regardless — serve itself never issues
 // any other write.
+//
+// The returned repository is wrapped in telemetry.TraceRepository, so every
+// call the HTTP router makes gets a repo.<Method> child span under the
+// otelmux HTTP span (see tracedrepo.go's doc comment for why — this is the
+// serve path's read pool, the one place a per-call span is cheap and
+// useful; ingest/bundle code opens sqlite directly and stays unwrapped).
 func openRepo(cfg *config.Config, logger *slog.Logger) (output.Repository, func() error) {
 	if cfg.SQLite.Path == "" {
 		return nil, nil
@@ -156,7 +162,7 @@ func openRepo(cfg *config.Config, logger *slog.Logger) (output.Repository, func(
 			"path", cfg.SQLite.Path, "error", err)
 		return nil, nil
 	}
-	return db, db.Close
+	return telemetry.TraceRepository(db), db.Close
 }
 
 // Serve starts an HTTP server on Config.Server's host:port and blocks until

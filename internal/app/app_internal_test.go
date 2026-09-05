@@ -12,6 +12,7 @@ import (
 
 	"github.com/jobrunner/hostus/internal/adapters/sqlite"
 	"github.com/jobrunner/hostus/internal/config"
+	"github.com/jobrunner/hostus/internal/ports/output"
 )
 
 // whiteboxTestConfig mirrors app_test.go's testConfig but lives here (same
@@ -37,6 +38,11 @@ func whiteboxTestConfig() *config.Config {
 // literal, would previously have survived, since output.Repository exposes
 // no pool introspection. The assertion goes through *sqlite.DB.MaxOpenConns,
 // a test-only seam on the ADAPTER (not the port — see its doc comment).
+//
+// openRepo now wraps the *sqlite.DB in telemetry.TraceRepository (see
+// tracedrepo.go), so repo is no longer a *sqlite.DB itself — it unwraps via
+// the decorator's Unwrap() output.Repository (a test-only seam of its own)
+// before the *sqlite.DB assertion below.
 func TestOpenRepo_UsesConfiguredMaxReadConns(t *testing.T) {
 	cfg := whiteboxTestConfig()
 	cfg.SQLite.Path = filepath.Join(t.TempDir(), "openrepo.db")
@@ -57,9 +63,13 @@ func TestOpenRepo_UsesConfiguredMaxReadConns(t *testing.T) {
 		t.Fatalf("BackboneVersions on a freshly opened repo: %v", err)
 	}
 
-	db, ok := repo.(*sqlite.DB)
+	unwrappable, ok := repo.(interface{ Unwrap() output.Repository })
 	if !ok {
-		t.Fatalf("openRepo returned %T, want *sqlite.DB", repo)
+		t.Fatalf("openRepo returned %T, want a type wrapping *sqlite.DB with Unwrap() output.Repository", repo)
+	}
+	db, ok := unwrappable.Unwrap().(*sqlite.DB)
+	if !ok {
+		t.Fatalf("openRepo's unwrapped repository is %T, want *sqlite.DB", unwrappable.Unwrap())
 	}
 	if got := db.MaxOpenConns(); got != cfg.SQLite.MaxReadConns {
 		t.Fatalf("MaxOpenConns() = %d, want cfg.SQLite.MaxReadConns = %d", got, cfg.SQLite.MaxReadConns)

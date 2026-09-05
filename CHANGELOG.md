@@ -27,6 +27,16 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Added
 
+* **Repository-Tracing:** Jeder `output.Repository`-Aufruf auf dem
+  Serve-Pfad erzeugt jetzt einen eigenen Span (`repo.<Methode>`) unter dem
+  HTTP-Span — sichtbar im Debug-MCP (`get_trace`) und in jedem
+  OTLP-Export. Anlass war ein 7,9-s-`/v1/suggest`-Request, dessen Trace nur
+  EINEN Span enthielt (den otelmux-HTTP-Span); die Slow-Query-Analyse musste
+  deshalb auf `EXPLAIN` ausweichen statt auf einen echten Span-Breakdown.
+  Query-Text und -Parameter werden bewusst NICHT als Span-Attribute
+  mitgeschrieben (PII/Kardinalität). Ingest- und Bundle-Export-Pfade öffnen
+  SQLite weiterhin direkt und bleiben unverdrahtet (ein Span pro
+  Ingest-Aufruf wäre bei Millionen Zeilen reiner Overhead).
 * **Serve-Lese-Pool:** `hostus serve` liest jetzt mit bis zu
   `sqlite.max_read_conns` (Default 4, env `HOSTUS_SQLITE_MAX_READ_CONNS`)
   parallelen SQLite-Verbindungen statt einer einzigen — unter Tipp-Last

@@ -220,6 +220,11 @@
         return { ok: res.ok, status: res.status, body: body, raw: raw, ms: ms };
       });
     }, function (err) {
+      if (err && err.name === "AbortError") {
+        // Bewusst KEIN Fehlerobjekt: ein Abbruch ist die Folge einer neueren
+        // Eingabe, nie ein Zustand, den der Nutzer sehen soll.
+        return { aborted: true, ok: false, status: 0, body: null, raw: "", ms: Math.round(performance.now() - started) };
+      }
       return { ok: false, status: 0, body: null, raw: String(err), ms: Math.round(performance.now() - started) };
     });
   }
@@ -245,7 +250,7 @@
   // Live-Regionen verhalten sich je nach Screenreader unterschiedlich.
   function errorBox(res) {
     var code = res.body && res.body.error ? res.body.error.code : "HTTP_" + res.status;
-    var msg = res.body && res.body.error ? res.body.error.message : (res.raw || "keine Antwort");
+    var msg = res.body && res.body.error ? res.body.error.message : (res.raw || "ungültige oder leere JSON-Antwort");
     var box = el("div", "error", "Fehler " + code + ": " + msg);
     box.setAttribute("role", "alert");
     return box;
@@ -265,6 +270,7 @@
   (function loadAreas() {
     var list = byId("areas");
     api("/v1/areas").then(function (res) {
+      if (res.aborted) { return; }
       if (!res.ok || !res.body || !Array.isArray(res.body.areas)) { return; }
       var opts = [];
       res.body.areas.forEach(function (a) {
@@ -305,6 +311,15 @@
   var EXPECTED_RANKS = ["FAMILY", "GENUS", "SPECIES", "SUBSPECIES"];
   var suggestSeq = 0;
   var suggestTimer = null;
+  var suggestAbort = null;
+
+  // Bricht einen noch laufenden Suggest-Request ab. Wird beim TASTENDRUCK
+  // aufgerufen, nicht erst wenn der Debounce-Timer feuert: die eine
+  // SQLite-Verbindung des Servers wird so sofort frei, statt jede
+  // Eingabepause als vollen Query auslaufen zu lassen.
+  function abortSuggest() {
+    if (suggestAbort !== null) { suggestAbort.abort(); suggestAbort = null; }
+  }
 
   function rankMix(results) {
     var counts = {};
@@ -331,7 +346,7 @@
     suggestSummary.replaceChildren();
     suggestBody.replaceChildren();
 
-    if (!res.ok) {
+    if (!res.ok || !res.body) {
       suggestSummary.appendChild(errorBox(res));
       return;
     }
@@ -423,6 +438,7 @@
       suggestURL.textContent = "";
       suggestSummary.replaceChildren();
       suggestBody.replaceChildren();
+      suggestSeq += 1; // Leer-Query verwirft auch jede noch offene Antwort
       return;
     }
     var params = new URLSearchParams();
@@ -439,7 +455,9 @@
     suggestSeq = seq;
     suggestURL.textContent = "GET " + path + " …";
 
-    api(path).then(function (res) {
+    suggestAbort = new AbortController();
+    api(path, { signal: suggestAbort.signal }).then(function (res) {
+      if (res.aborted) { return; }
       if (seq !== suggestSeq) { return; }
       stamp(suggestURL, "GET", path, res);
       renderSuggest(q, res);
@@ -447,8 +465,11 @@
   }
 
   function scheduleSuggest() {
+    // Abbruch SCHON beim Tastendruck, nicht erst beim Timer: der Entlastungs-
+    // Effekt für die eine SQLite-Verbindung soll sofort greifen.
+    abortSuggest();
     if (suggestTimer !== null) { clearTimeout(suggestTimer); }
-    suggestTimer = setTimeout(runSuggest, 150);
+    suggestTimer = setTimeout(runSuggest, 250);
   }
 
   qInput.addEventListener("input", scheduleSuggest);
@@ -541,7 +562,7 @@
   function renderPublicationSynonyms(res) {
     var box = el("div");
     box.appendChild(el("h3", null, "Synonyme, publikationsrelevant (relevance=publication)"));
-    if (!res.ok) {
+    if (!res.ok || !res.body) {
       box.appendChild(errorBox(res));
       return box;
     }
@@ -591,12 +612,13 @@
       api(base),
       api(base + "/synonyms?relevance=publication")
     ]).then(function (all) {
+      if (all[0].aborted || all[1].aborted) { return; }
       if (currentConceptID !== id) { return; }
       var conceptRes = all[0];
       var out = el("div");
       out.appendChild(el("p", "url", "GET " + base + "  ·  HTTP " + conceptRes.status + "  ·  " + conceptRes.ms + " ms"));
 
-      if (!conceptRes.ok) {
+      if (!conceptRes.ok || !conceptRes.body) {
         out.appendChild(errorBox(conceptRes));
         conceptOut.replaceChildren(out);
         return;
@@ -628,10 +650,12 @@
   var matchSec = byId("match-sec");
   var matchSpace = byId("match-space");
   var matchOut = byId("match-out");
+  var matchSeq = 0;
+  var matchAbort = null;
 
   function renderMatch(lines, res) {
     matchOut.replaceChildren();
-    if (!res.ok) {
+    if (!res.ok || !res.body) {
       matchOut.appendChild(errorBox(res));
       return;
     }
@@ -681,11 +705,18 @@
     if (msec !== "") { payload.entry_sec = msec; }
     if (matchSpace && matchSpace.value) { payload.target_space = matchSpace.value; }
     matchURL.textContent = "POST /v1/match …";
+    if (matchAbort !== null) { matchAbort.abort(); }
+    matchAbort = new AbortController();
+    var seq = matchSeq + 1;
+    matchSeq = seq;
     api("/v1/match", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: matchAbort.signal
     }).then(function (res) {
+      if (res.aborted) { return; }
+      if (seq !== matchSeq) { return; }
       stamp(matchURL, "POST", "/v1/match", res);
       renderMatch(lines, res);
     });
@@ -698,6 +729,8 @@
   var translateBtn = byId("translate-run");
   var translateURL = byId("translate-url");
   var translateOut = byId("translate-out");
+  var translateSeq = 0;
+  var translateAbort = null;
 
   function noRelationStatement(target, body) {
     var box = el("div", "statement");
@@ -743,7 +776,7 @@
 
   function renderTranslate(target, res) {
     translateOut.replaceChildren();
-    if (!res.ok) {
+    if (!res.ok || !res.body) {
       translateOut.appendChild(errorBox(res));
       return;
     }
@@ -797,11 +830,18 @@
       include_name_candidates: translateNames.checked
     };
     translateURL.textContent = "POST /v1/translate …";
+    if (translateAbort !== null) { translateAbort.abort(); }
+    translateAbort = new AbortController();
+    var seq = translateSeq + 1;
+    translateSeq = seq;
     api("/v1/translate", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: translateAbort.signal
     }).then(function (res) {
+      if (res.aborted) { return; }
+      if (seq !== translateSeq) { return; }
       stamp(translateURL, "POST", "/v1/translate", res);
       renderTranslate(target, res);
     });
@@ -816,6 +856,7 @@
     var list = byId("sec-spaces");
     if (!list) { return; }
     api("/v1/sec").then(function (res) {
+      if (res.aborted) { return; }
       if (!res.ok || !res.body || !Array.isArray(res.body.sec_references)) { return; }
       var opts = res.body.sec_references.map(function (s) {
         var o = el("option");
@@ -843,6 +884,7 @@
 
   (function loadCatalog() {
     api("/v1/backbones").then(function (res) {
+      if (res.aborted) { return; }
       if (!res.ok || !res.body || !Array.isArray(res.body.backbones)) { return; }
       [suggestBackbone, matchBackbone].forEach(function (sel) {
         fillSelect(sel, res.body.backbones,
@@ -851,6 +893,7 @@
       });
     });
     api("/v1/spaces").then(function (res) {
+      if (res.aborted) { return; }
       if (!res.ok || !res.body || !Array.isArray(res.body.spaces)) { return; }
       [suggestSpace, matchSpace].forEach(function (sel) {
         fillSelect(sel, res.body.spaces,

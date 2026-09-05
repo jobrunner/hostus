@@ -279,7 +279,14 @@ func buildSuggestQuery(q string, opts output.SuggestOpts) (query string, args []
 	// to the index-selection analysis without changing its truth value, so
 	// the planner falls back to driving from `matches`/fts_name_map as it
 	// does without a backbone filter, and applies this predicate only as a
-	// post-join check.
+	// post-join check. SQLite parses `+X` as an expression, not a column
+	// reference, so the column's type AFFINITY no longer applies to the
+	// comparison (datatype3 §4.2) — harmless here because backbone_id is
+	// TEXT/BINARY with no COLLATE in schema.sql and the bound parameter is
+	// already a Go string, so no affinity conversion was happening anyway;
+	// this does NOT carry over to an INTEGER column compared against a
+	// string parameter, where dropping the affinity conversion would change
+	// which rows match.
 	//
 	// rankFilter (`tc.rank IN (...)`, above) does NOT need the same `+`:
 	// tc.rank carries no index (see schema.sql — no idx_taxon_concept_rank),
@@ -381,7 +388,11 @@ func buildSuggestQuery(q string, opts output.SuggestOpts) (query string, args []
 // Suggest. Measured on the real index (target_space=eurosl, a Suggest page's
 // worth of concept ids): 0.455s driven by the PK index vs 0.001s once
 // suppressed — identical 5-row result. `+space = ?` applies the same unary-+
-// idiom to fix it.
+// idiom to fix it. The fix does give up the row order the (space, ext_id)
+// PK used to hand `ORDER BY ext_id ASC` for free, in exchange for an
+// explicit TEMP B-TREE sort — semantically identical (still ext_id ASC,
+// so the resolver's tie-break stays deterministic) and confirmed to
+// produce the same row order on the real index.
 const targetSpaceQuery = `
 	SELECT concept_id, name, aggregate, COALESCE(status, '')
 	FROM name_space_entry

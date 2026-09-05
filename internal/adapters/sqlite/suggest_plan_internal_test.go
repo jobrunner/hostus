@@ -87,6 +87,13 @@ func TestSuggestQueryPlanDoesNotScanBackboneIndex(t *testing.T) {
 	if strings.Contains(plan, "idx_taxon_concept_backbone_id") {
 		t.Errorf("suggest plan drives from idx_taxon_concept_backbone_id again (backbone scan, the Synology-502 shape):\n%s", plan)
 	}
+	// Positive counterpart to the absence check above (symmetry with
+	// TestAttachTargetSpaceNamesQueryPlanDoesNotScanSpace): "SCAN m" is
+	// SQLite's stable EQP wording for driving off the materialized `matches`
+	// CTE (the FTS5 match set), i.e. the join order this fix restores.
+	if !strings.Contains(plan, "SCAN m") {
+		t.Errorf("suggest plan does not drive from the FTS-matched `matches` CTE (want a \"SCAN m\" row):\n%s", plan)
+	}
 
 	// KONTROLLE: die Vor-Fix-Form MUSS den Index wählen, sonst ist die
 	// Assertion oben nicht beweiskräftig.

@@ -363,6 +363,31 @@ func buildSuggestQuery(q string, opts output.SuggestOpts) (query string, args []
 	return query, args, true
 }
 
+// targetSpaceQuery is attachTargetSpaceNames' query. It is a package-level
+// constant (not inlined at the call site) so
+// TestAttachTargetSpaceNamesQueryPlanDoesNotScanSpace can EXPLAIN QUERY PLAN
+// the EXACT string production runs, rather than a hand-copied stand-in that
+// could silently drift from it.
+//
+// SECOND INSTANCE of the backboneFilter planner trap (see that doc comment
+// in Suggest for the full mechanism) — same fix, same reasoning, different
+// table: `space = ?` looks selective but name_space_entry's PRIMARY KEY is
+// (space, ext_id), so the space column is only the LEADING part of that
+// composite index; for a populous space (eurosl: 116k rows) the planner
+// still picked that PK-derived autoindex (sqlite_autoindex_name_space_entry_1)
+// to drive the query, scanning every eurosl row and testing concept_id
+// membership per row instead of starting from idx_name_space_entry_concept_id
+// via the ≤ suggestFetchMultiplier*limit concept ids already selected by
+// Suggest. Measured on the real index (target_space=eurosl, a Suggest page's
+// worth of concept ids): 0.455s driven by the PK index vs 0.001s once
+// suppressed — identical 5-row result. `+space = ?` applies the same unary-+
+// idiom to fix it.
+const targetSpaceQuery = `
+	SELECT concept_id, name, aggregate, COALESCE(status, '')
+	FROM name_space_entry
+	WHERE +space = ? AND concept_id IN (SELECT value FROM json_each(?))
+	ORDER BY ext_id ASC`
+
 // attachTargetSpaceNames fills TargetSpaceName on every item that has a
 // spelling in space. It runs ONE query for the whole page rather than one per
 // hit: a suggest page holds up to the fetch budget of concepts, and a
@@ -397,11 +422,7 @@ func (db *DB) attachTargetSpaceNames(ctx context.Context, items []domain.Suggest
 	// ext_id ASC only makes the input order stable, so the resolver's own
 	// fallback ("no entry is marked accepted") is deterministic rather than
 	// whatever the store returns first.
-	rows, err := db.sql.QueryContext(ctx, `
-		SELECT concept_id, name, aggregate, COALESCE(status, '')
-		FROM name_space_entry
-		WHERE space = ? AND concept_id IN (SELECT value FROM json_each(?))
-		ORDER BY ext_id ASC`, space, idsJSON)
+	rows, err := db.sql.QueryContext(ctx, targetSpaceQuery, space, idsJSON)
 	if err != nil {
 		return fmt.Errorf("sqlite: suggest target space %q: %w", space, err)
 	}

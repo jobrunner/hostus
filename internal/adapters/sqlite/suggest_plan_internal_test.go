@@ -99,3 +99,61 @@ func TestSuggestQueryPlanDoesNotScanBackboneIndex(t *testing.T) {
 		t.Fatalf("control (unfixed) plan does not use the backbone index — the assertion above proves nothing on this database:\n%s", controlPlan)
 	}
 }
+
+// TestAttachTargetSpaceNamesQueryPlanDoesNotScanSpace pins the SECOND
+// instance of the same planner trap (spec 2026-09-05, fix round 1): the
+// Synology-form gate ("< 50ms") still failed with target_space=eurosl
+// because attachTargetSpaceNames' query drove from
+// sqlite_autoindex_name_space_entry_1 (name_space_entry's PRIMARY KEY
+// (space, ext_id)) on `space = ?`, scanning every row of the requested
+// space (116k for eurosl) instead of the handful of concept ids already
+// selected by Suggest via idx_name_space_entry_concept_id — measured 0.455s
+// vs 0.001s for an identical 5-row result. See the backboneFilter doc
+// comment in suggest.go for the full mechanism; targetSpaceQuery's own doc
+// comment states the measured values for this second instance.
+func TestAttachTargetSpaceNamesQueryPlanDoesNotScanSpace(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	bv := domain.BackboneVersion{ID: "wcvp", Version: "v1", IngestedAt: "2026-09-05T00:00:00Z", ManifestSHA: "x"}
+	ingestVia(t, db, bv, func(tx output.IngestTx) {
+		n := species("n-wcvp-inula-hirta", "Inula hirta")
+		mustTx(t, tx.UpsertName(n))
+		c := domain.Concept{ID: "wcvp:concept:inula-hirta", BackboneID: "wcvp", AcceptedName: n, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+		mustTx(t, tx.UpsertConcept(c))
+		mustTx(t, tx.LinkName(c.ID, n.ID, "accepted", nil))
+	})
+
+	tx, err := db.BeginIngest(ctx, domain.BackboneVersion{ID: "eurosl-src", Version: "v1", IngestedAt: "2026-09-05T00:00:00Z", ManifestSHA: "y"})
+	mustTx(t, err)
+	mustTx(t, tx.UpsertNameSpace(domain.NameSpaceMeta{ID: "eurosl", Version: "v1", ManifestSHA: "y", Redistribution: domain.RedistributionUnknown}))
+	mustTx(t, tx.AddNameSpaceEntry("wcvp:concept:inula-hirta", domain.NameSpaceEntry{
+		Space: "eurosl", ExtID: "e-1", Name: "Inula hirta", Status: "accepted",
+	}))
+	mustTx(t, tx.Commit())
+
+	idsJSON, err := marshalIDs([]string{"wcvp:concept:inula-hirta"})
+	if err != nil {
+		t.Fatalf("marshalIDs: unexpected error: %v", err)
+	}
+	args := []any{"eurosl", idsJSON}
+
+	plan := explainPlan(t, db, targetSpaceQuery, args)
+	if strings.Contains(plan, "sqlite_autoindex_name_space_entry_1") {
+		t.Errorf("target-space plan drives from the (space, ext_id) primary-key autoindex again (space scan, the fix-round-1 shape):\n%s", plan)
+	}
+	if !strings.Contains(plan, "idx_name_space_entry_concept_id") {
+		t.Errorf("target-space plan does not use idx_name_space_entry_concept_id:\n%s", plan)
+	}
+
+	// KONTROLLE: die Vor-Fix-Form MUSS den PK-Autoindex wählen, sonst ist die
+	// Assertion oben nicht beweiskräftig.
+	unfixed := strings.Replace(targetSpaceQuery, "+space", "space", 1)
+	if unfixed == targetSpaceQuery {
+		t.Fatal("fixed query does not contain +space — fix missing or renamed")
+	}
+	controlPlan := explainPlan(t, db, unfixed, args)
+	if !strings.Contains(controlPlan, "sqlite_autoindex_name_space_entry_1") {
+		t.Fatalf("control (unfixed) plan does not use the primary-key autoindex — the assertion above proves nothing on this database:\n%s", controlPlan)
+	}
+}

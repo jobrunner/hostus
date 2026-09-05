@@ -60,7 +60,10 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   den 30-s-Timeout (Proxy-502), lokal gemessen 6,96 s. Das unäre `+` vor
   `tc.backbone_id` (dokumentiertes SQLite-Idiom, um Index-Nutzung für
   genau einen Term abzuschalten) senkt das auf 0,0023 s bei identischem
-  Ergebnis.
+  Ergebnis. Dieselbe Falle traf `target_space` (Fix-Runde 1): der
+  `attachTargetSpaceNames`-Lookup trieb über den (space, ext_id)-PK-
+  Autoindex statt über `idx_name_space_entry_concept_id` (eurosl: 116k
+  Zeilen, 0,455 s); dasselbe `+` vor `space` senkt das auf 0,001 s.
 
 ## [3.1.0-alpha.0](https://github.com/jobrunner/hostus/compare/v3.0.4-alpha.0...v3.1.0-alpha.0) (2026-09-04)
 

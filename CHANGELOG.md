@@ -5,6 +5,27 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [3.4.0-alpha.0](https://github.com/jobrunner/hostus/compare/v3.3.0-alpha.0...v3.4.0-alpha.0) (2026-09-13)
+
+
+### Features
+
+* **ingest:** Quell-Synonymie schließt offene Namespace-Zeilen (Inula-hirta-Klasse) ([e72c3dc](https://github.com/jobrunner/hostus/commit/e72c3dc2b72272cec324fa7a02c82297bfb3cf73))
+* **match:** Batch-Auflösung über Fremd-IDs (powo u. a.) per xref-Eintrag ([ec36fb0](https://github.com/jobrunner/hostus/commit/ec36fb0a063124aa6522fbdecdc7cf3014135fe8))
+* **match:** PlantNet→Habitatus-Workflow — Xref-Batch, E+M-UUIDs, Synonymie-Schluss ([803c91f](https://github.com/jobrunner/hostus/commit/803c91f532b5ca12767a9e272d0dcd6cb86ab40b))
+* **translate:** Zielraum-Antworten tragen Quell-UUID und Status des gewählten Namens ([1a1b817](https://github.com/jobrunner/hostus/commit/1a1b817ff0aa9b2a0ef0d49946011bd55aa32b40))
+
+
+### Bug Fixes
+
+* **ci:** gitsubmodule-Ecosystem aus Dependabot entfernen ([df2312c](https://github.com/jobrunner/hostus/commit/df2312cd0fc218ee0c7d8035426b331c0565f249))
+* **ci:** gitsubmodule-Ecosystem aus Dependabot entfernen - privates Submodule unerreichbar ([12dd425](https://github.com/jobrunner/hostus/commit/12dd4251e40d175726a68890827902a0164f0725))
+* **http:** writeMatchError ohne tag-losen switch (Mutation-Coverage-Attribution) ([3011e74](https://github.com/jobrunner/hostus/commit/3011e74909060cbfb820f3b9b840e65de12be866))
+* **http:** xref-Feldvalidierung, entry_sec-Filter-Test, aggregate_policy-Doku für xref-Zeilen ([817d3d9](https://github.com/jobrunner/hostus/commit/817d3d9385edde45e9d39ad64324003384379e31))
+* **ingest:** matchedAccepted prüft alle Kandidaten; pickSpelling bevorzugt direkte accepted-Einträge ([ec167c9](https://github.com/jobrunner/hostus/commit/ec167c931042b68ecb78ecdddc88e07b0fa2624c))
+* **ingest:** Synonymie-Schluss verlangt accepted-Rollen-Anker (Kreuz-Homonym-Schutz) ([b2e89f7](https://github.com/jobrunner/hostus/commit/b2e89f70cedda6b7aedfa814e546863bd569bfb2))
+* **tooling:** debt-guard schließt verschachtelte poc/third_party in Worktrees aus ([3e3b940](https://github.com/jobrunner/hostus/commit/3e3b940187a9e1b36ac2bf916aba141aa39e8d7b))
+
 ## [Unreleased]
 
 ### Added

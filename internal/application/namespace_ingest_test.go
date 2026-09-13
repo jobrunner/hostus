@@ -1133,7 +1133,7 @@ func TestIngestNameSpace_TieBrokenAcceptedSpellingWinsTargetSpaceChoice(t *testi
 // parameter would just restate it).
 func assertClosedEntry(t *testing.T, entries []domain.NameSpaceEntry, wantName, wantStatus string) {
 	t.Helper()
-	const wantResolution = "source_synonymy_closure"
+	const wantResolution = domain.ResolutionSourceSynonymyClosure
 	for i := range entries {
 		if entries[i].Name != wantName {
 			continue
@@ -1479,6 +1479,61 @@ func TestIngestNameSpace_SynonymyClosureAcceptsTieBrokenAnchor(t *testing.T) {
 	entries, err := repo.NameSpaceEntries(ctx, "wcvp:concept:a1", []string{"eurosl"})
 	if err != nil || len(entries) != 2 {
 		t.Fatalf("NameSpaceEntries(a1) = %v, %v — both rows must be attached to the tie-broken bearer", entries, err)
+	}
+	assertClosedEntry(t, entries, "Unresolved Companion", "synonym")
+}
+
+// TestIngestNameSpace_SynonymyClosureQualifiesAcrossAllCandidatesOfOneConcept
+// pins whole-branch-review 2026-09-13 I1: ONE concept can carry TWO
+// concept_name rows spelled IDENTICALLY — an accepted-role link and a
+// synonym-role link with the same canonical (measured on the real index:
+// 766 such pairs, 364 with the non-accepted row ordered first). The anchor
+// row's own crosswalk resolution is a single-candidate match (one distinct
+// concept.ID), but MatchExact returns BOTH concept_name rows for that
+// concept, ordered by name.id — here deliberately with the SYNONYM row
+// sorting first (its source taxon id is lexicographically smaller). Reading
+// only the first candidate would make matchedAccepted false by an accident
+// of ordering; it must be true because an accepted-role candidate exists
+// AT ALL for that concept, which is what qualifies the group to close.
+func TestIngestNameSpace_SynonymyClosureQualifiesAcrossAllCandidatesOfOneConcept(t *testing.T) {
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "wcvp", Version: "v1"}}, ManifestSHA: "x"}
+	taxa := []application.TaxonRow{
+		// "a0syn" sorts BEFORE "a1" lexicographically (nameID is
+		// "wcvp:name:"+TaxonID), so its concept_name row is the one
+		// MatchExact returns FIRST for this concept — a synonym-role row.
+		{TaxonID: "a0syn", AcceptedTaxonID: "a1", Accepted: false, Canonical: "Duplicis nomen", Rank: "SPECIES", Status: "Synonym"},
+		{TaxonID: "a1", AcceptedTaxonID: "a1", Accepted: true, Canonical: "Duplicis nomen", Rank: "SPECIES", Status: "Accepted"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) { return fakeRowSource{taxa: taxa}, nil }
+	if _, err := application.Ingest(ctx, ds, readerFor, repo); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	report, err := application.IngestNameSpace(ctx, repo,
+		sliceRowSource{
+			// Anchor: single-candidate match onto concept a1 (both rows
+			// share this canonical, so distinct concept count is 1), but
+			// candidates[0] is the SYNONYM row by name-id order.
+			{Taxon: "Duplicis nomen", SourceID: "e1", Status: "synonym", AcceptedTaxon: "Group D"},
+			// No WCVP taxon at all — stays Unmatched by itself.
+			{Taxon: "Unresolved Companion", SourceID: "e2", Status: "synonym", AcceptedTaxon: "Group D"},
+		},
+		domain.NameSpaceMeta{ID: "eurosl", Version: "v1"})
+	if err != nil {
+		t.Fatalf("IngestNameSpace: %v", err)
+	}
+	if report.SynonymyClosed != 1 {
+		t.Fatalf("SynonymyClosed = %d, want 1 (the anchor carries an accepted-role candidate too, just not first)", report.SynonymyClosed)
+	}
+	if len(report.SynonymyClosedSample) != 1 || report.SynonymyClosedSample[0] != "Unresolved Companion" {
+		t.Errorf("SynonymyClosedSample = %v, want [Unresolved Companion]", report.SynonymyClosedSample)
+	}
+
+	entries, err := repo.NameSpaceEntries(ctx, "wcvp:concept:a1", []string{"eurosl"})
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("NameSpaceEntries(a1) = %v, %v — both rows must be attached to the single concept", entries, err)
 	}
 	assertClosedEntry(t, entries, "Unresolved Companion", "synonym")
 }

@@ -136,8 +136,8 @@ func TestResolutionWithTieBreak(t *testing.T) {
 		{"exact mit tie-break", domain.RuleExact, true, false, "accepted_bearer_tiebreak"},
 		{"rule ohne marker", domain.RuleHybridSpacing, false, false, string(domain.RuleHybridSpacing)},
 		{"rule mit tie-break", domain.RuleHybridSpacing, true, false, string(domain.RuleHybridSpacing) + "+accepted_bearer_tiebreak"},
-		{"exact mit synonymy-closure", domain.RuleExact, false, true, "source_synonymy_closure"},
-		{"rule mit synonymy-closure", domain.RuleHybridSpacing, false, true, string(domain.RuleHybridSpacing) + "+source_synonymy_closure"},
+		{"exact mit synonymy-closure", domain.RuleExact, false, true, domain.ResolutionSourceSynonymyClosure},
+		{"rule mit synonymy-closure", domain.RuleHybridSpacing, false, true, string(domain.RuleHybridSpacing) + "+" + domain.ResolutionSourceSynonymyClosure},
 	}
 	for _, c := range cases {
 		if got := resolutionWithTieBreak(c.rule, c.tieBroken, c.synonymyClosed); got != c.want {

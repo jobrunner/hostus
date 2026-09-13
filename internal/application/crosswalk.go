@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"slices"
 	"sort"
 
 	"github.com/jobrunner/hostus/internal/domain"
@@ -54,11 +55,17 @@ type traitResolution struct {
 	synonymyClosed bool
 	// matchedAccepted records that the candidate key which produced this
 	// outcome answered with an ACCEPTED-role name of conceptID
-	// (output.MatchCandidate.Role == "accepted") — either the single
-	// candidate itself, or, on a tie-broken outcome, the winning candidate
-	// (acceptedBearerWinner's winner IS the accepted bearer by definition,
-	// so tieBroken == true always implies matchedAccepted == true). Only
-	// meaningful when matched is also true.
+	// (output.MatchCandidate.Role == "accepted") — checked across ALL
+	// candidates the key returned for that concept, not just the first one
+	// (candidates[0] can be either role: the same concept can carry two
+	// concept_name links spelled identically, an accepted one and a synonym
+	// one — measured on the real index, 766 such pairs, 364 with the
+	// non-accepted row ordered first — so reading only candidates[0] would
+	// make this field an accident of name-ID ordering, not a nomenclatural
+	// fact; whole-branch review 2026-09-13, I1). On a tie-broken outcome the
+	// winning candidate is used instead (acceptedBearerWinner's winner IS
+	// the accepted bearer by definition, so tieBroken == true always implies
+	// matchedAccepted == true). Only meaningful when matched is also true.
 	//
 	// closeSynonymyGroups' accepted-role guard (spec 2026-09-13, fix round
 	// 2) reads this: a real full-ingest run found a germansl bryophyte group
@@ -215,10 +222,22 @@ func resolveTraitName(ctx context.Context, repo output.Repository, canon string,
 			return traitResolution{ambiguous: true, rule: cand.Rule}, nil
 		}
 		return traitResolution{
-			conceptID:       candidates[0].Concept.ID,
-			matched:         true,
-			matchedAccepted: candidates[0].Role == roleAccepted,
-			rule:            cand.Rule,
+			conceptID: candidates[0].Concept.ID,
+			matched:   true,
+			// ALL candidates, not just candidates[0]: with a single distinct
+			// concept.ID, candidates can still hold MORE than one row — the
+			// same concept can carry two concept_name links with the
+			// identical canonical spelling (an accepted name and a synonym
+			// spelled alike; measured on the real index: 766 such pairs, 364
+			// of them with the non-accepted row ordered first). Reading only
+			// candidates[0] then makes matchedAccepted depend on which
+			// name-ID sorts first — an accident of insertion order, not the
+			// nomenclatural fact this field exists to record (see its doc
+			// comment, whole-branch review 2026-09-13 I1).
+			matchedAccepted: slices.ContainsFunc(candidates, func(c output.MatchCandidate) bool {
+				return c.Role == roleAccepted
+			}),
+			rule: cand.Rule,
 		}, nil
 	}
 	return traitResolution{}, nil

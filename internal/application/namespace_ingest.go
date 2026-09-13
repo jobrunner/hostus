@@ -353,9 +353,9 @@ func resolutionWithTieBreak(rule domain.NormalizationRule, tieBroken, synonymyCl
 		return base + "+accepted_bearer_tiebreak"
 	case synonymyClosed:
 		if base == "" {
-			return "source_synonymy_closure"
+			return domain.ResolutionSourceSynonymyClosure
 		}
-		return base + "+source_synonymy_closure"
+		return base + "+" + domain.ResolutionSourceSynonymyClosure
 	default:
 		return base
 	}
@@ -406,6 +406,20 @@ func closeSynonymyGroups(rows []NameRow, resolved map[string]traitResolution) {
 // closeSynonymyGroups' doc comment for the grouping rule). Split out of
 // closeSynonymyGroups purely to keep that function's cognitive complexity
 // within the linter's bound.
+//
+// A SOURCE HOMONYM — the identical canonical Taxon spelling appearing in
+// rows with two DIFFERENT AcceptedTaxon values, i.e. the source's own list
+// claims that one spelling belongs to two different synonymy groups — is
+// not disambiguated: `seen` assigns the canonical name to whichever group
+// its FIRST occurrence (rows' own order, deterministic per source file)
+// names, and every later occurrence is silently folded into that same
+// group. This is a deliberate non-handling, not an oversight (whole-branch
+// review 2026-09-13, M9): a spelling claiming two different synonymy
+// parents within ONE source's own list is a data error in that source, not
+// a hostus-crosswalk ambiguity resolveNameSpaceNames' ladder is meant to
+// catch — and resolveNameSpaceNames itself dedups the same canonical name
+// the same way (first occurrence wins), so both phases already agree on
+// which group a repeated spelling belongs to.
 func synonymyGroups(rows []NameRow) map[string]map[string]bool {
 	groups := make(map[string]map[string]bool) // group key -> set of canonical member names
 	seen := make(map[string]bool)              // canonical member name already assigned to a group

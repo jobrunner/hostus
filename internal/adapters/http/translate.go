@@ -145,6 +145,9 @@ type nameSpaceTranslationDTO struct {
 	// EuroVeg.eu can join on); Status is its verbatim source status
 	// ("accepted", "synonym", ...), how a caller distinguishes the space's
 	// accepted name from a synonym fallback. Both empty when Name is empty.
+	// Status is ALSO empty when Name is set but the source carries no
+	// status for this entry at all (e.g. an ingest that predates the
+	// status column) — a non-empty Name never guarantees a Status.
 	ExtID           string `json:"ext_id,omitempty"`
 	Status          string `json:"status,omitempty"`
 	AggregatePolicy string `json:"aggregate_policy,omitempty"`

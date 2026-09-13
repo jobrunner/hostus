@@ -1401,7 +1401,11 @@ components:
             aus der Quelle (`accepted`, `synonym`, `synonymobjective`, …).
             Damit ist erkennbar, ob `name` der akzeptierte Name des
             Zielraums ist oder ein Synonym-Fallback (kein akzeptierter
-            Eintrag im Zielraum vorhanden). Fehlt, wenn `name` leer ist.
+            Eintrag im Zielraum vorhanden). Fehlt, wenn `name` leer ist —
+            fehlt aber AUCH, wenn die Quelle für diesen Eintrag keinen
+            Status führt (z. B. Einträge aus einem Ingest vor Einführung
+            der Status-Spalte): ein vorhandener `name` garantiert keinen
+            Status.
           example: accepted
         aggregate_policy:
           type: string
@@ -1603,7 +1607,10 @@ components:
             Quelle (`accepted`, `synonym`, `synonymobjective`, …) — damit
             ist erkennbar, ob `target_space_name` der akzeptierte Name des
             Zielraums ist oder ein Synonym-Fallback. Fehlt, wenn
-            `target_space_name` fehlt.
+            `target_space_name` fehlt — fehlt aber AUCH, wenn die Quelle
+            für diesen Eintrag keinen Status führt (z. B. Einträge aus
+            einem Ingest vor Einführung der Status-Spalte): ein
+            vorhandener `target_space_name` garantiert keinen Status.
           example: accepted
         aggregate_policy:
           type: string

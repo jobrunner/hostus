@@ -324,7 +324,10 @@ type matchResultDTO struct {
 	// like EuroVeg.eu can join on); TargetSpaceStatus is its verbatim source
 	// status ("accepted", "synonym", ...) — how a caller distinguishes the
 	// space's accepted name from a synonym fallback. Both are the source's
-	// own identity, never a hostus id.
+	// own identity, never a hostus id. TargetSpaceStatus is ALSO empty when
+	// TargetSpaceName is set but the source carries no status for this
+	// entry at all (e.g. an ingest that predates the status column) — a
+	// non-empty TargetSpaceName never guarantees a TargetSpaceStatus.
 	// AggregatePolicy is the tri-state (known/unresolvable/absent) — absent
 	// (empty, dropped) means no aggregate is involved.
 	// ESyDiagnosticRelevance is ALWAYS esyRelevanceNotDeterminable on the

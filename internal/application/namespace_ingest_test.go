@@ -1122,3 +1122,189 @@ func TestIngestNameSpace_TieBrokenAcceptedSpellingWinsTargetSpaceChoice(t *testi
 		t.Errorf("ResolveTargetSpace policy = %q, want empty (plain species)", policy)
 	}
 }
+
+// assertClosedEntry finds entries' member named wantName and asserts it
+// carries wantResolution/wantStatus, failing the test otherwise. Split out
+// of TestIngestNameSpace_SourceSynonymyClosesUnattachedAccepted to keep that
+// test's cyclomatic complexity within the linter's bound.
+func assertClosedEntry(t *testing.T, entries []domain.NameSpaceEntry, wantName, wantResolution, wantStatus string) {
+	t.Helper()
+	for i := range entries {
+		if entries[i].Name != wantName {
+			continue
+		}
+		if entries[i].Resolution != wantResolution {
+			t.Errorf("Resolution = %q, want %q", entries[i].Resolution, wantResolution)
+		}
+		if entries[i].Status != wantStatus {
+			t.Errorf("Status = %q, want %q (the row's own source status, untouched by closure)", entries[i].Status, wantStatus)
+		}
+		return
+	}
+	t.Fatalf("entries = %+v, want one named %q", entries, wantName)
+}
+
+// TestIngestNameSpace_SourceSynonymyClosesUnattachedAccepted pins spec
+// 2026-09-13 decision 3 (the Inula-hirta class, 3719 of 47989 concepts on
+// the real index): a source row the name crosswalk cannot place (its
+// spelling has no accepted bearer in WCVP) is attached to the ONE concept
+// its own source-synonymy group already resolved to.
+//
+// Fixture (WCVP): accepted "Pentanema hirtum" (ph1) additionally holds
+// "Inula hirta" only as a synonym; a second, unrelated concept ("Beta
+// genuina", b1) ALSO holds "Inula hirta" only as a synonym — the same
+// two-synonym-bearer construction TestIngestNameSpace_SynonymOnlyHomonymStaysAmbiguous
+// uses, so "Inula hirta" resolves to Ambiguous by name alone, with no
+// accepted bearer to tie-break to.
+//
+// Name space rows mirror the real eurosl-canonical convention (measured:
+// 53.643/53.643 accepted rows carry an EMPTY accepted_taxon — the group key
+// for an accepted row is its own name):
+//
+//	{Taxon:"Pentanema hirtum", AcceptedTaxon:"Inula hirta", Status:"synonymobjective", SourceID:"e-syn"}
+//	{Taxon:"Inula hirta",      AcceptedTaxon:"",            Status:"accepted",         SourceID:"e-acc"}
+//
+// Both rows share the group key Canonicalize("Inula hirta"). "Pentanema
+// hirtum" resolves normally (its own accepted name, unambiguous) to ph1;
+// "Inula hirta" stays Ambiguous by itself. The group's resolved members
+// point to exactly ONE concept (ph1), so the Ambiguous row is closed there.
+func TestIngestNameSpace_SourceSynonymyClosesUnattachedAccepted(t *testing.T) {
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "wcvp", Version: "v1"}}, ManifestSHA: "x"}
+	taxa := []application.TaxonRow{
+		{TaxonID: "ph1", AcceptedTaxonID: "ph1", Accepted: true, Canonical: "Pentanema hirtum", Rank: "SPECIES", Status: "Accepted"},
+		// ph1 also holds "Inula hirta", but only as a synonym.
+		{TaxonID: "phsyn", AcceptedTaxonID: "ph1", Accepted: false, Canonical: "Inula hirta", Rank: "SPECIES", Status: "Synonym"},
+		{TaxonID: "b1", AcceptedTaxonID: "b1", Accepted: true, Canonical: "Beta genuina", Rank: "SPECIES", Status: "Accepted"},
+		// b1 ALSO holds "Inula hirta" only as a synonym — no accepted bearer
+		// exists for the spelling, so it stays genuinely ambiguous by name.
+		{TaxonID: "bsyn", AcceptedTaxonID: "b1", Accepted: false, Canonical: "Inula hirta", Rank: "SPECIES", Status: "Synonym"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) { return fakeRowSource{taxa: taxa}, nil }
+	if _, err := application.Ingest(ctx, ds, readerFor, repo); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	report, err := application.IngestNameSpace(ctx, repo,
+		sliceRowSource{
+			{Taxon: "Pentanema hirtum", SourceID: "e-syn", Status: "synonymobjective", AcceptedTaxon: "Inula hirta"},
+			{Taxon: "Inula hirta", SourceID: "e-acc", Status: "accepted", AcceptedTaxon: ""},
+		},
+		domain.NameSpaceMeta{ID: "eurosl", Version: "v1"})
+	if err != nil {
+		t.Fatalf("IngestNameSpace: %v", err)
+	}
+	if report.Matched != 2 || report.Ambiguous != 0 || report.Unmatched != 0 {
+		t.Fatalf("matched/ambiguous/unmatched = %d/%d/%d, want 2/0/0", report.Matched, report.Ambiguous, report.Unmatched)
+	}
+	if report.SynonymyClosed != 1 {
+		t.Errorf("SynonymyClosed = %d, want 1", report.SynonymyClosed)
+	}
+	if len(report.SynonymyClosedSample) != 1 || report.SynonymyClosedSample[0] != "Inula hirta" {
+		t.Errorf("SynonymyClosedSample = %v, want [Inula hirta]", report.SynonymyClosedSample)
+	}
+
+	entries, err := repo.NameSpaceEntries(ctx, "wcvp:concept:ph1", []string{"eurosl"})
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("NameSpaceEntries(ph1) = %v, %v — beide Zeilen müssen an ph1 attached sein", entries, err)
+	}
+	assertClosedEntry(t, entries, "Inula hirta", "source_synonymy_closure", "accepted")
+
+	// Habitatus-Gewinn: with the accepted eurosl entry now present,
+	// ResolveTargetSpace picks "Inula hirta" (Status accepted), not the
+	// merely-synonym "Pentanema hirtum" entry.
+	choice, policy := domain.ResolveTargetSpace(false, entries)
+	if choice.Name != "Inula hirta" {
+		t.Errorf("ResolveTargetSpace name = %q, want %q (the closed, source-accepted spelling)", choice.Name, "Inula hirta")
+	}
+	if choice.Status != "accepted" {
+		t.Errorf("ResolveTargetSpace status = %q, want %q", choice.Status, "accepted")
+	}
+	if policy != "" {
+		t.Errorf("ResolveTargetSpace policy = %q, want empty (plain species)", policy)
+	}
+}
+
+// TestIngestNameSpace_SynonymyClosureRefusesAmbiguousGroups pins the
+// closure pass's refusal to guess: a group whose already-resolved members
+// point to TWO distinct concepts offers no single answer, so an
+// unresolved member of the SAME group stays open (kein Raten).
+func TestIngestNameSpace_SynonymyClosureRefusesAmbiguousGroups(t *testing.T) {
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "wcvp", Version: "v1"}}, ManifestSHA: "x"}
+	taxa := []application.TaxonRow{
+		{TaxonID: "a1", AcceptedTaxonID: "a1", Accepted: true, Canonical: "Concept Alpha", Rank: "SPECIES", Status: "Accepted"},
+		{TaxonID: "b1", AcceptedTaxonID: "b1", Accepted: true, Canonical: "Concept Beta", Rank: "SPECIES", Status: "Accepted"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) { return fakeRowSource{taxa: taxa}, nil }
+	if _, err := application.Ingest(ctx, ds, readerFor, repo); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	report, err := application.IngestNameSpace(ctx, repo,
+		sliceRowSource{
+			{Taxon: "Concept Alpha", SourceID: "e1", Status: "synonym", AcceptedTaxon: "Group Z"},
+			{Taxon: "Concept Beta", SourceID: "e2", Status: "synonym", AcceptedTaxon: "Group Z"},
+			{Taxon: "Mystery Name", SourceID: "e3", Status: "accepted", AcceptedTaxon: "Group Z"},
+		},
+		domain.NameSpaceMeta{ID: "eurosl", Version: "v1"})
+	if err != nil {
+		t.Fatalf("IngestNameSpace: %v", err)
+	}
+	if report.SynonymyClosed != 0 {
+		t.Errorf("SynonymyClosed = %d, want 0 (group resolves to two distinct concepts)", report.SynonymyClosed)
+	}
+	if report.Unmatched != 1 || report.Matched != 2 {
+		t.Fatalf("matched/unmatched = %d/%d, want 2/1", report.Matched, report.Unmatched)
+	}
+	if len(report.UnmatchedSample) != 1 || report.UnmatchedSample[0] != "Mystery Name" {
+		t.Errorf("UnmatchedSample = %v, want [Mystery Name]", report.UnmatchedSample)
+	}
+}
+
+// TestIngestNameSpace_SynonymyClosureNeverOverridesResolved pins that the
+// closure pass never touches a row the ordinary crosswalk already resolved,
+// even when the rest of its source-synonymy group points elsewhere: two
+// rows in the SAME group each resolve, by name alone, to their OWN distinct
+// concept — the group therefore offers no single target — and each keeps
+// exactly the concept it resolved to.
+func TestIngestNameSpace_SynonymyClosureNeverOverridesResolved(t *testing.T) {
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "wcvp", Version: "v1"}}, ManifestSHA: "x"}
+	taxa := []application.TaxonRow{
+		{TaxonID: "a1", AcceptedTaxonID: "a1", Accepted: true, Canonical: "Concept Gamma", Rank: "SPECIES", Status: "Accepted"},
+		{TaxonID: "b1", AcceptedTaxonID: "b1", Accepted: true, Canonical: "Concept Delta", Rank: "SPECIES", Status: "Accepted"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) { return fakeRowSource{taxa: taxa}, nil }
+	if _, err := application.Ingest(ctx, ds, readerFor, repo); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	report, err := application.IngestNameSpace(ctx, repo,
+		sliceRowSource{
+			{Taxon: "Concept Gamma", SourceID: "e1", Status: "accepted", AcceptedTaxon: "Group W"},
+			{Taxon: "Concept Delta", SourceID: "e2", Status: "synonym", AcceptedTaxon: "Group W"},
+		},
+		domain.NameSpaceMeta{ID: "eurosl", Version: "v1"})
+	if err != nil {
+		t.Fatalf("IngestNameSpace: %v", err)
+	}
+	if report.SynonymyClosed != 0 {
+		t.Errorf("SynonymyClosed = %d, want 0 (neither row was ever open)", report.SynonymyClosed)
+	}
+	if report.Matched != 2 {
+		t.Fatalf("Matched = %d, want 2", report.Matched)
+	}
+
+	gammaEntries, err := repo.NameSpaceEntries(ctx, "wcvp:concept:a1", []string{"eurosl"})
+	if err != nil || len(gammaEntries) != 1 || gammaEntries[0].Name != "Concept Gamma" {
+		t.Fatalf("NameSpaceEntries(a1) = %v, %v — want its OWN row, untouched", gammaEntries, err)
+	}
+	deltaEntries, err := repo.NameSpaceEntries(ctx, "wcvp:concept:b1", []string{"eurosl"})
+	if err != nil || len(deltaEntries) != 1 || deltaEntries[0].Name != "Concept Delta" {
+		t.Fatalf("NameSpaceEntries(b1) = %v, %v — want its OWN row, untouched", deltaEntries, err)
+	}
+}

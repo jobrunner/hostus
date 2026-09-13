@@ -121,21 +121,26 @@ func TestPreferGenuineClaimants(t *testing.T) {
 // TestResolutionWithTieBreak pins resolutionWithTieBreak's rendering: the
 // base rule (empty for domain.RuleExact) with the tie-break marker appended
 // only when tieBroken is set — the SQL-greppable audit trail spec 2026-09-04
-// requires (resolution LIKE '%accepted_bearer_tiebreak%').
+// requires (resolution LIKE '%accepted_bearer_tiebreak%') — or, independently,
+// the source-synonymy-closure marker appended when synonymyClosed is set
+// (spec 2026-09-13 decision 3, resolution LIKE '%source_synonymy_closure%').
 func TestResolutionWithTieBreak(t *testing.T) {
 	cases := []struct {
-		name      string
-		rule      domain.NormalizationRule
-		tieBroken bool
-		want      string
+		name           string
+		rule           domain.NormalizationRule
+		tieBroken      bool
+		synonymyClosed bool
+		want           string
 	}{
-		{"exact ohne tie-break", domain.RuleExact, false, ""},
-		{"exact mit tie-break", domain.RuleExact, true, "accepted_bearer_tiebreak"},
-		{"rule ohne tie-break", domain.RuleHybridSpacing, false, string(domain.RuleHybridSpacing)},
-		{"rule mit tie-break", domain.RuleHybridSpacing, true, string(domain.RuleHybridSpacing) + "+accepted_bearer_tiebreak"},
+		{"exact ohne marker", domain.RuleExact, false, false, ""},
+		{"exact mit tie-break", domain.RuleExact, true, false, "accepted_bearer_tiebreak"},
+		{"rule ohne marker", domain.RuleHybridSpacing, false, false, string(domain.RuleHybridSpacing)},
+		{"rule mit tie-break", domain.RuleHybridSpacing, true, false, string(domain.RuleHybridSpacing) + "+accepted_bearer_tiebreak"},
+		{"exact mit synonymy-closure", domain.RuleExact, false, true, "source_synonymy_closure"},
+		{"rule mit synonymy-closure", domain.RuleHybridSpacing, false, true, string(domain.RuleHybridSpacing) + "+source_synonymy_closure"},
 	}
 	for _, c := range cases {
-		if got := resolutionWithTieBreak(c.rule, c.tieBroken); got != c.want {
+		if got := resolutionWithTieBreak(c.rule, c.tieBroken, c.synonymyClosed); got != c.want {
 			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
 		}
 	}

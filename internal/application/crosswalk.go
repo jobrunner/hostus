@@ -40,9 +40,24 @@ type traitResolution struct {
 	// tieBroken records that this outcome came from genuineBearerWinner
 	// rather than from a single-candidate key, so a caller can report it.
 	tieBroken bool
+	// synonymyClosed records that this outcome came NOT from the crosswalk
+	// ladder at all, but from IngestNameSpace's post-resolve source-synonymy
+	// closure pass (spec 2026-09-13, decision 3): the row's own spelling
+	// stayed ambiguous or unmatched, and was attached to the one concept its
+	// source-synonymy group (rows sharing the same accepted-taxon name)
+	// already resolved to. Mutually exclusive with tieBroken in practice —
+	// resolveNameSpaceNames never sets this, closeSynonymyGroups never
+	// touches a row that already has matched == true — but both are kept as
+	// independent bools rather than a shared enum, mirroring tieBroken, so
+	// resolutionWithTieBreak can compose either marker without the other
+	// caring.
+	synonymyClosed bool
 	// rule is the normalisation rule whose key produced this outcome (both
 	// for matched and for ambiguous). domain.RuleExact means the plain
-	// Canonicalize key answered — the pre-normalisation behavior.
+	// Canonicalize key answered — the pre-normalisation behavior. Left at
+	// its zero value (which renders identically to RuleExact via
+	// resolutionFor) for a synonymyClosed outcome: it did not come through
+	// a normalisation rule at all.
 	rule domain.NormalizationRule
 }
 

@@ -34,6 +34,19 @@ type NameRow struct {
 	// Status is the space's own nomenclatural status, verbatim
 	// ("accepted", "synonym", "synonymobjective", ...).
 	Status string
+	// AcceptedTaxon is the space's own synonymy link, verbatim
+	// (namelist.Row.AcceptedTaxon): a NAME string, not an id, and empty for
+	// the space's own accepted rows (the source CSV convention: measured
+	// 53.643/53.643 eurosl-canonical accepted rows carry an empty
+	// accepted_taxon). Unlike Rank, this ONE taxonomy-shaped field IS acted
+	// on here — not to build a synonymy edge, but as the post-resolve
+	// closure pass's group key (closeSynonymyGroups, spec 2026-09-13,
+	// decision 3): rows that share a group's accepted-taxon name are the
+	// same source-internal synonymy group, and an ambiguous-or-unmatched
+	// row in a group whose OTHER members already resolved to exactly one
+	// concept can safely be attached there without hostus ever guessing
+	// from source-external evidence.
+	AcceptedTaxon string
 	// Family, OrderName and ClassName carry the row's classification above
 	// family, ALREADY RESOLVED by the caller (see internal/app/ingest.go's
 	// classificationFor) by walking the source's own parent chain up to the
@@ -121,6 +134,17 @@ type NameSpaceIngestReport struct {
 	// duplicate ext_ids, the same way Matched itself already can.
 	TieBroken       int
 	TieBrokenSample []string
+	// SynonymyClosed counts the matched rows whose concept was decided by
+	// the post-resolve source-synonymy closure pass (closeSynonymyGroups,
+	// spec 2026-09-13 decision 3) rather than by the crosswalk ladder
+	// itself — the Inula-hirta class: a spelling with no accepted bearer in
+	// the backbone, attached via its own source's synonymy group instead.
+	// Subset of Matched, same accounting as TieBroken: the report invariant
+	// Matched+Unmatched+Ambiguous == Rows is untouched, a closed row simply
+	// moves from Ambiguous/Unmatched into Matched. SynonymyClosedSample is
+	// its bounded, deterministic name sample.
+	SynonymyClosed       int
+	SynonymyClosedSample []string
 }
 
 // IngestNameSpace resolves every name src provides against repo's name index
@@ -174,6 +198,7 @@ func IngestNameSpace(ctx context.Context, repo output.Repository, src NameRowSou
 	if err != nil {
 		return report, fmt.Errorf("application: resolving names for name space %q: %w", meta.ID, err)
 	}
+	closeSynonymyGroups(rows, resolved)
 
 	tx, err := repo.BeginTraitIngest(ctx)
 	if err != nil {
@@ -245,6 +270,10 @@ func writeNameSpaceRow(
 		report.TieBroken++
 		tally.countTieBroken(row.Taxon)
 	}
+	if res.synonymyClosed {
+		report.SynonymyClosed++
+		tally.countSynonymyClosed(row.Taxon)
+	}
 	if aggregate {
 		report.AggregatesMatched++
 	}
@@ -259,7 +288,7 @@ func writeNameSpaceRow(
 		ExtID:      row.SourceID,
 		Name:       row.Taxon,
 		Aggregate:  aggregate,
-		Resolution: resolutionWithTieBreak(res.rule, res.tieBroken),
+		Resolution: resolutionWithTieBreak(res.rule, res.tieBroken, res.synonymyClosed),
 		// The source list already carries its own status; dropping it here was
 		// what made a target-space name arbitrary for every concept a space
 		// maps several of its names onto.
@@ -295,24 +324,124 @@ func resolutionFor(rule domain.NormalizationRule) string {
 }
 
 // resolutionWithTieBreak renders the stored resolution for one entry: the
-// normalisation rule as before (empty for the exact key), suffixed with the
-// tie-break marker when acceptedBearerWinner decided the concept — so every
-// tie-broken row stays identifiable in SQL
-// (resolution LIKE '%accepted_bearer_tiebreak%'), which is the audit trail
-// the spec makes mandatory. The composed form ("<rule>+accepted_bearer_
-// tiebreak", e.g. "hybrid_spacing+accepted_bearer_tiebreak") records TWO
-// independent judgement calls made on the same row — a normalisation
-// rewrite AND a homonym tie-break — both greppable individually via a LIKE
-// on the relevant substring.
-func resolutionWithTieBreak(rule domain.NormalizationRule, tieBroken bool) string {
+// normalisation rule as before (empty for the exact key), suffixed with
+// EITHER of two independent audit markers — the tie-break marker when
+// acceptedBearerWinner decided the concept, or the source-synonymy-closure
+// marker when closeSynonymyGroups did (spec 2026-09-13 decision 3) — so
+// every such row stays identifiable in SQL (resolution LIKE
+// '%accepted_bearer_tiebreak%' / LIKE '%source_synonymy_closure%'), which is
+// the audit trail both specs make mandatory. The composed form ("<rule>+
+// accepted_bearer_tiebreak", e.g. "hybrid_spacing+accepted_bearer_tiebreak")
+// records TWO independent judgement calls made on the same row — a
+// normalisation rewrite AND a homonym tie-break — both greppable
+// individually via a LIKE on the relevant substring. tieBroken and
+// synonymyClosed are mutually exclusive in practice (see traitResolution's
+// doc comment) so the two markers are never both appended; tieBroken is
+// checked first purely to keep that precedence explicit.
+func resolutionWithTieBreak(rule domain.NormalizationRule, tieBroken, synonymyClosed bool) string {
 	base := resolutionFor(rule)
-	if !tieBroken {
+	switch {
+	case tieBroken:
+		if base == "" {
+			return "accepted_bearer_tiebreak"
+		}
+		return base + "+accepted_bearer_tiebreak"
+	case synonymyClosed:
+		if base == "" {
+			return "source_synonymy_closure"
+		}
+		return base + "+source_synonymy_closure"
+	default:
 		return base
 	}
-	if base == "" {
-		return "accepted_bearer_tiebreak"
+}
+
+// closeSynonymyGroups is IngestNameSpace's post-resolve pass (spec
+// 2026-09-13, decision 3), mutating resolved in place to fill gaps ONLY —
+// it never revisits a canonical name that already resolved (matched ==
+// true), so it can never override an outcome resolveNameSpaceNames already
+// decided.
+//
+// Rows are grouped by the source's own synonymy link: a row with a
+// non-empty AcceptedTaxon groups under that NAME (canonicalized); a row
+// with an empty AcceptedTaxon — the source CSV convention for its own
+// accepted rows (measured 53.643/53.643 on the real eurosl-canonical) —
+// groups under its OWN name. Both conventions fall together on the group's
+// accepted spelling, which is the point: an accepted row and the synonym
+// rows that name it as their accepted_taxon land in the same group.
+//
+// Within one group, the target concepts of every member that DID resolve
+// (matched && !ambiguous) are collected. Exactly one distinct concept means
+// every other member of the group — the ones still ambiguous or unmatched —
+// is attached there, marked synonymyClosed so the write phase can report and
+// audit it. Zero or several distinct concepts means the group offers no
+// single answer, so every open member is left exactly as resolveNameSpaceNames
+// left it: this pass never guesses.
+//
+// Grouping uses the FIRST row seen for a given canonical Taxon name, the
+// same dedup discipline resolveNameSpaceNames already applies — a name
+// occurs once in resolved regardless of how many source rows spell it.
+func closeSynonymyGroups(rows []NameRow, resolved map[string]traitResolution) {
+	for _, members := range synonymyGroups(rows) {
+		target, ok := singleTargetConcept(members, resolved)
+		if !ok {
+			continue
+		}
+		for name := range members {
+			if resolved[name].matched {
+				continue
+			}
+			resolved[name] = traitResolution{conceptID: target, matched: true, synonymyClosed: true, rule: domain.RuleExact}
+		}
 	}
-	return base + "+accepted_bearer_tiebreak"
+}
+
+// synonymyGroups partitions rows' DISTINCT canonical taxon names into
+// source-synonymy groups, keyed by the group's accepted-taxon name (see
+// closeSynonymyGroups' doc comment for the grouping rule). Split out of
+// closeSynonymyGroups purely to keep that function's cognitive complexity
+// within the linter's bound.
+func synonymyGroups(rows []NameRow) map[string]map[string]bool {
+	groups := make(map[string]map[string]bool) // group key -> set of canonical member names
+	seen := make(map[string]bool)              // canonical member name already assigned to a group
+
+	for _, row := range rows {
+		canon := domain.Canonicalize(row.Taxon)
+		if seen[canon] {
+			continue
+		}
+		seen[canon] = true
+
+		key := canon
+		if row.AcceptedTaxon != "" {
+			key = domain.Canonicalize(row.AcceptedTaxon)
+		}
+		if groups[key] == nil {
+			groups[key] = make(map[string]bool)
+		}
+		groups[key][canon] = true
+	}
+	return groups
+}
+
+// singleTargetConcept reports the ONE concept members' already-resolved
+// (matched && !ambiguous) names point to, and false when zero or several
+// distinct concepts are present — the "kein Raten" refusal at the heart of
+// closeSynonymyGroups.
+func singleTargetConcept(members map[string]bool, resolved map[string]traitResolution) (string, bool) {
+	concepts := make(map[string]bool)
+	for name := range members {
+		if res := resolved[name]; res.matched && !res.ambiguous {
+			concepts[res.conceptID] = true
+		}
+	}
+	if len(concepts) != 1 {
+		return "", false
+	}
+	for id := range concepts {
+		return id, true
+	}
+	return "", false
 }
 
 // resolveNameSpaceNames is IngestNameSpace's phase 1: it maps every DISTINCT
@@ -393,35 +522,38 @@ func resolveNameSpaceNames(ctx context.Context, repo output.Repository, rows []N
 // beyond its plain counters: the three name samples, the set of distinct
 // concepts covered, the claimed ext_ids, and the per-rule breakdown.
 type nameSpaceTally struct {
-	unmatched map[string]bool
-	ambiguous map[string]bool
-	duplicate map[string]bool
-	flagged   map[string]bool
-	tieBroken map[string]bool
-	concepts  map[string]bool
-	extIDs    map[string]bool
-	ruleRows  map[domain.NormalizationRule]int
-	ruleTaxa  map[domain.NormalizationRule]map[string]bool
+	unmatched      map[string]bool
+	ambiguous      map[string]bool
+	duplicate      map[string]bool
+	flagged        map[string]bool
+	tieBroken      map[string]bool
+	synonymyClosed map[string]bool
+	concepts       map[string]bool
+	extIDs         map[string]bool
+	ruleRows       map[domain.NormalizationRule]int
+	ruleTaxa       map[domain.NormalizationRule]map[string]bool
 }
 
 func newNameSpaceTally() *nameSpaceTally {
 	return &nameSpaceTally{
-		unmatched: map[string]bool{},
-		ambiguous: map[string]bool{},
-		duplicate: map[string]bool{},
-		flagged:   map[string]bool{},
-		tieBroken: map[string]bool{},
-		concepts:  map[string]bool{},
-		extIDs:    map[string]bool{},
-		ruleRows:  map[domain.NormalizationRule]int{},
-		ruleTaxa:  map[domain.NormalizationRule]map[string]bool{},
+		unmatched:      map[string]bool{},
+		ambiguous:      map[string]bool{},
+		duplicate:      map[string]bool{},
+		flagged:        map[string]bool{},
+		tieBroken:      map[string]bool{},
+		synonymyClosed: map[string]bool{},
+		concepts:       map[string]bool{},
+		extIDs:         map[string]bool{},
+		ruleRows:       map[domain.NormalizationRule]int{},
+		ruleTaxa:       map[domain.NormalizationRule]map[string]bool{},
 	}
 }
 
-func (t *nameSpaceTally) countUnmatched(name string)  { t.unmatched[name] = true }
-func (t *nameSpaceTally) countAmbiguous(name string)  { t.ambiguous[name] = true }
-func (t *nameSpaceTally) countDuplicate(extID string) { t.duplicate[extID] = true }
-func (t *nameSpaceTally) countTieBroken(name string)  { t.tieBroken[name] = true }
+func (t *nameSpaceTally) countUnmatched(name string)      { t.unmatched[name] = true }
+func (t *nameSpaceTally) countAmbiguous(name string)      { t.ambiguous[name] = true }
+func (t *nameSpaceTally) countDuplicate(extID string)     { t.duplicate[extID] = true }
+func (t *nameSpaceTally) countTieBroken(name string)      { t.tieBroken[name] = true }
+func (t *nameSpaceTally) countSynonymyClosed(name string) { t.synonymyClosed[name] = true }
 
 // claimed reports whether extID has already been written in this run — the
 // (space, ext_id) primary key, checked before the write rather than after,
@@ -459,6 +591,7 @@ func (t *nameSpaceTally) report(r *NameSpaceIngestReport) {
 	r.DuplicateSample = sortedSample(t.duplicate)
 	r.FlaggedSample = sortedSample(t.flagged)
 	r.TieBrokenSample = sortedSample(t.tieBroken)
+	r.SynonymyClosedSample = sortedSample(t.synonymyClosed)
 	r.Concepts = len(t.concepts)
 	r.Normalized = ruleCounts(t.ruleRows, t.ruleTaxa)
 }

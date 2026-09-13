@@ -18,6 +18,11 @@ Aufgabenorientierte Rezepte — jedes löst ein konkretes Problem. Sie setzen
   `POST /v1/match` mit `target_space`, die dreiwertige `aggregate_policy`, die
   durchgerechnete Beispielaufnahme und ausdrücklich **was fehlt**: die nicht
   bestimmbare `esy_diagnostic_relevance` ohne ESy-Regelwerk
+- **[Von einer PlantNet-Bestimmung zu Euro+Med und Zeigerwerten (UC7)](plantnet-habitatus-uc7.md)**
+  — `POST /v1/match` mit `xref`-Zeilen (POWO/IPNI), Euro+Med-Name samt
+  TaxonUsage-UUID und Status, der Anschluss an situs' Zeigerwerte über
+  dieselbe Konzept-ID, und ausdrücklich **was nicht abgedeckt ist**:
+  Synonym-IPNI-IDs, Taxa außerhalb des Euro+Med-Scopes, Trait-Lücken
 - **[Die eingebettete Testkonsole benutzen](test-console.md)** — die SPA
   unter `/`, der Schalter in allen drei Stufen, wozu die vier Panels da
   sind, ausdrücklich **was die Konsole nicht ist**, und was man an bekannten

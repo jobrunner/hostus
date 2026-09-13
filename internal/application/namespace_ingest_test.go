@@ -3,6 +3,7 @@ package application_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -1307,4 +1308,56 @@ func TestIngestNameSpace_SynonymyClosureNeverOverridesResolved(t *testing.T) {
 	if err != nil || len(deltaEntries) != 1 || deltaEntries[0].Name != "Concept Delta" {
 		t.Fatalf("NameSpaceEntries(b1) = %v, %v — want its OWN row, untouched", deltaEntries, err)
 	}
+}
+
+// TestIngestNameSpace_SynonymyClosureClosesAllOpenMembersOfOneGroup pins
+// the real eurosl scenario a single-member fixture cannot show: one group
+// can carry MORE than one open (per-name unresolvable) row at once — an
+// accepted-status row plus another synonym spelling, both unmatched by
+// name — and BOTH close to the SAME concept in the SAME run once the
+// group's one other member resolves it. Neither member of the pair is
+// second-guessed against the other; each is independently marked
+// synonymyClosed via the same singleTargetConcept lookup.
+func TestIngestNameSpace_SynonymyClosureClosesAllOpenMembersOfOneGroup(t *testing.T) {
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "wcvp", Version: "v1"}}, ManifestSHA: "x"}
+	taxa := []application.TaxonRow{
+		// Concept M: the group's ONE resolved member's accepted name.
+		{TaxonID: "m1", AcceptedTaxonID: "m1", Accepted: true, Canonical: "Alpha resolved", Rank: "SPECIES", Status: "Accepted"},
+		// Deliberately NO taxon at all for "Beta unresolved"/"Gamma
+		// unresolved" — both stay Unmatched by name alone.
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) { return fakeRowSource{taxa: taxa}, nil }
+	if _, err := application.Ingest(ctx, ds, readerFor, repo); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	report, err := application.IngestNameSpace(ctx, repo,
+		sliceRowSource{
+			{Taxon: "Alpha resolved", SourceID: "e1", Status: "synonym", AcceptedTaxon: "Group M"},
+			{Taxon: "Beta unresolved", SourceID: "e2", Status: "accepted", AcceptedTaxon: "Group M"},
+			{Taxon: "Gamma unresolved", SourceID: "e3", Status: "synonym", AcceptedTaxon: "Group M"},
+		},
+		domain.NameSpaceMeta{ID: "eurosl", Version: "v1"})
+	if err != nil {
+		t.Fatalf("IngestNameSpace: %v", err)
+	}
+	if report.Matched != 3 || report.Unmatched != 0 || report.Ambiguous != 0 {
+		t.Fatalf("matched/unmatched/ambiguous = %d/%d/%d, want 3/0/0", report.Matched, report.Unmatched, report.Ambiguous)
+	}
+	if report.SynonymyClosed != 2 {
+		t.Fatalf("SynonymyClosed = %d, want 2 (both open members of the group)", report.SynonymyClosed)
+	}
+	wantSample := []string{"Beta unresolved", "Gamma unresolved"}
+	if !reflect.DeepEqual(report.SynonymyClosedSample, wantSample) {
+		t.Errorf("SynonymyClosedSample = %v, want %v", report.SynonymyClosedSample, wantSample)
+	}
+
+	entries, err := repo.NameSpaceEntries(ctx, "wcvp:concept:m1", []string{"eurosl"})
+	if err != nil || len(entries) != 3 {
+		t.Fatalf("NameSpaceEntries(m1) = %v, %v — want all three rows attached to the ONE resolved concept", entries, err)
+	}
+	assertClosedEntry(t, entries, "Beta unresolved", "source_synonymy_closure", "accepted")
+	assertClosedEntry(t, entries, "Gamma unresolved", "source_synonymy_closure", "synonym")
 }

@@ -15,10 +15,15 @@ import (
 // so application never imports internal/adapters/namelist directly
 // (depguard).
 //
-// Rank/AcceptedTaxon are deliberately NOT carried. A name space contributes
-// names, not taxonomy: hostus never builds a concept, a parent chain or a
-// synonymy edge out of one, so a field this use case cannot act on would be a
-// field a reader of the DTO would reasonably expect it to act on.
+// Rank is deliberately NOT carried. A name space contributes names, not
+// taxonomy: hostus never builds a concept, a parent chain or a synonymy edge
+// out of one, so a field this use case cannot act on would be a field a
+// reader of the DTO would reasonably expect it to act on.
+//
+// AcceptedTaxon WAS excluded on the same grounds and is now carried — see
+// its own field comment below and closeSynonymyGroups for why it does not
+// violate the rule above: it never builds a synonymy edge either, only a
+// same-run grouping key for the post-resolve closure pass.
 //
 // Status WAS excluded on the same grounds and is now carried, which is the
 // measured decision that exclusion invited. It is not taxonomy here: it does

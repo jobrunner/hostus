@@ -162,13 +162,14 @@ func (s nameSpaceRowSource) Rows() []application.NameRow {
 	for _, r := range s.ds.Rows {
 		family, order, class := classificationFor(r, byID)
 		out = append(out, application.NameRow{
-			Taxon:        r.Taxon,
-			SourceID:     r.SourceID,
-			Status:       r.Status,
-			Family:       family,
-			OrderName:    order,
-			ClassName:    class,
-			VernacularDE: r.VernacularDE,
+			Taxon:         r.Taxon,
+			SourceID:      r.SourceID,
+			Status:        r.Status,
+			AcceptedTaxon: r.AcceptedTaxon,
+			Family:        family,
+			OrderName:     order,
+			ClassName:     class,
+			VernacularDE:  r.VernacularDE,
 		})
 	}
 	return out

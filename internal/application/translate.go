@@ -191,8 +191,14 @@ type TranslateResult struct {
 // mean nothing for "what does this space call it" — so the result lands
 // here, never in Candidates.
 type NameSpaceTranslation struct {
-	NameSpace       string
-	Name            string
+	NameSpace string
+	Name      string
+	// ExtID is the chosen entry's own id in the target space (for "eurosl"
+	// the Euro+Med TaxonUsageID); Status is its verbatim source status
+	// ("accepted", "synonym", ...) — see domain.TargetSpaceChoice, whose
+	// fields these mirror.
+	ExtID           string
+	Status          string
 	AggregatePolicy domain.AggregatePolicy
 }
 
@@ -452,7 +458,7 @@ func translateToNameSpace(ctx context.Context, repo output.Repository, req Trans
 		return TranslateResult{}, err
 	}
 	sourceIsAggregate := domain.IsAggregateName(source.AcceptedName.Canonical) || isCollectiveRank(source.Rank)
-	name, policy := domain.ResolveTargetSpace(sourceIsAggregate, entries)
+	choice, policy := domain.ResolveTargetSpace(sourceIsAggregate, entries)
 	return TranslateResult{
 		Source:         source,
 		Entry:          entry,
@@ -460,7 +466,9 @@ func translateToNameSpace(ctx context.Context, repo output.Repository, req Trans
 		RequiresReview: entry.RequiresReview,
 		NameSpaceTranslation: &NameSpaceTranslation{
 			NameSpace:       req.TargetSec,
-			Name:            name,
+			Name:            choice.Name,
+			ExtID:           choice.ExtID,
+			Status:          choice.Status,
 			AggregatePolicy: policy,
 		},
 	}, nil

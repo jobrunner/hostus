@@ -252,9 +252,49 @@ POST /v1/match
 }
 ```
 
-`match_type` ist eines von `exact`, `exact_author`, `aggregate_alias` oder
-`unresolvable`. `candidates` (Liste von Kanonicalnamen) wird nur bei
-Autor-Mehrdeutigkeit gefüllt.
+`match_type` ist eines von `exact`, `exact_author`, `aggregate_alias`,
+`aggregate_nominate`, `fuzzy`, `xref` oder `unresolvable`. `candidates`
+(Liste von Kanonicalnamen) wird nur bei Autor-Mehrdeutigkeit oder bei einem
+Fuzzy-Treffer unterhalb der Schwelle gefüllt.
+
+#### `xref`: Auflösung per Fremd-ID statt Verbatim-Name
+
+Statt `verbatim` kann eine Zeile `xref: {authority, id}` tragen — der
+PlantNet-Anwendungsfall (die Identifikation liefert bereits eine POWO-ID,
+kein Klarname). Pro Zeile ist **genau eines** von `verbatim`/`xref` gesetzt;
+beides oder keines ist `400 INVALID_QUERY` und nennt die Zeilen-`id`. Ebenso
+`400 INVALID_QUERY` (nennt die Zeilen-`id`): `xref` mit leerer `authority`
+**oder** leerer `id`.
+
+```json
+POST /v1/match
+{ "names": [ { "id": "1", "xref": { "authority": "powo", "id": "396681-1" } } ] }
+```
+
+```json
+{
+  "backbone_versions": { "wcvp": "2026-06-15" },
+  "results": [
+    {
+      "id": "1",
+      "match_type": "xref",
+      "confidence": 1.0,
+      "concept_id": "wcvp:concept:405825"
+    }
+  ]
+}
+```
+
+Auflösung läuft über `GET /v1/xref`s Repository-Lookup (Fremd-ID → Concept),
+nicht über die Namens-Leiter — kein Fuzzy-Fallback, keine
+Autor-Verifikation. Eine unbekannte Fremd-ID ist **kein** HTTP-Fehler,
+sondern ein normales `unresolvable`-Ergebnis; dasselbe gilt, wenn das
+aufgelöste Concept außerhalb eines gesetzten `entry_backbone`/`entry_sec`
+liegt. Da eine `xref`-Zeile keine eigene Schreibweise trägt, bleibt
+`aggregate_policy` bei ihr **immer** leer (auch mit gesetztem
+`target_space`) — es gibt keine Anfrage-Schreibweise, an der sich prüfen
+ließe, ob die ANFRAGE ein Aggregat war, selbst wenn das aufgelöste Concept
+selbst eines ist.
 
 #### `classification` und `aggregate_resolution` (Namensraum-/Klassifikations-Redesign)
 
@@ -311,7 +351,7 @@ Messung: [`docs/research/sp5-sec-filter.md`](../research/sp5-sec-filter.md).
 
 Mit dem optionalen `target_space` (aktuell nur `floraveg`) wird jeder Treffer
 zusätzlich in den genannten Namensraum aufgelöst. **Ohne `target_space` ist
-die Antwort byteweise die oben gezeigte Form** — die drei folgenden Felder
+die Antwort byteweise die oben gezeigte Form** — die fünf folgenden Felder
 fehlen dann vollständig, damit UC3/UC6, die denselben Endpunkt nutzen, keine
 Formänderung sehen.
 
@@ -332,6 +372,8 @@ POST /v1/match
       "concept_id": "<aggregat-concept-id>",
       "note": "Aggregat, keine Kleinartauflösung",
       "target_space_name": "Festuca ovina aggr.",
+      "target_space_ext_id": "5648",
+      "target_space_status": "accepted",
       "aggregate_policy": "known",
       "esy_diagnostic_relevance": "not_determinable"
     }
@@ -344,6 +386,17 @@ POST /v1/match
   Schreibweise hat, **insbesondere bei `aggregate_policy: unresolvable`**: dort
   wird bewusst kein Name geliefert, weil die Kleinart als Aggregatnamen
   anzubieten genau die falsche „nicht erfüllt"-Antwort wäre.
+- `target_space_ext_id` — die Quell-ID des Namensraum-Eintrags hinter
+  `target_space_name` (`name_space_entry.ext_id`) — für `target_space: eurosl`
+  die Euro+Med-PlantBase-TaxonUsage-UUID, ein stabiler Schlüssel für externe
+  E+M-Ressourcen (z. B. EuroVeg.eu). Fehlt, wenn `target_space_name` fehlt.
+- `target_space_status` — der verbatim von der Quelle übernommene
+  Namensraum-Status hinter `target_space_name` (`accepted`, `synonym`,
+  `synonymobjective`, …) — so unterscheidet ein Aufrufer den akzeptierten
+  Namen des Zielraums von einem Synonym-Fallback. Kann leer sein, obwohl
+  `target_space_name` gesetzt ist (Alt-Ingest vor Einführung der
+  Status-Spalte, oder Quellzeilen ohne Status) — ein vorhandener
+  `target_space_name` garantiert keinen `target_space_status`.
 - `aggregate_policy` — dreiwertig:
   - `known` — der Zielraum führt das Aggregat als eigenes Taxon (Beispiel oben:
     `Festuca ovina aggr.`).

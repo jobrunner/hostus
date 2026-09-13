@@ -1,5 +1,7 @@
 package domain
 
+import "strings"
+
 // Name spaces (SP9, UC4).
 //
 // A NAME SPACE is a checklist that contributes NAMES but no taxonomy: it has
@@ -114,6 +116,19 @@ const (
 // listing everything it is not.
 const NameSpaceStatusAccepted = "accepted"
 
+// ResolutionSourceSynonymyClosure is the marker
+// IngestNameSpace's post-resolve source-synonymy closure pass
+// (application.closeSynonymyGroups, spec 2026-09-13 decision 3) appends onto
+// NameSpaceEntry.Resolution for a row it attached — never the whole
+// Resolution string by itself (it composes as "<rule>+source_synonymy_closure"
+// when a normalisation rule also fired), which is why pickSpelling below
+// tests it with strings.Contains rather than equality. Exported from domain,
+// not kept as an application-private literal, so pickSpelling — which lives
+// in domain because it decides ResolveTargetSpace's ordering, not the
+// ingest's — has one shared source of truth for the string instead of a
+// second copy that could drift from the one application actually writes.
+const ResolutionSourceSynonymyClosure = "source_synonymy_closure"
+
 // AcceptedInSpace reports whether e is the space's accepted spelling.
 //
 // An entry ingested before Status existed reports false — deliberately, so a
@@ -121,6 +136,32 @@ const NameSpaceStatusAccepted = "accepted"
 // of claiming a synonym is accepted. Re-ingest is what fixes it.
 func (e NameSpaceEntry) AcceptedInSpace() bool {
 	return e.Status == NameSpaceStatusAccepted
+}
+
+// TargetSpaceChoice is the entry ResolveTargetSpace chose to report, not just
+// its name: Habitatus needs the source's own identity for that spelling to
+// tell whether it got the space's ACCEPTED name or a synonym (see Status) and
+// to carry a stable external key forward (see ExtID) — the name alone answers
+// neither question.
+//
+// Name == "" means "no entry" exactly as it did when ResolveTargetSpace
+// returned a bare string; ExtID/Status are then also empty and carry no
+// separate meaning.
+type TargetSpaceChoice struct {
+	// Name is the ESy-compatible spelling the target space uses — the same
+	// value ResolveTargetSpace used to return on its own.
+	Name string
+	// ExtID is the chosen entry's OWN id in the target space
+	// (NameSpaceEntry.ExtID) — for "eurosl" this is the Euro+Med
+	// TaxonUsageID, a stable key external resources (e.g. EuroVeg.eu) can be
+	// joined on. It is the source's id, not a hostus concept id.
+	ExtID string
+	// Status is the chosen entry's own nomenclatural status, verbatim from
+	// the source (NameSpaceEntry.Status: "accepted", "synonym",
+	// "synonymobjective", ...). This is how a caller distinguishes "the
+	// space's accepted name" from a synonym fallback (see pickSpelling) —
+	// the name string alone cannot carry that distinction.
+	Status string
 }
 
 // ResolveTargetSpace decides, for one matched concept, the ESy-compatible name
@@ -138,20 +179,21 @@ func (e NameSpaceEntry) AcceptedInSpace() bool {
 //     precisely the false "not met" the source document warns against.
 //   - not queryIsAggregate -> the nominate (non-aggregate) spelling if any,
 //     else the first spelling, else ""; policy is the zero value (absent).
-func ResolveTargetSpace(queryIsAggregate bool, entries []NameSpaceEntry) (string, AggregatePolicy) {
+func ResolveTargetSpace(queryIsAggregate bool, entries []NameSpaceEntry) (TargetSpaceChoice, AggregatePolicy) {
 	if queryIsAggregate {
 		if e, ok := pickSpelling(entries, true); ok {
-			return e.Name, AggregatePolicyKnown
+			return TargetSpaceChoice{Name: e.Name, ExtID: e.ExtID, Status: e.Status}, AggregatePolicyKnown
 		}
-		return "", AggregatePolicyUnresolvable
+		return TargetSpaceChoice{}, AggregatePolicyUnresolvable
 	}
 	if e, ok := pickSpelling(entries, false); ok {
-		return e.Name, ""
+		return TargetSpaceChoice{Name: e.Name, ExtID: e.ExtID, Status: e.Status}, ""
 	}
 	if len(entries) > 0 {
-		return entries[0].Name, ""
+		e := entries[0]
+		return TargetSpaceChoice{Name: e.Name, ExtID: e.ExtID, Status: e.Status}, ""
 	}
-	return "", ""
+	return TargetSpaceChoice{}, ""
 }
 
 // pickSpelling returns the entry to report among those matching aggregate,
@@ -162,19 +204,42 @@ func ResolveTargetSpace(queryIsAggregate bool, entries []NameSpaceEntry) (string
 // first. Falling back to the first match when no entry is marked accepted
 // keeps an index ingested before Status was recorded working exactly as
 // before, rather than reporting nothing.
+//
+// Among several accepted entries, a DIRECT one — its Resolution does not
+// carry ResolutionSourceSynonymyClosure — outranks a CLOSED one (attached by
+// application.closeSynonymyGroups' post-resolve pass, spec 2026-09-13
+// decision 3), even when the closed entry's ext_id would otherwise sort
+// first. This is a real defect the closure pass exposed rather than caused:
+// a concept can carry two or more accepted-in-space entries already (2.732
+// such concepts measured on the real index BEFORE the closure pass; it adds
+// more), and the prior plain ext_id order let a closure-attached entry — one
+// concept_name link inferred from its OWN group, not from THIS row's
+// spelling — outrank an entry the crosswalk matched onto this concept
+// DIRECTLY by name. Direct name evidence must win; within either tier the
+// existing ext_id order (the order entries already arrives in) is
+// unchanged. See whole-branch review 2026-09-13, I3.
 func pickSpelling(entries []NameSpaceEntry, aggregate bool) (NameSpaceEntry, bool) {
-	var first NameSpaceEntry
-	found := false
+	var first, closedAccepted NameSpaceEntry
+	found, foundClosedAccepted := false, false
 	for _, e := range entries {
 		if e.Aggregate != aggregate {
 			continue
 		}
 		if e.AcceptedInSpace() {
+			if strings.Contains(e.Resolution, ResolutionSourceSynonymyClosure) {
+				if !foundClosedAccepted {
+					closedAccepted, foundClosedAccepted = e, true
+				}
+				continue
+			}
 			return e, true
 		}
 		if !found {
 			first, found = e, true
 		}
+	}
+	if foundClosedAccepted {
+		return closedAccepted, true
 	}
 	return first, found
 }

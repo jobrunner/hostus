@@ -1383,6 +1383,30 @@ components:
             Die Schreibweise des Ziel-Namensraums für das Quellkonzept.
             Leer, wenn `aggregate_policy: unresolvable`.
           example: Weiß-Tanne
+        ext_id:
+          type: string
+          description: >-
+            Die Quell-ID des Namensraum-Eintrags hinter `name`
+            (`name_space_entry.ext_id`) — für `name_space: eurosl` die
+            Euro+Med-PlantBase-TaxonUsage-UUID, ein stabiler Schlüssel für
+            externe E+M-Ressourcen (z. B. EuroVeg.eu). `name_space` selbst
+            ist die Herkunft: `eurosl` IST der Euro+Med-PlantBase-Snapshot
+            (EuroSL.sqlite, AccordingTo api.cybertaxonomy.org/euromed).
+            Fehlt, wenn `name` leer ist.
+          example: a08253f0-0000-0000-0000-000000000001
+        status:
+          type: string
+          description: >-
+            Der nomenklatorische Status des Eintrags hinter `name`, verbatim
+            aus der Quelle (`accepted`, `synonym`, `synonymobjective`, …).
+            Damit ist erkennbar, ob `name` der akzeptierte Name des
+            Zielraums ist oder ein Synonym-Fallback (kein akzeptierter
+            Eintrag im Zielraum vorhanden). Fehlt, wenn `name` leer ist —
+            fehlt aber AUCH, wenn die Quelle für diesen Eintrag keinen
+            Status führt (z. B. Einträge aus einem Ingest vor Einführung
+            der Status-Spalte): ein vorhandener `name` garantiert keinen
+            Status.
+          example: accepted
         aggregate_policy:
           type: string
           enum: [known, unresolvable]
@@ -1416,7 +1440,11 @@ components:
 
     MatchNameRequest:
       type: object
-      required: [id, verbatim]
+      required: [id]
+      description: >-
+        Genau eines von `verbatim`/`xref` muss gesetzt sein (spec
+        2026-09-13): beide oder keines ist `400 INVALID_QUERY`, nennt die
+        Zeilen-`id`.
       properties:
         id:
           type: string
@@ -1425,6 +1453,22 @@ components:
         verbatim:
           type: string
           example: Senecio jacobaea L.
+        xref:
+          type: object
+          required: [authority, id]
+          description: >-
+            Löst die Zeile über eine Fremd-ID auf (z. B. eine POWO-ID aus dem
+            PlantNet-Workflow) statt über einen verbatim-Namen — ein exakter
+            ID-Lookup ohne Namensleiter/Fuzzy. Eine unbekannte ID liefert ein
+            `unresolvable`-Ergebnis (die restliche Batch läuft weiter), keinen
+            HTTP-Fehler.
+          properties:
+            authority:
+              type: string
+              example: powo
+            id:
+              type: string
+              example: '77178414-1'
 
     MatchRequest:
       type: object
@@ -1473,8 +1517,12 @@ components:
           description: Spiegelt die `id` aus der Anfrage.
         match_type:
           type: string
-          enum: [exact, exact_author, aggregate_alias, aggregate_nominate, fuzzy, unresolvable]
+          enum: [exact, exact_author, aggregate_alias, aggregate_nominate, fuzzy, xref, unresolvable]
           description: >-
+            `xref`: die Zeile wurde über eine Fremd-ID aufgelöst
+            (`names[].xref`), nicht über einen Namen — `confidence` ist dann
+            immer `1.0` und keine Namensleiter (exact/fuzzy/…) lief.
+
             `aggregate_nominate` heißt: die Anfrage nannte eine **Sammelart**
             (`X aggr.`, `X s.l.`, auch geschichtet `X aggr. s. l.`), der Index
             führt dafür kein Sammelart-Taxon, und geantwortet wird mit dem
@@ -1541,6 +1589,29 @@ components:
             Name geliefert wird (die Kleinart als Aggregatnamen anzubieten
             wäre genau die falsche „nicht erfüllt"-Antwort, die UC4 vermeidet).
           example: 'Festuca ovina aggr.'
+        target_space_ext_id:
+          type: string
+          description: >-
+            Nur bei gesetztem `target_space`: die Quell-ID des
+            Namensraum-Eintrags hinter `target_space_name`
+            (`name_space_entry.ext_id`) — für `target_space: eurosl` die
+            Euro+Med-PlantBase-TaxonUsage-UUID, ein stabiler Schlüssel für
+            externe E+M-Ressourcen (z. B. EuroVeg.eu). Fehlt, wenn
+            `target_space_name` fehlt.
+          example: a08253f0-0000-0000-0000-000000000001
+        target_space_status:
+          type: string
+          description: >-
+            Nur bei gesetztem `target_space`: der nomenklatorische Status
+            des Eintrags hinter `target_space_name`, verbatim aus der
+            Quelle (`accepted`, `synonym`, `synonymobjective`, …) — damit
+            ist erkennbar, ob `target_space_name` der akzeptierte Name des
+            Zielraums ist oder ein Synonym-Fallback. Fehlt, wenn
+            `target_space_name` fehlt — fehlt aber AUCH, wenn die Quelle
+            für diesen Eintrag keinen Status führt (z. B. Einträge aus
+            einem Ingest vor Einführung der Status-Spalte): ein
+            vorhandener `target_space_name` garantiert keinen Status.
+          example: accepted
         aggregate_policy:
           type: string
           enum: [known, unresolvable]
@@ -1552,7 +1623,11 @@ components:
             „nicht entscheidbar", NICHT „nicht erfüllt", und die Deckung darf
             NICHT auf die Kleinarten verteilt werden. FEHLT das Feld (dritter
             Zustand), ist gar kein Aggregat im Spiel (gewöhnliche Art) — ein
-            `known` für jede Art würde das Feld bedeutungslos machen.
+            `known` für jede Art würde das Feld bedeutungslos machen. Bei einer
+            per `xref` aufgelösten Zeile FEHLT `aggregate_policy` IMMER: die
+            Zeile trägt keine eigene Anfrage-Schreibweise, an der sich prüfen
+            ließe, ob die ANFRAGE ein Aggregat war — auch wenn das aufgelöste
+            Concept selbst eines ist.
         esy_diagnostic_relevance:
           type: string
           enum: [not_determinable]

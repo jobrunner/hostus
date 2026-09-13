@@ -138,8 +138,18 @@ type translateNameCandidateDTO struct {
 // has no basis for — and is rendered only when application.Translate took
 // that branch.
 type nameSpaceTranslationDTO struct {
-	NameSpace       string `json:"name_space"`
-	Name            string `json:"name"`
+	NameSpace string `json:"name_space"`
+	Name      string `json:"name"`
+	// ExtID is the chosen entry's own id in the target space (for "eurosl"
+	// the Euro+Med TaxonUsageID — a stable key external resources like
+	// EuroVeg.eu can join on); Status is its verbatim source status
+	// ("accepted", "synonym", ...), how a caller distinguishes the space's
+	// accepted name from a synonym fallback. Both empty when Name is empty.
+	// Status is ALSO empty when Name is set but the source carries no
+	// status for this entry at all (e.g. an ingest that predates the
+	// status column) — a non-empty Name never guarantees a Status.
+	ExtID           string `json:"ext_id,omitempty"`
+	Status          string `json:"status,omitempty"`
 	AggregatePolicy string `json:"aggregate_policy,omitempty"`
 }
 
@@ -292,6 +302,8 @@ func translateToDTO(res application.TranslateResult) translateResponseDTO {
 		out.NameSpaceTranslation = &nameSpaceTranslationDTO{
 			NameSpace:       res.NameSpaceTranslation.NameSpace,
 			Name:            res.NameSpaceTranslation.Name,
+			ExtID:           res.NameSpaceTranslation.ExtID,
+			Status:          res.NameSpaceTranslation.Status,
 			AggregatePolicy: string(res.NameSpaceTranslation.AggregatePolicy),
 		}
 	}

@@ -31,6 +31,16 @@ const (
 	// ClassifyMatch — assigned by the application layer once fuzzy scoring
 	// clears the threshold.
 	MatchFuzzy MatchType = "fuzzy"
+	// MatchXref: the row identified its concept by a foreign authority's id
+	// (e.g. POWO) rather than a verbatim name — the PlantNet workflow (spec
+	// 2026-09-13), where the identification already carries a POWO id and an
+	// id lookup is exact where every name match is a heuristic. A foreign id
+	// beats any name ladder: it never goes through ClassifyMatch, fuzzy
+	// scoring, or claimant preference, since there is exactly one concept to
+	// look up rather than a set of candidates to choose among. Never
+	// produced by ClassifyMatch — assigned by the application layer's xref
+	// resolution branch.
+	MatchXref MatchType = "xref"
 )
 
 // FuzzyThreshold is the minimum Similarity score for a fuzzy candidate to be

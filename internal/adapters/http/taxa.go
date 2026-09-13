@@ -268,10 +268,22 @@ func classificationInfoFromMatch(cl domain.Classification) *classificationInfoDT
 	return &classificationInfoDTO{Family: cl.Family, Order: cl.OrderName, Class: cl.ClassName}
 }
 
+// xrefRefDTO identifies one matchNameDTO row by a foreign authority's id
+// instead of a verbatim name (spec 2026-09-13, the PlantNet workflow: the
+// identification already carries a POWO id).
+type xrefRefDTO struct {
+	Authority string `json:"authority"`
+	ID        string `json:"id"`
+}
+
 // matchNameDTO is one entry of POST /v1/match's request body, per §B.2.
+// Exactly one of Verbatim/Xref must be set — application.MatchInSpace
+// rejects a row setting both or neither with application.ErrInvalidMatchRequest,
+// which handleMatch renders as 400 INVALID_QUERY.
 type matchNameDTO struct {
-	ID       string `json:"id"`
-	Verbatim string `json:"verbatim"`
+	ID       string      `json:"id"`
+	Verbatim string      `json:"verbatim,omitempty"`
+	Xref     *xrefRefDTO `json:"xref,omitempty"`
 }
 
 // matchRequestDTO is the POST /v1/match request body. TargetSpace (SP9/UC4)
@@ -302,11 +314,20 @@ type matchResultDTO struct {
 	RequiresReview bool     `json:"requires_review,omitempty"`
 	Note           string   `json:"note,omitempty"`
 
-	// The three UC4 fields below appear ONLY when the request named a
-	// target_space; on the plain path they stay zero and omitempty drops them,
-	// leaving the SP1 shape untouched.
+	// The UC4 fields below appear ONLY when the request named a target_space;
+	// on the plain path they stay zero and omitempty drops them, leaving the
+	// SP1 shape untouched.
 	//
 	// TargetSpaceName is the ESy-compatible spelling the target space uses.
+	// TargetSpaceExtID is that spelling's own id in the target space (for
+	// "eurosl" the Euro+Med TaxonUsageID — a stable key external resources
+	// like EuroVeg.eu can join on); TargetSpaceStatus is its verbatim source
+	// status ("accepted", "synonym", ...) — how a caller distinguishes the
+	// space's accepted name from a synonym fallback. Both are the source's
+	// own identity, never a hostus id. TargetSpaceStatus is ALSO empty when
+	// TargetSpaceName is set but the source carries no status for this
+	// entry at all (e.g. an ingest that predates the status column) — a
+	// non-empty TargetSpaceName never guarantees a TargetSpaceStatus.
 	// AggregatePolicy is the tri-state (known/unresolvable/absent) — absent
 	// (empty, dropped) means no aggregate is involved.
 	// ESyDiagnosticRelevance is ALWAYS esyRelevanceNotDeterminable on the
@@ -315,6 +336,8 @@ type matchResultDTO struct {
 	// silently missing — a consumer must never read its absence as "not
 	// relevant". See docs/reference/http-api.md.
 	TargetSpaceName        string `json:"target_space_name,omitempty"`
+	TargetSpaceExtID       string `json:"target_space_ext_id,omitempty"`
+	TargetSpaceStatus      string `json:"target_space_status,omitempty"`
 	AggregatePolicy        string `json:"aggregate_policy,omitempty"`
 	ESyDiagnosticRelevance string `json:"esy_diagnostic_relevance,omitempty"`
 
@@ -547,6 +570,50 @@ func handleXref(repo output.Repository) http.HandlerFunc {
 	}
 }
 
+// matchErrorMappings pairs each application match-validation sentinel with
+// the 400 INVALID_QUERY message writeMatchError renders for it, checked in
+// order via errors.Is. Kept as data rather than an if/else-if chain (four
+// real arms would trip gocritic's ifElseChain) or a tagless switch (which
+// hides each case's condition from the mutation gate — measured as a NOT
+// COVERED mutant on the err==nil arm despite every branch having a test; the
+// exact same trap fixed in tracedrepo.go, commit 6943d27). A data-driven
+// loop's per-iteration errors.Is condition attributes properly instead.
+var matchErrorMappings = []struct {
+	sentinel error
+	message  func(body matchRequestDTO, err error) string
+}{
+	{application.ErrUnknownTargetSpace, func(body matchRequestDTO, _ error) string {
+		return "unknown target_space " + strconv.Quote(body.TargetSpace)
+	}},
+	{application.ErrUnknownBackbone, func(body matchRequestDTO, _ error) string {
+		return "unknown entry_backbone " + strconv.Quote(body.EntryBackbone)
+	}},
+	{application.ErrUnknownSec, func(body matchRequestDTO, _ error) string {
+		return "unknown entry_sec " + strconv.Quote(body.EntrySec)
+	}},
+	{application.ErrInvalidMatchRequest, func(_ matchRequestDTO, err error) string {
+		return err.Error()
+	}},
+}
+
+// writeMatchError renders an application.MatchInSpace error as its HTTP
+// response and reports true, or reports false (writing nothing) if err is
+// nil. Pulled out of handleMatch purely to keep that function's cognitive
+// complexity down; body supplies the request values the 400 messages quote.
+func writeMatchError(w http.ResponseWriter, err error, body matchRequestDTO) bool {
+	if err == nil {
+		return false
+	}
+	for _, m := range matchErrorMappings {
+		if errors.Is(err, m.sentinel) {
+			httperr.InvalidQueryError(w, m.message(body, err))
+			return true
+		}
+	}
+	httperr.InternalError(w)
+	return true
+}
+
 // handleMatch serves POST /v1/match: batch verbatim-name resolution via
 // application.MatchNames. A per-item UNRESOLVABLE outcome is rendered as a
 // normal 200 result element (matchTypeUnresolvable), never as an HTTP
@@ -567,24 +634,27 @@ func handleMatch(repo output.Repository) http.HandlerFunc {
 		reqs := make([]application.MatchRequest, len(body.Names))
 		for i, n := range body.Names {
 			reqs[i] = application.MatchRequest{ID: n.ID, Verbatim: n.Verbatim}
+			if n.Xref != nil {
+				// application.matchNamesFiltered only checks that Xref is
+				// SET (exactly one of verbatim/xref) — it never inspects
+				// the two fields inside it, so an xref with an empty
+				// authority or id would otherwise sail through as a
+				// well-formed request and resolve as UNRESOLVABLE
+				// (ConceptByXref("", ...) simply finds nothing), not as
+				// the malformed request it actually is. Caught here, at
+				// the boundary, the same way the malformed-body check
+				// above is (whole-branch review 2026-09-13, M6).
+				if n.Xref.Authority == "" || n.Xref.ID == "" {
+					httperr.InvalidQueryError(w, "xref requires both authority and id: row "+strconv.Quote(n.ID))
+					return
+				}
+				reqs[i].Xref = &application.XrefRef{Authority: n.Xref.Authority, ID: n.Xref.ID}
+			}
 		}
 
 		results, err := application.MatchInSpace(r.Context(), repo, reqs, body.TargetSpace,
 			application.MatchFilter{Backbone: body.EntryBackbone, Sec: body.EntrySec})
-		if errors.Is(err, application.ErrUnknownTargetSpace) {
-			httperr.InvalidQueryError(w, "unknown target_space "+strconv.Quote(body.TargetSpace))
-			return
-		}
-		if errors.Is(err, application.ErrUnknownBackbone) {
-			httperr.InvalidQueryError(w, "unknown entry_backbone "+strconv.Quote(body.EntryBackbone))
-			return
-		}
-		if errors.Is(err, application.ErrUnknownSec) {
-			httperr.InvalidQueryError(w, "unknown entry_sec "+strconv.Quote(body.EntrySec))
-			return
-		}
-		if err != nil {
-			httperr.InternalError(w)
+		if writeMatchError(w, err, body) {
 			return
 		}
 
@@ -631,6 +701,8 @@ func matchResultsToDTO(results []application.MatchResult, targetSpace bool) []ma
 		}
 		if targetSpace {
 			dto.TargetSpaceName = res.TargetSpaceName
+			dto.TargetSpaceExtID = res.TargetSpaceExtID
+			dto.TargetSpaceStatus = res.TargetSpaceStatus
 			dto.AggregatePolicy = string(res.AggregatePolicy)
 			dto.ESyDiagnosticRelevance = esyRelevanceNotDeterminable
 		}

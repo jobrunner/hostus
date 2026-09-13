@@ -430,6 +430,49 @@ func TestPrintNameSpaceReports_TieBrokenCountAndSampleVisible(t *testing.T) {
 	}
 }
 
+// TestPrintNameSpaceReports_SynonymyClosedCountAndSampleVisible pins that
+// when SynonymyClosed > 0, a "synonymy-closed (source synonymy)=N" line and
+// a sample line appear; when SynonymyClosed == 0, they do not (covering
+// both branches for mutation testing) — the CLI counterpart of spec
+// 2026-09-13 decision 3, mirroring
+// TestPrintNameSpaceReports_TieBrokenCountAndSampleVisible above.
+func TestPrintNameSpaceReports_SynonymyClosedCountAndSampleVisible(t *testing.T) {
+	reports := []application.NameSpaceIngestReport{
+		{
+			Space: "eurosl", Rows: 10, Matched: 10, Concepts: 8,
+			SynonymyClosed:       1,
+			SynonymyClosedSample: []string{"Inula hirta"},
+			Redistribution:       "allowed",
+		},
+		{
+			Space: "clean", Rows: 5, Matched: 5, Concepts: 5,
+			SynonymyClosed:       0,
+			SynonymyClosedSample: []string{},
+			Redistribution:       "allowed",
+		},
+	}
+
+	var buf bytes.Buffer
+	printNameSpaceReports(&buf, reports)
+	got := buf.String()
+
+	if !strings.Contains(got, "synonymy-closed (source synonymy)=1") {
+		t.Errorf("report %q, want a \"synonymy-closed (source synonymy)=1\" line", got)
+	}
+	if !strings.Contains(got, "synonymy-closed sample: Inula hirta") {
+		t.Errorf("report %q, want a \"synonymy-closed sample: Inula hirta\" line", got)
+	}
+
+	cleanIdx := strings.Index(got, "clean:")
+	if cleanIdx == -1 {
+		t.Fatalf("report %q, want it to mention space %q", got, "clean")
+	}
+	cleanSection := got[cleanIdx:]
+	if strings.Contains(cleanSection, "synonymy-closed") {
+		t.Errorf("report %q, want no \"synonymy-closed\" line for a space with SynonymyClosed == 0", cleanSection)
+	}
+}
+
 // TestIngestCommand_NameSpace_PrintsReport drives the whole CLI against the
 // fixture manifest (which pins the FloraVeg name space) and asserts the
 // name-space section reaches stdout.

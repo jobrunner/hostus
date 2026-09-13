@@ -30,14 +30,18 @@ status=0
 }
 
 # count <pattern> — number of matching directive lines in first-party *.go,
-# excluding poc/** and third_party/**.
+# excluding poc/** and third_party/** at ANY depth plus .worktrees/** —
+# anchored '^\./poc/' missed the same trees nested inside a linked git
+# worktree (.worktrees/<name>/poc/...), which false-flagged an unrelated
+# commit on 2026-09-13.
 # Tolerant of zero matches: grep exits 1 with no hits, which would abort the
 # pipeline under `set -euo pipefail`, so swallow it and still emit a count.
 count() {
   { grep -rn "$1" --include='*.go' . || true; } \
     | { grep -v '/\.go/mod/' || true; } \
-    | { grep -v '^\./poc/' || true; } \
-    | { grep -v '^\./third_party/' || true; } \
+    | { grep -v '/poc/' || true; } \
+    | { grep -v '/third_party/' || true; } \
+    | { grep -v '^\./\.worktrees/' || true; } \
     | { grep -c '' || true; } | tr -d ' '
 }
 
@@ -62,8 +66,9 @@ fi
 # doesn't false-positive. poc/** and third_party/** are exempt.
 markers=$(grep -rnE '//[[:space:]]*(TODO|FIXME|HACK|XXX)([[:space:]:(]|$)' --include='*.go' . \
   | grep -v '/\.go/mod/' \
-  | grep -v '^\./poc/' \
-  | grep -v '^\./third_party/' || true)
+  | grep -v '/poc/' \
+  | grep -v '/third_party/' \
+  | grep -v '^\./\.worktrees/' || true)
 if [ -n "$markers" ]; then
   echo "  ▼ debt-guard: FAIL — debt markers found (keep them out of the tree; track in docs):" >&2
   echo "$markers" | sed 's/^/      /' >&2

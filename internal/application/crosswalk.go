@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"slices"
 	"sort"
 
 	"github.com/jobrunner/hostus/internal/domain"
@@ -40,9 +41,52 @@ type traitResolution struct {
 	// tieBroken records that this outcome came from genuineBearerWinner
 	// rather than from a single-candidate key, so a caller can report it.
 	tieBroken bool
+	// synonymyClosed records that this outcome came NOT from the crosswalk
+	// ladder at all, but from IngestNameSpace's post-resolve source-synonymy
+	// closure pass (spec 2026-09-13, decision 3): the row's own spelling
+	// stayed ambiguous or unmatched, and was attached to the one concept its
+	// source-synonymy group (rows sharing the same accepted-taxon name)
+	// already resolved to. Mutually exclusive with tieBroken in practice —
+	// resolveNameSpaceNames never sets this, closeSynonymyGroups never
+	// touches a row that already has matched == true — but both are kept as
+	// independent bools rather than a shared enum, mirroring tieBroken, so
+	// resolutionWithTieBreak can compose either marker without the other
+	// caring.
+	synonymyClosed bool
+	// matchedAccepted records that the candidate key which produced this
+	// outcome answered with an ACCEPTED-role name of conceptID
+	// (output.MatchCandidate.Role == "accepted") — checked across ALL
+	// candidates the key returned for that concept, not just the first one
+	// (candidates[0] can be either role: the same concept can carry two
+	// concept_name links spelled identically, an accepted one and a synonym
+	// one — measured on the real index, 766 such pairs, 364 with the
+	// non-accepted row ordered first — so reading only candidates[0] would
+	// make this field an accident of name-ID ordering, not a nomenclatural
+	// fact; whole-branch review 2026-09-13, I1). On a tie-broken outcome the
+	// winning candidate is used instead (acceptedBearerWinner's winner IS
+	// the accepted bearer by definition, so tieBroken == true always implies
+	// matchedAccepted == true). Only meaningful when matched is also true.
+	//
+	// closeSynonymyGroups' accepted-role guard (spec 2026-09-13, fix round
+	// 2) reads this: a real full-ingest run found a germansl bryophyte group
+	// ("Syntrichia sinensis") closed entirely onto a WCVP FLOWERING-PLANT
+	// concept (Caryopteris incana var. incana) because its only resolved
+	// anchor, "Barbula sinensis", matched WCVP's cross-kingdom homonym
+	// SYNONYM name "Barbula sinensis" — Barbula being both a moss genus (not
+	// in WCVP at all) and a Lamiaceae synonym genus. A synonym-role anchor
+	// is exactly the class of coincidental cross-kingdom name collision this
+	// pass must not amplify into an attach; only a concept with at least one
+	// matchedAccepted anchor qualifies as a group's closure target. The
+	// underlying crosswalk defect (a moss name matching a WCVP homonym in
+	// the ORDINARY, non-closure path) is out of this field's scope — it is
+	// tracked as a follow-up issue, not fixed here.
+	matchedAccepted bool
 	// rule is the normalisation rule whose key produced this outcome (both
 	// for matched and for ambiguous). domain.RuleExact means the plain
-	// Canonicalize key answered — the pre-normalisation behavior.
+	// Canonicalize key answered — the pre-normalisation behavior. Left at
+	// its zero value (which renders identically to RuleExact via
+	// resolutionFor) for a synonymyClosed outcome: it did not come through
+	// a normalisation rule at all.
 	rule domain.NormalizationRule
 }
 
@@ -170,11 +214,31 @@ func resolveTraitName(ctx context.Context, repo output.Repository, canon string,
 			// whichever tiered tie-break policy selects, or reports the tie
 			// stands.
 			if id, ok := resolveHomonymTie(candidates, policy); ok {
-				return traitResolution{conceptID: id, matched: true, tieBroken: true, rule: cand.Rule}, nil
+				// The tie-break winner IS the accepted bearer by construction
+				// (acceptedBearerWinner/genuineBearerWinner's tier 1) — see
+				// matchedAccepted's doc comment.
+				return traitResolution{conceptID: id, matched: true, tieBroken: true, matchedAccepted: true, rule: cand.Rule}, nil
 			}
 			return traitResolution{ambiguous: true, rule: cand.Rule}, nil
 		}
-		return traitResolution{conceptID: candidates[0].Concept.ID, matched: true, rule: cand.Rule}, nil
+		return traitResolution{
+			conceptID: candidates[0].Concept.ID,
+			matched:   true,
+			// ALL candidates, not just candidates[0]: with a single distinct
+			// concept.ID, candidates can still hold MORE than one row — the
+			// same concept can carry two concept_name links with the
+			// identical canonical spelling (an accepted name and a synonym
+			// spelled alike; measured on the real index: 766 such pairs, 364
+			// of them with the non-accepted row ordered first). Reading only
+			// candidates[0] then makes matchedAccepted depend on which
+			// name-ID sorts first — an accident of insertion order, not the
+			// nomenclatural fact this field exists to record (see its doc
+			// comment, whole-branch review 2026-09-13 I1).
+			matchedAccepted: slices.ContainsFunc(candidates, func(c output.MatchCandidate) bool {
+				return c.Role == roleAccepted
+			}),
+			rule: cand.Rule,
+		}, nil
 	}
 	return traitResolution{}, nil
 }

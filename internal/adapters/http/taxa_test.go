@@ -777,6 +777,130 @@ func splitConceptID(conceptID string) (backbone, sourceID string, ok bool) {
 	return strings.Cut(conceptID, ":concept:")
 }
 
+// corynephorusPowoID is the powo xref the WCVP fixture ingest attaches to
+// corynephorusConceptID (wcvp_taxon.csv's dynamicproperties.powoid for
+// taxonid 405825 — see internal/adapters/wcvp/testdata/wcvp-sample).
+const corynephorusPowoID = "396681-1"
+
+// TestHandleMatch_XrefRowResolvesByForeignID posts a batch mixing a verbatim
+// row and an xref row (spec 2026-09-13's PlantNet workflow): both resolve,
+// the xref row with match_type "xref" and confidence 1.0.
+func TestHandleMatch_XrefRowResolvesByForeignID(t *testing.T) {
+	repo := seededRepo(t)
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	body := `{
+		"names": [
+			{"id": "1", "verbatim": "Corynephorus canescens"},
+			{"id": "2", "xref": {"authority": "powo", "id": "` + corynephorusPowoID + `"}}
+		]
+	}`
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/match", bytes.NewBufferString(body))
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	assertJSONContentType(t, rr)
+
+	got := decodeJSON[matchResponse](t, rr.Body)
+	if len(got.Results) != 2 {
+		t.Fatalf("len(results) = %d, want 2", len(got.Results))
+	}
+	byID := map[string]int{}
+	for i, res := range got.Results {
+		byID[res.ID] = i
+	}
+
+	xrefResult := got.Results[byID["2"]]
+	if xrefResult.MatchType != "xref" {
+		t.Errorf("result 2: match_type = %q, want %q", xrefResult.MatchType, "xref")
+	}
+	if xrefResult.Confidence != 1.0 {
+		t.Errorf("result 2: confidence = %v, want 1.0", xrefResult.Confidence)
+	}
+	if xrefResult.ConceptID != corynephorusConceptID {
+		t.Errorf("result 2: concept_id = %q, want %q", xrefResult.ConceptID, corynephorusConceptID)
+	}
+
+	verbatimResult := got.Results[byID["1"]]
+	if verbatimResult.MatchType != "exact" || verbatimResult.ConceptID != corynephorusConceptID {
+		t.Errorf("result 1 = %+v, want the same concept resolved via match_type=exact", verbatimResult)
+	}
+}
+
+// TestHandleMatch_RowWithBothVerbatimAndXref_Returns400InvalidQuery posts a
+// row that sets both verbatim and xref — rejected as 400 INVALID_QUERY, the
+// message naming the offending row id.
+func TestHandleMatch_RowWithBothVerbatimAndXref_Returns400InvalidQuery(t *testing.T) {
+	repo := seededRepo(t)
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	body := `{
+		"names": [
+			{"id": "row-1", "verbatim": "Corynephorus canescens", "xref": {"authority": "powo", "id": "` + corynephorusPowoID + `"}}
+		]
+	}`
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/match", bytes.NewBufferString(body))
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body: %s)", rr.Code, rr.Body.String())
+	}
+	assertJSONContentType(t, rr)
+
+	got := decodeJSON[errorEnvelope](t, rr.Body)
+	if got.Error.Code != "INVALID_QUERY" {
+		t.Errorf("error.code = %q, want %q", got.Error.Code, "INVALID_QUERY")
+	}
+	if !strings.Contains(got.Error.Message, "row-1") {
+		t.Errorf("error.message = %q, want it to name the offending row id %q", got.Error.Message, "row-1")
+	}
+}
+
+// TestHandleMatch_XrefWithEmptyFieldReturns400InvalidQuery pins M6
+// (whole-branch review 2026-09-13): application's own row validation only
+// checks that xref is SET (exactly one of verbatim/xref), never that its
+// two fields are non-empty — so an xref with an empty authority or id must
+// be caught at the HTTP boundary, the same way "both set" already is,
+// rather than silently resolving as UNRESOLVABLE. Table-driven to cover
+// both fields.
+func TestHandleMatch_XrefWithEmptyFieldReturns400InvalidQuery(t *testing.T) {
+	cases := []struct {
+		name string
+		xref string
+	}{
+		{"empty authority", `{"authority": "", "id": "` + corynephorusPowoID + `"}`},
+		{"empty id", `{"authority": "powo", "id": ""}`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repo := seededRepo(t)
+			r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+			body := `{"names": [{"id": "row-1", "xref": ` + c.xref + `}]}`
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/v1/match", bytes.NewBufferString(body))
+			r.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (body: %s)", rr.Code, rr.Body.String())
+			}
+			assertJSONContentType(t, rr)
+
+			got := decodeJSON[errorEnvelope](t, rr.Body)
+			if got.Error.Code != "INVALID_QUERY" {
+				t.Errorf("error.code = %q, want %q", got.Error.Code, "INVALID_QUERY")
+			}
+			if !strings.Contains(got.Error.Message, "row-1") {
+				t.Errorf("error.message = %q, want it to name the offending row id %q", got.Error.Message, "row-1")
+			}
+		})
+	}
+}
+
 func TestHandleMatch_MalformedBody_Returns400InvalidQuery(t *testing.T) {
 	repo := seededRepo(t)
 	r := httpx.NewRouter(httpx.Deps{Repo: repo})

@@ -109,6 +109,10 @@ func printNameSpaceReports(w io.Writer, reports []application.NameSpaceIngestRep
 			_, _ = fmt.Fprintf(w, "    tie-broken (accepted bearer)=%d\n", r.TieBroken)
 		}
 		printSampleLine(w, "tie-broken sample", r.TieBrokenSample)
+		if r.SynonymyClosed > 0 {
+			_, _ = fmt.Fprintf(w, "    synonymy-closed (source synonymy)=%d\n", r.SynonymyClosed)
+		}
+		printSampleLine(w, "synonymy-closed sample", r.SynonymyClosedSample)
 		printRedistributionNotice(w, r.Space, r.Redistribution)
 	}
 }

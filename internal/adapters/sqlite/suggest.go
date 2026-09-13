@@ -462,8 +462,8 @@ func (db *DB) attachTargetSpaceNames(ctx context.Context, items []domain.Suggest
 	// carries it even when the query matched only the plain name — using it
 	// would name a plain query with the aggregate spelling.
 	for i := range items {
-		name, _ := domain.ResolveTargetSpace(queryIsAggregate, entries[items[i].ConceptID])
-		items[i].TargetSpaceName = name
+		choice, _ := domain.ResolveTargetSpace(queryIsAggregate, entries[items[i].ConceptID])
+		items[i].TargetSpaceName = choice.Name
 	}
 	return nil
 }

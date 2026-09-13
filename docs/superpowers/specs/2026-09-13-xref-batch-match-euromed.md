@@ -66,6 +66,25 @@ Antwort exponiert.
    Duplicate-ExtID-Regeln unverändert. `ResolveTargetSpace`s
    Präzedenz (accepted-in-space zuerst) bleibt identisch — durch Phase A
    wird der accepted-Eintrag schlicht wieder VORHANDEN sein.
+
+   **Nachtrag (Whole-Branch-Review 2026-09-13, I3):** „bleibt identisch"
+   war zu grob — ein Konzept KANN bereits vor Phase A mehrere
+   accepted-in-space-Einträge tragen (real 2.732 Konzepte gemessen; Phase A
+   fügt weitere hinzu), und `pickSpelling` nahm bislang unter den
+   accepted-Einträgen schlicht den ersten nach `ext_id`. Ein per Phase A
+   GESCHLOSSENER accepted-Eintrag (aus der Quell-Synonymiegruppe erschlossen,
+   nicht aus der eigenen Schreibweise dieser Zeile) konnte so einen DIREKT
+   namensgematchten accepted-Eintrag verdrängen, wenn seine `ext_id` zufällig
+   kleiner sortierte — ein durch Phase A erst SICHTBAR gewordener,
+   vorbestehender Spec-Defekt. Ruling: `pickSpelling` bekommt eine Vorstufe
+   — unter accepted-Einträgen schlagen Einträge OHNE
+   `domain.ResolutionSourceSynonymyClosure` in `Resolution` (direkte
+   Namens-Evidenz) die geschlossenen; erst ohne einen direkten Kandidaten
+   gewinnt der erste geschlossene. Innerhalb derselben Stufe bleibt die
+   bisherige `ext_id`-Ordnung unverändert. Siehe
+   `internal/domain/namespace.go`s `pickSpelling` und
+   `TestResolveTargetSpace_DirectAcceptedEntryOutranksClosedOne`/
+   `TestResolveTargetSpace_ClosedAcceptedEntryStillWinsWithNoDirectOne`.
 5. **Außerhalb dieses Scopes:** Euro+Med-Backbone (Phasen 1–3 der Skizze
    2026-09-12 — zurückgestellt, bis E+M-UUIDs als Konzept-IDs oder die
    E+M-Sicht als Taxonomie gebraucht werden), situs-Export, GBIF-Xrefs als

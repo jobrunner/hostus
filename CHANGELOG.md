@@ -10,7 +10,7 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ### Added
 
 * **match:** `/v1/match` löst Zeilen jetzt auch per Fremd-ID auf (`xref: {authority, id}` statt `verbatim`) — Batch-Auflösung für PlantNet-artige Eingänge, bei denen der Client eine POWO-ID statt einen Verbatim-Namen liefert.
-* **translate:** Zielraum-Antworten (`/v1/translate`, `/v1/match` target_space, `/v1/suggest`) tragen jetzt die Quell-UUID (`ext_id`, z. B. die Euro+Med-PlantBase-UUID) und den Quell-Status (`accepted`/`synonym`/…) des gewählten Zielraum-Namens, nicht mehr nur dessen Namen.
+* **translate:** Zielraum-Antworten (`/v1/translate`, `/v1/match` target_space) tragen jetzt die Quell-UUID (`ext_id`, z. B. die Euro+Med-PlantBase-UUID) und den Quell-Status (`accepted`/`synonym`/…) des gewählten Zielraum-Namens, nicht mehr nur dessen Namen.
 * **ingest:** Der Namespace-Ingest schließt jetzt einen Teil der Zeilen, die der Namens-Crosswalk nicht platzieren kann (weder eindeutig noch mehrdeutig auflösbar), über die QUELLE-interne Synonymie: eine Zeile ohne eigenen Treffer wird an das EINE Konzept angehängt, auf das die restlichen Mitglieder ihrer Quell-Synonymiegruppe bereits aufgelöst haben — nie geraten, nie bei mehreren Zielkonzepten. Betrifft insbesondere Fälle, in denen Euro+Med einen Namen akzeptiert führt, den WCVP nur als Synonym kennt (die „Inula-hirta"-Klasse). Sichtbar über `NameSpaceIngestReport.SynonymyClosed`/`SynonymyClosedSample`, die CLI-Ausgabe von `hostus ingest` und den Resolution-Marker `source_synonymy_closure` auf dem geschriebenen `name_space_entry`.
 
 ## [3.3.0-alpha.0](https://github.com/jobrunner/hostus/compare/v3.2.0-alpha.0...v3.3.0-alpha.0) (2026-09-05)

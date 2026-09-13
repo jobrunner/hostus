@@ -6,8 +6,12 @@
 #   2. gomod          — bumps Go modules AND the `toolchain` directive in
 #                       go.mod. This is what keeps us off the next round of
 #                       stdlib CVEs without manual work.
-#   3. gitsubmodule   — bumps the third_party/claude-skills pin (added in a
-#                       later task) to the latest of its tracked branch.
+#
+# NOTE deliberately NOT listed: gitsubmodule. third_party/claude-skills is a
+# PRIVATE same-owner repo, and Dependabot on a personal account cannot clone
+# private repos — every weekly submodules job failed with "Repository not
+# found" (run 34161940113, 2026-09-07). The pin is updated on demand via the
+# "Update skills submodule" workflow_dispatch action instead.
 #
 # The CI workflows read the Go version via `go-version-file: go.mod` (the
 # `toolchain` directive), so go.mod is the single source of truth — Dependabot
@@ -62,22 +66,3 @@ updates:
         update-types:
           - "minor"
           - "patch"
-
-  # git submodules — bumps the third_party/claude-skills pin to the latest of
-  # its tracked branch (main, per .gitmodules) as a reviewed PR, so hostus's
-  # CI validates the new skills version before it lands. Keeps the submodule
-  # pinned (reproducible) while still updating regularly. Manual on-demand
-  # run: Insights → Dependency graph → Dependabot → "Check for updates" (or
-  # the "Update skills submodule" workflow_dispatch action).
-  # NOTE: claude-skills is private; Dependabot needs access to it (same-owner
-  # repos are reachable by default) or the PR won't appear. The submodule
-  # itself is added in a later task (S13) — this entry is a no-op until then.
-  - package-ecosystem: gitsubmodule
-    directory: /
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - skills

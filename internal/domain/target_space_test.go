@@ -24,21 +24,21 @@ func TestResolveTargetSpace(t *testing.T) {
 		name        string
 		isAggregate bool
 		entries     []domain.NameSpaceEntry
-		wantName    string
+		wantChoice  domain.TargetSpaceChoice
 		wantPolicy  domain.AggregatePolicy
 	}{
 		{
 			name:        "aggregate query, space carries the aggregate as its own taxon",
 			isAggregate: true,
 			entries:     festuca,
-			wantName:    "Festuca ovina aggr.",
+			wantChoice:  domain.TargetSpaceChoice{Name: "Festuca ovina aggr.", ExtID: "5648"},
 			wantPolicy:  domain.AggregatePolicyKnown,
 		},
 		{
 			name:        "plain species query carries no policy and the nominate spelling",
 			isAggregate: false,
 			entries:     festuca,
-			wantName:    "Festuca ovina",
+			wantChoice:  domain.TargetSpaceChoice{Name: "Festuca ovina", ExtID: "5647"},
 			wantPolicy:  "",
 		},
 		{
@@ -47,21 +47,21 @@ func TestResolveTargetSpace(t *testing.T) {
 			entries: []domain.NameSpaceEntry{
 				{Space: "floraveg", ExtID: "5647", Name: "Festuca ovina", Aggregate: false},
 			},
-			wantName:   "",
+			wantChoice: domain.TargetSpaceChoice{},
 			wantPolicy: domain.AggregatePolicyUnresolvable,
 		},
 		{
 			name:        "aggregate query, concept has no target-space entry at all -> unresolvable",
 			isAggregate: true,
 			entries:     nil,
-			wantName:    "",
+			wantChoice:  domain.TargetSpaceChoice{},
 			wantPolicy:  domain.AggregatePolicyUnresolvable,
 		},
 		{
 			name:        "plain species query, concept has no target-space entry -> no name, no policy",
 			isAggregate: false,
 			entries:     nil,
-			wantName:    "",
+			wantChoice:  domain.TargetSpaceChoice{},
 			wantPolicy:  "",
 		},
 		{
@@ -70,7 +70,7 @@ func TestResolveTargetSpace(t *testing.T) {
 			entries: []domain.NameSpaceEntry{
 				{Space: "floraveg", ExtID: "5648", Name: "Festuca ovina aggr.", Aggregate: true},
 			},
-			wantName:   "Festuca ovina aggr.",
+			wantChoice: domain.TargetSpaceChoice{Name: "Festuca ovina aggr.", ExtID: "5648"},
 			wantPolicy: "",
 		},
 		{
@@ -88,16 +88,44 @@ func TestResolveTargetSpace(t *testing.T) {
 				{Space: "floraveg", ExtID: "1", Name: "Festuca ovina aggr.", Aggregate: true},
 				{Space: "floraveg", ExtID: "2", Name: "Festuca ovina", Aggregate: false},
 			},
-			wantName:   "Festuca ovina",
+			wantChoice: domain.TargetSpaceChoice{Name: "Festuca ovina", ExtID: "2"},
+			wantPolicy: "",
+		},
+		{
+			// Pins that the CHOSEN entry's own ext_id/status ride along, not
+			// just its name — the whole point of TargetSpaceChoice. The
+			// accepted-in-space entry is picked (a08253f0-... models a real
+			// Euro+Med TaxonUsageID shape), so Status reports "accepted".
+			name:        "accepted entry carries its ext_id and accepted status",
+			isAggregate: false,
+			entries: []domain.NameSpaceEntry{
+				{Space: "eurosl", ExtID: "a08253f0-0000-0000-0000-000000000001", Name: "Inula hirta", Status: domain.NameSpaceStatusAccepted},
+			},
+			wantChoice: domain.TargetSpaceChoice{Name: "Inula hirta", ExtID: "a08253f0-0000-0000-0000-000000000001", Status: domain.NameSpaceStatusAccepted},
+			wantPolicy: "",
+		},
+		{
+			// The Inula-hirta class: no accepted-in-space entry exists (WCVP's
+			// side of the concept carries only Euro+Med SYNONYMS), so
+			// pickSpelling falls back to the first spelling and its Status is
+			// the source's own synonym status verbatim — this is exactly how
+			// Habitatus is meant to tell "this is an E+M synonym, not the
+			// accepted E+M name" from the response alone.
+			name:        "no accepted-in-space entry -> fallback spelling's own synonym status",
+			isAggregate: false,
+			entries: []domain.NameSpaceEntry{
+				{Space: "eurosl", ExtID: "b19364e1-0000-0000-0000-000000000002", Name: "Inula hirta subsp. hirta", Status: "synonymobjective"},
+			},
+			wantChoice: domain.TargetSpaceChoice{Name: "Inula hirta subsp. hirta", ExtID: "b19364e1-0000-0000-0000-000000000002", Status: "synonymobjective"},
 			wantPolicy: "",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			gotName, gotPolicy := domain.ResolveTargetSpace(tc.isAggregate, tc.entries)
-			if gotName != tc.wantName {
-				t.Errorf("name = %q, want %q", gotName, tc.wantName)
+			gotChoice, gotPolicy := domain.ResolveTargetSpace(tc.isAggregate, tc.entries)
+			if gotChoice != tc.wantChoice {
+				t.Errorf("choice = %+v, want %+v", gotChoice, tc.wantChoice)
 			}
 			if gotPolicy != tc.wantPolicy {
 				t.Errorf("policy = %q, want %q", gotPolicy, tc.wantPolicy)

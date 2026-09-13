@@ -1383,6 +1383,26 @@ components:
             Die Schreibweise des Ziel-Namensraums für das Quellkonzept.
             Leer, wenn `aggregate_policy: unresolvable`.
           example: Weiß-Tanne
+        ext_id:
+          type: string
+          description: >-
+            Die Quell-ID des Namensraum-Eintrags hinter `name`
+            (`name_space_entry.ext_id`) — für `name_space: eurosl` die
+            Euro+Med-PlantBase-TaxonUsage-UUID, ein stabiler Schlüssel für
+            externe E+M-Ressourcen (z. B. EuroVeg.eu). `name_space` selbst
+            ist die Herkunft: `eurosl` IST der Euro+Med-PlantBase-Snapshot
+            (EuroSL.sqlite, AccordingTo api.cybertaxonomy.org/euromed).
+            Fehlt, wenn `name` leer ist.
+          example: a08253f0-0000-0000-0000-000000000001
+        status:
+          type: string
+          description: >-
+            Der nomenklatorische Status des Eintrags hinter `name`, verbatim
+            aus der Quelle (`accepted`, `synonym`, `synonymobjective`, …).
+            Damit ist erkennbar, ob `name` der akzeptierte Name des
+            Zielraums ist oder ein Synonym-Fallback (kein akzeptierter
+            Eintrag im Zielraum vorhanden). Fehlt, wenn `name` leer ist.
+          example: accepted
         aggregate_policy:
           type: string
           enum: [known, unresolvable]
@@ -1565,6 +1585,26 @@ components:
             Name geliefert wird (die Kleinart als Aggregatnamen anzubieten
             wäre genau die falsche „nicht erfüllt"-Antwort, die UC4 vermeidet).
           example: 'Festuca ovina aggr.'
+        target_space_ext_id:
+          type: string
+          description: >-
+            Nur bei gesetztem `target_space`: die Quell-ID des
+            Namensraum-Eintrags hinter `target_space_name`
+            (`name_space_entry.ext_id`) — für `target_space: eurosl` die
+            Euro+Med-PlantBase-TaxonUsage-UUID, ein stabiler Schlüssel für
+            externe E+M-Ressourcen (z. B. EuroVeg.eu). Fehlt, wenn
+            `target_space_name` fehlt.
+          example: a08253f0-0000-0000-0000-000000000001
+        target_space_status:
+          type: string
+          description: >-
+            Nur bei gesetztem `target_space`: der nomenklatorische Status
+            des Eintrags hinter `target_space_name`, verbatim aus der
+            Quelle (`accepted`, `synonym`, `synonymobjective`, …) — damit
+            ist erkennbar, ob `target_space_name` der akzeptierte Name des
+            Zielraums ist oder ein Synonym-Fallback. Fehlt, wenn
+            `target_space_name` fehlt.
+          example: accepted
         aggregate_policy:
           type: string
           enum: [known, unresolvable]

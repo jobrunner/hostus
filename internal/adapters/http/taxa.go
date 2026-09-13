@@ -314,11 +314,17 @@ type matchResultDTO struct {
 	RequiresReview bool     `json:"requires_review,omitempty"`
 	Note           string   `json:"note,omitempty"`
 
-	// The three UC4 fields below appear ONLY when the request named a
-	// target_space; on the plain path they stay zero and omitempty drops them,
-	// leaving the SP1 shape untouched.
+	// The UC4 fields below appear ONLY when the request named a target_space;
+	// on the plain path they stay zero and omitempty drops them, leaving the
+	// SP1 shape untouched.
 	//
 	// TargetSpaceName is the ESy-compatible spelling the target space uses.
+	// TargetSpaceExtID is that spelling's own id in the target space (for
+	// "eurosl" the Euro+Med TaxonUsageID — a stable key external resources
+	// like EuroVeg.eu can join on); TargetSpaceStatus is its verbatim source
+	// status ("accepted", "synonym", ...) — how a caller distinguishes the
+	// space's accepted name from a synonym fallback. Both are the source's
+	// own identity, never a hostus id.
 	// AggregatePolicy is the tri-state (known/unresolvable/absent) — absent
 	// (empty, dropped) means no aggregate is involved.
 	// ESyDiagnosticRelevance is ALWAYS esyRelevanceNotDeterminable on the
@@ -327,6 +333,8 @@ type matchResultDTO struct {
 	// silently missing — a consumer must never read its absence as "not
 	// relevant". See docs/reference/http-api.md.
 	TargetSpaceName        string `json:"target_space_name,omitempty"`
+	TargetSpaceExtID       string `json:"target_space_ext_id,omitempty"`
+	TargetSpaceStatus      string `json:"target_space_status,omitempty"`
 	AggregatePolicy        string `json:"aggregate_policy,omitempty"`
 	ESyDiagnosticRelevance string `json:"esy_diagnostic_relevance,omitempty"`
 
@@ -655,6 +663,8 @@ func matchResultsToDTO(results []application.MatchResult, targetSpace bool) []ma
 		}
 		if targetSpace {
 			dto.TargetSpaceName = res.TargetSpaceName
+			dto.TargetSpaceExtID = res.TargetSpaceExtID
+			dto.TargetSpaceStatus = res.TargetSpaceStatus
 			dto.AggregatePolicy = string(res.AggregatePolicy)
 			dto.ESyDiagnosticRelevance = esyRelevanceNotDeterminable
 		}

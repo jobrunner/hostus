@@ -123,6 +123,32 @@ func (e NameSpaceEntry) AcceptedInSpace() bool {
 	return e.Status == NameSpaceStatusAccepted
 }
 
+// TargetSpaceChoice is the entry ResolveTargetSpace chose to report, not just
+// its name: Habitatus needs the source's own identity for that spelling to
+// tell whether it got the space's ACCEPTED name or a synonym (see Status) and
+// to carry a stable external key forward (see ExtID) — the name alone answers
+// neither question.
+//
+// Name == "" means "no entry" exactly as it did when ResolveTargetSpace
+// returned a bare string; ExtID/Status are then also empty and carry no
+// separate meaning.
+type TargetSpaceChoice struct {
+	// Name is the ESy-compatible spelling the target space uses — the same
+	// value ResolveTargetSpace used to return on its own.
+	Name string
+	// ExtID is the chosen entry's OWN id in the target space
+	// (NameSpaceEntry.ExtID) — for "eurosl" this is the Euro+Med
+	// TaxonUsageID, a stable key external resources (e.g. EuroVeg.eu) can be
+	// joined on. It is the source's id, not a hostus concept id.
+	ExtID string
+	// Status is the chosen entry's own nomenclatural status, verbatim from
+	// the source (NameSpaceEntry.Status: "accepted", "synonym",
+	// "synonymobjective", ...). This is how a caller distinguishes "the
+	// space's accepted name" from a synonym fallback (see pickSpelling) —
+	// the name string alone cannot carry that distinction.
+	Status string
+}
+
 // ResolveTargetSpace decides, for one matched concept, the ESy-compatible name
 // the target space uses and the AggregatePolicy that applies. queryIsAggregate
 // says whether the verbatim the caller matched carried an aggregate marker
@@ -138,20 +164,21 @@ func (e NameSpaceEntry) AcceptedInSpace() bool {
 //     precisely the false "not met" the source document warns against.
 //   - not queryIsAggregate -> the nominate (non-aggregate) spelling if any,
 //     else the first spelling, else ""; policy is the zero value (absent).
-func ResolveTargetSpace(queryIsAggregate bool, entries []NameSpaceEntry) (string, AggregatePolicy) {
+func ResolveTargetSpace(queryIsAggregate bool, entries []NameSpaceEntry) (TargetSpaceChoice, AggregatePolicy) {
 	if queryIsAggregate {
 		if e, ok := pickSpelling(entries, true); ok {
-			return e.Name, AggregatePolicyKnown
+			return TargetSpaceChoice{Name: e.Name, ExtID: e.ExtID, Status: e.Status}, AggregatePolicyKnown
 		}
-		return "", AggregatePolicyUnresolvable
+		return TargetSpaceChoice{}, AggregatePolicyUnresolvable
 	}
 	if e, ok := pickSpelling(entries, false); ok {
-		return e.Name, ""
+		return TargetSpaceChoice{Name: e.Name, ExtID: e.ExtID, Status: e.Status}, ""
 	}
 	if len(entries) > 0 {
-		return entries[0].Name, ""
+		e := entries[0]
+		return TargetSpaceChoice{Name: e.Name, ExtID: e.ExtID, Status: e.Status}, ""
 	}
-	return "", ""
+	return TargetSpaceChoice{}, ""
 }
 
 // pickSpelling returns the entry to report among those matching aggregate,

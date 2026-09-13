@@ -512,6 +512,34 @@ func TestTranslateNameSpaceTargetOverHTTP(t *testing.T) {
 	if _, hasPolicy := nst["aggregate_policy"]; hasPolicy {
 		t.Errorf("aggregate_policy present for a plain-species query, want omitted: %v", nst)
 	}
+	// Task 2: the chosen entry's own ext_id/status ride along.
+	if nst["ext_id"] != "1" || nst["status"] != domain.NameSpaceStatusAccepted {
+		t.Errorf("name_space_translation ext_id/status = %v, want {1, %q}", nst, domain.NameSpaceStatusAccepted)
+	}
+}
+
+// TestTranslateNameSpaceTargetOmitsExtIDAndStatusWithoutAnEntry pins that
+// ext_id/status are absent (not empty strings) when the concept has no
+// entry in the target space at all.
+func TestTranslateNameSpaceTargetOmitsExtIDAndStatusWithoutAnEntry(t *testing.T) {
+	repo := stubTranslateNSRepo{
+		nameSpaces: []domain.NameSpaceMeta{{ID: "germansl"}},
+		concepts:   map[string]domain.Concept{"cdm:concept:a": nsConcept("cdm:concept:a", "Abies alba")},
+	}
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	got := decodeTranslateOn(t, r, `{"concept_id":"cdm:concept:a","target_space":"germansl"}`)
+
+	nst, ok := got["name_space_translation"].(map[string]any)
+	if !ok {
+		t.Fatalf("name_space_translation missing or wrong shape: %v", got["name_space_translation"])
+	}
+	if _, present := nst["ext_id"]; present {
+		t.Errorf("ext_id present without a target-space entry, want omitted: %v", nst)
+	}
+	if _, present := nst["status"]; present {
+		t.Errorf("status present without a target-space entry, want omitted: %v", nst)
+	}
 }
 
 // TestTranslateWCVPTrivialIdentityOverHTTP pins the "wcvp" special case for

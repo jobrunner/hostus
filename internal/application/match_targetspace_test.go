@@ -138,6 +138,65 @@ func TestMatchInSpace_PlainSpeciesCarriesNoPolicy(t *testing.T) {
 	}
 }
 
+// TestMatchInSpace_TargetSpaceCarriesExtIDAndAcceptedStatus pins Task 2: the
+// resolved target-space entry's OWN identity (ext_id, the Euro+Med
+// TaxonUsageID shape for eurosl) and its verbatim source status ride along
+// with the name, not just the name.
+func TestMatchInSpace_TargetSpaceCarriesExtIDAndAcceptedStatus(t *testing.T) {
+	repo := seededMatchRepo(t)
+	const corynephorusConceptID = "wcvp:concept:405825"
+	addFloraVeg(t, repo, map[string][]domain.NameSpaceEntry{
+		corynephorusConceptID: {
+			{Space: "floraveg", ExtID: "a08253f0-0000-0000-0000-000000000001", Name: "Corynephorus canescens", Status: domain.NameSpaceStatusAccepted},
+		},
+	})
+
+	results, err := application.MatchInSpace(context.Background(), repo, []application.MatchRequest{
+		{ID: "1", Verbatim: "Corynephorus canescens"},
+	}, "floraveg", application.MatchFilter{})
+	if err != nil {
+		t.Fatalf("MatchInSpace: unexpected error: %v", err)
+	}
+	r := results[0]
+	if r.TargetSpaceExtID != "a08253f0-0000-0000-0000-000000000001" {
+		t.Errorf("TargetSpaceExtID = %q, want the source ext_id", r.TargetSpaceExtID)
+	}
+	if r.TargetSpaceStatus != domain.NameSpaceStatusAccepted {
+		t.Errorf("TargetSpaceStatus = %q, want %q", r.TargetSpaceStatus, domain.NameSpaceStatusAccepted)
+	}
+}
+
+// TestMatchInSpace_TargetSpaceSynonymFallbackCarriesSynonymStatus pins the
+// Inula-hirta class (spec 2026-09-13): no accepted-in-space entry exists for
+// the concept (WCVP's side carries only Euro+Med synonyms), so
+// domain.ResolveTargetSpace falls back to the first spelling — and its
+// Status is the source's own synonym status VERBATIM, not "accepted". This is
+// the mechanism Habitatus relies on to tell it did NOT get the space's
+// accepted name.
+func TestMatchInSpace_TargetSpaceSynonymFallbackCarriesSynonymStatus(t *testing.T) {
+	repo := seededMatchRepo(t)
+	const corynephorusConceptID = "wcvp:concept:405825"
+	addFloraVeg(t, repo, map[string][]domain.NameSpaceEntry{
+		corynephorusConceptID: {
+			{Space: "floraveg", ExtID: "b19364e1-0000-0000-0000-000000000002", Name: "Corynephorus canescens", Status: "synonymobjective"},
+		},
+	})
+
+	results, err := application.MatchInSpace(context.Background(), repo, []application.MatchRequest{
+		{ID: "1", Verbatim: "Corynephorus canescens"},
+	}, "floraveg", application.MatchFilter{})
+	if err != nil {
+		t.Fatalf("MatchInSpace: unexpected error: %v", err)
+	}
+	r := results[0]
+	if r.TargetSpaceExtID != "b19364e1-0000-0000-0000-000000000002" {
+		t.Errorf("TargetSpaceExtID = %q, want the fallback entry's ext_id", r.TargetSpaceExtID)
+	}
+	if r.TargetSpaceStatus != "synonymobjective" {
+		t.Errorf("TargetSpaceStatus = %q, want the source's verbatim synonym status, not \"accepted\"", r.TargetSpaceStatus)
+	}
+}
+
 // TestMatchInSpace_UnknownTargetSpaceIsRejected pins that an un-ingested target
 // space is rejected by name (the HTTP layer renders this as INVALID_QUERY), not
 // silently ignored.

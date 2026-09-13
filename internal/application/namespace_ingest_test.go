@@ -1114,9 +1114,9 @@ func TestIngestNameSpace_TieBrokenAcceptedSpellingWinsTargetSpaceChoice(t *testi
 		t.Fatalf("NameSpaceEntries(a1) = %v, %v — want both entries on the tie-broken bearer", entries, err)
 	}
 
-	name, policy := domain.ResolveTargetSpace(false, entries)
-	if name != "Abies alba" {
-		t.Errorf("ResolveTargetSpace name = %q, want %q (the tie-broken, source-accepted spelling)", name, "Abies alba")
+	choice, policy := domain.ResolveTargetSpace(false, entries)
+	if choice.Name != "Abies alba" {
+		t.Errorf("ResolveTargetSpace name = %q, want %q (the tie-broken, source-accepted spelling)", choice.Name, "Abies alba")
 	}
 	if policy != "" {
 		t.Errorf("ResolveTargetSpace policy = %q, want empty (plain species)", policy)

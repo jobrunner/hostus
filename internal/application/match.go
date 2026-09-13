@@ -258,14 +258,22 @@ type MatchResult struct {
 	RequiresReview bool
 	Note           string
 
-	// TargetSpaceName and AggregatePolicy are populated only by MatchInSpace
-	// (UC4), never by MatchNames — both stay zero on the plain match path so
-	// that path's result is byte-for-byte what it always was. TargetSpaceName
-	// is the ESy-compatible spelling the target space uses for ConceptID;
-	// AggregatePolicy is the tri-state from domain.ResolveTargetSpace (empty
-	// for a plain species). See MatchInSpace.
-	TargetSpaceName string
-	AggregatePolicy domain.AggregatePolicy
+	// TargetSpaceName, TargetSpaceExtID, TargetSpaceStatus and
+	// AggregatePolicy are populated only by MatchInSpace (UC4), never by
+	// MatchNames — all stay zero on the plain match path so that path's
+	// result is byte-for-byte what it always was. TargetSpaceName is the
+	// ESy-compatible spelling the target space uses for ConceptID.
+	// TargetSpaceExtID is that spelling's OWN id in the target space (for
+	// "eurosl" the Euro+Med TaxonUsageID, a stable key external resources
+	// like EuroVeg.eu can join on); TargetSpaceStatus is its verbatim
+	// source status ("accepted", "synonym", ...) — how a caller tells the
+	// space's accepted name from a synonym fallback. AggregatePolicy is the
+	// tri-state from domain.ResolveTargetSpace (empty for a plain species).
+	// See MatchInSpace.
+	TargetSpaceName   string
+	TargetSpaceExtID  string
+	TargetSpaceStatus string
+	AggregatePolicy   domain.AggregatePolicy
 
 	// Classification and AggregateResolution are populated by
 	// matchNamesFiltered (Task 10), so BOTH MatchNames and MatchInSpace carry
@@ -588,8 +596,10 @@ func MatchInSpace(ctx context.Context, repo output.Repository, reqs []MatchReque
 			return nil, err
 		}
 		canonical, _ := splitVerbatim(reqs[i].Verbatim)
-		name, policy := domain.ResolveTargetSpace(isAggregate(canonical), entries)
-		results[i].TargetSpaceName = name
+		choice, policy := domain.ResolveTargetSpace(isAggregate(canonical), entries)
+		results[i].TargetSpaceName = choice.Name
+		results[i].TargetSpaceExtID = choice.ExtID
+		results[i].TargetSpaceStatus = choice.Status
 		results[i].AggregatePolicy = policy
 	}
 	return results, nil

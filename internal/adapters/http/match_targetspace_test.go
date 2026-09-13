@@ -79,10 +79,34 @@ func TestHandleMatch_NoTargetSpace_OmitsUC4Fields(t *testing.T) {
 		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
 	}
 	res := rawResults(t, rr)[0]
-	for _, k := range []string{"target_space_name", "aggregate_policy", "esy_diagnostic_relevance"} {
+	for _, k := range []string{"target_space_name", "target_space_ext_id", "target_space_status", "aggregate_policy", "esy_diagnostic_relevance"} {
 		if _, present := res[k]; present {
 			t.Errorf("result carries %q without a target_space; want it absent", k)
 		}
+	}
+}
+
+// TestHandleMatch_TargetSpace_CarriesExtIDAndStatus pins Task 2 at the wire:
+// with a target_space that carries an accepted-in-space entry, the result
+// carries that entry's own ext_id and status alongside target_space_name.
+func TestHandleMatch_TargetSpace_CarriesExtIDAndStatus(t *testing.T) {
+	db := seededRepo(t)
+	seedFloraVegHTTP(t, db, map[string][]domain.NameSpaceEntry{
+		corynephorusConceptID: {
+			{Space: "floraveg", ExtID: "a08253f0-0000-0000-0000-000000000001", Name: "Corynephorus canescens", Status: domain.NameSpaceStatusAccepted},
+		},
+	})
+	rr := postMatch(t, db, `{"target_space":"floraveg","names":[{"id":"1","verbatim":"Corynephorus canescens"}]}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	res := rawResults(t, rr)[0]
+
+	if extID, present := res["target_space_ext_id"]; !present || string(extID) != `"a08253f0-0000-0000-0000-000000000001"` {
+		t.Errorf("target_space_ext_id = %s (present=%v), want the source ext_id", extID, present)
+	}
+	if status, present := res["target_space_status"]; !present || string(status) != `"accepted"` {
+		t.Errorf("target_space_status = %s (present=%v), want %q", status, present, "accepted")
 	}
 }
 

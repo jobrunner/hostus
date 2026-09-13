@@ -19,9 +19,9 @@ func TestResolveTargetSpace_PrefersTheAcceptedSpelling(t *testing.T) {
 		{Space: "eurosl", ExtID: "2", Name: "Hyssopus officinalis", Status: "accepted"},
 		{Space: "eurosl", ExtID: "3", Name: "Hyssopus pubescens", Status: "synonymobjective"},
 	}
-	name, _ := domain.ResolveTargetSpace(false, entries)
-	if name != "Hyssopus officinalis" {
-		t.Errorf("name = %q, want the accepted spelling regardless of entry order", name)
+	choice, _ := domain.ResolveTargetSpace(false, entries)
+	if choice.Name != "Hyssopus officinalis" {
+		t.Errorf("name = %q, want the accepted spelling regardless of entry order", choice.Name)
 	}
 }
 
@@ -33,8 +33,8 @@ func TestResolveTargetSpace_FallsBackWhenNoStatusIsKnown(t *testing.T) {
 		{Space: "eurosl", ExtID: "1", Name: "Hyssopus ruber"},
 		{Space: "eurosl", ExtID: "2", Name: "Hyssopus officinalis"},
 	}
-	if name, _ := domain.ResolveTargetSpace(false, entries); name != "Hyssopus ruber" {
-		t.Errorf("name = %q, want the first entry as before when no status is known", name)
+	if choice, _ := domain.ResolveTargetSpace(false, entries); choice.Name != "Hyssopus ruber" {
+		t.Errorf("name = %q, want the first entry as before when no status is known", choice.Name)
 	}
 }
 
@@ -47,9 +47,9 @@ func TestResolveTargetSpace_AggregateStillWinsForAnAggregateQuery(t *testing.T) 
 		{Space: "floraveg", ExtID: "1", Name: "Festuca ovina", Status: "accepted"},
 		{Space: "floraveg", ExtID: "2", Name: "Festuca ovina aggr.", Aggregate: true, Status: "synonym"},
 	}
-	name, policy := domain.ResolveTargetSpace(true, entries)
-	if name != "Festuca ovina aggr." {
-		t.Errorf("name = %q, want the aggregate spelling for an aggregate query", name)
+	choice, policy := domain.ResolveTargetSpace(true, entries)
+	if choice.Name != "Festuca ovina aggr." {
+		t.Errorf("name = %q, want the aggregate spelling for an aggregate query", choice.Name)
 	}
 	if policy != domain.AggregatePolicyKnown {
 		t.Errorf("policy = %q, want %q", policy, domain.AggregatePolicyKnown)
@@ -64,7 +64,7 @@ func TestResolveTargetSpace_AcceptedAggregateWinsAmongAggregates(t *testing.T) {
 		{Space: "floraveg", ExtID: "1", Name: "Festuca ovina s. l.", Aggregate: true, Status: "synonym"},
 		{Space: "floraveg", ExtID: "2", Name: "Festuca ovina aggr.", Aggregate: true, Status: "accepted"},
 	}
-	if name, _ := domain.ResolveTargetSpace(true, entries); name != "Festuca ovina aggr." {
-		t.Errorf("name = %q, want the accepted aggregate spelling", name)
+	if choice, _ := domain.ResolveTargetSpace(true, entries); choice.Name != "Festuca ovina aggr." {
+		t.Errorf("name = %q, want the accepted aggregate spelling", choice.Name)
 	}
 }

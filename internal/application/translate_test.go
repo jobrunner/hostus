@@ -715,6 +715,58 @@ func TestTranslate_NameSpaceTargetCarriesAggregatePolicy(t *testing.T) {
 	}
 }
 
+// TestTranslate_NameSpaceTargetCarriesExtIDAndAcceptedStatus pins Task 2: the
+// name-space branch surfaces the chosen entry's ext_id (the Euro+Med
+// TaxonUsageID shape for eurosl) and its verbatim source status, not just
+// the name.
+func TestTranslate_NameSpaceTargetCarriesExtIDAndAcceptedStatus(t *testing.T) {
+	repo := translateRepo()
+	repo.nameSpaces = []domain.NameSpaceMeta{{ID: "eurosl"}}
+	repo.nameSpaceEntries = map[string][]domain.NameSpaceEntry{
+		"cdm:concept:roth": {
+			{Space: "eurosl", ExtID: "a08253f0-0000-0000-0000-000000000001", Name: "Inula hirta", Status: domain.NameSpaceStatusAccepted},
+		},
+	}
+
+	res := translate(t, repo, application.TranslateRequest{ConceptID: "cdm:concept:roth", TargetSec: "eurosl"})
+
+	if res.NameSpaceTranslation == nil {
+		t.Fatal("NameSpaceTranslation = nil, want set")
+	}
+	if res.NameSpaceTranslation.ExtID != "a08253f0-0000-0000-0000-000000000001" {
+		t.Errorf("ExtID = %q, want the source ext_id", res.NameSpaceTranslation.ExtID)
+	}
+	if res.NameSpaceTranslation.Status != domain.NameSpaceStatusAccepted {
+		t.Errorf("Status = %q, want %q", res.NameSpaceTranslation.Status, domain.NameSpaceStatusAccepted)
+	}
+}
+
+// TestTranslate_NameSpaceTargetSynonymFallbackCarriesSynonymStatus pins the
+// Inula-hirta class: no accepted-in-space entry exists, so the fallback
+// entry's OWN synonym status rides along verbatim — the mechanism that lets
+// Habitatus tell it did not get the space's accepted name.
+func TestTranslate_NameSpaceTargetSynonymFallbackCarriesSynonymStatus(t *testing.T) {
+	repo := translateRepo()
+	repo.nameSpaces = []domain.NameSpaceMeta{{ID: "eurosl"}}
+	repo.nameSpaceEntries = map[string][]domain.NameSpaceEntry{
+		"cdm:concept:roth": {
+			{Space: "eurosl", ExtID: "b19364e1-0000-0000-0000-000000000002", Name: "Inula hirta subsp. hirta", Status: "synonymobjective"},
+		},
+	}
+
+	res := translate(t, repo, application.TranslateRequest{ConceptID: "cdm:concept:roth", TargetSec: "eurosl"})
+
+	if res.NameSpaceTranslation == nil {
+		t.Fatal("NameSpaceTranslation = nil, want set")
+	}
+	if res.NameSpaceTranslation.ExtID != "b19364e1-0000-0000-0000-000000000002" {
+		t.Errorf("ExtID = %q, want the fallback entry's ext_id", res.NameSpaceTranslation.ExtID)
+	}
+	if res.NameSpaceTranslation.Status != "synonymobjective" {
+		t.Errorf("Status = %q, want the source's verbatim synonym status, not %q", res.NameSpaceTranslation.Status, domain.NameSpaceStatusAccepted)
+	}
+}
+
 // TestTranslate_WCVPTargetIsTrivialIdentityForAWCVPSource pins the
 // documented "wcvp" special case (§9 names it as valid, but
 // Repository.NameSpaces never lists it — it's a backbone, not a name

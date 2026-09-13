@@ -567,25 +567,47 @@ func handleXref(repo output.Repository) http.HandlerFunc {
 	}
 }
 
+// matchErrorMappings pairs each application match-validation sentinel with
+// the 400 INVALID_QUERY message writeMatchError renders for it, checked in
+// order via errors.Is. Kept as data rather than an if/else-if chain (four
+// real arms would trip gocritic's ifElseChain) or a tagless switch (which
+// hides each case's condition from the mutation gate — measured as a NOT
+// COVERED mutant on the err==nil arm despite every branch having a test; the
+// exact same trap fixed in tracedrepo.go, commit 6943d27). A data-driven
+// loop's per-iteration errors.Is condition attributes properly instead.
+var matchErrorMappings = []struct {
+	sentinel error
+	message  func(body matchRequestDTO, err error) string
+}{
+	{application.ErrUnknownTargetSpace, func(body matchRequestDTO, _ error) string {
+		return "unknown target_space " + strconv.Quote(body.TargetSpace)
+	}},
+	{application.ErrUnknownBackbone, func(body matchRequestDTO, _ error) string {
+		return "unknown entry_backbone " + strconv.Quote(body.EntryBackbone)
+	}},
+	{application.ErrUnknownSec, func(body matchRequestDTO, _ error) string {
+		return "unknown entry_sec " + strconv.Quote(body.EntrySec)
+	}},
+	{application.ErrInvalidMatchRequest, func(_ matchRequestDTO, err error) string {
+		return err.Error()
+	}},
+}
+
 // writeMatchError renders an application.MatchInSpace error as its HTTP
 // response and reports true, or reports false (writing nothing) if err is
 // nil. Pulled out of handleMatch purely to keep that function's cognitive
 // complexity down; body supplies the request values the 400 messages quote.
 func writeMatchError(w http.ResponseWriter, err error, body matchRequestDTO) bool {
-	switch {
-	case err == nil:
+	if err == nil {
 		return false
-	case errors.Is(err, application.ErrUnknownTargetSpace):
-		httperr.InvalidQueryError(w, "unknown target_space "+strconv.Quote(body.TargetSpace))
-	case errors.Is(err, application.ErrUnknownBackbone):
-		httperr.InvalidQueryError(w, "unknown entry_backbone "+strconv.Quote(body.EntryBackbone))
-	case errors.Is(err, application.ErrUnknownSec):
-		httperr.InvalidQueryError(w, "unknown entry_sec "+strconv.Quote(body.EntrySec))
-	case errors.Is(err, application.ErrInvalidMatchRequest):
-		httperr.InvalidQueryError(w, err.Error())
-	default:
-		httperr.InternalError(w)
 	}
+	for _, m := range matchErrorMappings {
+		if errors.Is(err, m.sentinel) {
+			httperr.InvalidQueryError(w, m.message(body, err))
+			return true
+		}
+	}
+	httperr.InternalError(w)
 	return true
 }
 

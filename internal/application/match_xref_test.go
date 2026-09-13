@@ -56,6 +56,26 @@ func seedXrefConcept(t *testing.T, repo *sqlite.DB) string {
 	return concept.ID
 }
 
+// seedSecReference registers id as a known sec. reference space with no
+// concept attached — just enough for validateFilter (MatchFilter.Sec) to
+// accept it, for tests that only need a REGISTERED id, not a concept that
+// carries it (seedSameNameAcrossSecs is for the latter).
+func seedSecReference(t *testing.T, repo *sqlite.DB, id string) string {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := repo.BeginIngest(ctx, domain.BackboneVersion{ID: "test-secref-only", Version: "v1"})
+	if err != nil {
+		t.Fatalf("BeginIngest: %v", err)
+	}
+	if err := tx.UpsertSecReference(domain.SecReference{ID: id, Title: "Flora " + id}); err != nil {
+		t.Fatalf("UpsertSecReference(%s): %v", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	return id
+}
+
 // addEurosl registers an "eurosl" name space (addFloraVeg's pattern, applied
 // to the space TestMatchNames_XrefEntryResolvesByForeignID targets) and
 // attaches the given per-concept entries.
@@ -181,6 +201,46 @@ func TestMatchNames_XrefRespectsBackboneFilter(t *testing.T) {
 	}
 	if r.Note == "" {
 		t.Error("Note = empty, want an explanation")
+	}
+}
+
+// TestMatchNames_XrefRespectsSecFilter pins M7 (whole-branch review
+// 2026-09-13): matchByXref's entry_sec check, the Sec counterpart of
+// TestMatchNames_XrefRespectsBackboneFilter above. The WCVP fixture concept
+// resolved by xref here is a genuine backbone concept — SecReference is
+// empty, never any sec. reference space — so ANY non-empty entry_sec filter
+// must refuse it exactly as the backbone filter does: unresolvable, with
+// noteXrefFiltered (never a "wrong backbone" error — the id itself is
+// valid, it just names a concept outside the requested sec. space).
+func TestMatchNames_XrefRespectsSecFilter(t *testing.T) {
+	repo := seededMatchRepo(t)
+	const corynephorusPowoID = "396681-1"
+	// A registered sec. reference space, so validateFilter accepts it —
+	// the xref concept below carries none of it (it is a genuine WCVP
+	// backbone concept, SecReference empty), which is exactly the mismatch
+	// under test. No concept needs to carry this sec — the filter only
+	// checks the ID is a known sec. reference.
+	sec := seedSecReference(t, repo, "sec-corynephorus-filter-probe")
+
+	results, err := application.MatchInSpace(context.Background(), repo, []application.MatchRequest{
+		{ID: "1", Xref: &application.XrefRef{Authority: "powo", ID: corynephorusPowoID}},
+	}, "", application.MatchFilter{Sec: sec})
+	if err != nil {
+		t.Fatalf("MatchInSpace: unexpected error: %v", err)
+	}
+	r := results[0]
+	if r.ConceptID != "" {
+		t.Errorf("ConceptID = %q, want empty (concept carries no sec. reference, so any entry_sec filter excludes it)", r.ConceptID)
+	}
+	if r.MatchType != "" {
+		t.Errorf("MatchType = %q, want empty (unresolvable)", r.MatchType)
+	}
+	if !r.RequiresReview {
+		t.Error("RequiresReview = false, want true")
+	}
+	const noteXrefFiltered = "Konzept liegt außerhalb des angeforderten Backbone-/Sec-Filters"
+	if r.Note != noteXrefFiltered {
+		t.Errorf("Note = %q, want %q", r.Note, noteXrefFiltered)
 	}
 }
 

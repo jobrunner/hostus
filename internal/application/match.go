@@ -595,6 +595,16 @@ func MatchInSpace(ctx context.Context, repo output.Repository, reqs []MatchReque
 		if err != nil {
 			return nil, err
 		}
+		// For an xref row reqs[i].Verbatim is always "" (matchByXref never
+		// sets it — the row carried no spelling to begin with), so canonical
+		// is "" and isAggregate("") is unconditionally false here. Its
+		// AggregatePolicy therefore always stays the zero value (absent),
+		// even when the resolved concept itself IS an aggregate: there is no
+		// query-side spelling to test for an aggregate marker, and
+		// ResolveTargetSpace's aggregate branch is deliberately keyed on
+		// what the CALLER asked for, not on what the concept happens to be
+		// (whole-branch review 2026-09-13, M5; see docs/reference/http-api.md's
+		// aggregate_policy description for the wire-level statement of this).
 		canonical, _ := splitVerbatim(reqs[i].Verbatim)
 		choice, policy := domain.ResolveTargetSpace(isAggregate(canonical), entries)
 		results[i].TargetSpaceName = choice.Name

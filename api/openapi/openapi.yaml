@@ -1623,7 +1623,11 @@ components:
             „nicht entscheidbar", NICHT „nicht erfüllt", und die Deckung darf
             NICHT auf die Kleinarten verteilt werden. FEHLT das Feld (dritter
             Zustand), ist gar kein Aggregat im Spiel (gewöhnliche Art) — ein
-            `known` für jede Art würde das Feld bedeutungslos machen.
+            `known` für jede Art würde das Feld bedeutungslos machen. Bei einer
+            per `xref` aufgelösten Zeile FEHLT `aggregate_policy` IMMER: die
+            Zeile trägt keine eigene Anfrage-Schreibweise, an der sich prüfen
+            ließe, ob die ANFRAGE ein Aggregat war — auch wenn das aufgelöste
+            Concept selbst eines ist.
         esy_diagnostic_relevance:
           type: string
           enum: [not_determinable]

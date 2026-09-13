@@ -635,6 +635,19 @@ func handleMatch(repo output.Repository) http.HandlerFunc {
 		for i, n := range body.Names {
 			reqs[i] = application.MatchRequest{ID: n.ID, Verbatim: n.Verbatim}
 			if n.Xref != nil {
+				// application.matchNamesFiltered only checks that Xref is
+				// SET (exactly one of verbatim/xref) — it never inspects
+				// the two fields inside it, so an xref with an empty
+				// authority or id would otherwise sail through as a
+				// well-formed request and resolve as UNRESOLVABLE
+				// (ConceptByXref("", ...) simply finds nothing), not as
+				// the malformed request it actually is. Caught here, at
+				// the boundary, the same way the malformed-body check
+				// above is (whole-branch review 2026-09-13, M6).
+				if n.Xref.Authority == "" || n.Xref.ID == "" {
+					httperr.InvalidQueryError(w, "xref requires both authority and id: row "+strconv.Quote(n.ID))
+					return
+				}
 				reqs[i].Xref = &application.XrefRef{Authority: n.Xref.Authority, ID: n.Xref.ID}
 			}
 		}

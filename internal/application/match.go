@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -25,6 +26,14 @@ var (
 	ErrUnknownBackbone = errors.New("unknown entry_backbone")
 	ErrUnknownSec      = errors.New("unknown entry_sec")
 )
+
+// ErrInvalidMatchRequest is returned by matchNamesFiltered when a row sets
+// both Verbatim and Xref, or neither — the request must identify the row
+// exactly one way, since a row carrying both (or carrying none) does not say
+// which resolution path it wants. The HTTP adapter renders it as a 400
+// INVALID_QUERY that names the offending row id (wrapped via fmt.Errorf, so
+// errors.Is still finds this sentinel underneath).
+var ErrInvalidMatchRequest = errors.New("match request row must set exactly one of verbatim or xref")
 
 // MatchFilter narrows verbatim resolution to a single backbone and/or sec.
 // reference space, so a name shared across the multi-backbone index (WCVP +
@@ -193,6 +202,17 @@ const (
 	noteAmbiguous          = "Mehrdeutiger Treffer: mehrere Konzepte mit gleicher Übereinstimmungsstärke, manuelle Prüfung nötig"
 	noteFuzzy              = "Fuzzy-Treffer: Ähnlichkeit über Schwellenwert, manuelle Prüfung erforderlich"
 	noteFuzzyAmbiguous     = "Mehrdeutiger Fuzzy-Treffer: mehrere Konzepte mit gleicher Ähnlichkeit, manuelle Prüfung nötig"
+	// noteXrefUnknown is the xref branch's UNRESOLVABLE note: the foreign
+	// authority/id names no concept in the index (Repository.ConceptByXref
+	// returned domain.ErrNotFound). There is no name ladder to fall back to
+	// — an id lookup either finds its one concept or it doesn't.
+	noteXrefUnknown = "Fremd-ID unbekannt: kein Konzept mit dieser Authority/ID im Index"
+	// noteXrefFiltered is the xref branch's UNRESOLVABLE note when the
+	// resolved concept exists but sits outside the entry_backbone/entry_sec
+	// filter — the same filter a verbatim row's candidates are narrowed by
+	// (MatchFilter.apply), applied here to the single concept an xref
+	// resolves to rather than to a candidate list.
+	noteXrefFiltered = "Konzept liegt außerhalb des angeforderten Backbone-/Sec-Filters"
 	// noteAggregatePrefix is prepended to whatever matchFuzzy's Note already
 	// says (noteFuzzy or noteFuzzyAmbiguous) when a fuzzy hit resolves an
 	// aggregate/collective-species query — see matchAggregate's fuzzy
@@ -203,11 +223,21 @@ const (
 	noteAggregatePrefix = "Aggregat: "
 )
 
-// MatchRequest is one verbatim name to resolve, identified by a
-// caller-supplied ID that is echoed back on the corresponding MatchResult.
+// XrefRef identifies one row by a foreign authority's id instead of a
+// verbatim name — the PlantNet path: the identification carries a POWO
+// id, and an id lookup is exact where every name match is a heuristic.
+type XrefRef struct{ Authority, ID string }
+
+// MatchRequest is one row to resolve, identified by a caller-supplied ID
+// that is echoed back on the corresponding MatchResult. Exactly one of
+// Verbatim/Xref must be set: Verbatim for the ordinary name-ladder
+// resolution, Xref to resolve by a foreign authority's id instead (see
+// XrefRef). matchNamesFiltered rejects a row that sets both or neither with
+// ErrInvalidMatchRequest before any resolution is attempted.
 type MatchRequest struct {
 	ID       string
 	Verbatim string
+	Xref     *XrefRef
 }
 
 // MatchResult is the outcome of resolving one MatchRequest. A zero MatchType
@@ -283,9 +313,27 @@ func MatchNames(ctx context.Context, repo output.Repository, reqs []MatchRequest
 	return matchNamesFiltered(ctx, repo, reqs, MatchFilter{})
 }
 
+// validateRequestShapes checks every row identifies itself exactly one way
+// (a verbatim name OR a foreign xref id), never both and never neither,
+// BEFORE any row is matched — same "reject before partial work" principle as
+// validateFilter. Pulled out of matchNamesFiltered as its own function
+// purely to keep that function's cognitive complexity down; it has no
+// broader reuse.
+func validateRequestShapes(reqs []MatchRequest) error {
+	for _, req := range reqs {
+		if (req.Verbatim != "") == (req.Xref != nil) {
+			return fmt.Errorf("%w: row %q", ErrInvalidMatchRequest, req.ID)
+		}
+	}
+	return nil
+}
+
 // matchNamesFiltered is MatchNames with an optional resolution filter applied
 // to every entry. A zero filter makes it byte-for-byte MatchNames.
 func matchNamesFiltered(ctx context.Context, repo output.Repository, reqs []MatchRequest, filter MatchFilter) ([]MatchResult, error) {
+	if err := validateRequestShapes(reqs); err != nil {
+		return nil, err
+	}
 	// Loaded only when the filter is empty: preferGenuineClaimants is never
 	// invoked on the filtered path (every call site below is itself gated by
 	// filter.empty()), so a caller pinning entry_backbone/entry_sec costs no
@@ -548,6 +596,10 @@ func MatchInSpace(ctx context.Context, repo output.Repository, reqs []MatchReque
 }
 
 func matchOne(ctx context.Context, repo output.Repository, req MatchRequest, filter MatchFilter, nativeSpaces map[string]bool) (MatchResult, error) {
+	if req.Xref != nil {
+		return matchByXref(ctx, repo, req, filter)
+	}
+
 	canonical, author := splitVerbatim(req.Verbatim)
 
 	if isAggregate(canonical) {
@@ -594,6 +646,44 @@ func matchOne(ctx context.Context, repo output.Repository, req MatchRequest, fil
 		return *fuzzy, nil
 	}
 	return res, nil
+}
+
+// matchByXref resolves req.Xref via Repository.ConceptByXref — an id lookup,
+// not a name match, so none of the name ladder runs: no ClassifyMatch, no
+// fuzzy fallback, and no preferGenuineClaimants (that tie-break exists to
+// choose among several candidates sharing a spelling; an xref names exactly
+// one concept, so there is no set to choose among).
+//
+// domain.ErrNotFound (no concept carries this authority/ext_id) yields an
+// UNRESOLVABLE result (noteXrefUnknown), not an error: the batch continues
+// past an unknown id exactly as it continues past an unresolvable verbatim
+// name. A resolved concept still has to clear the entry_backbone/entry_sec
+// filter (the same filter a verbatim row's MatchExact candidates are
+// narrowed by) — applied here to the single resolved concept rather than to
+// a candidate list, via the same BackboneID/SecReference fields
+// MatchFilter.apply compares. Failing that check is UNRESOLVABLE too
+// (noteXrefFiltered), never a "wrong backbone" error: the id itself was
+// valid, it just names a concept outside the requested space.
+func matchByXref(ctx context.Context, repo output.Repository, req MatchRequest, filter MatchFilter) (MatchResult, error) {
+	concept, err := repo.ConceptByXref(ctx, req.Xref.Authority, req.Xref.ID)
+	if errors.Is(err, domain.ErrNotFound) {
+		return MatchResult{ID: req.ID, RequiresReview: true, Note: noteXrefUnknown}, nil
+	}
+	if err != nil {
+		return MatchResult{}, err
+	}
+	if filter.Backbone != "" && concept.BackboneID != filter.Backbone {
+		return MatchResult{ID: req.ID, RequiresReview: true, Note: noteXrefFiltered}, nil
+	}
+	if filter.Sec != "" && concept.SecReference != filter.Sec {
+		return MatchResult{ID: req.ID, RequiresReview: true, Note: noteXrefFiltered}, nil
+	}
+	return MatchResult{
+		ID:         req.ID,
+		MatchType:  domain.MatchXref,
+		Confidence: 1.0,
+		ConceptID:  concept.ID,
+	}, nil
 }
 
 // unresolvedNote picks the note for an unresolved result that still carries
@@ -1052,10 +1142,10 @@ func classify(req MatchRequest, queryCanon, queryAuthor string, candidates []out
 			exactAuthorMatches = append(exactAuthorMatches, hit)
 		case domain.MatchExact:
 			exactMatches = append(exactMatches, hit)
-		case domain.MatchAggregateAlias, domain.MatchAggregateNominate, domain.MatchFuzzy:
+		case domain.MatchAggregateAlias, domain.MatchAggregateNominate, domain.MatchFuzzy, domain.MatchXref:
 			// ClassifyMatch never produces any of these — they are assigned
-			// by separate code paths (matchAggregate,
-			// matchAggregateNominate, matchFuzzy) — unreachable here.
+			// by separate code paths (matchAggregate, matchAggregateNominate,
+			// matchFuzzy, matchByXref) — unreachable here.
 		}
 	}
 

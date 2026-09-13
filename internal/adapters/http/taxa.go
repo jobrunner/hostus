@@ -268,10 +268,22 @@ func classificationInfoFromMatch(cl domain.Classification) *classificationInfoDT
 	return &classificationInfoDTO{Family: cl.Family, Order: cl.OrderName, Class: cl.ClassName}
 }
 
+// xrefRefDTO identifies one matchNameDTO row by a foreign authority's id
+// instead of a verbatim name (spec 2026-09-13, the PlantNet workflow: the
+// identification already carries a POWO id).
+type xrefRefDTO struct {
+	Authority string `json:"authority"`
+	ID        string `json:"id"`
+}
+
 // matchNameDTO is one entry of POST /v1/match's request body, per §B.2.
+// Exactly one of Verbatim/Xref must be set — application.MatchInSpace
+// rejects a row setting both or neither with application.ErrInvalidMatchRequest,
+// which handleMatch renders as 400 INVALID_QUERY.
 type matchNameDTO struct {
-	ID       string `json:"id"`
-	Verbatim string `json:"verbatim"`
+	ID       string      `json:"id"`
+	Verbatim string      `json:"verbatim,omitempty"`
+	Xref     *xrefRefDTO `json:"xref,omitempty"`
 }
 
 // matchRequestDTO is the POST /v1/match request body. TargetSpace (SP9/UC4)
@@ -547,6 +559,28 @@ func handleXref(repo output.Repository) http.HandlerFunc {
 	}
 }
 
+// writeMatchError renders an application.MatchInSpace error as its HTTP
+// response and reports true, or reports false (writing nothing) if err is
+// nil. Pulled out of handleMatch purely to keep that function's cognitive
+// complexity down; body supplies the request values the 400 messages quote.
+func writeMatchError(w http.ResponseWriter, err error, body matchRequestDTO) bool {
+	switch {
+	case err == nil:
+		return false
+	case errors.Is(err, application.ErrUnknownTargetSpace):
+		httperr.InvalidQueryError(w, "unknown target_space "+strconv.Quote(body.TargetSpace))
+	case errors.Is(err, application.ErrUnknownBackbone):
+		httperr.InvalidQueryError(w, "unknown entry_backbone "+strconv.Quote(body.EntryBackbone))
+	case errors.Is(err, application.ErrUnknownSec):
+		httperr.InvalidQueryError(w, "unknown entry_sec "+strconv.Quote(body.EntrySec))
+	case errors.Is(err, application.ErrInvalidMatchRequest):
+		httperr.InvalidQueryError(w, err.Error())
+	default:
+		httperr.InternalError(w)
+	}
+	return true
+}
+
 // handleMatch serves POST /v1/match: batch verbatim-name resolution via
 // application.MatchNames. A per-item UNRESOLVABLE outcome is rendered as a
 // normal 200 result element (matchTypeUnresolvable), never as an HTTP
@@ -567,24 +601,14 @@ func handleMatch(repo output.Repository) http.HandlerFunc {
 		reqs := make([]application.MatchRequest, len(body.Names))
 		for i, n := range body.Names {
 			reqs[i] = application.MatchRequest{ID: n.ID, Verbatim: n.Verbatim}
+			if n.Xref != nil {
+				reqs[i].Xref = &application.XrefRef{Authority: n.Xref.Authority, ID: n.Xref.ID}
+			}
 		}
 
 		results, err := application.MatchInSpace(r.Context(), repo, reqs, body.TargetSpace,
 			application.MatchFilter{Backbone: body.EntryBackbone, Sec: body.EntrySec})
-		if errors.Is(err, application.ErrUnknownTargetSpace) {
-			httperr.InvalidQueryError(w, "unknown target_space "+strconv.Quote(body.TargetSpace))
-			return
-		}
-		if errors.Is(err, application.ErrUnknownBackbone) {
-			httperr.InvalidQueryError(w, "unknown entry_backbone "+strconv.Quote(body.EntryBackbone))
-			return
-		}
-		if errors.Is(err, application.ErrUnknownSec) {
-			httperr.InvalidQueryError(w, "unknown entry_sec "+strconv.Quote(body.EntrySec))
-			return
-		}
-		if err != nil {
-			httperr.InternalError(w)
+		if writeMatchError(w, err, body) {
 			return
 		}
 

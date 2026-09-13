@@ -1416,7 +1416,11 @@ components:
 
     MatchNameRequest:
       type: object
-      required: [id, verbatim]
+      required: [id]
+      description: >-
+        Genau eines von `verbatim`/`xref` muss gesetzt sein (spec
+        2026-09-13): beide oder keines ist `400 INVALID_QUERY`, nennt die
+        Zeilen-`id`.
       properties:
         id:
           type: string
@@ -1425,6 +1429,22 @@ components:
         verbatim:
           type: string
           example: Senecio jacobaea L.
+        xref:
+          type: object
+          required: [authority, id]
+          description: >-
+            Löst die Zeile über eine Fremd-ID auf (z. B. eine POWO-ID aus dem
+            PlantNet-Workflow) statt über einen verbatim-Namen — ein exakter
+            ID-Lookup ohne Namensleiter/Fuzzy. Eine unbekannte ID liefert ein
+            `unresolvable`-Ergebnis (die restliche Batch läuft weiter), keinen
+            HTTP-Fehler.
+          properties:
+            authority:
+              type: string
+              example: powo
+            id:
+              type: string
+              example: '77178414-1'
 
     MatchRequest:
       type: object
@@ -1473,8 +1493,12 @@ components:
           description: Spiegelt die `id` aus der Anfrage.
         match_type:
           type: string
-          enum: [exact, exact_author, aggregate_alias, aggregate_nominate, fuzzy, unresolvable]
+          enum: [exact, exact_author, aggregate_alias, aggregate_nominate, fuzzy, xref, unresolvable]
           description: >-
+            `xref`: die Zeile wurde über eine Fremd-ID aufgelöst
+            (`names[].xref`), nicht über einen Namen — `confidence` ist dann
+            immer `1.0` und keine Namensleiter (exact/fuzzy/…) lief.
+
             `aggregate_nominate` heißt: die Anfrage nannte eine **Sammelart**
             (`X aggr.`, `X s.l.`, auch geschichtet `X aggr. s. l.`), der Index
             führt dafür kein Sammelart-Taxon, und geantwortet wird mit dem

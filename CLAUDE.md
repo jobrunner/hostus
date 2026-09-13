@@ -4,10 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**hostus 2.0** - A local, read-only naming and trait service for vascular
-plants, built on a **multi-backbone index** (COL XR, WCVP/POWO, Euro+Med,
-FloraVeg.EU, plus trait vocabularies EIVE/Tichý/Midolo) fed by versioned,
-pinned artifacts. hostus is *not* a stateless GBIF autosuggest proxy anymore
+**hostus 2.0** - A local, read-only naming service for vascular plants, built
+on a **multi-backbone index** (COL XR, WCVP/POWO, Euro+Med via the `eurosl`
+snapshot, FloraVeg.EU, GermanSL) fed by versioned, pinned artifacts. Trait
+vocabularies (EIVE/Tichý/Midolo) are NO LONGER part of hostus — the traits
+subsystem was removed and transferred to the sibling service situs, which
+keys indicator values by the same WCVP concept IDs hostus serves (see
+`docs/how-to/plantnet-habitatus-uc7.md`). hostus is *not* a stateless GBIF autosuggest proxy anymore
 — that was hostus 1.x. It now runs its own local SQLite/FTS5 index, ingests
 backbone data through a dedicated pipeline, and serves seven API endpoints
 plus an offline bundle export. GBIF, where still used, is one ingest/
@@ -48,11 +51,11 @@ Hexagonal (Ports & Adapters), not a stateless proxy:
 
 ```
 internal/
-  domain/        # Name, Concept, Trait, Xref, Distribution, Relation — no I/O deps
-  application/   # Use cases: Suggest, Match, ResolveConcept, ReverseXref, Traits, Synonyms, Translate, Ingest, Bundle
+  domain/        # Name, Concept, Xref, Distribution, Relation — no I/O deps
+  application/   # Use cases: Suggest, Match, ResolveConcept, ReverseXref, Synonyms, Translate, Ingest, Bundle
   ports/
     input/       # interfaces the application offers
-    output/      # interfaces the application needs (repository, trait store, ...)
+    output/      # interfaces the application needs (repository, ...)
   adapters/
     sqlite/      # SQLite/FTS5 repository (modernc.org/sqlite)
     coldp/       # ColDP importer
@@ -69,7 +72,7 @@ Hexagon boundaries are enforced by `depguard`/`gomodguard` in the linter
 
 ### Key Responsibilities
 - Serve a local, versioned multi-backbone index (SQLite/FTS5) fed by pinned
-  backbone/trait artifacts — not a live GBIF passthrough
+  backbone/name-space artifacts — not a live GBIF passthrough
 - Group synonyms under accepted taxa (concept/name relations, typed
   homotypic/heterotypic)
 - Rate limiting and load shedding for upstream protection (ingest/enrichment
@@ -90,10 +93,9 @@ All of the above are OTel-instrumented (`otelmux`).
 
 ### API Endpoints
 - `GET /v1/suggest?q={query}&limit={n}` - autosuggest, area-ranked (SP2)
-- `POST /v1/match` - batch name resolution, verbatim → concept candidates (SP1 exact, SP3 fuzzy)
+- `POST /v1/match` - batch resolution, verbatim name OR `xref` foreign ID → concept candidates (SP1 exact, SP3 fuzzy)
 - `GET /v1/concept/{id}` - concept with xrefs + classification (SP1)
 - `GET /v1/xref` - reverse lookup, foreign ID → concept (SP1 base, SP4 enrichment)
-- `GET /v1/concept/{id}/traits` - indicator values per vocabulary (SP3)
 - `GET /v1/concept/{id}/synonyms` - synonym list, relevance-filterable (SP6)
 - `POST /v1/translate` - concept translation between `sec.` reference spaces (SP5)
 - `GET /openapi` - generated OpenAPI spec

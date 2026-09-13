@@ -5,6 +5,27 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [Unreleased]
+
+### Added
+
+* **Doku:** How-to „Von einer PlantNet-Bestimmung zu Euro+Med-Namen und
+  Zeigerwerten (UC7)" (`docs/how-to/plantnet-habitatus-uc7.md`) — die
+  vollständige Kette PlantNet → `POST /v1/match` (xref) → situs-Traits, mit
+  dem verifizierten IPNI-ID-Format, den Grenzfällen (Synonym-IPNI-IDs,
+  außereuropäische Taxa, unbekannte IDs) und der Abgrenzung zu FloraVeg.
+
+### Fixed
+
+* **Doku:** `CLAUDE.md` beschrieb hostus weiterhin als „naming and trait
+  service" und listete den in 3.0 entfernten Endpunkt
+  `GET /v1/concept/{id}/traits` — korrigiert samt Verweis auf situs; der
+  `xref`-Eingang von `POST /v1/match` ergänzt.
+
+### Changed
+
+* **chore:** `third_party/claude-skills` auf `2546ee6` gehoben.
+
 ## [3.4.0-alpha.0](https://github.com/jobrunner/hostus/compare/v3.3.0-alpha.0...v3.4.0-alpha.0) (2026-09-13)
 
 

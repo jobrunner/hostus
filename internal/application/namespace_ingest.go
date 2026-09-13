@@ -433,17 +433,36 @@ func synonymyGroups(rows []NameRow) map[string]map[string]bool {
 // (matched && !ambiguous) names point to, and false when zero or several
 // distinct concepts are present — the "kein Raten" refusal at the heart of
 // closeSynonymyGroups.
+//
+// Accepted-role anchor guard (spec 2026-09-13, fix round 2): the concept
+// additionally qualifies only if AT LEAST ONE of its resolved anchors in
+// this group carries matchedAccepted — see traitResolution.matchedAccepted's
+// doc comment for the real cross-kingdom-homonym failure this guards
+// against (a germansl bryophyte group closed entirely onto a WCVP flowering
+// plant because its only anchor matched WCVP's homonym SYNONYM name). A
+// concept every anchor reached only via a synonym-role name is exactly the
+// class of coincidental name collision this pass must refuse, the same way
+// it already refuses two distinct concepts.
 func singleTargetConcept(members map[string]bool, resolved map[string]traitResolution) (string, bool) {
 	concepts := make(map[string]bool)
+	acceptedAnchor := make(map[string]bool)
 	for name := range members {
-		if res := resolved[name]; res.matched && !res.ambiguous {
-			concepts[res.conceptID] = true
+		res := resolved[name]
+		if !res.matched || res.ambiguous {
+			continue
+		}
+		concepts[res.conceptID] = true
+		if res.matchedAccepted {
+			acceptedAnchor[res.conceptID] = true
 		}
 	}
 	if len(concepts) != 1 {
 		return "", false
 	}
 	for id := range concepts {
+		if !acceptedAnchor[id] {
+			return "", false
+		}
 		return id, true
 	}
 	return "", false

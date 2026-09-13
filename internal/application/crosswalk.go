@@ -52,6 +52,28 @@ type traitResolution struct {
 	// resolutionWithTieBreak can compose either marker without the other
 	// caring.
 	synonymyClosed bool
+	// matchedAccepted records that the candidate key which produced this
+	// outcome answered with an ACCEPTED-role name of conceptID
+	// (output.MatchCandidate.Role == "accepted") — either the single
+	// candidate itself, or, on a tie-broken outcome, the winning candidate
+	// (acceptedBearerWinner's winner IS the accepted bearer by definition,
+	// so tieBroken == true always implies matchedAccepted == true). Only
+	// meaningful when matched is also true.
+	//
+	// closeSynonymyGroups' accepted-role guard (spec 2026-09-13, fix round
+	// 2) reads this: a real full-ingest run found a germansl bryophyte group
+	// ("Syntrichia sinensis") closed entirely onto a WCVP FLOWERING-PLANT
+	// concept (Caryopteris incana var. incana) because its only resolved
+	// anchor, "Barbula sinensis", matched WCVP's cross-kingdom homonym
+	// SYNONYM name "Barbula sinensis" — Barbula being both a moss genus (not
+	// in WCVP at all) and a Lamiaceae synonym genus. A synonym-role anchor
+	// is exactly the class of coincidental cross-kingdom name collision this
+	// pass must not amplify into an attach; only a concept with at least one
+	// matchedAccepted anchor qualifies as a group's closure target. The
+	// underlying crosswalk defect (a moss name matching a WCVP homonym in
+	// the ORDINARY, non-closure path) is out of this field's scope — it is
+	// tracked as a follow-up issue, not fixed here.
+	matchedAccepted bool
 	// rule is the normalisation rule whose key produced this outcome (both
 	// for matched and for ambiguous). domain.RuleExact means the plain
 	// Canonicalize key answered — the pre-normalisation behavior. Left at
@@ -185,11 +207,19 @@ func resolveTraitName(ctx context.Context, repo output.Repository, canon string,
 			// whichever tiered tie-break policy selects, or reports the tie
 			// stands.
 			if id, ok := resolveHomonymTie(candidates, policy); ok {
-				return traitResolution{conceptID: id, matched: true, tieBroken: true, rule: cand.Rule}, nil
+				// The tie-break winner IS the accepted bearer by construction
+				// (acceptedBearerWinner/genuineBearerWinner's tier 1) — see
+				// matchedAccepted's doc comment.
+				return traitResolution{conceptID: id, matched: true, tieBroken: true, matchedAccepted: true, rule: cand.Rule}, nil
 			}
 			return traitResolution{ambiguous: true, rule: cand.Rule}, nil
 		}
-		return traitResolution{conceptID: candidates[0].Concept.ID, matched: true, rule: cand.Rule}, nil
+		return traitResolution{
+			conceptID:       candidates[0].Concept.ID,
+			matched:         true,
+			matchedAccepted: candidates[0].Role == roleAccepted,
+			rule:            cand.Rule,
+		}, nil
 	}
 	return traitResolution{}, nil
 }

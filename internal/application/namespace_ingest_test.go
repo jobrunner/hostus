@@ -1125,11 +1125,15 @@ func TestIngestNameSpace_TieBrokenAcceptedSpellingWinsTargetSpaceChoice(t *testi
 }
 
 // assertClosedEntry finds entries' member named wantName and asserts it
-// carries wantResolution/wantStatus, failing the test otherwise. Split out
-// of TestIngestNameSpace_SourceSynonymyClosesUnattachedAccepted to keep that
-// test's cyclomatic complexity within the linter's bound.
-func assertClosedEntry(t *testing.T, entries []domain.NameSpaceEntry, wantName, wantResolution, wantStatus string) {
+// carries the "source_synonymy_closure" resolution marker and wantStatus,
+// failing the test otherwise. Split out of
+// TestIngestNameSpace_SourceSynonymyClosesUnattachedAccepted to keep that
+// test's cyclomatic complexity within the linter's bound. wantResolution is
+// not a parameter (every call site wants the same marker — an unparam-flagged
+// parameter would just restate it).
+func assertClosedEntry(t *testing.T, entries []domain.NameSpaceEntry, wantName, wantStatus string) {
 	t.Helper()
+	const wantResolution = "source_synonymy_closure"
 	for i := range entries {
 		if entries[i].Name != wantName {
 			continue
@@ -1210,7 +1214,7 @@ func TestIngestNameSpace_SourceSynonymyClosesUnattachedAccepted(t *testing.T) {
 	if err != nil || len(entries) != 2 {
 		t.Fatalf("NameSpaceEntries(ph1) = %v, %v — beide Zeilen müssen an ph1 attached sein", entries, err)
 	}
-	assertClosedEntry(t, entries, "Inula hirta", "source_synonymy_closure", "accepted")
+	assertClosedEntry(t, entries, "Inula hirta", "accepted")
 
 	// Habitatus-Gewinn: with the accepted eurosl entry now present,
 	// ResolveTargetSpace picks "Inula hirta" (Status accepted), not the
@@ -1358,6 +1362,123 @@ func TestIngestNameSpace_SynonymyClosureClosesAllOpenMembersOfOneGroup(t *testin
 	if err != nil || len(entries) != 3 {
 		t.Fatalf("NameSpaceEntries(m1) = %v, %v — want all three rows attached to the ONE resolved concept", entries, err)
 	}
-	assertClosedEntry(t, entries, "Beta unresolved", "source_synonymy_closure", "accepted")
-	assertClosedEntry(t, entries, "Gamma unresolved", "source_synonymy_closure", "synonym")
+	assertClosedEntry(t, entries, "Beta unresolved", "accepted")
+	assertClosedEntry(t, entries, "Gamma unresolved", "synonym")
+}
+
+// TestIngestNameSpace_SynonymyClosureRefusesSynonymOnlyAnchor pins the
+// accepted-role anchor guard (spec 2026-09-13, fix round 2): a group whose
+// only resolved member reached its concept through a SYNONYM-role name must
+// NOT close the group, even though that concept is the group's single
+// candidate.
+//
+// This mirrors a real full-ingest finding (run 2026-09-13): the germansl
+// bryophyte group "Syntrichia sinensis" was closed entirely onto
+// wcvp:concept:34724 (Caryopteris incana var. incana, a FLOWERING PLANT)
+// because its only anchor, "Barbula sinensis", matched WCVP's cross-kingdom
+// homonym SYNONYM name "Barbula sinensis" — Barbula being both a moss genus
+// (absent from WCVP entirely) and a Lamiaceae synonym genus. Fixture below
+// reconstructs that shape: concept x1 holds "Barbula sinensis" only as a
+// synonym (never as its accepted name), so the anchor's matchedAccepted is
+// false and the group must stay open.
+//
+// The underlying crosswalk defect this exposes — "Barbula sinensis" itself
+// matching a WCVP homonym in the ORDINARY, non-closure resolve — is
+// deliberately OUT OF SCOPE here; this test only pins that the closure pass
+// does not amplify it onto a whole group.
+func TestIngestNameSpace_SynonymyClosureRefusesSynonymOnlyAnchor(t *testing.T) {
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "wcvp", Version: "v1"}}, ManifestSHA: "x"}
+	taxa := []application.TaxonRow{
+		{TaxonID: "x1", AcceptedTaxonID: "x1", Accepted: true, Canonical: "Concept X (flowering plant)", Rank: "SPECIES", Status: "Accepted"},
+		// x1 holds "Barbula sinensis" only as a SYNONYM — never as its
+		// accepted name. This is the cross-kingdom homonym collision.
+		{TaxonID: "xsyn", AcceptedTaxonID: "x1", Accepted: false, Canonical: "Barbula sinensis", Rank: "SPECIES", Status: "Synonym"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) { return fakeRowSource{taxa: taxa}, nil }
+	if _, err := application.Ingest(ctx, ds, readerFor, repo); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	report, err := application.IngestNameSpace(ctx, repo,
+		sliceRowSource{
+			// Resolves (single candidate, synonym role) to x1 — but NOT via
+			// an accepted-role name.
+			{Taxon: "Barbula sinensis", SourceID: "g1", Status: "synonym", AcceptedTaxon: "Syntrichia sinensis"},
+			// No WCVP taxon at all carries this spelling — stays Unmatched,
+			// and must NOT be rescued by x1 despite the group having only
+			// one resolved member.
+			{Taxon: "Syntrichia sinensis", SourceID: "g2", Status: "accepted", AcceptedTaxon: ""},
+		},
+		domain.NameSpaceMeta{ID: "germansl", Version: "v1"})
+	if err != nil {
+		t.Fatalf("IngestNameSpace: %v", err)
+	}
+	if report.SynonymyClosed != 0 {
+		t.Errorf("SynonymyClosed = %d, want 0 (the group's only anchor matched a synonym-role name, not accepted)", report.SynonymyClosed)
+	}
+	if report.Matched != 1 || report.Unmatched != 1 {
+		t.Fatalf("matched/unmatched = %d/%d, want 1/1", report.Matched, report.Unmatched)
+	}
+	if len(report.UnmatchedSample) != 1 || report.UnmatchedSample[0] != "Syntrichia sinensis" {
+		t.Errorf("UnmatchedSample = %v, want [Syntrichia sinensis]", report.UnmatchedSample)
+	}
+
+	entries, err := repo.NameSpaceEntries(ctx, "wcvp:concept:x1", []string{"germansl"})
+	if err != nil || len(entries) != 1 || entries[0].Name != "Barbula sinensis" {
+		t.Fatalf("NameSpaceEntries(x1) = %v, %v — want only the anchor's own row, \"Syntrichia sinensis\" must stay unattached", entries, err)
+	}
+}
+
+// TestIngestNameSpace_SynonymyClosureAcceptsTieBrokenAnchor pins the other
+// side of the accepted-role guard: a tie-broken anchor qualifies as a
+// closure target — acceptedBearerWinner's winner IS the accepted bearer by
+// construction (spec 2026-09-04), so tieBroken == true always implies
+// matchedAccepted == true.
+func TestIngestNameSpace_SynonymyClosureAcceptsTieBrokenAnchor(t *testing.T) {
+	repo := openMemoryRepo(t)
+	ctx := context.Background()
+	ds := &application.Dataset{Backbones: []application.Backbone{{ID: "wcvp", Version: "v1"}}, ManifestSHA: "x"}
+	taxa := []application.TaxonRow{
+		// Concept A: bears "Nomen typicum" as its ACCEPTED name.
+		{TaxonID: "a1", AcceptedTaxonID: "a1", Accepted: true, Canonical: "Nomen typicum", Rank: "SPECIES", Status: "Accepted"},
+		// Concept B: a different accepted taxon...
+		{TaxonID: "b1", AcceptedTaxonID: "b1", Accepted: true, Canonical: "Beta genuina", Rank: "SPECIES", Status: "Accepted"},
+		// ...that holds "Nomen typicum" only as a SYNONYM — the homonym tie
+		// acceptedBearerWinner resolves to concept A.
+		{TaxonID: "bsyn", AcceptedTaxonID: "b1", Accepted: false, Canonical: "Nomen typicum", Rank: "SPECIES", Status: "Illegitimate"},
+	}
+	readerFor := func(application.Backbone) (application.RowSource, error) { return fakeRowSource{taxa: taxa}, nil }
+	if _, err := application.Ingest(ctx, ds, readerFor, repo); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	report, err := application.IngestNameSpace(ctx, repo,
+		sliceRowSource{
+			// Tie-broken anchor: resolves to concept A via acceptedBearerWinner.
+			{Taxon: "Nomen typicum", SourceID: "e1", Status: "accepted", AcceptedTaxon: "Group T"},
+			// No WCVP taxon at all — stays Unmatched by itself, but the
+			// group's one resolved (tie-broken) member points to A alone.
+			{Taxon: "Unresolved Companion", SourceID: "e2", Status: "synonym", AcceptedTaxon: "Group T"},
+		},
+		domain.NameSpaceMeta{ID: "eurosl", Version: "v1"})
+	if err != nil {
+		t.Fatalf("IngestNameSpace: %v", err)
+	}
+	if report.TieBroken != 1 {
+		t.Errorf("TieBroken = %d, want 1", report.TieBroken)
+	}
+	if report.SynonymyClosed != 1 {
+		t.Fatalf("SynonymyClosed = %d, want 1 (the tie-broken anchor qualifies as an accepted-role anchor)", report.SynonymyClosed)
+	}
+	if len(report.SynonymyClosedSample) != 1 || report.SynonymyClosedSample[0] != "Unresolved Companion" {
+		t.Errorf("SynonymyClosedSample = %v, want [Unresolved Companion]", report.SynonymyClosedSample)
+	}
+
+	entries, err := repo.NameSpaceEntries(ctx, "wcvp:concept:a1", []string{"eurosl"})
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("NameSpaceEntries(a1) = %v, %v — both rows must be attached to the tie-broken bearer", entries, err)
+	}
+	assertClosedEntry(t, entries, "Unresolved Companion", "synonym")
 }

@@ -14,6 +14,13 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   vollständige Kette PlantNet → `POST /v1/match` (xref) → situs-Traits, mit
   dem verifizierten IPNI-ID-Format, den Grenzfällen (Synonym-IPNI-IDs,
   außereuropäische Taxa, unbekannte IDs) und der Abgrenzung zu FloraVeg.
+* **CORS:** `cors.allowed_origins` versteht Subdomain-Wildcards
+  (`https://*.example.com`). Platzhalter ist nur das Host-Label — Schema und
+  Port müssen exakt passen, sodass weder `http://sub.example.com` noch
+  `https://sub.example.com:8443` zugelassen wird; die bare Domain ist nicht
+  abgedeckt. Bei konfigurierter Allowlist trägt jede Antwort auf eine
+  Anfrage mit `Origin` ein `Vary: Origin`, damit ein Shared Cache die
+  Antwort eines Ursprungs nicht an einen anderen ausliefert.
 
 ### Fixed
 

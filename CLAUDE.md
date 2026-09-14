@@ -86,10 +86,18 @@ Hexagon boundaries are enforced by `depguard`/`gomodguard` in the linter
 3. Rate-Limiting
 4. Load-Shedding
 5. Timeouts
-6. CORS
-7. Metrics
+6. Metrics
 
 All of the above are OTel-instrumented (`otelmux`).
+
+**CORS is NOT a chain member** — it wraps the finished router
+(`internal/adapters/http/cors.go`). `gorilla/mux` runs `Use`-registered
+middleware only for MATCHED routes, so a preflight against a
+`.Methods(POST)` route never reaches the chain: as a chain member, CORS
+answered every preflight with a bare 405 and no headers, which made
+`/v1/match` and `/v1/translate` unusable from a browser. Do not move it
+back into `r.Use(...)`; the fitness test
+`TestCORS_PreflightOnPostRouteIsAnswered` fails if you do.
 
 ### API Endpoints
 - `GET /v1/suggest?q={query}&limit={n}` - autosuggest, area-ranked (SP2)

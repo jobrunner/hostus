@@ -22,5 +22,9 @@ Die Reihenfolge ist eine bewusste, unveränderliche Randbedingung (siehe
 3. Rate-Limiting
 4. Load-Shedding
 5. Timeouts
-6. CORS
-7. Metrics
+6. Metrics
+
+CORS umschließt den fertigen Router und ist kein Kettenglied; Preflights
+werden aber durch dieselbe Kette geschickt und erscheinen daher regulär in
+Logs, Metriken und Spans (siehe
+[Architektur](../explanation/architecture.md)).

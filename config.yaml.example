@@ -67,8 +67,19 @@ sqlite:
   max_read_conns: 4
 
 cors:
-  # Erlaubte Ursprünge für Cross-Origin-Requests (leer = keine erlaubt).
+  # Erlaubte Ursprünge für Cross-Origin-Requests.
+  #
+  # ACHTUNG: leer bedeutet ALLE erlaubt ("Access-Control-Allow-Origin: *"),
+  # nicht "keine". Wer den Zugriff einschränken will, muss aktiv eine Liste
+  # setzen. Der permissive Default ist vertretbar, weil hostus read-only und
+  # ohne Authentifizierung arbeitet und "Allow-Credentials" nie gesetzt wird.
+  #
+  # Einträge sind exakte Ursprünge oder Subdomain-Wildcards; Schema und Port
+  # müssen dabei exakt passen ("https://*.example.com" lässt weder
+  # "http://sub.example.com" noch "https://sub.example.com:8443" zu).
   allowed_origins: []
+  # - "https://app.example.com"
+  # - "https://*.example.com"
 
 ui:
   # Eingebettete Testkonsole unter "/" ausliefern (Standard: an).

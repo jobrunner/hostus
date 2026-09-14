@@ -42,8 +42,17 @@ Die Reihenfolge ist eine bewusste, unveränderliche Randbedingung:
 3. **Rate-Limiting** — schützt vor Überlastung
 4. **Load-Shedding** — Circuit Breaker für den Upstream
 5. **Timeout** — begrenzt die Request-Laufzeit
-6. **CORS** — Cross-Origin-Handling
-7. **Metrics** — Prometheus-Instrumentierung
+6. **Metrics** — Prometheus-Instrumentierung
+
+**CORS ist bewusst kein Kettenglied**, sondern umschließt den fertigen
+Router (`internal/adapters/http/cors.go`). `gorilla/mux` führt per `Use`
+registrierte Middleware nur für *gematchte* Routen aus — ein
+CORS-Preflight (`OPTIONS`) gegen eine als `.Methods(POST)` registrierte
+Route matcht nichts und erreicht die Kette nie. Als Kettenglied beantwortete
+CORS deshalb jeden Preflight mit einem nackten 405 ohne Header, womit
+`/v1/match` und `/v1/translate` aus einem Browser unbenutzbar waren.
+Preflights werden vom Wrapper allerdings durch dieselbe Kette geschickt,
+damit sie observierbar und rate-limitiert bleiben.
 
 ## Synonym-Gruppierung (SP1+)
 

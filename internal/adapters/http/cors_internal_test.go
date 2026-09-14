@@ -24,6 +24,15 @@ func TestMatchOrigin(t *testing.T) {
 		{"exact match ignores scheme case", "https://a.example", "HTTPS://a.example", true},
 		{"wildcard ignores host case", "https://x.EXAMPLE.com", "https://*.example.com", true},
 		{"case folding does not widen the host", "https://evil.example", "https://A.EXAMPLE", false},
+		// The asymmetry is deliberate, see matchOrigin's doc comment: a path
+		// on the ORIGIN side is a request-supplied value that would end up
+		// echoed verbatim in Access-Control-Allow-Origin, while a path on the
+		// PATTERN side is an operator typo worth forgiving.
+		{"origin with trailing slash is rejected", "https://ok.example/", "https://ok.example", false},
+		{"origin with path is rejected", "https://ok.example/app", "https://ok.example", false},
+		{"origin with path is rejected against a wildcard too", "https://sub.example.com/app", "https://*.example.com", false},
+		{"pattern with path is forgiven", "https://ok.example", "https://ok.example/app", true},
+		{"pattern with trailing slash is forgiven", "https://ok.example", "https://ok.example/", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

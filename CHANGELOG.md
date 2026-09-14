@@ -34,7 +34,9 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   `Access-Control-Allow-Methods` wird aus den tatsächlich registrierten
   Routen abgeleitet statt fest verdrahtet. Der Origin-Vergleich bleibt dabei
   wie bisher case-insensitiv, und ein `*` wirkt an beliebiger Stelle der
-  Allowlist.
+  Allowlist. Ein `Origin`-Header mit Pfadanteil wird nie zugelassen (und
+  damit auch nie zurückgespiegelt); ein Pfad im Allowlist-*Eintrag* wird
+  weiterhin verziehen.
 * **405 unterliegt jetzt dem Rate-Limit:** `MethodNotAllowedHandler` hängt —
   wie schon `NotFoundHandler` — in der Middleware-Kette. Zuvor ließen sich
   über `OPTIONS` auf einen POST-Endpunkt beliebig viele 405er abholen, ohne

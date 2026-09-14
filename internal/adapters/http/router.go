@@ -173,9 +173,16 @@ func NewRouter(deps Deps) http.Handler {
 	// NotFoundHandler below), so without this a client could send an endless
 	// stream of OPTIONS /v1/match — no Origin, hence no preflight
 	// short-circuit — and collect 405s without ever touching the limiter, the
-	// shedder, the logs or the metrics. The CORS wrapper only short-circuits
-	// paths that exist, so the metric cardinality this opens stays bounded by
-	// the route table.
+	// shedder, the logs or the metrics.
+	//
+	// This does widen what reaches middleware.Metrics, which labels its
+	// series with r.URL.Path. The CORS wrapper restricts the preflight
+	// short-circuit to paths that MATCH a route, but "matches a route" is not
+	// a finite set: /v1/concept/{id} matches every id, so OPTIONS or POST
+	// against /v1/concept/<random> still mints one series per value. That is
+	// not a new exposure — a plain GET /v1/concept/<random> has always done
+	// the same, under the same rate limit — but it is a reason to label on
+	// the route TEMPLATE rather than the raw path if cardinality ever bites.
 	r.MethodNotAllowedHandler = applyChain(chain, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}))

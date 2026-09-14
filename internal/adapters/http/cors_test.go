@@ -309,6 +309,41 @@ func TestCORS_AllowlistIsCaseInsensitive(t *testing.T) {
 	}
 }
 
+// TestCORS_OriginWithPathIsNotEchoed pins the one thing that must never
+// happen: Access-Control-Allow-Origin carrying a value the CLIENT composed.
+// Because the path is stripped on both sides before comparing, a request
+// announcing "https://ok.example/anything" would otherwise satisfy the
+// allowlist entry "https://ok.example" and then be mirrored back raw,
+// suffix and all.
+func TestCORS_OriginWithPathIsNotEchoed(t *testing.T) {
+	r := httpx.NewRouter(httpx.Deps{CORSAllowedOrigins: []string{"https://ok.example"}})
+
+	req := httptest.NewRequest(http.MethodGet, "/health/live", nil)
+	req.Header.Set("Origin", "https://ok.example/anything")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want empty — an Origin with a path is not an origin", got)
+	}
+}
+
+// TestCORS_AllowlistEntryWithPathStillMatches is the intended counterpart:
+// pasting the app URL into the allowlist is the commonest configuration slip,
+// and the entry comes from the operator, so it is read as the origin it means.
+func TestCORS_AllowlistEntryWithPathStillMatches(t *testing.T) {
+	r := httpx.NewRouter(httpx.Deps{CORSAllowedOrigins: []string{"https://ok.example/app"}})
+
+	req := httptest.NewRequest(http.MethodGet, "/health/live", nil)
+	req.Header.Set("Origin", "https://ok.example")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://ok.example" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want the origin echoed despite the path in the allowlist entry", got)
+	}
+}
+
 // TestCORS_WildcardAmongConcreteOriginsStillAllowsAll: a "*" that is not the
 // only entry must still mean allow-all. Anchored to allowAll's old
 // len(origins)==1 shape, the star would be inert — matchOrigin never matches

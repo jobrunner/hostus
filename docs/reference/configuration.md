@@ -68,6 +68,15 @@ ebensowenig. Der Vergleich ist bei Schema und Host
 groß-/kleinschreibungsunabhängig. Taucht `*` irgendwo in der Liste auf,
 gilt der permissive Modus für alle Einträge.
 
+**Standardport nicht mitschreiben.** Ein Browser lässt den Standardport des
+Schemas im `Origin`-Header weg. Ein Eintrag `https://app.example.com:443`
+matcht deshalb **nie** — richtig ist `https://app.example.com` (analog
+`http://app.example.com` statt `…:80`). Ein Pfadanteil im Eintrag
+(`https://app.example.com/ui`) wird dagegen verziehen und als Ursprung
+`https://app.example.com` gelesen; umgekehrt wird eine Anfrage, deren
+`Origin`-Header einen Pfad enthält, nie zugelassen — echte Browser senden so
+etwas nicht.
+
 Bei konfigurierter Allowlist trägt jede Antwort auf eine Anfrage mit
 `Origin`-Header ein `Vary: Origin`, damit ein Shared Cache die Antwort eines
 Ursprungs nicht an einen anderen ausliefert.

@@ -176,7 +176,25 @@ func (c *corsWrapper) isOriginAllowed(origin string) bool {
 // different service on the same host) — an origin is the scheme/host/port
 // triple, and widening it silently would hand responses to servers the
 // operator never listed.
+//
+// The two sides are deliberately NOT symmetric about a path component:
+//
+//   - On the ORIGIN side a path is fatal. RFC 6454 says an Origin header is
+//     scheme/host/port and nothing else, so "https://ok.example/" is not
+//     something a browser sends. Tolerating it would mean a request-supplied
+//     string ("https://ok.example/<whatever>") matches an allowlist entry and
+//     is then echoed VERBATIM into Access-Control-Allow-Origin — a
+//     client-controlled value in a response header, which is worth refusing
+//     even though no browser would honor the result.
+//   - On the PATTERN side a path is forgiven. "https://ok.example/app" is the
+//     single most common way to mis-write an allowlist entry (people paste the
+//     app URL), and reading it as the origin it obviously means costs nothing:
+//     the entry comes from the operator, not from a request.
 func matchOrigin(origin, pattern string) bool {
+	if hasPathComponent(origin) {
+		return false
+	}
+
 	oScheme, oHost, oPort := splitOrigin(origin)
 	pScheme, pHost, pPort := splitOrigin(pattern)
 	if oScheme != pScheme || oPort != pPort {
@@ -199,6 +217,18 @@ func matchOrigin(origin, pattern string) bool {
 	// len > len(suffix) keeps "example.com" itself out, and requiring the
 	// leading dot keeps "evil-example.com" out.
 	return strings.HasSuffix(oHost, suffix) && len(oHost) > len(suffix)
+}
+
+// hasPathComponent reports whether a "/" survives after the scheme, i.e.
+// whether the string carries more than the scheme/host/port an origin is
+// allowed to consist of. A trailing slash already counts: "https://ok.example/"
+// is a URL, not an origin.
+func hasPathComponent(origin string) bool {
+	rest := origin
+	if idx := strings.Index(rest, "://"); idx != -1 {
+		rest = rest[idx+3:]
+	}
+	return strings.Contains(rest, "/")
 }
 
 // splitOrigin breaks an origin (or a wildcard pattern) into scheme, host and

@@ -17,6 +17,15 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Fixed
 
+* **CORS-Preflight:** `OPTIONS` auf die POST-Endpunkte `/v1/match` und
+  `/v1/translate` wurde mit einem nackten 405 ohne CORS-Header beantwortet,
+  weil gorilla/mux `Use`-Middleware nur für *gematchte* Routen ausführt — ein
+  Preflight gegen eine `.Methods(POST)`-Route matcht nichts. CORS ist jetzt
+  kein Kettenglied mehr, sondern ein Wrapper um den fertigen Router
+  (`internal/adapters/http/cors.go`); der 204-Responder läuft weiterhin durch
+  dieselbe Middleware-Kette, bleibt also observierbar und rate-limitiert.
+  `Access-Control-Allow-Methods` wird aus den tatsächlich registrierten
+  Routen abgeleitet statt fest verdrahtet.
 * **Doku:** `CLAUDE.md` beschrieb hostus weiterhin als „naming and trait
   service" und listete den in 3.0 entfernten Endpunkt
   `GET /v1/concept/{id}/traits` — korrigiert samt Verweis auf situs; der

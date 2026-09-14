@@ -87,10 +87,15 @@ type Deps struct {
 
 // NewRouter assembles the hostus HTTP surface: the fixed middleware chain
 // (Request-ID -> Logging -> Rate-Limiting -> Load-Shedding -> Timeouts ->
-// CORS -> Metrics), wrapped in an outermost otelmux span, plus the health
-// and metrics endpoints. The middleware order is an immutable global
-// constraint (see CLAUDE.md) and must not be reordered.
-func NewRouter(deps Deps) *mux.Router {
+// Metrics), wrapped in an outermost otelmux span, plus the health and
+// metrics endpoints. The middleware order is an immutable global constraint
+// (see CLAUDE.md) and must not be reordered.
+//
+// CORS is no longer a chain link: it wraps the FINISHED router, because a
+// preflight matches no route and would therefore never reach Use-registered
+// middleware (see cors.go for the full why). Hence the http.Handler return
+// type rather than *mux.Router.
+func NewRouter(deps Deps) http.Handler {
 	logger := deps.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -140,7 +145,6 @@ func NewRouter(deps Deps) *mux.Router {
 		middleware.RateLimit(limiter),
 		middleware.LoadShed(shedder),
 		middleware.Timeout(timeout),
-		middleware.CORS(origins),
 		middleware.Metrics,
 	}
 	for _, mw := range chain {
@@ -184,7 +188,14 @@ func NewRouter(deps Deps) *mux.Router {
 		r.NotFoundHandler = applyChain(chain, spaFallback(ui))
 	}
 
-	return r
+	// CORS wraps the FINISHED router: a preflight against a POST-only route
+	// matches no route at all, so it never reaches Use-registered
+	// middleware (see cors.go). The 204 responder is wrapped in the same
+	// chain by hand, so preflights stay observable and rate-limited.
+	preflight := applyChain(chain, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	return newCORSWrapper(r, origins, preflight)
 }
 
 // applyChain wraps h in mws so that mws[0] is outermost, matching the

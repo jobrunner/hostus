@@ -211,10 +211,13 @@ paths:
       description: >-
         Liefert Autosuggest-Kandidaten für ein Frontend-Eingabefeld: ein
         FTS5-Präfix-Treffer über den lokalen Index, optional nach
-        Referenzgebiet und Rang gefiltert, priorisiert (Präfix-Treffer vor
-        Nicht-Treffer, im Gebiet vor nicht im Gebiet, akzeptiert vor
-        Synonym, breitere vor feineren Rängen, bm25-Score aufsteigend) und
-        auf `limit` gekürzt.
+        Referenzgebiet und Rang gefiltert, priorisiert (exakter Namenstreffer
+        vor bloßem Präfixtreffer, Treffer im angefragten target_space vor
+        übrigen, Präfix-Treffer vor Nicht-Treffer, im Gebiet vor nicht im
+        Gebiet, akzeptiert vor Synonym, breitere vor feineren Rängen,
+        bm25-Score aufsteigend) und auf `limit` gekürzt. Die ersten beiden
+        Kriterien entscheiden Homonyme: welcher Name den Treffer ausgelöst
+        hat, steht in `matched_name`.
       tags:
         - taxa
       parameters:

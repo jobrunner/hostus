@@ -496,10 +496,29 @@ Distribution (die CDM-`sec.`-Concepts) — derselbe akzeptierte Name bei WCVP
 Präsenz-Daten, ein fehlender Eintrag ist keine belegte Abwesenheit. Die
 Testkonsole zeigt `false` deshalb als „keine Angabe", nie als „nein".
 
-Die Priorisierung folgt §B.1: Präfix-Treffer vor Nicht-Treffer, im
-angefragten Gebiet vor nicht im Gebiet, akzeptiert vor Synonym, breitere vor
-feineren Rängen (FAMILY/GENUS vor SPECIES vor SUBSPECIES/VARIETY/FORM),
-zuletzt bm25-Score aufsteigend (niedriger ist relevanter).
+Die Priorisierung, höchste Priorität zuerst:
+
+1. **Exakter Namenstreffer** vor bloßem Präfixtreffer — wer den vollen Namen
+   tippt, will keinen längeren.
+2. **Treffer im angefragten `target_space`** vor Kandidaten, die die Anfrage
+   nur über einen Namen außerhalb dieses Raums erfüllen. Ohne `target_space`
+   ist das Kriterium für jede Zeile gleich und damit wirkungslos.
+3. Präfix-Treffer vor Nicht-Treffer (unterscheidet nur bei
+   `match_mode=anywhere`; im Standardmodus ist jeder Kandidat ein
+   Präfix-Treffer).
+4. Im angefragten Gebiet vor nicht im Gebiet.
+5. Akzeptiert vor Synonym.
+6. Breitere vor feineren Rängen (FAMILY/GENUS vor SPECIES vor
+   SUBSPECIES/VARIETY/FORM).
+7. bm25-Score aufsteigend (niedriger ist relevanter).
+
+Die Kriterien 1 und 2 entscheiden den häufigsten Ärgerfall, das Homonym:
+`Inula hirta L.` gehört zu *Pentanema hirtum*, `Inula hirta Pollich` zu
+*Pentanema britannica*. Beide Kandidaten tragen den getippten Namen exakt,
+Kriterium 1 ist also unentschieden — den Ausschlag gibt, dass *P. hirtum* in
+Euro+Med ebenfalls „Inula hirta" heißt, *P. britannica* dort aber „Inula
+britannica". Welcher Name den Treffer ausgelöst hat, steht in
+`matched_name` samt Autorschaft.
 
 `target_space_name` ist die Schreibweise des Concepts im angefragten
 `target_space`. Das Feld ist nur vorhanden, wenn ein Zielraum angefragt wurde

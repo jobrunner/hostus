@@ -25,7 +25,13 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   (`internal/adapters/http/cors.go`); der 204-Responder läuft weiterhin durch
   dieselbe Middleware-Kette, bleibt also observierbar und rate-limitiert.
   `Access-Control-Allow-Methods` wird aus den tatsächlich registrierten
-  Routen abgeleitet statt fest verdrahtet.
+  Routen abgeleitet statt fest verdrahtet. Der Origin-Vergleich bleibt dabei
+  wie bisher case-insensitiv, und ein `*` wirkt an beliebiger Stelle der
+  Allowlist.
+* **405 unterliegt jetzt dem Rate-Limit:** `MethodNotAllowedHandler` hängt —
+  wie schon `NotFoundHandler` — in der Middleware-Kette. Zuvor ließen sich
+  über `OPTIONS` auf einen POST-Endpunkt beliebig viele 405er abholen, ohne
+  einen Token, ein Log oder eine Metrik zu erzeugen.
 * **Doku:** `CLAUDE.md` beschrieb hostus weiterhin als „naming and trait
   service" und listete den in 3.0 entfernten Endpunkt
   `GET /v1/concept/{id}/traits` — korrigiert samt Verweis auf situs; der

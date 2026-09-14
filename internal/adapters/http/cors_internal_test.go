@@ -20,6 +20,10 @@ func TestMatchOrigin(t *testing.T) {
 		{"wildcard matches with equal port", "https://sub.example.com:8443", "https://*.example.com:8443", true},
 		{"non-wildcard pattern never fuzzy-matches", "https://sub.example.com", "https://example.com", false},
 		{"pattern without scheme matches nothing real", "https://sub.example.com", "*.example.com", false},
+		{"exact match ignores host case", "https://habitatus.example", "https://Habitatus.Example", true},
+		{"exact match ignores scheme case", "https://a.example", "HTTPS://a.example", true},
+		{"wildcard ignores host case", "https://x.EXAMPLE.com", "https://*.example.com", true},
+		{"case folding does not widen the host", "https://evil.example", "https://A.EXAMPLE", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -45,6 +49,11 @@ func TestSplitOrigin(t *testing.T) {
 		{"path after port is dropped", "https://a.example:8443/foo", "https", "a.example", "8443"},
 		{"no scheme", "a.example", "", "a.example", ""},
 		{"wildcard pattern", "https://*.example.com", "https", "*.example.com", ""},
+		// Scheme and host are case-insensitive per RFC 3986 and are folded
+		// here so every comparison in matchOrigin inherits that; the port is
+		// left alone (folding digits would be pointless) and the path never
+		// survives the split at all, so nothing case-sensitive is touched.
+		{"scheme and host are folded, port is not", "HTTPS://A.Example:8443", "https", "a.example", "8443"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

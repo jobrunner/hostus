@@ -113,17 +113,24 @@ func TestCORS_UnservedMethodIsNotAdvertised(t *testing.T) {
 	if got := rec.Header().Get("Access-Control-Allow-Methods"); got != "" {
 		t.Fatalf("Access-Control-Allow-Methods = %q, want empty for an unserved method", got)
 	}
+	// The PATH exists (mux reports ErrMethodMismatch), so this is still a
+	// preflight worth answering — the browser learns "this endpoint is here,
+	// but not for DELETE" instead of a 405 it cannot read cross-origin.
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 — an existing path must still be preflighted", rec.Code)
+	}
 }
 
-// TestCORS_UnknownPathAdvertisesNoMethod: a path that matches no route at
-// all must not be advertised either. This separates "wrong verb" from
-// "wrong path" — a routeAllowsMethod that only inspected MatchErr, without
-// requiring Match to succeed, would pass the DELETE test above and still
-// promise GET on a 404 path.
-func TestCORS_UnknownPathAdvertisesNoMethod(t *testing.T) {
+// TestCORS_UnknownPathIsNotPreflighted: a path that matches no route at all
+// is not short-circuited. Two failure modes at once — a promised method on a
+// path that can only 404, and (the reason this is a hard rule rather than
+// taste) unbounded Prometheus cardinality: the 204 responder runs through
+// middleware.Metrics, which labels its series with r.URL.Path, so answering
+// arbitrary paths would let any client mint one time series per request.
+func TestCORS_UnknownPathIsNotPreflighted(t *testing.T) {
 	r := httpx.NewRouter(httpx.Deps{Repo: stubCORSRepo{}})
 
-	req := httptest.NewRequest(http.MethodOptions, "/v1/no-such-endpoint", nil)
+	req := httptest.NewRequest(http.MethodOptions, "/zz/no-such-endpoint", nil)
 	req.Header.Set("Origin", "https://habitatus.example")
 	req.Header.Set("Access-Control-Request-Method", http.MethodGet)
 	rec := httptest.NewRecorder()
@@ -131,6 +138,58 @@ func TestCORS_UnknownPathAdvertisesNoMethod(t *testing.T) {
 
 	if got := rec.Header().Get("Access-Control-Allow-Methods"); got != "" {
 		t.Fatalf("Access-Control-Allow-Methods = %q, want empty for an unrouted path", got)
+	}
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 — an unrouted path must not be answered as a preflight", rec.Code)
+	}
+}
+
+// TestCORS_MethodNotAllowedConsumesRateLimitToken pins the DoS hole the
+// review measured: mux wraps neither NotFoundHandler nor
+// MethodNotAllowedHandler in the Use chain, so before router.go set it by
+// hand a client could pull unlimited 405s out of OPTIONS /v1/match (no
+// Origin, hence no preflight short-circuit) without spending a single
+// rate-limit token. With RateLimitPerSecond=1 the second such request must
+// therefore be rejected, not served another 405.
+func TestCORS_MethodNotAllowedConsumesRateLimitToken(t *testing.T) {
+	r := httpx.NewRouter(httpx.Deps{Repo: stubCORSRepo{}, RateLimitPerSecond: 1})
+
+	send := func() int {
+		req := httptest.NewRequest(http.MethodOptions, "/v1/match", nil)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	if got := send(); got != http.StatusMethodNotAllowed {
+		t.Fatalf("first bare OPTIONS = %d, want 405", got)
+	}
+	if got := send(); got != http.StatusTooManyRequests {
+		t.Fatalf("second bare OPTIONS = %d, want 429 — the 405 path bypassed the rate limiter", got)
+	}
+}
+
+// TestCORS_PreflightIsRateLimited is the claim spec decision 3 actually
+// makes, and which an X-Request-ID assertion alone does not prove: a
+// preflight flood must hit the same limiter as everything else, or OPTIONS
+// becomes a shape that bypasses the DoS protections.
+func TestCORS_PreflightIsRateLimited(t *testing.T) {
+	r := httpx.NewRouter(httpx.Deps{Repo: stubCORSRepo{}, RateLimitPerSecond: 1})
+
+	send := func() int {
+		req := httptest.NewRequest(http.MethodOptions, "/v1/match", nil)
+		req.Header.Set("Origin", "https://habitatus.example")
+		req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	if got := send(); got != http.StatusNoContent {
+		t.Fatalf("first preflight = %d, want 204", got)
+	}
+	if got := send(); got != http.StatusTooManyRequests {
+		t.Fatalf("second preflight = %d, want 429 — preflights bypassed the rate limiter", got)
 	}
 }
 
@@ -221,6 +280,72 @@ func TestCORS_AllowlistEchoesListedOrigin(t *testing.T) {
 
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://ok.example" {
 		t.Fatalf("Access-Control-Allow-Origin = %q, want the listed origin echoed", got)
+	}
+	// Vary matters most on the ALLOWED half: this response carries a concrete
+	// Allow-Origin, so a shared cache that ignored Origin would hand
+	// ok.example's response — headers and all — to any other origin asking
+	// for the same URL.
+	if got := rec.Header().Get("Vary"); !strings.Contains(got, "Origin") {
+		t.Fatalf("Vary = %q, want it to contain Origin on an allowed response", got)
+	}
+}
+
+// TestCORS_AllowlistIsCaseInsensitive pins the regression the review caught:
+// internal/middleware/cors.go compared with strings.EqualFold, and browsers
+// send the origin lowercased (RFC 6454). An operator who configured
+// HOSTUS_CORS_ALLOWED_ORIGINS=https://Habitatus.Example would otherwise stop
+// getting Access-Control-Allow-Origin after the upgrade — a silent break of
+// a working browser app.
+func TestCORS_AllowlistIsCaseInsensitive(t *testing.T) {
+	r := httpx.NewRouter(httpx.Deps{CORSAllowedOrigins: []string{"https://Habitatus.Example"}})
+
+	req := httptest.NewRequest(http.MethodGet, "/health/live", nil)
+	req.Header.Set("Origin", "https://habitatus.example")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://habitatus.example" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want the origin echoed despite the configured casing", got)
+	}
+}
+
+// TestCORS_WildcardAmongConcreteOriginsStillAllowsAll: a "*" that is not the
+// only entry must still mean allow-all. Anchored to allowAll's old
+// len(origins)==1 shape, the star would be inert — matchOrigin never matches
+// a bare "*", since it only treats a HOST starting with "*." as a wildcard —
+// so the operator's intended "allow everything" would silently reject.
+func TestCORS_WildcardAmongConcreteOriginsStillAllowsAll(t *testing.T) {
+	r := httpx.NewRouter(httpx.Deps{CORSAllowedOrigins: []string{"*", "https://a.example"}})
+
+	req := httptest.NewRequest(http.MethodGet, "/health/live", nil)
+	req.Header.Set("Origin", "https://anywhere.example")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want %q", got, "*")
+	}
+}
+
+// TestCORS_PreflightFromForeignOriginStillGets204 pins spec decision 9: the
+// preflight is answered uniformly whether or not the origin is allowed. The
+// browser rejects it anyway for lack of Allow-Origin, and answering 204 only
+// for listed origins would turn the endpoint into an origin oracle — probe
+// with candidate origins, read the status, enumerate the allowlist.
+func TestCORS_PreflightFromForeignOriginStillGets204(t *testing.T) {
+	r := httpx.NewRouter(httpx.Deps{Repo: stubCORSRepo{}, CORSAllowedOrigins: []string{"https://ok.example"}})
+
+	req := httptest.NewRequest(http.MethodOptions, "/v1/match", nil)
+	req.Header.Set("Origin", "https://evil.example")
+	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 — a foreign origin must get the same answer as a listed one", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want empty for a foreign origin", got)
 	}
 }
 

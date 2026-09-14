@@ -1,7 +1,9 @@
 package httpx
 
 import (
+	"errors"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/gorilla/mux"
@@ -45,9 +47,14 @@ type corsWrapper struct {
 // would hand any client an OPTIONS-shaped bypass of the load shedder.
 func newCORSWrapper(router *mux.Router, origins []string, preflight http.Handler) *corsWrapper {
 	return &corsWrapper{
-		router:    router,
-		origins:   origins,
-		allowAll:  len(origins) == 1 && origins[0] == "*",
+		router:  router,
+		origins: origins,
+		// "*" anywhere in the list means allow-all, not just as the sole
+		// entry: a "*" that sits next to concrete origins would otherwise be
+		// silently inert, because matchOrigin only treats a pattern as a
+		// wildcard when its HOST starts with "*." — a bare "*" matches
+		// nothing at all there.
+		allowAll:  slices.Contains(origins, "*"),
 		preflight: preflight,
 	}
 }
@@ -57,15 +64,35 @@ func newCORSWrapper(router *mux.Router, origins []string, preflight http.Handler
 // needs in order to Walk the mounted routes — is through this accessor.
 func (c *corsWrapper) Unwrap() *mux.Router { return c.router }
 
+// routeProbe is what one lookup in the routing table tells us about the
+// method a preflight announces.
+type routeProbe struct {
+	// pathExists is true when SOME route is registered for this path, even
+	// if not for the announced method.
+	pathExists bool
+	// methodServed is true when the announced method is actually served.
+	methodServed bool
+}
+
 func (c *corsWrapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
+	requestedMethod := r.Header.Get("Access-Control-Request-Method")
+
+	// The routing table is consulted EXACTLY once, because both decisions
+	// below hang off the same answer: which method to advertise, and whether
+	// this request may be short-circuited at all.
+	var route routeProbe
+	if origin != "" && requestedMethod != "" {
+		route = c.probeRoute(r, requestedMethod)
+	}
+
 	if origin != "" {
 		if c.allowAll {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
-		} else if c.isOriginAllowed(origin) {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-		}
-		if !c.allowAll {
+		} else {
+			if c.isOriginAllowed(origin) {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+			}
 			// Vary is set for any cross-origin request, allowed or not: the
 			// response depends on Origin, so a shared cache must not hand
 			// one origin's response to another. Under a wildcard the
@@ -79,22 +106,29 @@ func (c *corsWrapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// is correct exactly until someone adds a DELETE route: nothing
 		// fails at build time, and the endpoint is simply unusable from a
 		// browser.
-		if m := r.Header.Get("Access-Control-Request-Method"); m != "" && c.routeAllowsMethod(r, m) {
-			w.Header().Set("Access-Control-Allow-Methods", m+", OPTIONS")
+		if route.methodServed {
+			w.Header().Set("Access-Control-Allow-Methods", requestedMethod+", OPTIONS")
 		}
 		w.Header().Set("Access-Control-Allow-Headers", corsAllowHeaders)
 		w.Header().Set("Access-Control-Max-Age", corsMaxAgeSeconds)
 	}
 
 	// Only a REAL preflight is short-circuited: OPTIONS carrying both Origin
-	// and Access-Control-Request-Method. A bare OPTIONS keeps falling
-	// through to the router exactly as before, so enabling CORS never turns
-	// a 405 into a silent 204.
+	// and Access-Control-Request-Method, FOR A PATH THAT EXISTS. A bare
+	// OPTIONS keeps falling through to the router exactly as before, so
+	// enabling CORS never turns a 405 into a silent 204.
+	//
+	// The path condition is not pedantry. The 204 responder runs through the
+	// middleware chain, and middleware.Metrics labels its series with
+	// r.URL.Path — answering an unrouted path would let anyone mint
+	// unbounded Prometheus time series with OPTIONS /zz/1, /zz/2, ... An
+	// unknown path therefore falls through to the router's own 404, which is
+	// also the semantically honest answer: there is nothing here to preflight.
 	//
 	// The 204 is returned whether or not the origin is allowed: without the
 	// Allow-Origin header the browser rejects the response anyway, and a
 	// uniform answer avoids leaking which origins are configured.
-	if r.Method == http.MethodOptions && origin != "" && r.Header.Get("Access-Control-Request-Method") != "" {
+	if r.Method == http.MethodOptions && origin != "" && requestedMethod != "" && route.pathExists {
 		c.preflight.ServeHTTP(w, r)
 		return
 	}
@@ -102,15 +136,25 @@ func (c *corsWrapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c.router.ServeHTTP(w, r)
 }
 
-// routeAllowsMethod asks the router whether method+path would match a route.
+// probeRoute asks the router whether method+path would match a route.
 // mux reports a path that exists under a different method via
 // RouteMatch.MatchErr == ErrMethodMismatch, so a method the service does not
-// serve is never advertised as allowed.
-func (c *corsWrapper) routeAllowsMethod(r *http.Request, method string) bool {
-	probe := r.Clone(r.Context())
+// serve is never advertised as allowed, while the path still counts as
+// existing.
+//
+// The bool Match returns is deliberately not the whole answer: whether mux
+// returns true on a method mismatch depends on MethodNotAllowedHandler being
+// set, so MatchErr is the stable signal.
+func (c *corsWrapper) probeRoute(r *http.Request, method string) routeProbe {
+	// A shallow copy suffices — Match only reads the request, and unlike
+	// r.Clone it costs no header/URL allocation on a hot path.
+	probe := *r
 	probe.Method = method
 	var match mux.RouteMatch
-	return c.router.Match(probe, &match) && match.MatchErr == nil
+	if c.router.Match(&probe, &match) && match.MatchErr == nil {
+		return routeProbe{pathExists: true, methodServed: true}
+	}
+	return routeProbe{pathExists: errors.Is(match.MatchErr, mux.ErrMethodMismatch)}
 }
 
 // isOriginAllowed reports whether origin matches any configured pattern.
@@ -133,14 +177,20 @@ func (c *corsWrapper) isOriginAllowed(origin string) bool {
 // triple, and widening it silently would hand responses to servers the
 // operator never listed.
 func matchOrigin(origin, pattern string) bool {
-	if origin == pattern {
-		return true
-	}
-
 	oScheme, oHost, oPort := splitOrigin(origin)
 	pScheme, pHost, pPort := splitOrigin(pattern)
 	if oScheme != pScheme || oPort != pPort {
 		return false
+	}
+	// Scheme and host arrive case-folded from splitOrigin, so the exact
+	// comparison is case-insensitive — the predecessor in
+	// internal/middleware/cors.go used strings.EqualFold, and an operator who
+	// configured "https://Habitatus.Example" must keep getting an
+	// Access-Control-Allow-Origin after this refactor. Browsers send the
+	// origin lowercased (RFC 6454), so a case-sensitive compare would fail
+	// silently in exactly the configuration nobody tests.
+	if oHost == pHost {
+		return true
 	}
 	if !strings.HasPrefix(pHost, "*.") {
 		return false
@@ -155,6 +205,10 @@ func matchOrigin(origin, pattern string) bool {
 // port. A pattern written without a scheme yields an empty scheme, which then
 // only matches an equally scheme-less origin — browsers always send one, so
 // such a pattern matches nothing rather than being quietly widened.
+//
+// Scheme and host come back lowercased because both are case-insensitive per
+// RFC 3986; the port is not folded (it is digits) and the path is discarded
+// entirely, so no case-sensitive component is ever touched.
 func splitOrigin(origin string) (scheme, host, port string) {
 	rest := origin
 	if idx := strings.Index(rest, "://"); idx != -1 {
@@ -166,5 +220,5 @@ func splitOrigin(origin string) (scheme, host, port string) {
 	if idx := strings.LastIndex(rest, ":"); idx != -1 {
 		rest, port = rest[:idx], rest[idx+1:]
 	}
-	return scheme, rest, port
+	return strings.ToLower(scheme), strings.ToLower(rest), port
 }

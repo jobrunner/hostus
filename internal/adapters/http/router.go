@@ -168,6 +168,18 @@ func NewRouter(deps Deps) http.Handler {
 		r.HandleFunc("/v1/spaces", handleSpaces(deps.Repo)).Methods(http.MethodGet)
 	}
 
+	// A 405 must cost a rate-limit token like everything else. mux does not
+	// wrap MethodNotAllowedHandler in the Use chain either (same reason as
+	// NotFoundHandler below), so without this a client could send an endless
+	// stream of OPTIONS /v1/match — no Origin, hence no preflight
+	// short-circuit — and collect 405s without ever touching the limiter, the
+	// shedder, the logs or the metrics. The CORS wrapper only short-circuits
+	// paths that exist, so the metric cardinality this opens stays bounded by
+	// the route table.
+	r.MethodNotAllowedHandler = applyChain(chain, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}))
+
 	// Registered last and inside the same middleware chain as everything
 	// else: the console must be observable (request id, logs, spans,
 	// metrics) and shed/limited exactly like the API it drives. Registering

@@ -27,6 +27,9 @@ und ergänzende Metrics/Export-Pfade).
 - Middleware-Kette (Request-ID → Logging → Rate-Limiting → Load-Shedding →
   Timeouts → CORS → Metrics) ist durchgängig OTel-instrumentiert; neue
   Handler erben Tracing ohne Zusatzaufwand über `otelmux`.
+  *(Nachtrag 2026-09-14: CORS ist seit dem Preflight-Fix kein Kettenglied
+  mehr, sondern umschließt den Router — Preflights laufen aber weiterhin
+  durch die Kette, die Aussage dieses ADR bleibt also gültig.)*
 - Der Debug-MCP (ADR-0014) kann auf einen In-Memory-Span-Exporter parallel
   zum OTLP-Exporter zurückgreifen, weil die Instrumentierung von Anfang an
   vorhanden ist, statt nachträglich in bestehenden Code eingezogen werden zu

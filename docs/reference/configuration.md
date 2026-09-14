@@ -34,6 +34,67 @@ im Repository.
 | `cors.allowed_origins`                        | []          | Erlaubte CORS-Origins              |
 | `ui.enabled` / `HOSTUS_UI_ENABLED`            | true        | Eingebettete Testkonsole unter `/` |
 
+## CORS (`cors.allowed_origins`)
+
+Steuert, welche fremden Ursprünge die API aus einem Browser heraus aufrufen
+dürfen.
+
+```yaml
+cors:
+  allowed_origins:
+    - "https://app.example.com"     # exakt
+    - "https://*.example.com"       # alle Subdomains
+```
+
+```bash
+HOSTUS_CORS_ALLOWED_ORIGINS=https://app.example.com,https://*.example.com
+```
+
+**Leer bedeutet „alle erlaubt", nicht „keine".** Ohne Konfiguration
+antwortet hostus mit `Access-Control-Allow-Origin: *`. Das ist Absicht und
+ungefährlich, solange es dabei bleibt, dass hostus read-only und ohne
+Authentifizierung arbeitet: `Access-Control-Allow-Credentials` wird **nie**
+gesetzt, ein Browser sendet also weder Cookies noch `Authorization`-Header,
+und der Wildcard gibt nichts preis, was ein anonymes `GET` nicht ohnehin
+liefert. Wer den Zugriff einschränken will, muss also aktiv eine Liste
+setzen — ein leerer Wert schließt nichts.
+
+Zur Wildcard-Semantik: Platzhalter ist **nur** das Host-Label. Schema und
+Port müssen exakt passen, damit `https://*.example.com` weder
+`http://sub.example.com` (Klartext) noch `https://sub.example.com:8443`
+(anderer Dienst auf demselben Host) zulässt. Die bare Domain
+(`https://example.com`) ist nicht abgedeckt, `https://evil-example.com`
+ebensowenig. Der Vergleich ist bei Schema und Host
+groß-/kleinschreibungsunabhängig. Taucht `*` irgendwo in der Liste auf,
+gilt der permissive Modus für alle Einträge.
+
+**Standardport nicht mitschreiben.** Ein Browser lässt den Standardport des
+Schemas im `Origin`-Header weg. Ein Eintrag `https://app.example.com:443`
+matcht deshalb **nie** — richtig ist `https://app.example.com` (analog
+`http://app.example.com` statt `…:80`). Ein Pfadanteil im Eintrag
+(`https://app.example.com/ui`) wird dagegen verziehen und als Ursprung
+`https://app.example.com` gelesen; umgekehrt wird eine Anfrage, deren
+`Origin`-Header einen Pfad enthält, nie zugelassen — echte Browser senden so
+etwas nicht.
+
+Bei konfigurierter Allowlist trägt jede Antwort auf eine Anfrage mit
+`Origin`-Header ein `Vary: Origin`, damit ein Shared Cache die Antwort eines
+Ursprungs nicht an einen anderen ausliefert.
+
+`Access-Control-Allow-Methods` wird **nicht** konfiguriert, sondern aus den
+tatsächlich registrierten Routen abgeleitet: Der Preflight bekommt genau das
+Verfahren bestätigt, das der Router für diesen Pfad auch bedient. Eine
+handgepflegte Liste wäre exakt so lange richtig, bis jemand eine Route
+hinzufügt.
+
+Betriebsnotiz: Ein Browser-`POST` kostet zwei Anfragen (Preflight +
+eigentliche Anfrage) und damit zwei Token aus dem *globalen*
+Rate-Limit-Bucket (derzeit fest 20 Anfragen/s, nicht konfigurierbar). Der
+Preflight ist absichtlich nicht ausgenommen — sonst wäre er ein Schlupfloch
+an Rate-Limiter und Load-Shedder vorbei. Browser cachen das Ergebnis
+allerdings 24 Stunden (`Access-Control-Max-Age`), der Aufschlag fällt also
+nur beim ersten Aufruf an.
+
 ## Testkonsole (`ui.enabled`)
 
 hostus liefert unter `/` eine eingebettete Testkonsole aus, mit der sich die

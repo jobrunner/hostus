@@ -45,7 +45,14 @@ func TestRoutesMatchOpenAPISpec(t *testing.T) {
 // routes, which are not part of the API contract, do not).
 func routerAPISurface(t *testing.T) map[string]bool {
 	t.Helper()
-	r := httpx.NewRouter(httpx.Deps{Repo: stubSecRepo{}, UIEnabled: false})
+	h := httpx.NewRouter(httpx.Deps{Repo: stubSecRepo{}, UIEnabled: false})
+	// NewRouter returns the CORS wrapper around the mux.Router; the mounted
+	// route surface lives on the inner router.
+	unwrapper, ok := h.(interface{ Unwrap() *mux.Router })
+	if !ok {
+		t.Fatalf("NewRouter returned %T, which does not expose the inner *mux.Router", h)
+	}
+	r := unwrapper.Unwrap()
 
 	got := map[string]bool{}
 	err := r.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {

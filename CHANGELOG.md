@@ -14,9 +14,33 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   vollständige Kette PlantNet → `POST /v1/match` (xref) → situs-Traits, mit
   dem verifizierten IPNI-ID-Format, den Grenzfällen (Synonym-IPNI-IDs,
   außereuropäische Taxa, unbekannte IDs) und der Abgrenzung zu FloraVeg.
+* **CORS:** `cors.allowed_origins` versteht Subdomain-Wildcards
+  (`https://*.example.com`). Platzhalter ist nur das Host-Label — Schema und
+  Port müssen exakt passen, sodass weder `http://sub.example.com` noch
+  `https://sub.example.com:8443` zugelassen wird; die bare Domain ist nicht
+  abgedeckt. Bei konfigurierter Allowlist trägt jede Antwort auf eine
+  Anfrage mit `Origin` ein `Vary: Origin`, damit ein Shared Cache die
+  Antwort eines Ursprungs nicht an einen anderen ausliefert.
 
 ### Fixed
 
+* **CORS-Preflight:** `OPTIONS` auf die POST-Endpunkte `/v1/match` und
+  `/v1/translate` wurde mit einem nackten 405 ohne CORS-Header beantwortet,
+  weil gorilla/mux `Use`-Middleware nur für *gematchte* Routen ausführt — ein
+  Preflight gegen eine `.Methods(POST)`-Route matcht nichts. CORS ist jetzt
+  kein Kettenglied mehr, sondern ein Wrapper um den fertigen Router
+  (`internal/adapters/http/cors.go`); der 204-Responder läuft weiterhin durch
+  dieselbe Middleware-Kette, bleibt also observierbar und rate-limitiert.
+  `Access-Control-Allow-Methods` wird aus den tatsächlich registrierten
+  Routen abgeleitet statt fest verdrahtet. Der Origin-Vergleich bleibt dabei
+  wie bisher case-insensitiv, und ein `*` wirkt an beliebiger Stelle der
+  Allowlist. Ein `Origin`-Header mit Pfadanteil wird nie zugelassen (und
+  damit auch nie zurückgespiegelt); ein Pfad im Allowlist-*Eintrag* wird
+  weiterhin verziehen.
+* **405 unterliegt jetzt dem Rate-Limit:** `MethodNotAllowedHandler` hängt —
+  wie schon `NotFoundHandler` — in der Middleware-Kette. Zuvor ließen sich
+  über `OPTIONS` auf einen POST-Endpunkt beliebig viele 405er abholen, ohne
+  einen Token, ein Log oder eine Metrik zu erzeugen.
 * **Doku:** `CLAUDE.md` beschrieb hostus weiterhin als „naming and trait
   service" und listete den in 3.0 entfernten Endpunkt
   `GET /v1/concept/{id}/traits` — korrigiert samt Verweis auf situs; der

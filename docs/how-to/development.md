@@ -135,8 +135,11 @@ Die Middleware-Chain ist bewusst in dieser Reihenfolge (siehe auch
 3. **Rate-Limiting** — Schützt vor Überlastung
 4. **Load-Shedding** — Circuit Breaker für Upstream
 5. **Timeout** — Request-Timeout
-6. **CORS** — Cross-Origin Handling
-7. **Metrics** — Prometheus Instrumentation
+6. **Metrics** — Prometheus Instrumentation
+
+CORS ist kein Kettenglied, sondern ein Wrapper um den fertigen Router —
+sonst erreicht ein Preflight die Kette nie (siehe
+[Architektur](../explanation/architecture.md)).
 
 ## Abhängigkeiten
 

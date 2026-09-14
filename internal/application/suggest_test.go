@@ -25,6 +25,11 @@ type fakeSuggestRepo struct {
 	suggestErr   error
 	versions     []domain.BackboneVersion
 	versionsErr  error
+	// areas backs Areas(); it defaults to the two codes the tests in this
+	// file pass as SuggestRequest.Area, since Suggest now validates the area
+	// against the areas that carry data (application.validateArea).
+	areas    []domain.Area
+	areasErr error
 
 	gotQ    string
 	gotOpts output.SuggestOpts
@@ -44,6 +49,16 @@ func (f *fakeSuggestRepo) BackboneVersions(context.Context) ([]domain.BackboneVe
 
 func (f *fakeSuggestRepo) BuildDistributionClosure(context.Context) error {
 	return nil
+}
+
+func (f *fakeSuggestRepo) Areas(context.Context) ([]domain.Area, error) {
+	if f.areas == nil && f.areasErr == nil {
+		return []domain.Area{
+			{Scheme: "wgsrpd_l3", Code: "GER", Name: "Germany"},
+			{Scheme: "wgsrpd_l3", Code: "AUT", Name: "Austria"},
+		}, nil
+	}
+	return f.areas, f.areasErr
 }
 
 func TestSuggest_EmptyQueryReturnsErrEmptyQuery(t *testing.T) {
@@ -247,5 +262,73 @@ func TestSuggest_WCVPFixture_AreaRankedAndTruncated(t *testing.T) {
 	}
 	if speciesIdx > genusIdx {
 		t.Errorf("Corynephorus canescens (InArea) at index %d, genus (not InArea) at %d; want species ranked first", speciesIdx, genusIdx)
+	}
+}
+
+// TestSuggest_AreaValidation covers validateArea's three outcomes against a
+// repo whose Areas() carries GER and AUT: an empty area is no filter, a
+// documented alias and a data-carrying code pass, and anything else is
+// ErrUnknownArea — reported BEFORE repo.Suggest runs, so an unknown area
+// never produces a result list that silently ignored it.
+func TestSuggest_AreaValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		area    string
+		wantErr error
+	}{
+		{"empty area is no filter", "", nil},
+		{"documented alias", "DE", nil},
+		{"alias is case-insensitive", "ch", nil},
+		{"ingested code", "AUT", nil},
+		{"code with data, lower case", "aut", nil},
+		{"typo", "QUATSCH", application.ErrUnknownArea},
+		{"real code without data in this index", "SPA", application.ErrUnknownArea},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repo := &fakeSuggestRepo{}
+			_, err := application.Suggest(context.Background(), repo, application.SuggestRequest{Q: "coryn", Area: c.area})
+			if !errors.Is(err, c.wantErr) {
+				t.Fatalf("Suggest(Area=%q) error = %v, want %v", c.area, err, c.wantErr)
+			}
+			if wantCalled := c.wantErr == nil; repo.called != wantCalled {
+				t.Errorf("Suggest(Area=%q) called repo.Suggest = %v, want %v", c.area, repo.called, wantCalled)
+			}
+		})
+	}
+}
+
+// TestSuggest_AreasErrorPropagates asserts a failing Repository.Areas is
+// surfaced rather than swallowed into a bogus "unknown area": the area may
+// well be valid, we just could not check it.
+func TestSuggest_AreasErrorPropagates(t *testing.T) {
+	wantErr := errors.New("areas boom")
+	repo := &fakeSuggestRepo{areasErr: wantErr}
+	_, err := application.Suggest(context.Background(), repo, application.SuggestRequest{Q: "coryn", Area: "AUT"})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Suggest error = %v, want it to wrap %v", err, wantErr)
+	}
+	if errors.Is(err, application.ErrUnknownArea) {
+		t.Error("Suggest error is ErrUnknownArea, want the underlying repo error")
+	}
+}
+
+// TestSuggest_ForwardsRequireTargetSpace asserts the flag reaches
+// output.SuggestOpts unchanged — it is the half that turns target_space from
+// an annotation into a filter, and a silently dropped flag is exactly the
+// failure this branch removes.
+func TestSuggest_ForwardsRequireTargetSpace(t *testing.T) {
+	for _, want := range []bool{false, true} {
+		repo := &fakeSuggestRepo{}
+		// No TargetSpace here: the pairing rule ("require needs a space") is
+		// the HTTP layer's 400, and this fake deliberately panics on any repo
+		// method Suggest was not expected to need — NameSpaces among them.
+		req := application.SuggestRequest{Q: "coryn", RequireTargetSpace: want}
+		if _, err := application.Suggest(context.Background(), repo, req); err != nil {
+			t.Fatalf("Suggest: unexpected error: %v", err)
+		}
+		if repo.gotOpts.RequireTargetSpace != want {
+			t.Errorf("repo.Suggest opts.RequireTargetSpace = %v, want %v", repo.gotOpts.RequireTargetSpace, want)
+		}
 	}
 }

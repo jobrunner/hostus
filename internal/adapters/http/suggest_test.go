@@ -1,9 +1,11 @@
 package httpx_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strings"
 	"testing"
 
@@ -19,12 +21,22 @@ type suggestItemResponse struct {
 	Status       string  `json:"status"`
 	InArea       bool    `json:"in_area"`
 	Score        float64 `json:"score"`
+	MatchedName  *struct {
+		Canonical  string `json:"canonical"`
+		Authorship string `json:"authorship"`
+		Role       string `json:"role"`
+	} `json:"matched_name"`
 }
 
 type suggestResponse struct {
 	BackboneVersions map[string]string     `json:"backbone_versions"`
 	Results          []suggestItemResponse `json:"results"`
 }
+
+// corynephorusGenusConceptID is the GENUS-ranked concept the "coryn" prefix
+// matches alongside corynephorusConceptID (the SPECIES) — see the
+// wcvp_taxon.csv fixture.
+const corynephorusGenusConceptID = "wcvp:concept:451295"
 
 func findSuggestResult(results []suggestItemResponse, conceptID string) *suggestItemResponse {
 	for i := range results {
@@ -321,6 +333,223 @@ func TestHandleSuggest_UnknownMatchMode_Returns400InvalidQuery(t *testing.T) {
 	got := decodeJSON[errorEnvelope](t, rr.Body)
 	if got.Error.Code != "INVALID_QUERY" {
 		t.Errorf("error.code = %q, want %q", got.Error.Code, "INVALID_QUERY")
+	}
+}
+
+// TestSuggest_RequireTargetSpaceWithoutTargetSpaceIs400 asserts
+// require_target_space=true without a target_space is rejected rather than
+// quietly ignored: there is no space to require an entry in, so the request
+// asks for a filter that cannot exist. The message must name BOTH parameters
+// — the caller's mistake is the combination, not either one alone.
+func TestSuggest_RequireTargetSpaceWithoutTargetSpaceIs400(t *testing.T) {
+	repo := seededRepo(t)
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/suggest?q=coryn&require_target_space=true", nil)
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body: %s)", rr.Code, rr.Body.String())
+	}
+	assertJSONContentType(t, rr)
+	got := decodeJSON[errorEnvelope](t, rr.Body)
+	if got.Error.Code != "INVALID_QUERY" {
+		t.Errorf("error.code = %q, want %q", got.Error.Code, "INVALID_QUERY")
+	}
+	for _, want := range []string{"require_target_space", "target_space"} {
+		if !strings.Contains(got.Error.Message, want) {
+			t.Errorf("error.message = %q, want it to name %q", got.Error.Message, want)
+		}
+	}
+}
+
+// TestSuggest_UnparsableRequireTargetSpaceIs400 asserts a non-boolean
+// require_target_space value 400s instead of silently defaulting to false —
+// a silently ineffective filter is exactly the failure class this branch
+// exists to remove.
+func TestSuggest_UnparsableRequireTargetSpaceIs400(t *testing.T) {
+	repo := seededRepo(t)
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/suggest?q=coryn&require_target_space=vielleicht", nil)
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body: %s)", rr.Code, rr.Body.String())
+	}
+	got := decodeJSON[errorEnvelope](t, rr.Body)
+	if got.Error.Code != "INVALID_QUERY" {
+		t.Errorf("error.code = %q, want %q", got.Error.Code, "INVALID_QUERY")
+	}
+	if !strings.Contains(got.Error.Message, "require_target_space") {
+		t.Errorf("error.message = %q, want it to name require_target_space", got.Error.Message)
+	}
+}
+
+// TestSuggest_RequireTargetSpaceWithSpaceIsAccepted asserts the parsed
+// parameter reaches the query path (200) when a target_space accompanies it:
+// the fixture carries no name-space entries, so the filter legitimately
+// empties the result — the point here is that a well-formed combination is
+// not rejected.
+func TestSuggest_RequireTargetSpaceWithSpaceIsAccepted(t *testing.T) {
+	repo := seededRepo(t)
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	for _, raw := range []string{"false", "0"} {
+		t.Run("require_target_space="+raw, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/v1/suggest?q=coryn&require_target_space="+raw, nil)
+			r.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+			}
+			got := decodeJSON[suggestResponse](t, rr.Body)
+			// Both fixture concepts the "coryn" prefix matches, to prove the
+			// false/0 flag narrowed nothing at all.
+			for _, id := range []string{corynephorusConceptID, corynephorusGenusConceptID} {
+				if findSuggestResult(got.Results, id) == nil {
+					t.Errorf("results = %+v, want the unfiltered entry for %q", got.Results, id)
+				}
+			}
+		})
+	}
+}
+
+// TestSuggest_UnknownAreaIs400 pins the behavior change: an area value the
+// index knows nothing about used to return 200 with a silently UNFILTERED
+// result list (area is a ranking signal, so an unknown code simply never
+// matched a distribution row). A typo'd area must not read as "this plant
+// occurs nowhere" — it is a bad request, and the message says which value.
+func TestSuggest_UnknownAreaIs400(t *testing.T) {
+	repo := seededRepo(t)
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/suggest?q=coryn&area=QUATSCH", nil)
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body: %s)", rr.Code, rr.Body.String())
+	}
+	assertJSONContentType(t, rr)
+	got := decodeJSON[errorEnvelope](t, rr.Body)
+	if got.Error.Code != "INVALID_QUERY" {
+		t.Errorf("error.code = %q, want %q", got.Error.Code, "INVALID_QUERY")
+	}
+	if !strings.Contains(got.Error.Message, "QUATSCH") {
+		t.Errorf("error.message = %q, want it to name the offending value %q", got.Error.Message, "QUATSCH")
+	}
+}
+
+// TestSuggest_KnownAreaAliasStillWorks guards the console against the
+// validation added above: a documented convenience alias ("DE") and a raw
+// WGSRPD L3 code that carries data ("AUT") both stay valid. "DE" is the
+// harder half — the fixture has no GER distribution row at all, and an alias
+// is part of the published API surface, so it must be accepted on the
+// strength of the alias table rather than on the strength of the ingested
+// data.
+func TestSuggest_KnownAreaAliasStillWorks(t *testing.T) {
+	repo := seededRepo(t)
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	for _, area := range []string{"DE", "de", "AUT"} {
+		t.Run("area="+area, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/v1/suggest?q=coryn&area="+area, nil)
+			r.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+			}
+			got := decodeJSON[suggestResponse](t, rr.Body)
+			if findSuggestResult(got.Results, corynephorusConceptID) == nil {
+				t.Errorf("results = %+v, want an entry for %q", got.Results, corynephorusConceptID)
+			}
+		})
+	}
+}
+
+// TestSuggest_MatchedNameIsRendered asserts the name that actually triggered
+// the hit reaches the wire, authorship included — the half that tells two
+// homonymous spellings apart when the concept's own accepted name
+// (canonical/display) cannot.
+func TestSuggest_MatchedNameIsRendered(t *testing.T) {
+	repo := seededRepo(t)
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/suggest?q="+url.QueryEscape("Corynephorus canescens"), nil)
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	got := decodeJSON[suggestResponse](t, rr.Body)
+	coryn := findSuggestResult(got.Results, corynephorusConceptID)
+	if coryn == nil {
+		t.Fatalf("results = %+v, want an entry for %q", got.Results, corynephorusConceptID)
+	}
+	if coryn.MatchedName == nil {
+		t.Fatal("matched_name is absent, want the triggering name")
+	}
+	if coryn.MatchedName.Canonical != "Corynephorus canescens" {
+		t.Errorf("matched_name.canonical = %q, want %q", coryn.MatchedName.Canonical, "Corynephorus canescens")
+	}
+	if coryn.MatchedName.Authorship != "(L.) P.Beauv." {
+		t.Errorf("matched_name.authorship = %q, want %q", coryn.MatchedName.Authorship, "(L.) P.Beauv.")
+	}
+	if coryn.MatchedName.Role != "accepted" {
+		t.Errorf("matched_name.role = %q, want %q", coryn.MatchedName.Role, "accepted")
+	}
+}
+
+// TestSuggest_ResponseUnchangedWithoutNewParams asserts this task added
+// exactly ONE field to the wire shape: a plain query's result objects carry
+// the SP1/SP2 keys plus (optionally) matched_name, and nothing else — the new
+// ranking signals (exact_hit/target_space_hit) stay internal to
+// domain.RankSuggestions, as PrefixHit already does.
+func TestSuggest_ResponseUnchangedWithoutNewParams(t *testing.T) {
+	repo := seededRepo(t)
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/suggest?q=coryn&area=AUT", nil)
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	var body struct {
+		Results []map[string]json.RawMessage `json:"results"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decoding response: %v (body: %s)", err, rr.Body.String())
+	}
+	if len(body.Results) == 0 {
+		t.Fatal("results = empty, want at least one candidate")
+	}
+
+	known := map[string]bool{
+		"concept_id": true, "display": true, "canonical": true,
+		"vernacular_de": true, "rank": true, "status": true,
+		"in_area": true, "score": true, "aggregate": true,
+		"sec": true, "target_space_name": true, "matched_name": true,
+	}
+	for i, item := range body.Results {
+		var unexpected []string
+		for key := range item {
+			if !known[key] {
+				unexpected = append(unexpected, key)
+			}
+		}
+		sort.Strings(unexpected)
+		if len(unexpected) != 0 {
+			t.Errorf("results[%d]: unexpected keys %v — the wire shape must be unchanged apart from matched_name", i, unexpected)
+		}
 	}
 }
 

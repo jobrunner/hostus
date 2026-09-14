@@ -33,6 +33,12 @@ type SuggestRequest struct {
 	// candidates are usable downstream in that space. Empty leaves the field
 	// empty. An un-ingested space is ErrUnknownTargetSpace, not silence.
 	TargetSpace string
+	// RequireTargetSpace narrows the results to concepts that HAVE an entry
+	// in TargetSpace (output.SuggestOpts.RequireTargetSpace), instead of
+	// merely annotating those that do. It is meaningless without a
+	// TargetSpace — the HTTP layer rejects that combination with a 400
+	// rather than letting an ineffective filter pass unnoticed.
+	RequireTargetSpace bool
 	// EntryBackbone restricts results to one backbone (e.g. "wcvp"), the
 	// same filter POST /v1/match offers under that name. Empty means every
 	// backbone. Naming an un-ingested backbone is ErrUnknownBackbone, not an
@@ -69,16 +75,20 @@ func Suggest(ctx context.Context, repo output.Repository, req SuggestRequest) (S
 	if err := validateTargetSpace(ctx, repo, req.TargetSpace); err != nil {
 		return SuggestResponse{}, err
 	}
+	if err := validateArea(ctx, repo, req.Area); err != nil {
+		return SuggestResponse{}, err
+	}
 
 	limit := effectiveLimit(req.Limit)
 
 	items, err := repo.Suggest(ctx, req.Q, output.SuggestOpts{
-		Area:        req.Area,
-		Ranks:       req.Ranks,
-		Limit:       limit,
-		Backbone:    req.EntryBackbone,
-		TargetSpace: req.TargetSpace,
-		MatchMode:   req.MatchMode,
+		Area:               req.Area,
+		Ranks:              req.Ranks,
+		Limit:              limit,
+		Backbone:           req.EntryBackbone,
+		TargetSpace:        req.TargetSpace,
+		RequireTargetSpace: req.RequireTargetSpace,
+		MatchMode:          req.MatchMode,
 	})
 	if err != nil {
 		return SuggestResponse{}, err

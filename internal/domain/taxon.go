@@ -410,6 +410,63 @@ type Area struct {
 	Name   string
 }
 
+// wgsrpdGermanyL3 is the single WGSRPD level-3 code WCVP uses for Germany.
+const wgsrpdGermanyL3 = "GER"
+
+// areaAlias maps a small set of convenience area names to their WGSRPD
+// level-3 area code(s). Any area value not found here (case-insensitively)
+// is treated as a raw WGSRPD level-3 code and passed through unchanged
+// (upper-cased) — so a caller can always bypass the alias table entirely by
+// supplying an exact L3 code (e.g. "GER") directly. "AT"/"CH" were added
+// alongside the multi-area bundle scoping (BundleOpts.Area) so a
+// Mitteleuropa bundle can be requested as "hostus bundle --area DE,AT,CH",
+// mirroring the ISO-3166 alpha-2 style "DE" rather than requiring the raw
+// WGSRPD codes (GER/AUT/SWI) for two of the three countries but not the
+// first.
+//
+// It lives in domain, not in the sqlite adapter that used to own it,
+// because BOTH sides of the hexagon need the same table: the adapter
+// resolves an area into the codes it matches distribution rows against, and
+// the application layer validates a caller-supplied area against it
+// (validateArea) — and the application must not import the adapter
+// (depguard). One table, one truth; the adapter's areaCodes and the
+// bundle's resolveAreaCodes both go through this function.
+var areaAlias = map[string][]string{
+	"DE": {wgsrpdGermanyL3},
+	"AT": {"AUT"},
+	"CH": {"SWI"},
+}
+
+// AreaCodes resolves an area value into the set of WGSRPD level-3 area
+// codes to match against distribution.area_code. An empty (or
+// whitespace-only) area returns nil: no area filter.
+func AreaCodes(area string) []string {
+	key := areaKey(area)
+	if key == "" {
+		return nil
+	}
+	if codes, ok := areaAlias[key]; ok {
+		return codes
+	}
+	return []string{key}
+}
+
+// IsAreaAlias reports whether area names one of the documented convenience
+// aliases (case-insensitively). An alias is part of the published API
+// surface, so it stays a valid area value even when the index happens to
+// carry no distribution rows for the code behind it — the answer is then an
+// honest "no positive occurrence record", not a rejected request.
+func IsAreaAlias(area string) bool {
+	_, ok := areaAlias[areaKey(area)]
+	return ok
+}
+
+// areaKey normalizes an area value for the alias lookup: trimmed and
+// upper-cased, "" for a blank value.
+func areaKey(area string) string {
+	return strings.ToUpper(strings.TrimSpace(area))
+}
+
 // Canonicalize normalizes a scientific name (or name fragment) into a
 // comparison key: it trims leading/trailing whitespace, collapses internal
 // whitespace runs to a single space, lower-cases, and strips diacritics.

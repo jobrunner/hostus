@@ -9,39 +9,17 @@ import (
 	"github.com/jobrunner/hostus/internal/ports/output"
 )
 
-// wgsrpdGermanyL3 is the single WGSRPD level-3 code WCVP uses for Germany.
-const wgsrpdGermanyL3 = "GER"
-
-// wgsrpdAlias maps a small set of convenience area names to their WGSRPD
-// level-3 area code(s). Any output.SuggestOpts.Area value not found here
-// (case-insensitively) is treated as a raw WGSRPD level-3 code and passed
-// through unchanged (upper-cased) — so a caller can always bypass the alias
-// table entirely by supplying an exact L3 code (e.g. "GER") directly. Add
-// further aliases here as UC1's frontend needs them. "AT"/"CH" were added
-// alongside Task 4's multi-area bundle scoping (BundleOpts.Area,
-// resolveAreaCodes in bundle.go) so a Mitteleuropa bundle can be requested
-// as "hostus bundle --area DE,AT,CH", mirroring the ISO-3166 alpha-2 style
-// "DE" already used, rather than requiring the raw WGSRPD codes
-// (GER/AUT/SWI) for two of the three countries but not the first.
-var wgsrpdAlias = map[string][]string{
-	"DE": {wgsrpdGermanyL3},
-	"AT": {"AUT"},
-	"CH": {"SWI"},
-}
-
 // areaCodes resolves a Repository.Suggest/output.SuggestOpts.Area value
 // into the set of WGSRPD level-3 area codes to match against
 // distribution.area_code. An empty area returns nil (no area filter — see
 // Suggest's doc comment on the empty-Area convention).
+//
+// The alias table itself lives in domain.AreaCodes: the application layer
+// validates a caller-supplied area against the same table and must not
+// import this adapter (depguard), so a copy here would be a second,
+// silently divergent truth.
 func areaCodes(area string) []string {
-	if strings.TrimSpace(area) == "" {
-		return nil
-	}
-	key := strings.ToUpper(strings.TrimSpace(area))
-	if codes, ok := wgsrpdAlias[key]; ok {
-		return codes
-	}
-	return []string{key}
+	return domain.AreaCodes(area)
 }
 
 // minQueryRunes is the minimum domain.Canonicalize'd length of q that
@@ -141,21 +119,29 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 		return nil, err
 	}
 	// TargetSpaceHit can only be decided once the space name is known, so it
-	// is set here rather than in the query. It compares the canonicalized
-	// space name against the canonicalized query — NOT the marker-stripped
-	// prefix the query's own signals use: with an aggregate query
-	// attachTargetSpaceNames resolves the AGGREGATE spelling of the space
-	// entry ("X agg."), and comparing that against the full canonicalized
-	// query is what makes the two sides agree. Without a requested space
-	// TargetSpaceName is "" for every item, and "" never has a non-empty
-	// query as its prefix, so the signal stays false throughout — no guard
-	// needed.
-	canonQuery := domain.Canonicalize(q)
+	// is set here rather than in the query. Both sides go through
+	// StripAggregateMarkers, the same measure ftsPrefixToken and
+	// nameStartFilter already apply — so the spaces' inconsistent marker
+	// SPELLINGS cannot decide this signal. Measured on the production index:
+	// eurosl (251 aggregate entries) and floraveg (211) write "… aggr.",
+	// germansl (614) writes "… agg.", and "… s. l." occurs as well. Comparing
+	// the raw canonical forms made "Alyssum montanum agg." miss eurosl's
+	// "Alyssum montanum aggr." on the "." vs "r" — and since
+	// ResolveTargetSpace answers "" for every concept without an aggregate
+	// entry on an aggregate query, the signal then went false for the WHOLE
+	// page, disabling the spec's decisive ranking criterion exactly where the
+	// aggregate machinery exists to help.
+	//
+	// Without a requested space TargetSpaceName is "" for every item, and ""
+	// never has a non-empty query as its prefix, so the signal stays false
+	// throughout — no guard needed.
+	prefix := domain.StripAggregateMarkers(domain.Canonicalize(q))
 	for i := range out {
-		out[i].TargetSpaceHit = strings.HasPrefix(domain.Canonicalize(out[i].TargetSpaceName), canonQuery)
+		spaceName := domain.StripAggregateMarkers(domain.Canonicalize(out[i].TargetSpaceName))
+		out[i].TargetSpaceHit = strings.HasPrefix(spaceName, prefix)
 	}
 
-	if err := db.attachMatchedNames(ctx, out, domain.StripAggregateMarkers(canonQuery)); err != nil {
+	if err := db.attachMatchedNames(ctx, out, prefix); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -173,9 +159,19 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 //     is shown that name, not a longer one that also starts with it;
 //  2. accepted before synonym — the same tie-break domain.RankSuggestions
 //     uses between concepts, applied here between one concept's names;
-//  3. canonical alphabetically — not a preference, just the last resort that
-//     makes the choice DETERMINISTIC, so two identical requests cannot show
-//     the operator two different "Treffer-Name" values.
+//  3. canonical, then authorship, then name id — not preferences, just the
+//     tie-breaks that make the choice DETERMINISTIC, so two identical
+//     requests cannot show the operator two different "Treffer-Name" values.
+//     Authorship and id are NOT optional garnish: a homonym is precisely two
+//     names of one concept with the same role and the same canonical that
+//     differ ONLY in authorship, and the first three keys cannot separate
+//     them. Measured on the production index: 5,784 (concept_id, role,
+//     canonical_fold) groups hold more than one name — e.g.
+//     wcvp:concept:1020 carries "Acalypha villicaulis Müll.Arg." and
+//     "Acalypha villicaulis Hochst. ex A.Rich.". Without the last two keys
+//     rowid order decides between them, and a plan or build change silently
+//     flips which author the console shows. nm.id is the final backstop for
+//     the (data-error) case of two rows identical in all four.
 //
 // The LIKE term needs no unary-+ guard: SQLite's LIKE optimization only
 // applies to a column with COLLATE NOCASE (or with case_sensitive_like ON),
@@ -190,7 +186,7 @@ const matchedNameQuery = `
 	  AND nm.canonical_fold LIKE ? || '%'
 	ORDER BY cn.concept_id ASC, exact_name DESC,
 	         CASE cn.role WHEN 'accepted' THEN 0 ELSE 1 END ASC,
-	         nm.canonical ASC`
+	         nm.canonical ASC, COALESCE(nm.authorship, '') ASC, nm.id ASC`
 
 // attachMatchedNames fills MatchedName on every item for which one of the
 // concept's own names is reached by the query prefix. It is a second pass
@@ -490,6 +486,16 @@ func buildSuggestQuery(q string, opts output.SuggestOpts) (query string, args []
 	// keep almost nothing — they are exactly the rows the unfiltered query
 	// hands back first.
 	//
+	// WHAT IT CANNOT RECOVER: suggestMatchPool caps the bm25 pool BEFORE this
+	// WHERE ever runs, and unlike the area filter the space has no union arm
+	// that fetches back what the cap dropped. Measured for q="ca" on the
+	// production index: 623 concepts with a eurosl entry are inside the pool,
+	// 2,963 are in the full match set — 79% are unreachable no matter what
+	// this filter does. Harmless today (623 already exceeds any fetch budget,
+	// 120 for limit=30), but a sparsely populated space plus a broad prefix
+	// can structurally starve the page. If that ever shows up, the fix is an
+	// in_area_rows-style union arm for the space, not a bigger pool.
+	//
 	// It requires BOTH halves: RequireTargetSpace alone has no space to
 	// require an entry in, and binding an empty space here would drop every
 	// row instead. (The HTTP layer rejects that combination with a 400, so
@@ -516,8 +522,11 @@ func buildSuggestQuery(q string, opts output.SuggestOpts) (query string, args []
 	// costs nothing, because the same term two tables over DID flip, and
 	// because a future ANALYZE would give the planner exactly the row counts
 	// that make the space index look attractive. Pinned by
-	// TestSuggestQueryPlanDoesNotScanNameSpaceEntry, whose doc comment
-	// records that the control assertion lives in the sibling test.
+	// TestSuggestQueryPlanDoesNotScanNameSpaceEntry, which controls over the
+	// FORM instead: written as a plain JOIN, this same filter DOES flip onto
+	// the PK autoindex — so the correlated shape is load-bearing here, and
+	// anyone rewriting it into a join reopens the trap the + alone would not
+	// close.
 	spaceFilter := ""
 	if opts.RequireTargetSpace && opts.TargetSpace != "" {
 		spaceFilter = ` AND EXISTS (

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -41,12 +42,31 @@ type suggestItemDTO struct {
 	// down to the score — this is what distinguishes them (SP5). Omitted for a
 	// concept with no sec. reference (WCVP), so the SP1/SP2 shape is unchanged.
 	Sec *secReferenceDTO `json:"sec,omitempty"`
+	// MatchedName is the name that actually triggered the hit (canonical +
+	// authorship + accepted/synonym role), which for a homonym-driven
+	// synonym match is NOT the concept's own accepted name in canonical/
+	// display — "Inula hirta L." and "Inula hirta Pollich" reach two
+	// different concepts and are indistinguishable without it. A pointer
+	// with omitempty so it is absent (not an empty object) when the
+	// triggering name could not be determined.
+	MatchedName *matchedNameDTO `json:"matched_name,omitempty"`
 	// TargetSpaceName is the candidate's spelling in the requested
 	// target_space, present only when one was requested AND this concept has
 	// an entry there. Its ABSENCE is the useful half: it says this candidate
 	// cannot be carried into that space, which is what a caller picking a
 	// concept for downstream use needs to see while choosing.
 	TargetSpaceName string `json:"target_space_name,omitempty"`
+}
+
+// matchedNameDTO is suggestItemDTO.MatchedName's nested object: the name
+// behind the hit. Every field is required on the wire — when there is no
+// matched name at all the whole object is absent, so a present object
+// always carries all three (authorship and role can legitimately be empty
+// strings for a name the backbone stored without them).
+type matchedNameDTO struct {
+	Canonical  string `json:"canonical"`
+	Authorship string `json:"authorship"`
+	Role       string `json:"role"`
 }
 
 // suggestResponseDTO is the GET /v1/suggest response envelope, per spec
@@ -72,6 +92,7 @@ func suggestResponseToDTO(resp application.SuggestResponse) suggestResponseDTO {
 			Score:        item.Score,
 			Aggregate:    item.Aggregate,
 
+			MatchedName:     matchedNameToDTO(item.MatchedName),
 			TargetSpaceName: item.TargetSpaceName,
 		}
 	}
@@ -79,6 +100,18 @@ func suggestResponseToDTO(resp application.SuggestResponse) suggestResponseDTO {
 		BackboneVersions: resp.BackboneVersions,
 		Results:          results,
 	}
+}
+
+// matchedNameToDTO renders the triggering name, or nil when there is none
+// to render. An empty Canonical is domain.MatchedName's documented "could
+// not be determined" state (see its doc comment), and an object whose only
+// content is three empty strings would claim to answer "which name matched?"
+// while saying nothing.
+func matchedNameToDTO(n domain.MatchedName) *matchedNameDTO {
+	if n.Canonical == "" {
+		return nil
+	}
+	return &matchedNameDTO{Canonical: n.Canonical, Authorship: n.Authorship, Role: n.Role}
 }
 
 // attachSuggestSec fills each result's Sec {id,title} for a sec-bearing
@@ -155,56 +188,103 @@ func parseSuggestMatchMode(param string) (string, error) {
 	return param, nil
 }
 
-// handleSuggest serves GET /v1/suggest?q=&area=&rank=&limit=&match_mode=,
+// parseSuggestRequireTargetSpace parses the `require_target_space` query
+// parameter as a boolean. A missing/empty parameter is false (no filter).
+// Anything strconv.ParseBool rejects is an error, NOT a silent false: a
+// filter that quietly fails to apply is the exact failure class this
+// parameter was added to remove — the caller would read an unnarrowed list
+// as a narrowed one.
+func parseSuggestRequireTargetSpace(param string) (bool, error) {
+	if param == "" {
+		return false, nil
+	}
+	v, err := strconv.ParseBool(param)
+	if err != nil {
+		return false, fmt.Errorf("require_target_space must be a boolean, got %q", param)
+	}
+	return v, nil
+}
+
+// parseSuggestRequest turns the query string into the application request,
+// or an error whose message IS the 400 INVALID_QUERY text (every parse
+// failure on this endpoint is a caller error, so there is no second error
+// class to distinguish here).
+func parseSuggestRequest(query url.Values) (application.SuggestRequest, error) {
+	ranks, err := parseSuggestRanks(query.Get("rank"))
+	if err != nil {
+		return application.SuggestRequest{}, err
+	}
+	limit, err := parseSuggestLimit(query.Get("limit"))
+	if err != nil {
+		return application.SuggestRequest{}, errors.New("limit must be an integer")
+	}
+	matchMode, err := parseSuggestMatchMode(query.Get("match_mode"))
+	if err != nil {
+		return application.SuggestRequest{}, err
+	}
+	requireTargetSpace, err := parseSuggestRequireTargetSpace(query.Get("require_target_space"))
+	if err != nil {
+		return application.SuggestRequest{}, err
+	}
+	targetSpace := query.Get("target_space")
+	// The combination, not either half, is the mistake: without a space there
+	// is nothing to require an entry in, and silently ignoring the flag would
+	// hand back an unfiltered list to a caller who asked for a filtered one.
+	if requireTargetSpace && targetSpace == "" {
+		return application.SuggestRequest{}, errors.New("require_target_space needs a target_space to require an entry in")
+	}
+	return application.SuggestRequest{
+		Q:                  query.Get("q"),
+		Area:               query.Get("area"),
+		Ranks:              ranks,
+		Limit:              limit,
+		EntryBackbone:      query.Get("entry_backbone"),
+		TargetSpace:        targetSpace,
+		RequireTargetSpace: requireTargetSpace,
+		MatchMode:          matchMode,
+	}, nil
+}
+
+// suggestInvalidQueryMessage maps application.Suggest's caller-error
+// sentinels to their 400 INVALID_QUERY message, echoing the offending value
+// from req. The bool is false for anything else — an infrastructure failure,
+// which the handler turns into a 500.
+func suggestInvalidQueryMessage(err error, req application.SuggestRequest) (string, bool) {
+	if errors.Is(err, application.ErrEmptyQuery) {
+		return "q query parameter is required", true
+	}
+	if errors.Is(err, application.ErrUnknownBackbone) {
+		return "unknown entry_backbone " + strconv.Quote(req.EntryBackbone), true
+	}
+	if errors.Is(err, application.ErrUnknownTargetSpace) {
+		return "unknown target_space " + strconv.Quote(req.TargetSpace), true
+	}
+	if errors.Is(err, application.ErrUnknownArea) {
+		return "unknown area " + strconv.Quote(req.Area) + " — GET /v1/areas lists the areas this index carries data for", true
+	}
+	return "", false
+}
+
+// handleSuggest serves
+// GET /v1/suggest?q=&area=&rank=&limit=&match_mode=&require_target_space=,
 // the frontend autosuggest endpoint, per spec §B.1. A missing/empty q, an
-// unknown rank token, a non-numeric limit, or an unrecognized match_mode
-// all report 400 INVALID_QUERY.
+// unknown rank token, a non-numeric limit, an unrecognized match_mode, a
+// non-boolean or space-less require_target_space, or an area the index does
+// not know all report 400 INVALID_QUERY.
 func handleSuggest(repo output.Repository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		query := r.URL.Query()
-
-		ranks, err := parseSuggestRanks(query.Get("rank"))
+		req, err := parseSuggestRequest(r.URL.Query())
 		if err != nil {
 			httperr.InvalidQueryError(w, err.Error())
 			return
 		}
 
-		limit, err := parseSuggestLimit(query.Get("limit"))
+		resp, err := application.Suggest(r.Context(), repo, req)
 		if err != nil {
-			httperr.InvalidQueryError(w, "limit must be an integer")
-			return
-		}
-
-		matchMode, err := parseSuggestMatchMode(query.Get("match_mode"))
-		if err != nil {
-			httperr.InvalidQueryError(w, err.Error())
-			return
-		}
-
-		entryBackbone := query.Get("entry_backbone")
-		targetSpace := query.Get("target_space")
-		resp, err := application.Suggest(r.Context(), repo, application.SuggestRequest{
-			Q:             query.Get("q"),
-			Area:          query.Get("area"),
-			Ranks:         ranks,
-			Limit:         limit,
-			EntryBackbone: entryBackbone,
-			TargetSpace:   targetSpace,
-			MatchMode:     matchMode,
-		})
-		if errors.Is(err, application.ErrEmptyQuery) {
-			httperr.InvalidQueryError(w, "q query parameter is required")
-			return
-		}
-		if errors.Is(err, application.ErrUnknownBackbone) {
-			httperr.InvalidQueryError(w, "unknown entry_backbone "+strconv.Quote(entryBackbone))
-			return
-		}
-		if errors.Is(err, application.ErrUnknownTargetSpace) {
-			httperr.InvalidQueryError(w, "unknown target_space "+strconv.Quote(targetSpace))
-			return
-		}
-		if err != nil {
+			if msg, ok := suggestInvalidQueryMessage(err, req); ok {
+				httperr.InvalidQueryError(w, msg)
+				return
+			}
 			httperr.InternalError(w)
 			return
 		}

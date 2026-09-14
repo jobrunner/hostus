@@ -110,6 +110,58 @@ func validateTargetSpace(ctx context.Context, repo output.Repository, space stri
 	return ErrUnknownTargetSpace
 }
 
+// ErrUnknownArea is returned by Suggest when the requested area names
+// neither a documented convenience alias (domain.IsAreaAlias, e.g. "DE") nor
+// an area the index actually carries distribution data for
+// (Repository.Areas). The HTTP adapter renders it as a 400 INVALID_QUERY
+// naming the offending value.
+//
+// Before this existed, a typo'd area was silently accepted: area is a
+// RANKING signal, so an unknown code simply never matched a distribution row
+// and every result came back with in_area false — which reads as "this plant
+// occurs nowhere", a wrong answer dressed as a fact.
+var ErrUnknownArea = errors.New("unknown area")
+
+// validateArea reports ErrUnknownArea unless area is usable. An empty area
+// is "no area filter" and always valid.
+//
+// Two ways to be valid, deliberately:
+//
+//   - a documented alias (domain.IsAreaAlias) is part of the published API
+//     surface and stays valid independently of what has been ingested;
+//     "DE" on an index without a single German distribution row yields an
+//     honest "no positive occurrence record", not a rejected request.
+//   - otherwise at least one of the codes the area resolves to
+//     (domain.AreaCodes) must appear in Repository.Areas, the areas that
+//     actually carry data. That list is the only inventory of area codes
+//     hostus has — it ships no full WGSRPD register — so a real L3 code for
+//     which nothing was ingested is rejected too. That is the deliberate
+//     trade: rejecting a code the index cannot say anything about beats
+//     answering it with a fabricated absence.
+func validateArea(ctx context.Context, repo output.Repository, area string) error {
+	codes := domain.AreaCodes(area)
+	if len(codes) == 0 {
+		return nil
+	}
+	if domain.IsAreaAlias(area) {
+		return nil
+	}
+	areas, err := repo.Areas(ctx)
+	if err != nil {
+		return err
+	}
+	known := make(map[string]bool, len(areas))
+	for _, a := range areas {
+		known[a.Code] = true
+	}
+	for _, c := range codes {
+		if known[c] {
+			return nil
+		}
+	}
+	return ErrUnknownArea
+}
+
 func validateFilter(ctx context.Context, repo output.Repository, filter MatchFilter) error {
 	if err := validateBackbone(ctx, repo, filter.Backbone); err != nil {
 		return err

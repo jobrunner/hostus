@@ -34,3 +34,11 @@
 
 # git worktrees (superpowers:using-git-worktrees)
 .worktrees/
+
+# Locally built databases (hostus ingest --db out/...). Multi-GB and
+# never a repository artifact. Ignored for two measured reasons, not
+# just tidiness: an implementer once committed a 2.26 GB database from
+# here because nothing stopped it, and `make mutation` fills the disk —
+# gremlins copies the whole working tree per mutant, so an un-ignored
+# 8.5 GB out/ left 451 GB of temp copies behind in one run.
+/out/

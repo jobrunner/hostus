@@ -317,10 +317,10 @@ func ExportBundle(ctx context.Context, src *DB, out string, opts BundleOpts) (Bu
 
 // resolveAreaCodes turns a BundleOpts.Area value into the deduplicated set
 // of WGSRPD level-3 codes ExportBundle scopes to: area is split on commas
-// (so "DE,AT,CH" resolves each part independently, e.g. via areaCodes'
-// alias table — "DE" alone expands to wgsrpdGermanyL3 — and unions the
-// results), blank parts are skipped, and an all-blank/empty area returns
-// nil, the existing "no filter" convention. A single value with no comma
+// (so "DE,AT,CH" resolves each part independently through areaCodes, i.e.
+// through domain.AreaCodes' alias table — "DE" alone expands to "GER" — and
+// unions the results), blank parts are skipped, and an all-blank/empty area
+// returns nil, the existing "no filter" convention. A single value with no comma
 // (the pre-multi-area form) behaves exactly as before: it is just a
 // one-element split. Sorted so the result (and its json_each encoding) is
 // deterministic regardless of the order --area listed its parts in.

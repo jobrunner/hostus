@@ -135,6 +135,7 @@
     accepted: "Ob das Konzept selbst der akzeptierte Name ist (ja) oder ein Synonym, das auf ein akzeptiertes Konzept aufgeloest wurde.",
     in_area: "Positiver Verbreitungsbeleg fuers Gebiet: „ja“, wenn das Konzept selbst dort verbreitet ist ODER derselbe Name bei WCVP (der Verbreitungs-Autoritaet, akzeptiert oder Synonym) dort vorkommt. Sonst „keine Angabe“ — Verbreitung ist Praesenz-Daten, ein fehlender Eintrag ist keine belegte Abwesenheit (deshalb nie „nein“). Ohne area-Parameter immer „keine Angabe“.",
     score: "Roher SQLite-FTS5-bm25()-Wert des Treffers. Niedriger = relevanter (ein Distanzmass, keine Aehnlichkeit).",
+    matched_name: "Der Name, der den Treffer AUSGELOEST hat, mit Autorschaft und Rolle (akzeptiert/Synonym). Er weicht vom angezeigten Namen ab, wenn der Treffer ueber ein Synonym kam — und er ist das einzige Merkmal, das Homonyme auseinanderhaelt: „Inula hirta L.“ gegenueber „Inula hirta Pollich“ fuehren zu zwei verschiedenen Konzepten. Bleibt leer, wenn der Dienst den ausloesenden Namen nicht bestimmen konnte.",
     prefix: "Ob der ANGEZEIGTE (akzeptierte) Name mit deiner Eingabe BEGINNT (links-verankert, normalisiert). \u201enein\u201c = der Treffer kam ueber einen anderen indexierten Namen: ein Synonym, eine Aggregat-Schreibweise oder einen spaeteren Token.",
     aggregate: "Das Konzept wurde ueber eine Aggregat-Schreibweise (agg./aggr./s.l.) getroffen. Da FloraVeg-Aggregate auf die Nominatart zeigen, wird die Nominatart mit diesem Badge angezeigt.",
     sec: "sec.-Referenzraum (\u201esecundum\u201c): die Flora/Checkliste, deren Umschreibung dieses Konzept meint. Unterscheidet gleichnamige CDM-Konzepte (Common Data Model, die Cybertaxonomy-/EDIT-Plattform mit den Wisskirchen-Konzeptbeziehungen) voneinander. Hat ein Konzept keinen sec.-Raum, steht dort die Herkunft: WCVP (World Checklist of Vascular Plants) als Backbone-Konzept, oder CDM (ohne sec.) bei den seltenen CDM-Konzepten ohne sec.",
@@ -177,7 +178,7 @@
 
   // Welche Felder je Panel in der Legende erklaert werden.
   var PANEL_LEGENDS = {
-    "panel-suggest": ["prefix", "aggregate", "sec", "rank", "accepted", "in_area", "score"],
+    "panel-suggest": ["matched_name", "prefix", "aggregate", "sec", "rank", "accepted", "in_area", "score"],
     "panel-concept": ["sec", "backbone", "publishable", "nom_status", "typification", "basionym", "reason"],
     "panel-match": ["match_type", "confidence", "requires_review"]
   };
@@ -305,6 +306,8 @@
   var suggestURL = byId("suggest-url");
   var suggestBackbone = byId("suggest-backbone");
   var suggestSpace = byId("suggest-space");
+  var suggestRank = byId("suggest-rank");
+  var suggestRequireSpace = byId("suggest-require-space");
   var suggestSummary = byId("suggest-summary");
   var suggestBody = byId("suggest-body");
 
@@ -390,6 +393,20 @@
         nameCell.appendChild(badge("agg.", "neutral"));
       }
       tr.appendChild(nameCell);
+
+      // Der ausloesende Name samt Autorschaft. Fehlt matched_name, bleibt die
+      // Zelle LEER statt „–“: das Feld ist omitempty, eine Fuellmarke wuerde
+      // eine Aussage vortaeuschen, die die Antwort nicht enthaelt.
+      var matched = item.matched_name;
+      var matchedTd = el("td", "name");
+      if (matched && matched.canonical) {
+        matchedTd.textContent = matched.authorship
+          ? matched.canonical + " " + matched.authorship
+          : matched.canonical;
+        if (matched.role) { matchedTd.title = matched.role; }
+      }
+      tr.appendChild(matchedTd);
+
       tr.appendChild(secTd(item.sec, item.concept_id));
 
       // Nur befüllt, wenn ein Namensraum gewählt ist. Die LEERE Zelle ist die
@@ -448,7 +465,16 @@
     var limit = limitInput.value.trim();
     if (limit !== "") { params.set("limit", limit); }
     if (suggestBackbone && suggestBackbone.value) { params.set("entry_backbone", suggestBackbone.value); }
-    if (suggestSpace && suggestSpace.value) { params.set("target_space", suggestSpace.value); }
+    if (suggestRank && suggestRank.value) { params.set("rank", suggestRank.value); }
+    var space = suggestSpace && suggestSpace.value ? suggestSpace.value : "";
+    if (space !== "") { params.set("target_space", space); }
+    // require_target_space OHNE target_space ist serverseitig 400 INVALID_QUERY.
+    // Die Konsole baut so einen Request gar nicht erst: ein garantiert
+    // scheiternder Aufruf saehe wie ein Dienstfehler aus, ist aber nur eine
+    // halb ausgefuellte Bedienung.
+    if (space !== "" && suggestRequireSpace && suggestRequireSpace.checked) {
+      params.set("require_target_space", "true");
+    }
 
     var path = "/v1/suggest?" + params.toString();
     var seq = suggestSeq + 1;
@@ -475,6 +501,14 @@
   qInput.addEventListener("input", scheduleSuggest);
   areaInput.addEventListener("input", scheduleSuggest);
   limitInput.addEventListener("input", scheduleSuggest);
+  // Die Auswahlfelder wirken sofort. Ohne das muesste man nach jeder
+  // Umstellung eine Taste im Suchfeld druecken, damit die Anzeige noch zur
+  // Bedienung passt — die Tabelle stuende bis dahin fuer andere Parameter als
+  // die sichtbaren. Beim Namensraum kommt dazu, dass er mitentscheidet, ob
+  // require_target_space ueberhaupt mitgeschickt werden darf.
+  [suggestBackbone, suggestSpace, suggestRank, suggestRequireSpace].forEach(function (c) {
+    if (c) { c.addEventListener("change", scheduleSuggest); }
+  });
 
   /* ---------- Panel 2: Konzept ---------- */
 
@@ -882,6 +916,13 @@
     });
   }
 
+  // Ob ein Auswahlfeld diesen Wert anbietet. Ein `sel.value = x` auf einen
+  // Wert ohne Option faellt still auf "" zurueck — die Pruefung haelt die
+  // Vorbelegung ehrlich, wenn ein Deployment das Backbone gar nicht fuehrt.
+  function hasOption(sel, value) {
+    return Array.prototype.some.call(sel.options, function (o) { return o.value === value; });
+  }
+
   (function loadCatalog() {
     api("/v1/backbones").then(function (res) {
       if (res.aborted) { return; }
@@ -891,6 +932,17 @@
           function (b) { return b.id; },
           function (b) { return b.id + " (" + b.version + ")"; });
       });
+      // Vorbelegung, keine Festlegung: „Alle" bleibt waehlbar. Ohne sie zeigt
+      // der Suggest die CDM-Dubletten desselben Namens (je ein Konzept pro
+      // Referenzwerk), gemessen 9 statt 2 Zeilen fuer q=Inula hirta — und wcvp
+      // ist ohnehin der Raum, den die Kette PlantNet->Habitatus nutzt.
+      if (suggestBackbone && hasOption(suggestBackbone, "wcvp")) {
+        suggestBackbone.value = "wcvp";
+        // Der Katalog trifft spaet ein; wer sofort losgetippt hat, saehe sonst
+        // ein ungefiltertes Ergebnis unter einem Feld, das schon „wcvp" zeigt.
+        // Ein programmatisch gesetzter Wert loest kein change-Ereignis aus.
+        if (qInput.value.trim() !== "") { scheduleSuggest(); }
+      }
     });
     api("/v1/spaces").then(function (res) {
       if (res.aborted) { return; }

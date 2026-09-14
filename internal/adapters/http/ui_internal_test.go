@@ -195,6 +195,65 @@ func TestUIPanelsArePresent(t *testing.T) {
 	}
 }
 
+// TestUISuggestPanelCarriesTheFilters pins the controls spec
+// 2026-09-14 (decision 6) added to the suggest panel. They are the whole
+// point of that spec from a user's seat: without them the console cannot
+// narrow to ONE species in the eurosl name space, which is what turned 9
+// rows (wrong one first) into 2 for q=Inula hirta.
+func TestUISuggestPanelCarriesTheFilters(t *testing.T) {
+	doc := buildUIDocument("")
+
+	for _, want := range []string{
+		`id="suggest-rank"`,
+		`id="suggest-require-space"`,
+		`<th data-doc="matched_name">Treffer-Name</th>`,
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("suggest panel lacks %q", want)
+		}
+	}
+	// The rank picker is only useful if it offers the ranks the index
+	// actually carries; "(alle)" must stay the no-filter default.
+	for _, rank := range []string{`<option value="">(alle)</option>`, "SPECIES", "SUBSPECIES", "VARIETY", "GENUS", "FAMILY"} {
+		if !strings.Contains(doc, rank) {
+			t.Errorf("the rank picker does not offer %q", rank)
+		}
+	}
+}
+
+// TestUISuggestSendsTheFilterParameters pins the wiring, not just the
+// markup: a control that exists but is never read is indistinguishable from
+// a missing one at the API.
+func TestUISuggestSendsTheFilterParameters(t *testing.T) {
+	for _, want := range []string{
+		`params.set("rank", suggestRank.value)`,
+		`params.set("require_target_space", "true")`,
+		`item.matched_name`,
+	} {
+		if !strings.Contains(uiAppJS, want) {
+			t.Errorf("app.js does not wire %q; the control would have no effect on the request", want)
+		}
+	}
+	// require_target_space WITHOUT target_space is 400 INVALID_QUERY since
+	// spec 2026-09-14 decision 1. The console must not build that request:
+	// it would read as a service fault instead of a half-filled form.
+	if !strings.Contains(uiAppJS, `space !== "" && suggestRequireSpace && suggestRequireSpace.checked`) {
+		t.Error("app.js no longer gates require_target_space on a selected target_space; " +
+			"ticking the box without a name space would produce a guaranteed 400")
+	}
+	// The wcvp preselection is what removes the CDM duplicates (measured
+	// 9 -> 2 rows for q=Inula hirta). A preselection, not a lock-in: "Alle"
+	// stays selectable, so the value is only set when the option exists.
+	if !strings.Contains(uiAppJS, `suggestBackbone.value = "wcvp"`) {
+		t.Error("app.js lost the wcvp preselection; the suggest panel would show the CDM duplicates again")
+	}
+	// Every filter must take effect at once; otherwise the table stands for
+	// different parameters than the ones on screen.
+	if !strings.Contains(uiAppJS, `c.addEventListener("change", scheduleSuggest)`) {
+		t.Error("app.js no longer re-runs the suggest when a picker changes; the table would stay stale")
+	}
+}
+
 // TestUIDoesNotCacheAPIResponses pins the instrument's core promise: what
 // the page shows is what the API just answered.
 func TestUIDoesNotCacheAPIResponses(t *testing.T) {

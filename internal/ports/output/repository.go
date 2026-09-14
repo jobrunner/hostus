@@ -236,8 +236,10 @@ type Repository interface {
 // SuggestOpts configures Repository.Suggest.
 type SuggestOpts struct {
 	// Area is a WGSRPD level-3 area code (e.g. "GER"), or one of a small
-	// set of documented convenience aliases (e.g. "DE"); see
-	// internal/adapters/sqlite's areaCodes. Empty means no area filter.
+	// set of documented convenience aliases (e.g. "DE"); the alias table and
+	// its resolution live in domain.AreaCodes, which every implementation
+	// must go through so the serving, bundle and validation paths cannot
+	// drift apart. Empty means no area filter.
 	Area string
 	// Ranks restricts results to the given domain.Rank values. Empty means
 	// no rank filter (every rank is eligible).
@@ -246,6 +248,19 @@ type SuggestOpts struct {
 	// carries its spelling in that space as SuggestItem.TargetSpaceName.
 	// Empty means no space is resolved and the field stays empty.
 	TargetSpace string
+	// RequireTargetSpace drops every concept WITHOUT an entry in
+	// TargetSpace. It only takes effect together with a non-empty
+	// TargetSpace — on its own there is no space to require an entry in,
+	// and it is then ignored (the HTTP layer rejects that combination
+	// outright rather than filtering silently).
+	//
+	// Like Backbone, it is applied inside the query, ahead of the limit,
+	// and for the same reason: a caller filtering the returned page
+	// afterwards would empty it out, since the concepts without an entry
+	// are exactly the ones the un-filtered query hands back first (one
+	// name can occur once per CDM sec. reference, none of which carry a
+	// eurosl entry).
+	RequireTargetSpace bool
 	// Backbone restricts results to concepts of that backbone (e.g. "wcvp").
 	// Empty means no backbone filter. It is applied inside the query, ahead
 	// of the limit: a caller filtering afterwards would keep almost nothing,

@@ -325,3 +325,56 @@ func TestParseRank_InformalCladeCarriesTier(t *testing.T) {
 		t.Errorf("ParseRank(%q) = %q, want %q", "INFORMAL_CLADE_5", got, domain.RankInformalClade)
 	}
 }
+
+// TestAreaCodes covers the alias table both sides of the hexagon share: the
+// sqlite adapter resolves an area into the codes it matches distribution
+// rows against, the application layer validates a caller's area against the
+// same table.
+func TestAreaCodes(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"", nil},
+		{"   ", nil},
+		{"DE", []string{"GER"}},
+		{" de ", []string{"GER"}},
+		{"AT", []string{"AUT"}},
+		{"CH", []string{"SWI"}},
+		{"GER", []string{"GER"}},
+		{"aut", []string{"AUT"}},
+		{"QUATSCH", []string{"QUATSCH"}},
+	}
+	for _, c := range cases {
+		got := domain.AreaCodes(c.in)
+		if len(got) != len(c.want) {
+			t.Errorf("AreaCodes(%q) = %v, want %v", c.in, got, c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("AreaCodes(%q) = %v, want %v", c.in, got, c.want)
+				break
+			}
+		}
+	}
+}
+
+// TestIsAreaAlias pins that only the documented convenience names are
+// aliases: a raw WGSRPD code is not one, which is what lets the application
+// layer treat the two cases differently (an alias stays valid even when the
+// index carries no data for the code behind it).
+func TestIsAreaAlias(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"DE", true}, {"de", true}, {" ch ", true}, {"AT", true},
+		{"GER", false}, {"", false}, {"QUATSCH", false},
+	}
+	for _, c := range cases {
+		if got := domain.IsAreaAlias(c.in); got != c.want {
+			t.Errorf("IsAreaAlias(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}

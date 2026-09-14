@@ -28,7 +28,49 @@ func (t *ingestTx) UpsertArea(a domain.Area) error {
 // ingested name (empty when none), ordered by (scheme, code). Only
 // areas-with-data are returned, so a picker built from this never offers a
 // region that yields nothing.
+//
+// The result is CACHED for the life of the process (dropped when an ingest
+// transaction commits through this handle — see invalidateAreas). The query
+// is a DISTINCT scan of the whole distribution table: 125 ms on the
+// production index, and application.validateArea calls it on EVERY /v1/suggest
+// and /v1/match request carrying a non-alias area — before the actual search,
+// and therefore also for requests that end in a 400. Without the cache an
+// unauthenticated caller could spend one full table scan per request on one
+// of the four pooled read connections just by sending ?area=ZZ1, ZZ2, … and
+// collecting error responses. The list only changes on ingest, and `serve`
+// opens the file read-only, so caching it costs nothing in correctness.
+//
+// Failures are NOT cached: a transient error (a closed or busy database)
+// would otherwise poison the answer for the rest of the process.
+//
+// The returned slice is shared with every other caller and must not be
+// modified. It is handed out as-is rather than copied because the callers
+// (validateArea's membership test, the /v1/areas handler's serialization)
+// only read it, and copying ~1000 entries per keystroke is exactly the work
+// this cache exists to remove.
 func (db *DB) Areas(ctx context.Context) ([]domain.Area, error) {
+	db.areasMu.Lock()
+	defer db.areasMu.Unlock()
+	if db.areasLoaded {
+		return db.areas, nil
+	}
+	areas, err := db.queryAreas(ctx)
+	if err != nil {
+		return nil, err
+	}
+	db.areas, db.areasLoaded = areas, true
+	return areas, nil
+}
+
+// invalidateAreas drops the Areas cache. Called by ingestTx.Commit, the only
+// operation that can change which areas carry data.
+func (db *DB) invalidateAreas() {
+	db.areasMu.Lock()
+	defer db.areasMu.Unlock()
+	db.areas, db.areasLoaded = nil, false
+}
+
+func (db *DB) queryAreas(ctx context.Context) ([]domain.Area, error) {
 	rows, err := db.sql.QueryContext(ctx, `
 		SELECT d.area_scheme, d.area_code, COALESCE(a.name, '')
 		FROM (SELECT DISTINCT area_scheme, area_code FROM distribution) d

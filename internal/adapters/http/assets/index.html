@@ -38,6 +38,17 @@
       <input id="suggest-limit" type="number" min="1" max="100" value="30">
     </div>
     <div class="field">
+      <label for="suggest-rank">Rang (rank)</label>
+      <select id="suggest-rank">
+        <option value="">(alle)</option>
+        <option value="SPECIES">SPECIES</option>
+        <option value="SUBSPECIES">SUBSPECIES</option>
+        <option value="VARIETY">VARIETY</option>
+        <option value="GENUS">GENUS</option>
+        <option value="FAMILY">FAMILY</option>
+      </select>
+    </div>
+    <div class="field">
       <label for="suggest-backbone">Konzeptraum (entry_backbone)</label>
       <select id="suggest-backbone">
         <option value="">Alle</option>
@@ -52,13 +63,20 @@
         <option value="">keiner</option>
       </select>
     </div>
+    <div class="field">
+      <!-- Wirkt nur zusammen mit einem gewählten Namensraum: ohne ihn
+           antwortet der Dienst auf require_target_space=true mit 400, die
+           Konsole schickt den Parameter dann gar nicht erst mit. -->
+      <label for="suggest-require-space">nur mit Eintrag im Namensraum</label>
+      <input id="suggest-require-space" type="checkbox">
+    </div>
   </div>
   <p class="hint">Hinweis: <code>?area=</code> nimmt heute <strong>einen</strong> Code. Mehrere Gebiete gibt es nur in <code>hostus bundle</code>.</p>
   <p class="url" id="suggest-url"></p>
   <div class="summary" id="suggest-summary"></div>
   <div class="scroll"><table id="suggest-table">
     <thead><tr>
-      <th>#</th><th>Name</th><th data-doc="sec">sec.</th><th>Name im Namensraum</th><th data-doc="rank">Rang</th><th data-doc="accepted">Akzeptiert</th><th data-doc="in_area">im Gebiet</th><th data-doc="score">Score</th><th data-doc="prefix">Pr&auml;fix</th>
+      <th>#</th><th>Name</th><th data-doc="matched_name">Treffer-Name</th><th data-doc="sec">sec.</th><th>Name im Namensraum</th><th data-doc="rank">Rang</th><th data-doc="accepted">Akzeptiert</th><th data-doc="in_area">im Gebiet</th><th data-doc="score">Score</th><th data-doc="prefix">Pr&auml;fix</th>
     </tr></thead>
     <tbody id="suggest-body"></tbody>
   </table></div>

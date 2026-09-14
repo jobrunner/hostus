@@ -140,3 +140,61 @@ func TestAreas_ClosedDBSurfacesError(t *testing.T) {
 		t.Error("Areas on a closed database: want an error, got nil")
 	}
 }
+
+// TestAreas_CachesTheListAndNotTheError pins the two halves of the Areas
+// cache (whole-branch review, finding W3). The query is a DISTINCT scan of
+// the whole distribution table — 125 ms on the production index — and
+// application.validateArea runs it on every /v1/suggest and /v1/match request
+// with a non-alias area, BEFORE the search and therefore also for requests
+// that end in a 400: without the cache, `?q=ab&area=ZZ1`, `ZZ2`, … buys an
+// attacker one full table scan per request on one of four pooled read
+// connections in exchange for an error message.
+//
+// "Does not query again" is asserted the only way a test can observe it from
+// outside: by taking the database away (Close) and demanding the same answer
+// anyway. A second query would fail on a closed handle.
+//
+// The error half matters just as much: a transient failure must not be
+// remembered, or one busy moment would poison every area validation for the
+// life of the process. It is provoked by renaming the table out from under
+// the query and back again — the same handle, an error and then a success.
+func TestAreas_CachesTheListAndNotTheError(t *testing.T) {
+	db := openSeededDB(t) // corynephorus distributed to GER + FRA
+	ctx := context.Background()
+
+	if _, err := db.sql.ExecContext(ctx, `ALTER TABLE distribution RENAME TO distribution_hidden`); err != nil {
+		t.Fatalf("hiding distribution: %v", err)
+	}
+	if _, err := db.Areas(ctx); err == nil {
+		t.Fatal("Areas without the distribution table: want an error, got nil")
+	}
+	if _, err := db.sql.ExecContext(ctx, `ALTER TABLE distribution_hidden RENAME TO distribution`); err != nil {
+		t.Fatalf("restoring distribution: %v", err)
+	}
+
+	// The failure above must not have been cached.
+	first, err := db.Areas(ctx)
+	if err != nil {
+		t.Fatalf("Areas after restoring the table: %v", err)
+	}
+	want := []domain.Area{
+		{Scheme: "wgsrpd_l3", Code: "FRA"},
+		{Scheme: "wgsrpd_l3", Code: "GER"},
+	}
+	if len(first) != len(want) {
+		t.Fatalf("Areas = %+v, want %+v (an error must not be cached)", first, want)
+	}
+
+	// Take the database away: a second query would now fail, so an answer
+	// proves the list came from the cache.
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	second, err := db.Areas(ctx)
+	if err != nil {
+		t.Fatalf("Areas on a closed database: %v — want the cached list, i.e. no second query", err)
+	}
+	if len(second) != len(want) || second[0] != want[0] || second[1] != want[1] {
+		t.Errorf("cached Areas = %+v, want %+v", second, want)
+	}
+}

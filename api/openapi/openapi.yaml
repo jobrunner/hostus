@@ -211,10 +211,13 @@ paths:
       description: >-
         Liefert Autosuggest-Kandidaten für ein Frontend-Eingabefeld: ein
         FTS5-Präfix-Treffer über den lokalen Index, optional nach
-        Referenzgebiet und Rang gefiltert, priorisiert (Präfix-Treffer vor
-        Nicht-Treffer, im Gebiet vor nicht im Gebiet, akzeptiert vor
-        Synonym, breitere vor feineren Rängen, bm25-Score aufsteigend) und
-        auf `limit` gekürzt.
+        Referenzgebiet und Rang gefiltert, priorisiert (exakter Namenstreffer
+        vor bloßem Präfixtreffer, Treffer im angefragten target_space vor
+        übrigen, Präfix-Treffer vor Nicht-Treffer, im Gebiet vor nicht im
+        Gebiet, akzeptiert vor Synonym, breitere vor feineren Rängen,
+        bm25-Score aufsteigend) und auf `limit` gekürzt. Die ersten beiden
+        Kriterien entscheiden Homonyme: welcher Name den Treffer ausgelöst
+        hat, steht in `matched_name`.
       tags:
         - taxa
       parameters:
@@ -229,8 +232,32 @@ paths:
           required: false
           description: >-
             WGSRPD-L3-Referenzgebietscode (z. B. `AUT`) oder eine
-            dokumentierte Kurzform (z. B. `DE`). Leer bedeutet kein
+            dokumentierte Kurzform (`DE`, `AT`, `CH`). Leer bedeutet kein
             Gebietsfilter — `in_area` ist dann bei jedem Ergebnis `false`.
+
+
+            **`area` ist ein Ranking-Signal, kein Filter.** Treffer außerhalb
+            des Gebiets verschwinden nicht, sie rücken nur nach hinten
+            (`in_area: false`). Wer ausschließlich Arten des Gebiets will,
+            muss die Liste selbst nach `in_area` filtern.
+
+
+            Nicht verwendbare Werte liefern 400 und nennen den Wert
+            (`area "SPA" is not available in this index — …`) — bewusst nicht
+            „unbekannt": der Code kann real sein und nur in DIESEM Index
+            (z. B. einem gebietsgeschnittenen Bundle) keine Verbreitungszeile
+            haben. Gültig sind die dokumentierten Kurzformen sowie jeder Code,
+            den `GET /v1/areas` für diesen Index auflistet (also jeder Code
+            mit Verbreitungsdaten). Früher lieferte ein Tippfehler 200 mit
+            ungefilterten Treffern und überall `in_area: false` — das las
+            sich wie „kommt nirgends vor".
+
+
+            **Sonderfall:** `DE`/`AT`/`CH` sind veröffentlichte API-Oberfläche
+            und deshalb datenunabhängig gültig. Auf einem Index ohne
+            GER-Daten liefert `area=DE` also 200 (überall `in_area: false`),
+            `area=GER` dagegen 400. Verlässliche Auskunft über die Gebiete
+            eines Index gibt allein `GET /v1/areas`.
           schema:
             type: string
         - name: rank
@@ -261,6 +288,24 @@ paths:
             ingestierter Raum liefert 400.
           schema:
             type: string
+        - name: require_target_space
+          in: query
+          required: false
+          description: >-
+            Macht aus `target_space` einen echten Filter: `true` liefert nur
+            Konzepte, die im Zielraum einen Eintrag haben, statt die anderen
+            bloß ohne `target_space_name` mitzuliefern. Der Filter greift in
+            der Abfrage, also **vor** dem Limit — nachträgliches Filtern der
+            Ergebnisseite würde fast nichts übrig lassen, weil die
+            eintragslosen Konzepte genau die sind, die die ungefilterte
+            Abfrage zuerst zurückgibt. Ohne `target_space` liefert `true` 400
+            (es gäbe keinen Raum, dessen Eintrag verlangt werden könnte);
+            ein nicht als Boolean lesbarer Wert ebenfalls 400 — ein
+            stillschweigend wirkungsloser Filter wäre schlimmer als eine
+            Fehlermeldung. Fehlt der Parameter, wird nicht gefiltert.
+          schema:
+            type: boolean
+            default: false
         - name: entry_backbone
           in: query
           required: false
@@ -297,7 +342,10 @@ paths:
               schema:
                 $ref: '#/components/schemas/SuggestResponse'
         '400':
-          description: '`q` fehlt/leer, ein `rank`-Token ist unbekannt, oder `limit` ist nicht numerisch.'
+          description: >-
+            `q` fehlt/leer, ein `rank`-Token ist unbekannt, `limit` ist nicht
+            numerisch, `area` ist unbekannt, oder `require_target_space` ist
+            kein Boolean bzw. steht ohne `target_space`.
           content:
             application/json:
               schema:
@@ -1791,6 +1839,32 @@ components:
             heißt NICHT „kommt dort nicht vor“, sondern nur „kein positiver
             Beleg“ (Distribution ist Präsenz-Daten; die Konsole zeigt dafür
             „keine Angabe“). Immer `false` ohne `area`-Parameter.
+        matched_name:
+          type: object
+          required: [canonical, authorship, role]
+          description: >-
+            Der Name, der DIESEN Treffer ausgelöst hat — nicht zwingend der
+            akzeptierte Name des Konzepts in `canonical`/`display`. Bei einem
+            Homonym ist das die entscheidende Information: „Inula hirta L."
+            und „Inula hirta Pollich" führen zu zwei verschiedenen Konzepten
+            und sind ohne dieses Feld nicht auseinanderzuhalten. Fehlt, wenn
+            der auslösende Name nicht bestimmt werden konnte (z. B. bei
+            `match_mode=anywhere`, wo ein Treffer mitten in einem Namen
+            liegen kann).
+          properties:
+            canonical:
+              type: string
+              example: Inula hirta
+            authorship:
+              type: string
+              description: >-
+                Autorenzitat des treffenden Namens, leer wenn die Quelle
+                keines führt.
+              example: L.
+            role:
+              type: string
+              description: '`accepted` oder `synonym` — die Rolle des treffenden Namens im Konzept.'
+              example: synonym
         target_space_name:
           type: string
           description: >-

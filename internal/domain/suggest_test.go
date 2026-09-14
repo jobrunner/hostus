@@ -6,8 +6,96 @@ import (
 	"github.com/jobrunner/hostus/internal/domain"
 )
 
+// TestRankSuggestions_TargetSpaceHitBeatsBetterScore pins the measured
+// Inula-hirta case: both concepts carry the queried name (Inula hirta L.
+// for Pentanema hirtum, Inula hirta Pollich for P. britannica), so the
+// exact-hit key ties and the target-space key decides. Before this key
+// existed, bm25 alone ordered them and put britannica — whose eurosl name
+// is "Inula britannica", i.e. NOT what was typed — first.
+func TestRankSuggestions_TargetSpaceHitBeatsBetterScore(t *testing.T) {
+	britannica := domain.SuggestItem{
+		ConceptID: "wcvp:concept:3217682", Canonical: "Pentanema britannica",
+		Rank: domain.RankSpecies, Status: domain.StatusAccepted,
+		ExactHit: true, TargetSpaceHit: false, PrefixHit: true, Score: 1.0,
+	}
+	hirtum := domain.SuggestItem{
+		ConceptID: "wcvp:concept:3217689", Canonical: "Pentanema hirtum",
+		Rank: domain.RankSpecies, Status: domain.StatusAccepted,
+		ExactHit: true, TargetSpaceHit: true, PrefixHit: true, Score: 2.0,
+	}
+
+	got := domain.RankSuggestions([]domain.SuggestItem{britannica, hirtum})
+
+	if got[0].ConceptID != hirtum.ConceptID {
+		t.Fatalf("first = %q, want the target-space hit %q", got[0].ConceptID, hirtum.ConceptID)
+	}
+}
+
+// TestRankSuggestions_ExactHitBeatsBetterScore isolates the new leading
+// criterion (ExactHit) over Score: the exact hit has a worse (higher)
+// score, but must still win, since a caller who typed the full name wants
+// no longer match ahead of it.
+func TestRankSuggestions_ExactHitBeatsBetterScore(t *testing.T) {
+	items := []domain.SuggestItem{
+		{ConceptID: "a", ExactHit: false, PrefixHit: true, InArea: true, Status: domain.StatusAccepted, Rank: domain.RankSpecies, Score: 0.1},
+		{ConceptID: "b", ExactHit: true, PrefixHit: true, InArea: true, Status: domain.StatusAccepted, Rank: domain.RankSpecies, Score: 0.9},
+	}
+	got := domain.RankSuggestions(items)
+	if got[0].ConceptID != "b" {
+		t.Fatalf("exact hit must outrank a better score: %v", got)
+	}
+}
+
+// TestRankSuggestions_ExistingOrderUnchangedWhenNewFieldsEqual guards that
+// the two new criteria (ExactHit, TargetSpaceHit) do not disturb the
+// pre-existing priority chain (PrefixHit, InArea, accepted, rank order,
+// score) when both new fields are equal across items.
+func TestRankSuggestions_ExistingOrderUnchangedWhenNewFieldsEqual(t *testing.T) {
+	items := []domain.SuggestItem{
+		{ConceptID: "a", ExactHit: true, TargetSpaceHit: true, PrefixHit: false, InArea: true, Status: domain.StatusAccepted, Rank: domain.RankSpecies, Score: 0.1},
+		{ConceptID: "b", ExactHit: true, TargetSpaceHit: true, PrefixHit: true, InArea: false, Status: domain.StatusSynonym, Rank: domain.RankForm, Score: 0.9},
+	}
+	got := domain.RankSuggestions(items)
+	if got[0].ConceptID != "b" {
+		t.Fatalf("with new fields equal, PrefixHit must still outrank in_area: %v", got)
+	}
+}
+
+// TestRankSuggestions_ExactHitBeatsPrefixHit pins that ExactHit (priority 1)
+// outranks PrefixHit (priority 3) even when PrefixHit DIFFERS between the
+// two items — unlike TestRankSuggestions_ExactHitBeatsBetterScore, which
+// keeps PrefixHit true on both sides and so cannot catch the two leading
+// keys being reordered relative to PrefixHit. This is the scenario Task 2
+// makes real once match_mode=anywhere lets PrefixHit vary: an exact hit
+// that is NOT also a prefix hit must still beat a mere prefix hit.
+func TestRankSuggestions_ExactHitBeatsPrefixHit(t *testing.T) {
+	items := []domain.SuggestItem{
+		{ConceptID: "a", ExactHit: false, PrefixHit: true, InArea: true, Status: domain.StatusAccepted, Rank: domain.RankSpecies, Score: 0.1},
+		{ConceptID: "b", ExactHit: true, PrefixHit: false, InArea: true, Status: domain.StatusAccepted, Rank: domain.RankSpecies, Score: 0.9},
+	}
+	got := domain.RankSuggestions(items)
+	if got[0].ConceptID != "b" {
+		t.Fatalf("exact hit must outrank a mere prefix hit: %v", got)
+	}
+}
+
+// TestRankSuggestions_TargetSpaceHitBeatsPrefixHit pins that TargetSpaceHit
+// (priority 2) outranks PrefixHit (priority 3) with PrefixHit differing
+// between items and ExactHit tied, so only the ExactHit/TargetSpaceHit vs.
+// PrefixHit ordering can make this pass.
+func TestRankSuggestions_TargetSpaceHitBeatsPrefixHit(t *testing.T) {
+	items := []domain.SuggestItem{
+		{ConceptID: "a", ExactHit: true, TargetSpaceHit: false, PrefixHit: true, InArea: true, Status: domain.StatusAccepted, Rank: domain.RankSpecies, Score: 0.1},
+		{ConceptID: "b", ExactHit: true, TargetSpaceHit: true, PrefixHit: false, InArea: true, Status: domain.StatusAccepted, Rank: domain.RankSpecies, Score: 0.9},
+	}
+	got := domain.RankSuggestions(items)
+	if got[0].ConceptID != "b" {
+		t.Fatalf("target-space hit must outrank a mere prefix hit: %v", got)
+	}
+}
+
 // TestRankSuggestions_InAreaBeatsAccepted is the brief's pinned regression:
-// in_area (priority 2) must dominate accepted-vs-synonym (priority 3), even
+// in_area (priority 4) must dominate accepted-vs-synonym (priority 5), even
 // though the out-of-area item is accepted and has a "better" (lower) score.
 func TestRankSuggestions_InAreaBeatsAccepted(t *testing.T) {
 	items := []domain.SuggestItem{
@@ -20,8 +108,8 @@ func TestRankSuggestions_InAreaBeatsAccepted(t *testing.T) {
 	}
 }
 
-// TestRankSuggestions_PrefixHitBeatsInArea isolates priority 1 (PrefixHit)
-// over priority 2 (InArea): the non-prefix-hit item is in_area, accepted,
+// TestRankSuggestions_PrefixHitBeatsInArea isolates priority 3 (PrefixHit)
+// over priority 4 (InArea): the non-prefix-hit item is in_area, accepted,
 // lower rank order, and better score — yet must still lose.
 func TestRankSuggestions_PrefixHitBeatsInArea(t *testing.T) {
 	items := []domain.SuggestItem{
@@ -34,8 +122,8 @@ func TestRankSuggestions_PrefixHitBeatsInArea(t *testing.T) {
 	}
 }
 
-// TestRankSuggestions_AcceptedBeatsRankOrder isolates priority 3 (accepted
-// status) over priority 4 (rank order): the synonym item has a better
+// TestRankSuggestions_AcceptedBeatsRankOrder isolates priority 5 (accepted
+// status) over priority 6 (rank order): the synonym item has a better
 // (lower) rank order and score, but must still lose to the accepted item.
 func TestRankSuggestions_AcceptedBeatsRankOrder(t *testing.T) {
 	items := []domain.SuggestItem{
@@ -48,8 +136,8 @@ func TestRankSuggestions_AcceptedBeatsRankOrder(t *testing.T) {
 	}
 }
 
-// TestRankSuggestions_RankOrderBeatsScore isolates priority 4 (rank order)
-// over priority 5 (score): the higher-rank-order item has a better (lower)
+// TestRankSuggestions_RankOrderBeatsScore isolates priority 6 (rank order)
+// over priority 7 (score): the higher-rank-order item has a better (lower)
 // score, but must still lose to the lower-rank-order item.
 func TestRankSuggestions_RankOrderBeatsScore(t *testing.T) {
 	items := []domain.SuggestItem{
@@ -62,7 +150,7 @@ func TestRankSuggestions_RankOrderBeatsScore(t *testing.T) {
 	}
 }
 
-// TestRankSuggestions_ScoreAscending isolates priority 5: with all higher
+// TestRankSuggestions_ScoreAscending isolates priority 7: with all higher
 // keys equal, lower Score (SQLite bm25: lower = more relevant) wins.
 func TestRankSuggestions_ScoreAscending(t *testing.T) {
 	items := []domain.SuggestItem{

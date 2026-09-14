@@ -400,6 +400,406 @@ func TestSuggest_InAreaCandidateSurvivesFetchBudgetOverflow(t *testing.T) {
 	}
 }
 
+// seedInulaHomonyms reproduces the spec's motivating fixture (spec
+// 2026-09-14) in miniature: the "Inula hirta" homonym as WCVP carries it —
+// two DIFFERENT names that share one canonical and differ only in
+// authorship, each a synonym of a different accepted concept — plus a third
+// concept whose only name merely STARTS with the query.
+//
+//   - pentanema-hirtum:      accepted "Pentanema hirtum",      synonym "Inula hirta L."
+//   - pentanema-britannica:  accepted "Pentanema britannica",  synonym "Inula hirta Pollich"
+//   - inula-hirta-var:       accepted "Inula hirta var. hirtella" (prefix, never equal)
+//
+// The eurosl name space is seeded on the first two only: "Inula hirta" for
+// pentanema-hirtum (the target-space hit the spec wants ranked first) and
+// "Inula britannica" for pentanema-britannica (an entry that exists but does
+// NOT match the query). inula-hirta-var deliberately has no entry at all, so
+// the same fixture also exercises RequireTargetSpace.
+func seedInulaHomonyms(t *testing.T, db *DB) {
+	t.Helper()
+	ctx := context.Background()
+
+	bv := domain.BackboneVersion{ID: "wcvp", Version: "v1", IngestedAt: "2026-09-14T00:00:00Z", ManifestSHA: "x"}
+	ingestVia(t, db, bv, func(tx output.IngestTx) {
+		hirtum := species("n-pentanema-hirtum", "Pentanema hirtum")
+		hirtaL := domain.Name{ID: "n-inula-hirta-l", Canonical: "Inula hirta", Authorship: "L.", Rank: domain.RankSpecies}
+		britannica := species("n-pentanema-britannica", "Pentanema britannica")
+		hirtaPollich := domain.Name{ID: "n-inula-hirta-pollich", Canonical: "Inula hirta", Authorship: "Pollich", Rank: domain.RankSpecies}
+		variety := domain.Name{ID: "n-inula-hirta-var-hirtella", Canonical: "Inula hirta var. hirtella", Rank: domain.RankVariety}
+
+		for _, n := range []domain.Name{hirtum, hirtaL, britannica, hirtaPollich, variety} {
+			mustTx(t, tx.UpsertName(n))
+		}
+
+		for _, c := range []struct {
+			id       string
+			accepted domain.Name
+			synonym  *domain.Name
+		}{
+			{"wcvp:concept:pentanema-hirtum", hirtum, &hirtaL},
+			{"wcvp:concept:pentanema-britannica", britannica, &hirtaPollich},
+			{"wcvp:concept:inula-hirta-var", variety, nil},
+		} {
+			// The concept's rank mirrors its accepted name's, as it does in
+			// every ingest: hard-coding RankSpecies here would label the
+			// variety a species and quietly mislead a future Ranks test.
+			concept := domain.Concept{ID: c.id, BackboneID: "wcvp", AcceptedName: c.accepted, Rank: c.accepted.Rank, Status: domain.StatusAccepted}
+			mustTx(t, tx.UpsertConcept(concept))
+			mustTx(t, tx.LinkName(concept.ID, c.accepted.ID, "accepted", nil))
+			if c.synonym != nil {
+				mustTx(t, tx.LinkName(concept.ID, c.synonym.ID, "synonym", nil))
+			}
+		}
+	})
+
+	tx, err := db.BeginIngest(ctx, domain.BackboneVersion{ID: "eurosl-src", Version: "v1", IngestedAt: "2026-09-14T00:00:00Z", ManifestSHA: "y"})
+	mustTx(t, err)
+	mustTx(t, tx.UpsertNameSpace(domain.NameSpaceMeta{ID: "eurosl", Version: "v1", ManifestSHA: "y", Redistribution: domain.RedistributionUnknown}))
+	mustTx(t, tx.AddNameSpaceEntry("wcvp:concept:pentanema-hirtum", domain.NameSpaceEntry{
+		Space: "eurosl", ExtID: "e-1", Name: "Inula hirta", Status: "accepted",
+	}))
+	mustTx(t, tx.AddNameSpaceEntry("wcvp:concept:pentanema-britannica", domain.NameSpaceEntry{
+		Space: "eurosl", ExtID: "e-2", Name: "Inula britannica", Status: "accepted",
+	}))
+	mustTx(t, tx.Commit())
+}
+
+// inulaHirtaQuery is the one query every seedInulaHomonyms-based test asks:
+// the spec's motivating input, typed in full.
+const inulaHirtaQuery = "Inula hirta"
+
+// suggestByID runs Suggest for inulaHirtaQuery and indexes the result by
+// concept id, so an assertion can state both "this concept is present with
+// these signals" and "this concept is absent" without re-walking the slice
+// each time.
+func suggestByID(t *testing.T, db *DB, opts output.SuggestOpts) map[string]domain.SuggestItem {
+	t.Helper()
+	items, err := db.Suggest(context.Background(), inulaHirtaQuery, opts)
+	if err != nil {
+		t.Fatalf("Suggest(%q, %+v): unexpected error: %v", inulaHirtaQuery, opts, err)
+	}
+	byID := make(map[string]domain.SuggestItem, len(items))
+	for _, it := range items {
+		byID[it.ConceptID] = it
+	}
+	return byID
+}
+
+// TestSuggest_RequireTargetSpaceDropsConceptsWithoutEntry pins the filter
+// half of the spec's first decision: with RequireTargetSpace AND a
+// TargetSpace, a concept with no entry in that space disappears while one
+// with an entry stays. The two control cases (either half alone) pin that
+// the filter is inert without BOTH — a caller who set only one of them must
+// see the un-filtered page, not a silently emptied one.
+func TestSuggest_RequireTargetSpaceDropsConceptsWithoutEntry(t *testing.T) {
+	db := openTestDB(t)
+	seedInulaHomonyms(t, db)
+
+	const withEntry = "wcvp:concept:pentanema-hirtum"
+	const withoutEntry = "wcvp:concept:inula-hirta-var"
+
+	filtered := suggestByID(t, db, output.SuggestOpts{Limit: 10, TargetSpace: "eurosl", RequireTargetSpace: true})
+	if _, ok := filtered[withEntry]; !ok {
+		t.Errorf("concept %q missing from the require_target_space result, want it kept (it has a eurosl entry)", withEntry)
+	}
+	if it, ok := filtered[withoutEntry]; ok {
+		t.Errorf("concept %q = %+v survived require_target_space, want it dropped (no eurosl entry)", withoutEntry, it)
+	}
+
+	spaceOnly := suggestByID(t, db, output.SuggestOpts{Limit: 10, TargetSpace: "eurosl"})
+	if _, ok := spaceOnly[withoutEntry]; !ok {
+		t.Errorf("concept %q dropped for target_space alone, want it kept (enrichment only, no filter)", withoutEntry)
+	}
+
+	requireOnly := suggestByID(t, db, output.SuggestOpts{Limit: 10, RequireTargetSpace: true})
+	if _, ok := requireOnly[withoutEntry]; !ok {
+		t.Errorf("concept %q dropped for require_target_space WITHOUT a target_space, want it kept (there is no space to require an entry in)", withoutEntry)
+	}
+}
+
+// TestSuggest_ExactHitIsSetOnlyForFullNameEquality pins the spec's first new
+// ranking signal: ExactHit means a name of the concept EQUALS the
+// canonicalized query, not merely starts with it.
+//
+// The "merely a prefix" concept carries "Inula hirta var. hirtella" rather
+// than the spec's illustrative "Inula hirtella": the latter matches neither
+// the FTS5 prefix token ("hirta"* does not reach "hirtella") nor the
+// name_start filter, so it would never be a candidate for this query at all
+// and the assertion below would be vacuously true no matter what the code
+// did.
+func TestSuggest_ExactHitIsSetOnlyForFullNameEquality(t *testing.T) {
+	db := openTestDB(t)
+	seedInulaHomonyms(t, db)
+
+	got := suggestByID(t, db, output.SuggestOpts{Limit: 10})
+
+	exact, ok := got["wcvp:concept:pentanema-hirtum"]
+	if !ok {
+		t.Fatalf("Suggest did not return the concept carrying the exact name (got %v)", conceptIDsList(itemsOf(got)))
+	}
+	if !exact.ExactHit {
+		t.Errorf("concept %q: ExactHit = false, want true (carries the name %q verbatim)", exact.ConceptID, "Inula hirta")
+	}
+
+	longer, ok := got["wcvp:concept:inula-hirta-var"]
+	if !ok {
+		t.Fatalf("Suggest did not return the prefix-only concept (got %v)", conceptIDsList(itemsOf(got)))
+	}
+	if longer.ExactHit {
+		t.Errorf("concept %q: ExactHit = true, want false (its only name %q merely STARTS with the query)", longer.ConceptID, "Inula hirta var. hirtella")
+	}
+	if !longer.PrefixHit {
+		t.Errorf("concept %q: PrefixHit = false, want true (its name starts with the query)", longer.ConceptID)
+	}
+}
+
+// TestSuggest_MatchedNameCarriesAuthorshipOfTheHit pins the spec's fifth
+// decision: the result names the name that TRIGGERED the hit, with its
+// authorship and role — the only thing that tells "Inula hirta L." apart
+// from "Inula hirta Pollich" — and not the concept's own accepted name,
+// which is identical in neither case.
+func TestSuggest_MatchedNameCarriesAuthorshipOfTheHit(t *testing.T) {
+	db := openTestDB(t)
+	seedInulaHomonyms(t, db)
+
+	got := suggestByID(t, db, output.SuggestOpts{Limit: 10})
+
+	cases := []struct {
+		conceptID string
+		want      domain.MatchedName
+	}{
+		{"wcvp:concept:pentanema-hirtum", domain.MatchedName{Canonical: "Inula hirta", Authorship: "L.", Role: "synonym"}},
+		{"wcvp:concept:pentanema-britannica", domain.MatchedName{Canonical: "Inula hirta", Authorship: "Pollich", Role: "synonym"}},
+		{"wcvp:concept:inula-hirta-var", domain.MatchedName{Canonical: "Inula hirta var. hirtella", Authorship: "", Role: "accepted"}},
+	}
+	for _, tc := range cases {
+		it, ok := got[tc.conceptID]
+		if !ok {
+			t.Errorf("Suggest did not return concept %q", tc.conceptID)
+			continue
+		}
+		if it.MatchedName != tc.want {
+			t.Errorf("concept %q: MatchedName = %+v, want %+v", tc.conceptID, it.MatchedName, tc.want)
+		}
+	}
+}
+
+// TestSuggest_TargetSpaceHitOnlyForTheSpaceNameMatchingTheQuery pins the
+// spec's second new ranking signal: it is the concept's name IN THE
+// REQUESTED SPACE that has to match the query, not the name that produced
+// the hit. Both concepts below matched via a WCVP synonym spelled "Inula
+// hirta", but only pentanema-hirtum is called that in eurosl — britannica is
+// "Inula britannica" there. Without a requested space the signal is false
+// for every item (there is nothing for it to prefer).
+func TestSuggest_TargetSpaceHitOnlyForTheSpaceNameMatchingTheQuery(t *testing.T) {
+	db := openTestDB(t)
+	seedInulaHomonyms(t, db)
+
+	withSpace := suggestByID(t, db, output.SuggestOpts{Limit: 10, TargetSpace: "eurosl"})
+	if it := withSpace["wcvp:concept:pentanema-hirtum"]; !it.TargetSpaceHit {
+		t.Errorf("concept %q: TargetSpaceHit = false, want true (its eurosl name IS the query)", it.ConceptID)
+	}
+	if it := withSpace["wcvp:concept:pentanema-britannica"]; it.TargetSpaceHit {
+		t.Errorf("concept %q: TargetSpaceHit = true, want false (its eurosl name is %q)", it.ConceptID, it.TargetSpaceName)
+	}
+
+	noSpace := suggestByID(t, db, output.SuggestOpts{Limit: 10})
+	for id, it := range noSpace {
+		if it.TargetSpaceHit {
+			t.Errorf("concept %q: TargetSpaceHit = true without a requested target space, want false", id)
+		}
+	}
+}
+
+// TestSuggest_MatchedNameIsDeterministicBetweenSameCanonicalAuthors pins the
+// tie-break the first three ORDER BY keys of matchedNameQuery cannot make:
+// TWO names of ONE concept, same role, same canonical, differing only in
+// authorship — which is what a homonym IS, and what 5,784 (concept_id, role,
+// canonical_fold) groups of the production index look like. Nothing but
+// authorship (then name id) separates them, so without those keys the answer
+// is rowid order and flips with any plan or build change, while the console
+// column "Treffer-Name" claims to name THE author of the hit.
+//
+// The name ids are chosen so the WRONG answer comes first without the fix:
+// the query reaches concept_name through its (concept_id, name_id) covering
+// index, so the un-fixed ORDER BY (stable up to name id) hands back
+// "…-1" = "Sm.", while authorship ASC must pick "A.Gray". Verified: with the
+// last two ORDER BY keys removed, this test fails. Naming them by author
+// instead would have made "a…gray" sort first by id too and the test would
+// have passed by luck on the broken code.
+func TestSuggest_MatchedNameIsDeterministicBetweenSameCanonicalAuthors(t *testing.T) {
+	db := openTestDB(t)
+	const conceptID = "wcvp:concept:pentanema-duplicatum"
+
+	bv := domain.BackboneVersion{ID: "wcvp", Version: "v1", IngestedAt: "2026-09-14T00:00:00Z", ManifestSHA: "x"}
+	ingestVia(t, db, bv, func(tx output.IngestTx) {
+		accepted := species("n-pentanema-duplicatum", "Pentanema duplicatum")
+		later := domain.Name{ID: "n-inula-duplicata-1", Canonical: "Inula duplicata", Authorship: "Sm.", Rank: domain.RankSpecies}
+		earlier := domain.Name{ID: "n-inula-duplicata-2", Canonical: "Inula duplicata", Authorship: "A.Gray", Rank: domain.RankSpecies}
+		for _, n := range []domain.Name{accepted, later, earlier} {
+			mustTx(t, tx.UpsertName(n))
+		}
+		c := domain.Concept{ID: conceptID, BackboneID: "wcvp", AcceptedName: accepted, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+		mustTx(t, tx.UpsertConcept(c))
+		mustTx(t, tx.LinkName(c.ID, accepted.ID, "accepted", nil))
+		mustTx(t, tx.LinkName(c.ID, later.ID, "synonym", nil))
+		mustTx(t, tx.LinkName(c.ID, earlier.ID, "synonym", nil))
+	})
+
+	want := domain.MatchedName{Canonical: "Inula duplicata", Authorship: "A.Gray", Role: "synonym"}
+	for run := 1; run <= 3; run++ {
+		items, err := db.Suggest(context.Background(), "Inula duplicata", output.SuggestOpts{Limit: 10})
+		if err != nil {
+			t.Fatalf("Suggest (run %d): unexpected error: %v", run, err)
+		}
+		found := false
+		for _, it := range items {
+			if it.ConceptID != conceptID {
+				continue
+			}
+			found = true
+			if it.MatchedName != want {
+				t.Errorf("run %d: MatchedName = %+v, want %+v (authorship ASC decides between two same-canonical synonyms)", run, it.MatchedName, want)
+			}
+		}
+		if !found {
+			t.Fatalf("run %d: Suggest returned no item for %q", run, conceptID)
+		}
+	}
+}
+
+// TestSuggest_AggregateQueryFallsBackToNominateSpaceName pins the fix for the
+// self-contradiction the whole-branch review found: with
+// require_target_space the endpoint keeps ONLY concepts that have an entry in
+// the space (the filter tests EXISTS, i.e. any entry) — and then answered
+// every one of those rows with an EMPTY target_space_name, because
+// domain.ResolveTargetSpace hands back "" for an aggregate query when the
+// space carries no is_aggregate entry. The console badges that as "kein Name
+// … lässt sich dort nicht benennen" for a concept the filter kept precisely
+// because it HAS a name there. Measured on the production index:
+// q="Alyssum montanum agg."&target_space=eurosl&require_target_space=true
+// returned 5 rows, all nameless, although eurosl calls
+// wcvp:concept:2632304 "Alyssum montanum" (status=accepted).
+//
+// The second half is the ranking: TargetSpaceHit is derived from that name,
+// so it was false for the WHOLE page — the spec's decisive criterion was dead
+// for every aggregate query, which is the common case, not the rare one
+// (eurosl 251 aggregate entries against ~125k entries overall).
+//
+// This fixture deliberately has NO Aggregate entry, the majority case that
+// TestSuggest_TargetSpaceHitSurvivesDifferentAggregateMarkerSpelling (which
+// seeds one) leaves open.
+func TestSuggest_AggregateQueryFallsBackToNominateSpaceName(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	const conceptID = "wcvp:concept:alyssum-montanum"
+
+	bv := domain.BackboneVersion{ID: "wcvp", Version: "v1", IngestedAt: "2026-09-15T00:00:00Z", ManifestSHA: "x"}
+	ingestVia(t, db, bv, func(tx output.IngestTx) {
+		accepted := species("n-alyssum-montanum", "Alyssum montanum")
+		mustTx(t, tx.UpsertName(accepted))
+		c := domain.Concept{ID: conceptID, BackboneID: "wcvp", AcceptedName: accepted, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+		mustTx(t, tx.UpsertConcept(c))
+		mustTx(t, tx.LinkName(c.ID, accepted.ID, "accepted", nil))
+	})
+
+	tx, err := db.BeginIngest(ctx, domain.BackboneVersion{ID: "eurosl-src", Version: "v1", IngestedAt: "2026-09-15T00:00:00Z", ManifestSHA: "y"})
+	mustTx(t, err)
+	mustTx(t, tx.UpsertNameSpace(domain.NameSpaceMeta{ID: "eurosl", Version: "v1", ManifestSHA: "y", Redistribution: domain.RedistributionUnknown}))
+	// The space knows the taxon, but only under its NOMINATE spelling — no
+	// aggregate entry anywhere, exactly as eurosl holds most taxa.
+	mustTx(t, tx.AddNameSpaceEntry(conceptID, domain.NameSpaceEntry{
+		Space: "eurosl", ExtID: "e-1", Name: "Alyssum montanum", Status: "accepted",
+	}))
+	mustTx(t, tx.Commit())
+
+	opts := output.SuggestOpts{Limit: 10, TargetSpace: "eurosl", RequireTargetSpace: true}
+	items, err := db.Suggest(ctx, "Alyssum montanum agg.", opts)
+	if err != nil {
+		t.Fatalf("Suggest: unexpected error: %v", err)
+	}
+
+	found := false
+	for _, it := range items {
+		if it.ConceptID != conceptID {
+			continue
+		}
+		found = true
+		if it.TargetSpaceName != "Alyssum montanum" {
+			t.Errorf("TargetSpaceName = %q, want %q — require_target_space kept this concept BECAUSE it has an entry, so the answer must name it", it.TargetSpaceName, "Alyssum montanum")
+		}
+		if !it.TargetSpaceHit {
+			t.Error("TargetSpaceHit = false, want true (the space's name for this concept IS the queried name)")
+		}
+	}
+	if !found {
+		t.Fatalf("Suggest returned no item for %q (require_target_space kept %d items)", conceptID, len(items))
+	}
+}
+
+// TestSuggest_TargetSpaceHitSurvivesDifferentAggregateMarkerSpelling pins
+// that TargetSpaceHit is decided by the NAME, not by which aggregate marker
+// a name space happens to spell. The spaces genuinely disagree — measured on
+// the production index, eurosl and floraveg write "… aggr." while germansl
+// writes "… agg." — so comparing the raw canonical forms made every
+// aggregate query against eurosl miss, and with it the spec's decisive
+// ranking criterion, for the whole page (ResolveTargetSpace answers "" for
+// concepts without an aggregate entry on an aggregate query). Both sides go
+// through StripAggregateMarkers, exactly as ftsPrefixToken and
+// nameStartFilter already do.
+func TestSuggest_TargetSpaceHitSurvivesDifferentAggregateMarkerSpelling(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	const conceptID = "wcvp:concept:achillea-millefolium"
+
+	bv := domain.BackboneVersion{ID: "wcvp", Version: "v1", IngestedAt: "2026-09-14T00:00:00Z", ManifestSHA: "x"}
+	ingestVia(t, db, bv, func(tx output.IngestTx) {
+		accepted := species("n-achillea-millefolium", "Achillea millefolium")
+		mustTx(t, tx.UpsertName(accepted))
+		c := domain.Concept{ID: conceptID, BackboneID: "wcvp", AcceptedName: accepted, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+		mustTx(t, tx.UpsertConcept(c))
+		mustTx(t, tx.LinkName(c.ID, accepted.ID, "accepted", nil))
+	})
+
+	tx, err := db.BeginIngest(ctx, domain.BackboneVersion{ID: "eurosl-src", Version: "v1", IngestedAt: "2026-09-14T00:00:00Z", ManifestSHA: "y"})
+	mustTx(t, err)
+	mustTx(t, tx.UpsertNameSpace(domain.NameSpaceMeta{ID: "eurosl", Version: "v1", ManifestSHA: "y", Redistribution: domain.RedistributionUnknown}))
+	// eurosl's own spelling: "aggr.", while the caller below types "agg.".
+	mustTx(t, tx.AddNameSpaceEntry(conceptID, domain.NameSpaceEntry{
+		Space: "eurosl", ExtID: "e-1", Name: "Achillea millefolium aggr.", Status: "accepted", Aggregate: true,
+	}))
+	mustTx(t, tx.Commit())
+
+	items, err := db.Suggest(ctx, "Achillea millefolium agg.", output.SuggestOpts{Limit: 10, TargetSpace: "eurosl"})
+	if err != nil {
+		t.Fatalf("Suggest: unexpected error: %v", err)
+	}
+	found := false
+	for _, it := range items {
+		if it.ConceptID != conceptID {
+			continue
+		}
+		found = true
+		if it.TargetSpaceName != "Achillea millefolium aggr." {
+			t.Fatalf("TargetSpaceName = %q, want eurosl's own aggregate spelling — fixture no longer exercises the marker mismatch", it.TargetSpaceName)
+		}
+		if !it.TargetSpaceHit {
+			t.Errorf("TargetSpaceHit = false for query %q against space name %q, want true (the marker spelling must not decide)", "Achillea millefolium agg.", it.TargetSpaceName)
+		}
+	}
+	if !found {
+		t.Fatalf("Suggest returned no item for %q", conceptID)
+	}
+}
+
+func itemsOf(byID map[string]domain.SuggestItem) []domain.SuggestItem {
+	out := make([]domain.SuggestItem, 0, len(byID))
+	for _, it := range byID {
+		out = append(out, it)
+	}
+	return out
+}
+
 func conceptIDsList(items []domain.SuggestItem) []string {
 	out := make([]string, len(items))
 	for i, it := range items {

@@ -19,6 +19,31 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Added
 
+* **Suggest:** `require_target_space=true` schränkt die Trefferliste auf
+  Konzepte ein, die im angefragten `target_space` tatsächlich einen Namen
+  tragen. Nur zusammen mit `target_space` gültig — allein angefragt ist es
+  `400 INVALID_QUERY`, nicht stillschweigend wirkungslos.
+* **Suggest:** Jede Trefferzeile nennt mit `matched_name`
+  (`canonical`, `authorship`, `role`) den Namen, der den Treffer ausgelöst
+  hat. Erst damit sind Homonyme unterscheidbar: „Inula hirta L." und „Inula
+  hirta Pollich" führen auf zwei verschiedene Konzepte und waren vorher in
+  der Antwort nicht auseinanderzuhalten. Additiv und `omitempty` — ohne den
+  auslösenden Namen fehlt das Feld ganz.
+* **Suggest-Ranking:** Zwei neue Kriterien ganz oben: **exakter Namenstreffer**
+  (die kanonisierte Form eines Namens des Konzepts *gleicht* der Anfrage,
+  beginnt nicht nur mit ihr) vor **Zielraum-Treffer** (der Name des Konzepts
+  im angefragten `target_space` trifft die Anfrage) vor dem bisherigen
+  `PrefixHit`. `PrefixHit` wird dabei aus einer echten Spalte berechnet statt
+  behauptet und bekommt damit in `match_mode=anywhere` erstmals Bedeutung.
+* **Testkonsole:** Das Suggest-Panel hat jetzt ein Rang-Auswahlfeld
+  (`(alle)`/SPECIES/SUBSPECIES/VARIETY/GENUS/FAMILY → `rank`), eine Checkbox
+  „nur mit Eintrag im Namensraum" (→ `require_target_space`, wird nur mit
+  gewähltem Namensraum mitgeschickt) und die Spalte **„Treffer-Name"**, die
+  `matched_name` samt Autorschaft zeigt. Der Konzeptraum ist auf `wcvp`
+  vorbelegt — das entfernt die CDM-Dubletten desselben Namens (gemessen 9 → 2
+  Zeilen für `q=Inula hirta`) und ist der Raum, den die Kette
+  PlantNet → Habitatus ohnehin nutzt; „Alle" bleibt wählbar. Jede Änderung an
+  den Auswahlfeldern wirkt sofort.
 * **Doku:** How-to „Von einer PlantNet-Bestimmung zu Euro+Med-Namen und
   Zeigerwerten (UC7)" (`docs/how-to/plantnet-habitatus-uc7.md`) — die
   vollständige Kette PlantNet → `POST /v1/match` (xref) → situs-Traits, mit
@@ -34,6 +59,17 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Fixed
 
+* **Suggest:** Ein unbekanntes Gebiet in `?area=` blieb still wirkungslos —
+  ein Tippfehler („Germani") lieferte die ungefilterte Liste, die wie ein
+  gefiltertes Ergebnis aussah. `area` wird jetzt gegen die bekannten
+  WGSRPD-L3-Codes und die dokumentierten Aliase geprüft; ein unbekannter Wert
+  ist `400 INVALID_QUERY` mit dem Wert im Text. Bewusste Verhaltensänderung.
+* **Suggest:** Der exakte Treffer landete hinter einem Homonym. Für
+  `q=Inula hirta` mit Namensraum `eurosl` stand *Pentanema britannica* (dort
+  „Inula britannica", getroffen nur über ein WCVP-Synonym) vor *Pentanema
+  hirtum*, das in eurosl genau den gesuchten Namen trägt. Mit den neuen
+  Ranking-Kriterien und `require_target_space` sind es 2 statt 9 Zeilen, und
+  *Pentanema hirtum* steht vorn.
 * **CORS-Preflight:** `OPTIONS` auf die POST-Endpunkte `/v1/match` und
   `/v1/translate` wurde mit einem nackten 405 ohne CORS-Header beantwortet,
   weil gorilla/mux `Use`-Middleware nur für *gematchte* Routen ausführt — ein

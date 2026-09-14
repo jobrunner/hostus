@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (CGO-free, FTS5 built in) — see ADR-0010
@@ -19,8 +20,18 @@ import (
 var schemaSQL string
 
 // DB is a modernc.org/sqlite-backed output.Repository.
+//
+// It must not be copied: the areas cache below carries a mutex, and a copy
+// would duplicate the cache while sharing the *sql.DB. Every caller takes it
+// as *DB already.
 type DB struct {
 	sql *sql.DB
+
+	// areasMu guards the Areas() cache — see that method's doc comment for
+	// why it exists and when invalidateAreas drops it.
+	areasMu     sync.Mutex
+	areas       []domain.Area
+	areasLoaded bool
 }
 
 var _ output.Repository = (*DB)(nil)
@@ -691,7 +702,7 @@ func (db *DB) BeginIngest(ctx context.Context, bv domain.BackboneVersion) (outpu
 		_ = tx.Rollback()
 		return nil, fmt.Errorf("sqlite: recording backbone_version %q: %w", bv.ID, err)
 	}
-	return &ingestTx{ctx: ctx, tx: tx, backboneID: bv.ID}, nil
+	return &ingestTx{ctx: ctx, tx: tx, backboneID: bv.ID, owner: db}, nil
 }
 
 // BeginTraitIngest starts a transaction for one trait-vocabulary import
@@ -706,7 +717,7 @@ func (db *DB) BeginTraitIngest(ctx context.Context) (output.IngestTx, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: beginning trait ingest transaction: %w", err)
 	}
-	return &ingestTx{ctx: ctx, tx: tx, backboneID: ""}, nil
+	return &ingestTx{ctx: ctx, tx: tx, backboneID: "", owner: db}, nil
 }
 
 // ingestTx implements output.IngestTx over a single *sql.Tx.
@@ -714,6 +725,13 @@ type ingestTx struct {
 	ctx        context.Context
 	tx         *sql.Tx
 	backboneID string
+	// owner is the DB this transaction writes through, or nil for a
+	// transaction with no owning handle (ExportBundle writes into a freshly
+	// created file that nobody has queried yet). Commit uses it to drop the
+	// areas cache — an ingest is the only thing that changes which areas
+	// carry data, and the cache would otherwise outlive the truth for the
+	// lifetime of the process.
+	owner *DB
 }
 
 var _ output.IngestTx = (*ingestTx)(nil)
@@ -958,6 +976,9 @@ func (t *ingestTx) UpsertXrefSource(meta domain.XrefSourceMeta) error {
 func (t *ingestTx) Commit() error {
 	if err := t.tx.Commit(); err != nil {
 		return fmt.Errorf("sqlite: committing ingest transaction: %w", err)
+	}
+	if t.owner != nil {
+		t.owner.invalidateAreas()
 	}
 	return nil
 }

@@ -124,13 +124,18 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 	// nameStartFilter already apply — so the spaces' inconsistent marker
 	// SPELLINGS cannot decide this signal. Measured on the production index:
 	// eurosl (251 aggregate entries) and floraveg (211) write "… aggr.",
-	// germansl (614) writes "… agg.", and "… s. l." occurs as well. Comparing
-	// the raw canonical forms made "Alyssum montanum agg." miss eurosl's
-	// "Alyssum montanum aggr." on the "." vs "r" — and since
-	// ResolveTargetSpace answers "" for every concept without an aggregate
-	// entry on an aggregate query, the signal then went false for the WHOLE
-	// page, disabling the spec's decisive ranking criterion exactly where the
-	// aggregate machinery exists to help.
+	// germansl (614) writes "… agg.", and "… s. l." occurs as well, so the raw
+	// canonical forms made "Alyssum montanum agg." miss eurosl's "Alyssum
+	// montanum aggr." on the "." vs "r".
+	//
+	// That was only HALF of what broke aggregate queries, and an earlier
+	// version of this comment wrongly presented it as the whole fix. The other
+	// half is the EMPTY name ResolveTargetSpace returns when a space carries
+	// no aggregate entry at all — by far the more common case, and the reason
+	// this criterion was dead for whole pages. It is handled in
+	// attachTargetSpaceNames (see the AGGREGATE FALLBACK note there); marker
+	// folding alone would not have helped, because there is no spelling to
+	// compare when there is no name.
 	//
 	// Without a requested space TargetSpaceName is "" for every item, and ""
 	// never has a non-empty query as its prefix, so the signal stays false
@@ -335,36 +340,56 @@ func buildSuggestQuery(q string, opts output.SuggestOpts) (query string, args []
 		)`, ph)
 	}
 
-	// exact_hit and prefix_hit are correlated EXISTS over the concept's names,
-	// the same shape (and therefore the same cost) as nameStartFilter below —
-	// for the same reason it takes that route: fts_name is contentless
-	// (content='', see schema.sql), so the text that matched cannot be read
-	// back outside a MATCH; name + concept_name is the only practical source
-	// of the concept's name strings.
+	// name_match is ONE correlated subquery over the concept's names that
+	// answers all three name-level questions as a step value:
 	//
-	// exact_hit is the match_mode-independent signal PrefixHit cannot be: in the
-	// default name_start mode every returned row is a prefix hit by
+	//	2 = some name of the concept EQUALS the query prefix   -> exact_hit
+	//	1 = some name STARTS with it                           -> prefix_hit,
+	//	                                                          and the
+	//	                                                          name_start
+	//	                                                          admission test
+	//	0 = neither (only an FTS token matched somewhere inside a name)
+	//
+	// It goes through name + concept_name because fts_name is contentless
+	// (content='', see schema.sql): the text that matched cannot be read back
+	// outside a MATCH, so this join is the only practical source of a
+	// concept's name strings.
+	//
+	// WHY ONE INSTEAD OF THREE (performance, spec 2026-09-14 review): this
+	// started as three separate correlated subqueries — a name_start EXISTS in
+	// the WHERE plus an exact_hit and a prefix_hit EXISTS in the SELECT list.
+	// The WHERE one was the expensive one: it ran once per MATCHED ROW, and a
+	// concept owns one row per name, while the area path's in_area_rows UNION
+	// pushes that row count far past the bm25 pool. Measured against the
+	// production index, q=ca&area=GER went from ~2s to ~5s. Folding all three
+	// into this single per-CONCEPT subquery, with the admission test applied
+	// to its result in the outer query (see nameStartFilter below), does the
+	// name lookup ONCE per concept instead of once per name plus twice per
+	// concept.
+	//
+	// exact_hit is the match_mode-independent signal PrefixHit cannot be: in
+	// the default name_start mode every returned row is a prefix hit by
 	// construction, so only equality still distinguishes "I typed the whole
 	// name" from "I typed the beginning of a longer one". prefix_hit stops
 	// being the constant true it was hard-coded as in scanSuggestItem as soon
 	// as MatchMode is "anywhere", where a row can arrive via a token match
 	// somewhere INSIDE a name.
 	//
-	// Neither needs the unary-+ planner guard the backbone and space terms
-	// carry: both are correlated subqueries driven by cn.concept_id = tc.id
-	// from the outer row, not join terms the planner could pick as the outer
-	// driver. idx_name_canonical_fold is genuinely the right index for
-	// exact_hit's equality (one canonical, a handful of rows).
-	args = append(args, prefix) // exact_hit
-	args = append(args, prefix) // prefix_hit
-	const exactHitExpr = `EXISTS (
-			SELECT 1 FROM name nm JOIN concept_name cn ON cn.name_id = nm.id
-			WHERE cn.concept_id = tc.id AND nm.canonical_fold = ?
-		)`
-	const prefixHitExpr = `EXISTS (
-			SELECT 1 FROM name nm JOIN concept_name cn ON cn.name_id = nm.id
-			WHERE cn.concept_id = tc.id AND nm.canonical_fold LIKE ? || '%'
-		)`
+	// It needs no unary-+ planner guard, unlike the backbone and space terms:
+	// it is correlated on cn.concept_id = tc.id from the outer row, not a join
+	// term the planner could pick as the outer driver.
+	//
+	// COALESCE because MAX() over an empty set is NULL, and a NULL step value
+	// would make both derived flags NULL rather than false.
+	args = append(args, prefix) // name_match: equality arm
+	args = append(args, prefix) // name_match: prefix arm
+	const nameMatchExpr = `COALESCE((
+			SELECT MAX(CASE WHEN nm.canonical_fold = ? THEN 2
+			                WHEN nm.canonical_fold LIKE ? || '%' THEN 1
+			                ELSE 0 END)
+			FROM name nm JOIN concept_name cn ON cn.name_id = nm.id
+			WHERE cn.concept_id = tc.id
+		), 0)`
 
 	rankFilter := ""
 	if len(opts.Ranks) > 0 {
@@ -436,11 +461,21 @@ func buildSuggestQuery(q string, opts output.SuggestOpts) (query string, args []
 		args = append(args, opts.Backbone)
 	}
 
-	// nameStartFilter sits alongside rankFilter/backboneFilter in the outer
-	// WHERE clause (not inside cteClause) for the same reason backboneFilter
-	// does: cteClause has two branches (with/without opts.Area), and tc.id is
-	// equally available to both once the outer query joins taxon_concept, so
-	// duplicating the filter into both CTE branches would buy nothing.
+	// nameStartFilter is applied in the OUTER query, to name_match's already
+	// computed step value — not as its own EXISTS in the inner WHERE, where
+	// it used to sit. Two reasons, one of them measured:
+	//
+	//   - correctness is unchanged: name_match is a property of the CONCEPT
+	//     (it looks at every name of tc.id), not of the individual matched
+	//     row, so filtering per row before GROUP BY and filtering per group
+	//     after it admit exactly the same concepts;
+	//   - cost is not: the inner WHERE ran the subquery once per MATCHED ROW
+	//     — one row per name, and with an area the in_area_rows UNION pushes
+	//     that count far past the pool — while this runs it once per concept.
+	//
+	// The LIMIT still applies after this filter (it sits in the outer query
+	// alongside it), so the fetch budget is spent on admitted concepts exactly
+	// as before.
 	nameStartFilter := ""
 	if opts.MatchMode != "anywhere" {
 		// name_start (Default): only concepts carrying AT LEAST ONE name
@@ -472,11 +507,10 @@ func buildSuggestQuery(q string, opts output.SuggestOpts) (query string, args []
 		// whole concept from name_start again — reopening the exact SP7 bug
 		// for every concept carrying an aggregate alias. See
 		// TestSuggest_NameStart_AggregateAliasDoesNotExemptBareEpithetQuery.
-		nameStartFilter = ` AND EXISTS (
-			SELECT 1 FROM name nm JOIN concept_name cn ON cn.name_id = nm.id
-			WHERE cn.concept_id = tc.id AND nm.canonical_fold LIKE ? || '%'
-		)`
-		args = append(args, prefix)
+		//
+		// No placeholder and no arg: the prefix was already bound once, into
+		// name_match.
+		nameStartFilter = " AND name_match >= 1"
 	}
 
 	// spaceFilter is the only clause that makes opts.TargetSpace FILTER
@@ -563,14 +597,28 @@ func buildSuggestQuery(q string, opts output.SuggestOpts) (query string, args []
 	// The concepts it would pull forward are already inside the budget
 	// whenever RequireTargetSpace narrows the page to them, and it never
 	// decides membership on its own — only order among rows that all matched.
+	//
+	// The two-level shape (inner grouped SELECT, outer filter/sort/limit) is
+	// what lets name_match be computed ONCE and then used three times: SQLite
+	// has no LATERAL join, and repeating the subquery text in the WHERE would
+	// hand the planner the very per-row work this fold removed. The outer
+	// query's WHERE therefore reads the inner query's output column.
 	query = `WITH ` + cteClause + `
-		SELECT tc.id, an.canonical, an.rank, tc.status, MIN(m.score) AS score, ` + inAreaExpr + ` AS in_area, ` + exactHitExpr + ` AS exact_hit, ` + prefixHitExpr + ` AS prefix_hit, COALESCE(tc.sec_reference, '') AS sec_reference, MAX(fnm.is_aggregate) AS aggregate
-		FROM matches m
-		JOIN fts_name_map fnm ON fnm.rowid = m.rowid
-		JOIN taxon_concept tc ON tc.id = fnm.concept_id
-		JOIN name an ON an.id = tc.accepted_name
-		WHERE 1 = 1` + rankFilter + backboneFilter + nameStartFilter + spaceFilter + `
-		GROUP BY tc.id
+		SELECT id, canonical, rank, status, score, in_area,
+		       name_match >= 2 AS exact_hit, name_match >= 1 AS prefix_hit,
+		       sec_reference, aggregate
+		FROM (
+			SELECT tc.id AS id, an.canonical AS canonical, an.rank AS rank, tc.status AS status,
+			       MIN(m.score) AS score, ` + inAreaExpr + ` AS in_area, ` + nameMatchExpr + ` AS name_match,
+			       COALESCE(tc.sec_reference, '') AS sec_reference, MAX(fnm.is_aggregate) AS aggregate
+			FROM matches m
+			JOIN fts_name_map fnm ON fnm.rowid = m.rowid
+			JOIN taxon_concept tc ON tc.id = fnm.concept_id
+			JOIN name an ON an.id = tc.accepted_name
+			WHERE 1 = 1` + rankFilter + backboneFilter + spaceFilter + `
+			GROUP BY tc.id
+		)
+		WHERE 1 = 1` + nameStartFilter + `
 		ORDER BY exact_hit DESC, in_area DESC, score ASC
 		LIMIT ?`
 
@@ -668,8 +716,38 @@ func (db *DB) attachTargetSpaceNames(ctx context.Context, items []domain.Suggest
 	// over the matched names, so a concept that owns any aggregate alias
 	// carries it even when the query matched only the plain name — using it
 	// would name a plain query with the aggregate spelling.
+	// AGGREGATE FALLBACK, and why it lives here and not in
+	// domain.ResolveTargetSpace: on an aggregate query that function answers
+	// AggregatePolicyUnresolvable and NO name whenever the space carries no
+	// is_aggregate entry for the concept. That is right for /v1/match and
+	// /v1/translate, whose caller (Habitatus) uses the name to ASSERT that a
+	// vegetation record meets an ESy expression — handing back the
+	// microspecies spelling there produces exactly the false "not met" the
+	// source document warns against, which is why the rule exists.
+	//
+	// Suggest asks a different question. It is a picker: target_space_name
+	// answers "what is this concept called in that space", and "Alyssum
+	// montanum" IS eurosl's (accepted) name for wcvp:concept:2632304 — saying
+	// so claims nothing about whether eurosl can express the AGGREGATE. Worse,
+	// without this fallback the endpoint contradicted itself:
+	// require_target_space keeps only concepts that HAVE an entry in the
+	// space, and every one of those rows then came back with an empty name,
+	// which the console badges as "kein Name … lässt sich dort nicht
+	// benennen". And since TargetSpaceHit is derived from this name, the
+	// spec's decisive ranking criterion was dead for EVERY aggregate query —
+	// not a rare case: eurosl carries 251 aggregate entries, floraveg 211,
+	// germansl 614, against ~125k entries in eurosl alone.
+	//
+	// The guard is on the empty NAME rather than on the policy so the
+	// non-aggregate path (which already falls back internally) stays a no-op
+	// here, and so a concept with no entries at all keeps "" instead of
+	// gaining a second meaning.
 	for i := range items {
-		choice, _ := domain.ResolveTargetSpace(queryIsAggregate, entries[items[i].ConceptID])
+		conceptEntries := entries[items[i].ConceptID]
+		choice, _ := domain.ResolveTargetSpace(queryIsAggregate, conceptEntries)
+		if choice.Name == "" { // ONLY when the space offered no aggregate name
+			choice, _ = domain.ResolveTargetSpace(false, conceptEntries)
+		}
 		items[i].TargetSpaceName = choice.Name
 	}
 	return nil

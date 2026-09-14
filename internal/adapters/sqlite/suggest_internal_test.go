@@ -668,6 +668,75 @@ func TestSuggest_MatchedNameIsDeterministicBetweenSameCanonicalAuthors(t *testin
 	}
 }
 
+// TestSuggest_AggregateQueryFallsBackToNominateSpaceName pins the fix for the
+// self-contradiction the whole-branch review found: with
+// require_target_space the endpoint keeps ONLY concepts that have an entry in
+// the space (the filter tests EXISTS, i.e. any entry) — and then answered
+// every one of those rows with an EMPTY target_space_name, because
+// domain.ResolveTargetSpace hands back "" for an aggregate query when the
+// space carries no is_aggregate entry. The console badges that as "kein Name
+// … lässt sich dort nicht benennen" for a concept the filter kept precisely
+// because it HAS a name there. Measured on the production index:
+// q="Alyssum montanum agg."&target_space=eurosl&require_target_space=true
+// returned 5 rows, all nameless, although eurosl calls
+// wcvp:concept:2632304 "Alyssum montanum" (status=accepted).
+//
+// The second half is the ranking: TargetSpaceHit is derived from that name,
+// so it was false for the WHOLE page — the spec's decisive criterion was dead
+// for every aggregate query, which is the common case, not the rare one
+// (eurosl 251 aggregate entries against ~125k entries overall).
+//
+// This fixture deliberately has NO Aggregate entry, the majority case that
+// TestSuggest_TargetSpaceHitSurvivesDifferentAggregateMarkerSpelling (which
+// seeds one) leaves open.
+func TestSuggest_AggregateQueryFallsBackToNominateSpaceName(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	const conceptID = "wcvp:concept:alyssum-montanum"
+
+	bv := domain.BackboneVersion{ID: "wcvp", Version: "v1", IngestedAt: "2026-09-15T00:00:00Z", ManifestSHA: "x"}
+	ingestVia(t, db, bv, func(tx output.IngestTx) {
+		accepted := species("n-alyssum-montanum", "Alyssum montanum")
+		mustTx(t, tx.UpsertName(accepted))
+		c := domain.Concept{ID: conceptID, BackboneID: "wcvp", AcceptedName: accepted, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+		mustTx(t, tx.UpsertConcept(c))
+		mustTx(t, tx.LinkName(c.ID, accepted.ID, "accepted", nil))
+	})
+
+	tx, err := db.BeginIngest(ctx, domain.BackboneVersion{ID: "eurosl-src", Version: "v1", IngestedAt: "2026-09-15T00:00:00Z", ManifestSHA: "y"})
+	mustTx(t, err)
+	mustTx(t, tx.UpsertNameSpace(domain.NameSpaceMeta{ID: "eurosl", Version: "v1", ManifestSHA: "y", Redistribution: domain.RedistributionUnknown}))
+	// The space knows the taxon, but only under its NOMINATE spelling — no
+	// aggregate entry anywhere, exactly as eurosl holds most taxa.
+	mustTx(t, tx.AddNameSpaceEntry(conceptID, domain.NameSpaceEntry{
+		Space: "eurosl", ExtID: "e-1", Name: "Alyssum montanum", Status: "accepted",
+	}))
+	mustTx(t, tx.Commit())
+
+	opts := output.SuggestOpts{Limit: 10, TargetSpace: "eurosl", RequireTargetSpace: true}
+	items, err := db.Suggest(ctx, "Alyssum montanum agg.", opts)
+	if err != nil {
+		t.Fatalf("Suggest: unexpected error: %v", err)
+	}
+
+	found := false
+	for _, it := range items {
+		if it.ConceptID != conceptID {
+			continue
+		}
+		found = true
+		if it.TargetSpaceName != "Alyssum montanum" {
+			t.Errorf("TargetSpaceName = %q, want %q — require_target_space kept this concept BECAUSE it has an entry, so the answer must name it", it.TargetSpaceName, "Alyssum montanum")
+		}
+		if !it.TargetSpaceHit {
+			t.Error("TargetSpaceHit = false, want true (the space's name for this concept IS the queried name)")
+		}
+	}
+	if !found {
+		t.Fatalf("Suggest returned no item for %q (require_target_space kept %d items)", conceptID, len(items))
+	}
+}
+
 // TestSuggest_TargetSpaceHitSurvivesDifferentAggregateMarkerSpelling pins
 // that TargetSpaceHit is decided by the NAME, not by which aggregate marker
 // a name space happens to spell. The spaces genuinely disagree — measured on

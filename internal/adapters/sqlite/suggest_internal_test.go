@@ -400,6 +400,222 @@ func TestSuggest_InAreaCandidateSurvivesFetchBudgetOverflow(t *testing.T) {
 	}
 }
 
+// seedInulaHomonyms reproduces the spec's motivating fixture (spec
+// 2026-09-14) in miniature: the "Inula hirta" homonym as WCVP carries it —
+// two DIFFERENT names that share one canonical and differ only in
+// authorship, each a synonym of a different accepted concept — plus a third
+// concept whose only name merely STARTS with the query.
+//
+//   - pentanema-hirtum:      accepted "Pentanema hirtum",      synonym "Inula hirta L."
+//   - pentanema-britannica:  accepted "Pentanema britannica",  synonym "Inula hirta Pollich"
+//   - inula-hirta-var:       accepted "Inula hirta var. hirtella" (prefix, never equal)
+//
+// The eurosl name space is seeded on the first two only: "Inula hirta" for
+// pentanema-hirtum (the target-space hit the spec wants ranked first) and
+// "Inula britannica" for pentanema-britannica (an entry that exists but does
+// NOT match the query). inula-hirta-var deliberately has no entry at all, so
+// the same fixture also exercises RequireTargetSpace.
+func seedInulaHomonyms(t *testing.T, db *DB) {
+	t.Helper()
+	ctx := context.Background()
+
+	bv := domain.BackboneVersion{ID: "wcvp", Version: "v1", IngestedAt: "2026-09-14T00:00:00Z", ManifestSHA: "x"}
+	ingestVia(t, db, bv, func(tx output.IngestTx) {
+		hirtum := species("n-pentanema-hirtum", "Pentanema hirtum")
+		hirtaL := domain.Name{ID: "n-inula-hirta-l", Canonical: "Inula hirta", Authorship: "L.", Rank: domain.RankSpecies}
+		britannica := species("n-pentanema-britannica", "Pentanema britannica")
+		hirtaPollich := domain.Name{ID: "n-inula-hirta-pollich", Canonical: "Inula hirta", Authorship: "Pollich", Rank: domain.RankSpecies}
+		variety := species("n-inula-hirta-var-hirtella", "Inula hirta var. hirtella")
+
+		for _, n := range []domain.Name{hirtum, hirtaL, britannica, hirtaPollich, variety} {
+			mustTx(t, tx.UpsertName(n))
+		}
+
+		for _, c := range []struct {
+			id       string
+			accepted domain.Name
+			synonym  *domain.Name
+		}{
+			{"wcvp:concept:pentanema-hirtum", hirtum, &hirtaL},
+			{"wcvp:concept:pentanema-britannica", britannica, &hirtaPollich},
+			{"wcvp:concept:inula-hirta-var", variety, nil},
+		} {
+			concept := domain.Concept{ID: c.id, BackboneID: "wcvp", AcceptedName: c.accepted, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+			mustTx(t, tx.UpsertConcept(concept))
+			mustTx(t, tx.LinkName(concept.ID, c.accepted.ID, "accepted", nil))
+			if c.synonym != nil {
+				mustTx(t, tx.LinkName(concept.ID, c.synonym.ID, "synonym", nil))
+			}
+		}
+	})
+
+	tx, err := db.BeginIngest(ctx, domain.BackboneVersion{ID: "eurosl-src", Version: "v1", IngestedAt: "2026-09-14T00:00:00Z", ManifestSHA: "y"})
+	mustTx(t, err)
+	mustTx(t, tx.UpsertNameSpace(domain.NameSpaceMeta{ID: "eurosl", Version: "v1", ManifestSHA: "y", Redistribution: domain.RedistributionUnknown}))
+	mustTx(t, tx.AddNameSpaceEntry("wcvp:concept:pentanema-hirtum", domain.NameSpaceEntry{
+		Space: "eurosl", ExtID: "e-1", Name: "Inula hirta", Status: "accepted",
+	}))
+	mustTx(t, tx.AddNameSpaceEntry("wcvp:concept:pentanema-britannica", domain.NameSpaceEntry{
+		Space: "eurosl", ExtID: "e-2", Name: "Inula britannica", Status: "accepted",
+	}))
+	mustTx(t, tx.Commit())
+}
+
+// inulaHirtaQuery is the one query every seedInulaHomonyms-based test asks:
+// the spec's motivating input, typed in full.
+const inulaHirtaQuery = "Inula hirta"
+
+// suggestByID runs Suggest for inulaHirtaQuery and indexes the result by
+// concept id, so an assertion can state both "this concept is present with
+// these signals" and "this concept is absent" without re-walking the slice
+// each time.
+func suggestByID(t *testing.T, db *DB, opts output.SuggestOpts) map[string]domain.SuggestItem {
+	t.Helper()
+	items, err := db.Suggest(context.Background(), inulaHirtaQuery, opts)
+	if err != nil {
+		t.Fatalf("Suggest(%q, %+v): unexpected error: %v", inulaHirtaQuery, opts, err)
+	}
+	byID := make(map[string]domain.SuggestItem, len(items))
+	for _, it := range items {
+		byID[it.ConceptID] = it
+	}
+	return byID
+}
+
+// TestSuggest_RequireTargetSpaceDropsConceptsWithoutEntry pins the filter
+// half of the spec's first decision: with RequireTargetSpace AND a
+// TargetSpace, a concept with no entry in that space disappears while one
+// with an entry stays. The two control cases (either half alone) pin that
+// the filter is inert without BOTH — a caller who set only one of them must
+// see the un-filtered page, not a silently emptied one.
+func TestSuggest_RequireTargetSpaceDropsConceptsWithoutEntry(t *testing.T) {
+	db := openTestDB(t)
+	seedInulaHomonyms(t, db)
+
+	const withEntry = "wcvp:concept:pentanema-hirtum"
+	const withoutEntry = "wcvp:concept:inula-hirta-var"
+
+	filtered := suggestByID(t, db, output.SuggestOpts{Limit: 10, TargetSpace: "eurosl", RequireTargetSpace: true})
+	if _, ok := filtered[withEntry]; !ok {
+		t.Errorf("concept %q missing from the require_target_space result, want it kept (it has a eurosl entry)", withEntry)
+	}
+	if it, ok := filtered[withoutEntry]; ok {
+		t.Errorf("concept %q = %+v survived require_target_space, want it dropped (no eurosl entry)", withoutEntry, it)
+	}
+
+	spaceOnly := suggestByID(t, db, output.SuggestOpts{Limit: 10, TargetSpace: "eurosl"})
+	if _, ok := spaceOnly[withoutEntry]; !ok {
+		t.Errorf("concept %q dropped for target_space alone, want it kept (enrichment only, no filter)", withoutEntry)
+	}
+
+	requireOnly := suggestByID(t, db, output.SuggestOpts{Limit: 10, RequireTargetSpace: true})
+	if _, ok := requireOnly[withoutEntry]; !ok {
+		t.Errorf("concept %q dropped for require_target_space WITHOUT a target_space, want it kept (there is no space to require an entry in)", withoutEntry)
+	}
+}
+
+// TestSuggest_ExactHitIsSetOnlyForFullNameEquality pins the spec's first new
+// ranking signal: ExactHit means a name of the concept EQUALS the
+// canonicalized query, not merely starts with it.
+//
+// The "merely a prefix" concept carries "Inula hirta var. hirtella" rather
+// than the spec's illustrative "Inula hirtella": the latter matches neither
+// the FTS5 prefix token ("hirta"* does not reach "hirtella") nor the
+// name_start filter, so it would never be a candidate for this query at all
+// and the assertion below would be vacuously true no matter what the code
+// did.
+func TestSuggest_ExactHitIsSetOnlyForFullNameEquality(t *testing.T) {
+	db := openTestDB(t)
+	seedInulaHomonyms(t, db)
+
+	got := suggestByID(t, db, output.SuggestOpts{Limit: 10})
+
+	exact, ok := got["wcvp:concept:pentanema-hirtum"]
+	if !ok {
+		t.Fatalf("Suggest did not return the concept carrying the exact name (got %v)", conceptIDsList(itemsOf(got)))
+	}
+	if !exact.ExactHit {
+		t.Errorf("concept %q: ExactHit = false, want true (carries the name %q verbatim)", exact.ConceptID, "Inula hirta")
+	}
+
+	longer, ok := got["wcvp:concept:inula-hirta-var"]
+	if !ok {
+		t.Fatalf("Suggest did not return the prefix-only concept (got %v)", conceptIDsList(itemsOf(got)))
+	}
+	if longer.ExactHit {
+		t.Errorf("concept %q: ExactHit = true, want false (its only name %q merely STARTS with the query)", longer.ConceptID, "Inula hirta var. hirtella")
+	}
+	if !longer.PrefixHit {
+		t.Errorf("concept %q: PrefixHit = false, want true (its name starts with the query)", longer.ConceptID)
+	}
+}
+
+// TestSuggest_MatchedNameCarriesAuthorshipOfTheHit pins the spec's fifth
+// decision: the result names the name that TRIGGERED the hit, with its
+// authorship and role — the only thing that tells "Inula hirta L." apart
+// from "Inula hirta Pollich" — and not the concept's own accepted name,
+// which is identical in neither case.
+func TestSuggest_MatchedNameCarriesAuthorshipOfTheHit(t *testing.T) {
+	db := openTestDB(t)
+	seedInulaHomonyms(t, db)
+
+	got := suggestByID(t, db, output.SuggestOpts{Limit: 10})
+
+	cases := []struct {
+		conceptID string
+		want      domain.MatchedName
+	}{
+		{"wcvp:concept:pentanema-hirtum", domain.MatchedName{Canonical: "Inula hirta", Authorship: "L.", Role: "synonym"}},
+		{"wcvp:concept:pentanema-britannica", domain.MatchedName{Canonical: "Inula hirta", Authorship: "Pollich", Role: "synonym"}},
+		{"wcvp:concept:inula-hirta-var", domain.MatchedName{Canonical: "Inula hirta var. hirtella", Authorship: "", Role: "accepted"}},
+	}
+	for _, tc := range cases {
+		it, ok := got[tc.conceptID]
+		if !ok {
+			t.Errorf("Suggest did not return concept %q", tc.conceptID)
+			continue
+		}
+		if it.MatchedName != tc.want {
+			t.Errorf("concept %q: MatchedName = %+v, want %+v", tc.conceptID, it.MatchedName, tc.want)
+		}
+	}
+}
+
+// TestSuggest_TargetSpaceHitOnlyForTheSpaceNameMatchingTheQuery pins the
+// spec's second new ranking signal: it is the concept's name IN THE
+// REQUESTED SPACE that has to match the query, not the name that produced
+// the hit. Both concepts below matched via a WCVP synonym spelled "Inula
+// hirta", but only pentanema-hirtum is called that in eurosl — britannica is
+// "Inula britannica" there. Without a requested space the signal is false
+// for every item (there is nothing for it to prefer).
+func TestSuggest_TargetSpaceHitOnlyForTheSpaceNameMatchingTheQuery(t *testing.T) {
+	db := openTestDB(t)
+	seedInulaHomonyms(t, db)
+
+	withSpace := suggestByID(t, db, output.SuggestOpts{Limit: 10, TargetSpace: "eurosl"})
+	if it := withSpace["wcvp:concept:pentanema-hirtum"]; !it.TargetSpaceHit {
+		t.Errorf("concept %q: TargetSpaceHit = false, want true (its eurosl name IS the query)", it.ConceptID)
+	}
+	if it := withSpace["wcvp:concept:pentanema-britannica"]; it.TargetSpaceHit {
+		t.Errorf("concept %q: TargetSpaceHit = true, want false (its eurosl name is %q)", it.ConceptID, it.TargetSpaceName)
+	}
+
+	noSpace := suggestByID(t, db, output.SuggestOpts{Limit: 10})
+	for id, it := range noSpace {
+		if it.TargetSpaceHit {
+			t.Errorf("concept %q: TargetSpaceHit = true without a requested target space, want false", id)
+		}
+	}
+}
+
+func itemsOf(byID map[string]domain.SuggestItem) []domain.SuggestItem {
+	out := make([]domain.SuggestItem, 0, len(byID))
+	for _, it := range byID {
+		out = append(out, it)
+	}
+	return out
+}
+
 func conceptIDsList(items []domain.SuggestItem) []string {
 	out := make([]string, len(items))
 	for i, it := range items {

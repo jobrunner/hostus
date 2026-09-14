@@ -107,6 +107,73 @@ func TestSuggestQueryPlanDoesNotScanBackboneIndex(t *testing.T) {
 	}
 }
 
+// TestSuggestQueryPlanDoesNotScanNameSpaceEntry pins the query plan of the
+// require_target_space EXISTS: it must probe
+// idx_name_space_entry_concept_id per FTS-matched concept, never drive from
+// name_space_entry's (space, ext_id) primary-key autoindex and scan the
+// whole space (124,730 eurosl rows in the production index) — the shape that
+// cost 0.455s vs 0.001s two tables over (see targetSpaceQuery's doc
+// comment).
+//
+// NO CONTROL ASSERTION HERE, deliberately, and the honest reason matters:
+// unlike its two siblings, this term does NOT flip without the `+`. The
+// EXISTS is correlated on concept_id = tc.id, so the space comparison is not
+// a join term the planner can promote to a driver. Verified against the real
+// 2.2 GB index (out/hostus-deploy-v3.4.0-alpha.0.sqlite, no sqlite_stat1):
+// identical plan with and without the `+`, both probing the concept_id
+// index. Writing a t.Fatal control here would therefore pin a claim that is
+// simply false — the control for this exact term on this exact table lives
+// in TestAttachTargetSpaceNamesQueryPlanDoesNotScanSpace, where the
+// non-correlated form DOES flip and is proven to. What this test still
+// catches is a restructuring of the filter into a non-correlated join (or an
+// ANALYZE that hands the planner the row counts), which is exactly when the
+// guard in suggest.go starts earning its keep.
+func TestSuggestQueryPlanDoesNotScanNameSpaceEntry(t *testing.T) {
+	db := openSeededSuggestDB(t)
+	seedInulaHomonyms(t, db)
+
+	opts := output.SuggestOpts{Limit: 10, TargetSpace: "eurosl", RequireTargetSpace: true}
+	query, args, ok := buildSuggestQuery("inula hirta", opts)
+	if !ok {
+		t.Fatal("buildSuggestQuery returned ok=false for a valid query")
+	}
+	if !strings.Contains(query, "+nse.space") {
+		t.Fatal("suggest query does not contain the +nse.space guard — fix missing or renamed")
+	}
+
+	plan := explainPlan(t, db, query, args)
+	if strings.Contains(plan, "sqlite_autoindex_name_space_entry_1") {
+		t.Errorf("suggest plan drives the require_target_space EXISTS from the (space, ext_id) primary-key autoindex (space scan):\n%s", plan)
+	}
+	if !strings.Contains(plan, "idx_name_space_entry_concept_id") {
+		t.Errorf("suggest plan does not probe idx_name_space_entry_concept_id for the require_target_space EXISTS:\n%s", plan)
+	}
+}
+
+// TestMatchedNamesQueryPlanDrivesFromTheIDList pins that the matched-name
+// second pass starts from the page's concept ids (json_each -> concept_name)
+// and never from `name`: a full scan of name (1.4M rows on the real index)
+// once per keystroke is the same class of mistake the two planner traps
+// above describe, even though no unary-+ is needed to avoid it here (see
+// matchedNameQuery's doc comment on the LIKE optimization).
+func TestMatchedNamesQueryPlanDrivesFromTheIDList(t *testing.T) {
+	db := openTestDB(t)
+	seedInulaHomonyms(t, db)
+
+	idsJSON, err := marshalIDs([]string{"wcvp:concept:pentanema-hirtum"})
+	if err != nil {
+		t.Fatalf("marshalIDs: unexpected error: %v", err)
+	}
+	plan := explainPlan(t, db, matchedNameQuery, []any{"inula hirta", idsJSON, "inula hirta"})
+
+	if !strings.Contains(plan, "json_each") {
+		t.Errorf("matched-name plan does not use the json_each id list:\n%s", plan)
+	}
+	if strings.Contains(plan, "SCAN nm") {
+		t.Errorf("matched-name plan scans the name table instead of probing it by id:\n%s", plan)
+	}
+}
+
 // TestAttachTargetSpaceNamesQueryPlanDoesNotScanSpace pins the SECOND
 // instance of the same planner trap (spec 2026-09-05, fix round 1): the
 // Synology-form gate ("< 50ms") still failed with target_space=eurosl

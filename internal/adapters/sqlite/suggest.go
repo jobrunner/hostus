@@ -140,7 +140,110 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 	if err := db.attachTargetSpaceNames(ctx, out, opts.TargetSpace, domain.IsAggregateName(q)); err != nil {
 		return nil, err
 	}
+	// TargetSpaceHit can only be decided once the space name is known, so it
+	// is set here rather than in the query. It compares the canonicalized
+	// space name against the canonicalized query — NOT the marker-stripped
+	// prefix the query's own signals use: with an aggregate query
+	// attachTargetSpaceNames resolves the AGGREGATE spelling of the space
+	// entry ("X agg."), and comparing that against the full canonicalized
+	// query is what makes the two sides agree. Without a requested space
+	// TargetSpaceName is "" for every item, and "" never has a non-empty
+	// query as its prefix, so the signal stays false throughout — no guard
+	// needed.
+	canonQuery := domain.Canonicalize(q)
+	for i := range out {
+		out[i].TargetSpaceHit = strings.HasPrefix(domain.Canonicalize(out[i].TargetSpaceName), canonQuery)
+	}
+
+	if err := db.attachMatchedNames(ctx, out, domain.StripAggregateMarkers(canonQuery)); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+// matchedNameQuery is attachMatchedNames' query, a package-level constant for
+// the same reason targetSpaceQuery is one: so the EXPLAIN regression test
+// plans the EXACT string production runs.
+//
+// It selects every name of the listed concepts that the query prefix reaches
+// and lets SQLite apply the precedence, so the caller only has to keep the
+// FIRST row per concept:
+//
+//  1. exact equality before a mere prefix — someone who typed the whole name
+//     is shown that name, not a longer one that also starts with it;
+//  2. accepted before synonym — the same tie-break domain.RankSuggestions
+//     uses between concepts, applied here between one concept's names;
+//  3. canonical alphabetically — not a preference, just the last resort that
+//     makes the choice DETERMINISTIC, so two identical requests cannot show
+//     the operator two different "Treffer-Name" values.
+//
+// The LIKE term needs no unary-+ guard: SQLite's LIKE optimization only
+// applies to a column with COLLATE NOCASE (or with case_sensitive_like ON),
+// and canonical_fold has neither, so idx_name_canonical_fold is not a
+// candidate driver for it in the first place — the json_each id list is.
+const matchedNameQuery = `
+	SELECT cn.concept_id, nm.canonical, COALESCE(nm.authorship, ''), cn.role,
+	       CASE WHEN nm.canonical_fold = ? THEN 1 ELSE 0 END AS exact_name
+	FROM concept_name cn
+	JOIN name nm ON nm.id = cn.name_id
+	WHERE cn.concept_id IN (SELECT value FROM json_each(?))
+	  AND nm.canonical_fold LIKE ? || '%'
+	ORDER BY cn.concept_id ASC, exact_name DESC,
+	         CASE cn.role WHEN 'accepted' THEN 0 ELSE 1 END ASC,
+	         nm.canonical ASC`
+
+// attachMatchedNames fills MatchedName on every item for which one of the
+// concept's own names is reached by the query prefix. It is a second pass
+// over the whole page in ONE query (like attachTargetSpaceNames) rather than
+// a column on the main query, because the main query GROUP BYs to one row
+// per concept and cannot carry a per-name choice through that aggregation.
+//
+// An item keeps the zero MatchedName when no name of its concept starts with
+// the prefix — the "anywhere" match mode's case, where the hit came from a
+// token inside a name. domain.SuggestItem.MatchedName documents that empty
+// value as "could not be determined", so there is nothing to invent here.
+func (db *DB) attachMatchedNames(ctx context.Context, items []domain.SuggestItem, prefix string) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	ids := make([]string, len(items))
+	for i, it := range items {
+		ids[i] = it.ConceptID
+	}
+	idsJSON, err := marshalIDs(ids)
+	if err != nil {
+		return err
+	}
+
+	rows, err := db.sql.QueryContext(ctx, matchedNameQuery, prefix, idsJSON, prefix)
+	if err != nil {
+		return fmt.Errorf("sqlite: suggest matched names: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	matched := make(map[string]domain.MatchedName, len(items))
+	for rows.Next() {
+		var conceptID string
+		var name domain.MatchedName
+		var exact int
+		if err := rows.Scan(&conceptID, &name.Canonical, &name.Authorship, &name.Role, &exact); err != nil {
+			return fmt.Errorf("sqlite: scanning suggest matched name row: %w", err)
+		}
+		// First row per concept wins — the query already ordered them by the
+		// precedence documented on matchedNameQuery.
+		if _, seen := matched[conceptID]; !seen {
+			matched[conceptID] = name
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("sqlite: iterating suggest matched name rows: %w", err)
+	}
+
+	for i := range items {
+		items[i].MatchedName = matched[items[i].ConceptID]
+	}
+	return nil
 }
 
 // buildSuggestQuery constructs the SQL and positional args for Suggest's FTS5
@@ -160,9 +263,17 @@ func buildSuggestQuery(q string, opts output.SuggestOpts) (query string, args []
 	// appear in the final query text below: match + pool cap (pool CTE), then
 	// — only with an area — match again (match_rows CTE), the area codes for
 	// in_area_rows, and the area codes for the in_area EXISTS (SELECT list),
-	// then the rank-filter codes (WHERE), the backbone id (WHERE), the
-	// name_start prefix (WHERE), then the LIMIT budget.
+	// then the exact_hit and prefix_hit prefixes (SELECT list), then the
+	// rank-filter codes (WHERE), the backbone id (WHERE), the name_start
+	// prefix (WHERE), the required target space (WHERE), then the LIMIT
+	// budget.
 	args = []any{match, suggestMatchPool}
+
+	// prefix is the canonicalized, marker-stripped query the three
+	// name-level signals below are all measured against — the same value
+	// ftsPrefixToken built its MATCH token from, so "X agg." asks about "X"
+	// here exactly as it does there.
+	prefix := domain.StripAggregateMarkers(domain.Canonicalize(q))
 
 	codes := areaCodes(opts.Area)
 
@@ -227,6 +338,37 @@ func buildSuggestQuery(q string, opts output.SuggestOpts) (query string, args []
 			WHERE de.concept_id = tc.id AND de.area_scheme = 'wgsrpd_l3' AND de.area_code IN (%s)
 		)`, ph)
 	}
+
+	// exact_hit and prefix_hit are correlated EXISTS over the concept's names,
+	// the same shape (and therefore the same cost) as nameStartFilter below —
+	// for the same reason it takes that route: fts_name is contentless
+	// (content='', see schema.sql), so the text that matched cannot be read
+	// back outside a MATCH; name + concept_name is the only practical source
+	// of the concept's name strings.
+	//
+	// exact_hit is the match_mode-independent signal PrefixHit cannot be: in the
+	// default name_start mode every returned row is a prefix hit by
+	// construction, so only equality still distinguishes "I typed the whole
+	// name" from "I typed the beginning of a longer one". prefix_hit stops
+	// being the constant true it was hard-coded as in scanSuggestItem as soon
+	// as MatchMode is "anywhere", where a row can arrive via a token match
+	// somewhere INSIDE a name.
+	//
+	// Neither needs the unary-+ planner guard the backbone and space terms
+	// carry: both are correlated subqueries driven by cn.concept_id = tc.id
+	// from the outer row, not join terms the planner could pick as the outer
+	// driver. idx_name_canonical_fold is genuinely the right index for
+	// exact_hit's equality (one canonical, a handful of rows).
+	args = append(args, prefix) // exact_hit
+	args = append(args, prefix) // prefix_hit
+	const exactHitExpr = `EXISTS (
+			SELECT 1 FROM name nm JOIN concept_name cn ON cn.name_id = nm.id
+			WHERE cn.concept_id = tc.id AND nm.canonical_fold = ?
+		)`
+	const prefixHitExpr = `EXISTS (
+			SELECT 1 FROM name nm JOIN concept_name cn ON cn.name_id = nm.id
+			WHERE cn.concept_id = tc.id AND nm.canonical_fold LIKE ? || '%'
+		)`
 
 	rankFilter := ""
 	if len(opts.Ranks) > 0 {
@@ -334,12 +476,55 @@ func buildSuggestQuery(q string, opts output.SuggestOpts) (query string, args []
 		// whole concept from name_start again — reopening the exact SP7 bug
 		// for every concept carrying an aggregate alias. See
 		// TestSuggest_NameStart_AggregateAliasDoesNotExemptBareEpithetQuery.
-		prefix := domain.StripAggregateMarkers(domain.Canonicalize(q))
 		nameStartFilter = ` AND EXISTS (
 			SELECT 1 FROM name nm JOIN concept_name cn ON cn.name_id = nm.id
 			WHERE cn.concept_id = tc.id AND nm.canonical_fold LIKE ? || '%'
 		)`
 		args = append(args, prefix)
+	}
+
+	// spaceFilter is the only clause that makes opts.TargetSpace FILTER
+	// rather than merely enrich. It sits in the same WHERE block as the
+	// backbone filter and for the same reason: ahead of GROUP BY and LIMIT.
+	// Dropping entry-less concepts from the returned page afterwards would
+	// keep almost nothing — they are exactly the rows the unfiltered query
+	// hands back first.
+	//
+	// It requires BOTH halves: RequireTargetSpace alone has no space to
+	// require an entry in, and binding an empty space here would drop every
+	// row instead. (The HTTP layer rejects that combination with a 400, so
+	// this branch is the defensive half of the same rule.)
+	//
+	// PLANNER GUARD, same table and same term as targetSpaceQuery's SECOND
+	// instance of the trap (see its doc comment): `nse.space = ?` on
+	// name_space_entry's (space, ext_id) primary key is what made the
+	// planner drive from that autoindex and scan the whole space (124,730
+	// eurosl rows in the current production index) instead of probing
+	// idx_name_space_entry_concept_id. `+nse.space` makes the term opaque to
+	// index selection without changing its truth value; it is sound here for
+	// the same reason it is there — space is a TEXT column with no COLLATE
+	// and the bound parameter is a Go string, so no affinity conversion was
+	// in play.
+	//
+	// Honest scope of the guard: in THIS shape the flip does not currently
+	// occur even without the +. The EXISTS is correlated on concept_id =
+	// tc.id, so the space term is not a join term the planner could promote
+	// to the driver; EXPLAIN QUERY PLAN against the real 2.2 GB index
+	// (out/hostus-deploy-v3.4.0-alpha.0.sqlite, which carries no sqlite_stat1)
+	// gives the identical plan with and without it, probing
+	// idx_name_space_entry_concept_id either way. The + stays because it
+	// costs nothing, because the same term two tables over DID flip, and
+	// because a future ANALYZE would give the planner exactly the row counts
+	// that make the space index look attractive. Pinned by
+	// TestSuggestQueryPlanDoesNotScanNameSpaceEntry, whose doc comment
+	// records that the control assertion lives in the sibling test.
+	spaceFilter := ""
+	if opts.RequireTargetSpace && opts.TargetSpace != "" {
+		spaceFilter = ` AND EXISTS (
+			SELECT 1 FROM name_space_entry nse
+			WHERE nse.concept_id = tc.id AND +nse.space = ?
+		)`
+		args = append(args, opts.TargetSpace)
 	}
 
 	args = append(args, fetchBudget(opts.Limit))
@@ -356,15 +541,28 @@ func buildSuggestQuery(q string, opts output.SuggestOpts) (query string, args []
 	// the outer query then aggregates the already-materialized score
 	// column (MIN(m.score), not MIN(bm25(...))) when collapsing a
 	// concept's several matching names (accepted + synonyms) into one row.
+	// exact_hit LEADS the ORDER BY, ahead of in_area, for the same reason
+	// in_area leads score (see TestSuggest_InAreaCandidateSurvivesFetchBudget
+	// Overflow): this LIMIT is the fetch budget, applied BEFORE the caller's
+	// domain.RankSuggestions ever runs, so a signal that outranks in_area in
+	// the final ranking must also outrank it here — otherwise the budget can
+	// truncate away the very row the caller typed in full.
+	//
+	// TargetSpaceHit, the ranking key BETWEEN exact_hit and in_area, has no
+	// counterpart here on purpose: it is only known after the second pass
+	// (attachTargetSpaceNames), which needs this query's page as its input.
+	// The concepts it would pull forward are already inside the budget
+	// whenever RequireTargetSpace narrows the page to them, and it never
+	// decides membership on its own — only order among rows that all matched.
 	query = `WITH ` + cteClause + `
-		SELECT tc.id, an.canonical, an.rank, tc.status, MIN(m.score) AS score, ` + inAreaExpr + ` AS in_area, COALESCE(tc.sec_reference, '') AS sec_reference, MAX(fnm.is_aggregate) AS aggregate
+		SELECT tc.id, an.canonical, an.rank, tc.status, MIN(m.score) AS score, ` + inAreaExpr + ` AS in_area, ` + exactHitExpr + ` AS exact_hit, ` + prefixHitExpr + ` AS prefix_hit, COALESCE(tc.sec_reference, '') AS sec_reference, MAX(fnm.is_aggregate) AS aggregate
 		FROM matches m
 		JOIN fts_name_map fnm ON fnm.rowid = m.rowid
 		JOIN taxon_concept tc ON tc.id = fnm.concept_id
 		JOIN name an ON an.id = tc.accepted_name
-		WHERE 1 = 1` + rankFilter + backboneFilter + nameStartFilter + `
+		WHERE 1 = 1` + rankFilter + backboneFilter + nameStartFilter + spaceFilter + `
 		GROUP BY tc.id
-		ORDER BY in_area DESC, score ASC
+		ORDER BY exact_hit DESC, in_area DESC, score ASC
 		LIMIT ?`
 
 	return query, args, true
@@ -469,13 +667,17 @@ func (db *DB) attachTargetSpaceNames(ctx context.Context, items []domain.Suggest
 }
 
 // scanSuggestItem decodes one Suggest result row into a domain.SuggestItem.
-// PrefixHit is always true: every row Suggest produces came from an FTS5
-// MATCH, so there is no other value it could carry here.
+// ExactHit and PrefixHit are read from the query's own columns (see
+// buildSuggestQuery): PrefixHit used to be hard-coded true here on the
+// grounds that every row came from an FTS5 MATCH, which is only true in the
+// default name_start mode — under MatchMode "anywhere" a row can arrive via
+// a token match INSIDE a name, and claiming a prefix hit for it fed
+// domain.RankSuggestions a constant where it expects a signal.
 func scanSuggestItem(scan func(dest ...any) error) (domain.SuggestItem, error) {
 	var item domain.SuggestItem
 	var rank, status string
-	var inArea, aggregate int
-	if err := scan(&item.ConceptID, &item.Canonical, &rank, &status, &item.Score, &inArea, &item.SecReference, &aggregate); err != nil {
+	var inArea, exactHit, prefixHit, aggregate int
+	if err := scan(&item.ConceptID, &item.Canonical, &rank, &status, &item.Score, &inArea, &exactHit, &prefixHit, &item.SecReference, &aggregate); err != nil {
 		return domain.SuggestItem{}, err
 	}
 	r, err := domain.ParseRank(rank)
@@ -487,6 +689,7 @@ func scanSuggestItem(scan func(dest ...any) error) (domain.SuggestItem, error) {
 	item.Display = item.Canonical
 	item.InArea = inArea != 0
 	item.Aggregate = aggregate != 0
-	item.PrefixHit = true
+	item.ExactHit = exactHit != 0
+	item.PrefixHit = prefixHit != 0
 	return item, nil
 }

@@ -442,6 +442,20 @@ func TestSuggest_UnknownAreaIs400(t *testing.T) {
 	if !strings.Contains(got.Error.Message, "QUATSCH") {
 		t.Errorf("error.message = %q, want it to name the offending value %q", got.Error.Message, "QUATSCH")
 	}
+	// The wording matters as much as the code: a rejected value may be a real
+	// WGSRPD code this index simply holds no data for, so the message says
+	// "not available in this index" and must not claim the code is unknown —
+	// a reader who only sees the first clause (log line, toast, truncated
+	// message) would go hunting for a typo that isn't there.
+	if want := `area "QUATSCH" is not available in this index`; !strings.HasPrefix(got.Error.Message, want) {
+		t.Errorf("error.message = %q, want it to start with %q", got.Error.Message, want)
+	}
+	if strings.Contains(got.Error.Message, "unknown") {
+		t.Errorf("error.message = %q, must not claim the area is unknown — it may exist and just carry no data here", got.Error.Message)
+	}
+	if !strings.Contains(got.Error.Message, "/v1/areas") {
+		t.Errorf("error.message = %q, want it to point at GET /v1/areas", got.Error.Message)
+	}
 }
 
 // TestSuggest_KnownAreaAliasStillWorks guards the console against the

@@ -260,7 +260,13 @@ func suggestInvalidQueryMessage(err error, req application.SuggestRequest) (stri
 		return "unknown target_space " + strconv.Quote(req.TargetSpace), true
 	}
 	if errors.Is(err, application.ErrUnknownArea) {
-		return "unknown area " + strconv.Quote(req.Area) + " — GET /v1/areas lists the areas this index carries data for", true
+		// "not available in this index", never "unknown": the value may be a
+		// real WGSRPD code this index just carries no data for (a bundle
+		// scope), and a first line reading "unknown" sends the reader looking
+		// for a typo instead of at the scope. The sentence must survive being
+		// cut after its first clause — in a log line or an error toast, that
+		// is all anyone sees.
+		return "area " + strconv.Quote(req.Area) + " is not available in this index — GET /v1/areas lists the areas it carries data for", true
 	}
 	return "", false
 }

@@ -239,12 +239,22 @@ paths:
             muss die Liste selbst nach `in_area` filtern.
 
 
-            Unbekannte Werte liefern 400 und nennen den Wert: gültig sind die
-            dokumentierten Kurzformen sowie jeder Code, den `GET /v1/areas`
-            für diesen Index auflistet (also jeder Code mit
-            Verbreitungsdaten). Früher lieferte ein Tippfehler 200 mit
+            Nicht verwendbare Werte liefern 400 und nennen den Wert
+            (`area "SPA" is not available in this index — …`) — bewusst nicht
+            „unbekannt": der Code kann real sein und nur in DIESEM Index
+            (z. B. einem gebietsgeschnittenen Bundle) keine Verbreitungszeile
+            haben. Gültig sind die dokumentierten Kurzformen sowie jeder Code,
+            den `GET /v1/areas` für diesen Index auflistet (also jeder Code
+            mit Verbreitungsdaten). Früher lieferte ein Tippfehler 200 mit
             ungefilterten Treffern und überall `in_area: false` — das las
             sich wie „kommt nirgends vor".
+
+
+            **Sonderfall:** `DE`/`AT`/`CH` sind veröffentlichte API-Oberfläche
+            und deshalb datenunabhängig gültig. Auf einem Index ohne
+            GER-Daten liefert `area=DE` also 200 (überall `in_area: false`),
+            `area=GER` dagegen 400. Verlässliche Auskunft über die Gebiete
+            eines Index gibt allein `GET /v1/areas`.
           schema:
             type: string
         - name: rank

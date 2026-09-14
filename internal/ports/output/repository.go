@@ -236,8 +236,10 @@ type Repository interface {
 // SuggestOpts configures Repository.Suggest.
 type SuggestOpts struct {
 	// Area is a WGSRPD level-3 area code (e.g. "GER"), or one of a small
-	// set of documented convenience aliases (e.g. "DE"); see
-	// internal/adapters/sqlite's areaCodes. Empty means no area filter.
+	// set of documented convenience aliases (e.g. "DE"); the alias table and
+	// its resolution live in domain.AreaCodes, which every implementation
+	// must go through so the serving, bundle and validation paths cannot
+	// drift apart. Empty means no area filter.
 	Area string
 	// Ranks restricts results to the given domain.Rank values. Empty means
 	// no rank filter (every rank is eligible).

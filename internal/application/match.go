@@ -116,11 +116,17 @@ func validateTargetSpace(ctx context.Context, repo output.Repository, space stri
 // (Repository.Areas). The HTTP adapter renders it as a 400 INVALID_QUERY
 // naming the offending value.
 //
-// Before this existed, a typo'd area was silently accepted: area is a
-// RANKING signal, so an unknown code simply never matched a distribution row
-// and every result came back with in_area false — which reads as "this plant
+// Its text says "not available in this index", not "unknown": a rejected
+// value may well be a perfectly real WGSRPD code (say "SPA") for which THIS
+// index simply holds no distribution row — a bundle scope, not a typo.
+// Claiming the code does not exist would send the reader hunting for a
+// spelling mistake that isn't there.
+//
+// Before this existed, a bad area was silently accepted: area is a RANKING
+// signal, so an unmatched code simply never matched a distribution row and
+// every result came back with in_area false — which reads as "this plant
 // occurs nowhere", a wrong answer dressed as a fact.
-var ErrUnknownArea = errors.New("unknown area")
+var ErrUnknownArea = errors.New("area not available in this index")
 
 // validateArea reports ErrUnknownArea unless area is usable. An empty area
 // is "no area filter" and always valid.

@@ -3,6 +3,7 @@ package application_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jobrunner/hostus/internal/application"
@@ -290,6 +291,12 @@ func TestSuggest_AreaValidation(t *testing.T) {
 			_, err := application.Suggest(context.Background(), repo, application.SuggestRequest{Q: "coryn", Area: c.area})
 			if !errors.Is(err, c.wantErr) {
 				t.Fatalf("Suggest(Area=%q) error = %v, want %v", c.area, err, c.wantErr)
+			}
+			// The sentinel's own text must not claim the value does not
+			// exist: "SPA" is a real WGSRPD code, it is just absent from
+			// THIS index (a bundle scope, not a typo).
+			if c.wantErr != nil && strings.Contains(err.Error(), "unknown") {
+				t.Errorf("Suggest(Area=%q) error = %q, want it to say the area is not available in this index, not that it is unknown", c.area, err)
 			}
 			if wantCalled := c.wantErr == nil; repo.called != wantCalled {
 				t.Errorf("Suggest(Area=%q) called repo.Suggest = %v, want %v", c.area, repo.called, wantCalled)

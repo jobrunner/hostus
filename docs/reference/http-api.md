@@ -414,7 +414,7 @@ POST /v1/match
   oder ein falsy-Wert dürfte **nie** als „nicht relevant" gelesen werden —
   genau dieser Fehlschluss ist der von UC4 gefürchtete False Negative.
 
-### `GET /v1/suggest?q={q}&area={area}&rank={rank}&limit={limit}&require_target_space={bool}`
+### `GET /v1/suggest?q={q}&area={area}&rank={rank}&limit={limit}&target_space={space}&require_target_space={bool}`
 
 Autosuggest-Endpunkt für ein Frontend-Eingabefeld: ein FTS5-Präfix-Treffer
 über den lokalen Index, optional nach Referenzgebiet und Rang gefiltert,
@@ -430,13 +430,29 @@ leer (auch nur Leerzeichen), liefert der Endpunkt `400 INVALID_QUERY`.
   `in_area: false`. Wer ausschließlich Arten des Gebiets sehen will, muss die
   Liste selbst nach `in_area` filtern — der Endpunkt tut das nicht.
 
-  Ein unbekannter Wert liefert `400 INVALID_QUERY` und nennt den Wert.
-  Gültig sind die dokumentierten Kurzformen (unabhängig davon, ob der Index
-  für den Code dahinter Daten trägt — sie gehören zur API) sowie jeder Code,
-  den `GET /v1/areas` für diesen Index auflistet, also jeder Code mit
+  Ein nicht verwendbarer Wert liefert `400 INVALID_QUERY` und nennt den Wert:
+  `area "SPA" is not available in this index — GET /v1/areas lists the areas
+  it carries data for`. Die Meldung sagt bewusst **nicht** „unbekannt": ein
+  abgelehnter Wert kann ein völlig realer WGSRPD-Code sein, für den *dieser*
+  Index (etwa ein gebietsgeschnittenes Bundle) keine Verbreitungszeile hält —
+  wer nur die erste Zeile sieht, soll den Bundle-Zuschnitt prüfen, nicht einen
+  Tippfehler suchen. Gültig sind die dokumentierten Kurzformen sowie jeder
+  Code, den `GET /v1/areas` für diesen Index auflistet, also jeder Code mit
   Verbreitungsdaten. Vorher war ein Tippfehler stumm: `area=QUATSCH` lieferte
   `200` mit ungefilterten Treffern und überall `in_area: false` — was sich
   wie „kommt nirgends vor" liest.
+
+  **Sonderfall: die drei Kurzformen sind datenunabhängig gültig.** `DE`, `AT`
+  und `CH` gehören zur veröffentlichten API-Oberfläche und werden deshalb
+  akzeptiert, auch wenn der Index für `GER`/`AUT`/`SWI` keine einzige
+  Verbreitungszeile trägt. Auf einem Index ohne GER-Daten antwortet
+  `?area=DE` also mit `200` (und überall `in_area: false`), `?area=GER`
+  dagegen mit `400` — zwei Schreibweisen desselben Gebiets, zwei
+  verschiedene Antworten. Das ist gewollt (ein Alias darf nicht davon
+  abhängen, was gerade ingestiert wurde), hebelt die Prüfung für genau diese
+  drei Werte aber aus: wer sich auf die 400 als „dieser Index kennt das
+  Gebiet" verlässt, darf das für `DE/AT/CH` nicht tun. Verlässlich ist
+  allein `GET /v1/areas`.
 - `rank` (optional): kommagetrennte Liste von Rängen, z. B.
   `species,subspecies`. Ein unbekannter Rang-Token liefert `400
   INVALID_QUERY`.
@@ -450,6 +466,19 @@ leer (auch nur Leerzeichen), liefert der Endpunkt `400 INVALID_QUERY`.
   indexierten Text stehen, nicht nur am Tokenanfang) und liefert dadurch
   mehr, aber weniger präzise Treffer. Jeder andere Wert liefert `400
   INVALID_QUERY`.
+- `target_space` (optional): Namensraum (z. B. `eurosl`), in dem jeder Treffer
+  zusätzlich seine dortige Schreibweise als `target_space_name` mitliefert —
+  so sieht man schon beim Tippen, welcher Kandidat sich in den Zielraum
+  übertragen lässt und wie er dort heißt. Ohne den Parameter fehlt das Feld
+  überall. Gültige Werte liefert `GET /v1/spaces`; ein nicht ingestierter Raum
+  liefert `400 INVALID_QUERY`. Der Parameter **annotiert** nur — zum Filtern
+  siehe `require_target_space`.
+- `entry_backbone` (optional): beschränkt die Treffer auf eine Backbone (z. B.
+  `wcvp`) — derselbe Filter, den `POST /v1/match` unter diesem Namen anbietet.
+  Leer bedeutet alle Backbones. Der Filter greift in der Abfrage, also **vor**
+  dem Limit: derselbe Name kann je CDM-`sec.`-Referenz einmal vorkommen und
+  ein einzelnes WCVP-Konzept sonst von der Ergebnisseite verdrängen. Eine
+  nicht ingestierte Backbone liefert `400 INVALID_QUERY`.
 - `require_target_space` (optional, Boolean): macht aus `target_space` einen
   echten Filter. `true` liefert nur Konzepte, die im Zielraum einen Eintrag
   haben, statt die übrigen bloß ohne `target_space_name` mitzuliefern. Der
@@ -471,6 +500,13 @@ Die Priorisierung folgt §B.1: Präfix-Treffer vor Nicht-Treffer, im
 angefragten Gebiet vor nicht im Gebiet, akzeptiert vor Synonym, breitere vor
 feineren Rängen (FAMILY/GENUS vor SPECIES vor SUBSPECIES/VARIETY/FORM),
 zuletzt bm25-Score aufsteigend (niedriger ist relevanter).
+
+`target_space_name` ist die Schreibweise des Concepts im angefragten
+`target_space`. Das Feld ist nur vorhanden, wenn ein Zielraum angefragt wurde
+**und** dieses Concept dort einen Eintrag hat. Die Abwesenheit ist die
+nützliche Hälfte: sie sagt, dass sich dieser Kandidat nicht in den Zielraum
+übertragen lässt — was man beim Auswählen sehen will, nicht erst danach. Wer
+solche Kandidaten gar nicht erst sehen will, setzt `require_target_space=true`.
 
 Jeder Treffer trägt `sec` `{id, title}` (SP5), sofern er zu einem
 sec-tragenden (CDM-)Concept gehört — das unterscheidet gleichnamige

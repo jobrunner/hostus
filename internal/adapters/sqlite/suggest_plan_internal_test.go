@@ -115,19 +115,25 @@ func TestSuggestQueryPlanDoesNotScanBackboneIndex(t *testing.T) {
 // cost 0.455s vs 0.001s two tables over (see targetSpaceQuery's doc
 // comment).
 //
-// NO CONTROL ASSERTION HERE, deliberately, and the honest reason matters:
-// unlike its two siblings, this term does NOT flip without the `+`. The
-// EXISTS is correlated on concept_id = tc.id, so the space comparison is not
-// a join term the planner can promote to a driver. Verified against the real
-// 2.2 GB index (out/hostus-deploy-v3.4.0-alpha.0.sqlite, no sqlite_stat1):
-// identical plan with and without the `+`, both probing the concept_id
-// index. Writing a t.Fatal control here would therefore pin a claim that is
-// simply false — the control for this exact term on this exact table lives
-// in TestAttachTargetSpaceNamesQueryPlanDoesNotScanSpace, where the
-// non-correlated form DOES flip and is proven to. What this test still
-// catches is a restructuring of the filter into a non-correlated join (or an
-// ANALYZE that hands the planner the row counts), which is exactly when the
-// guard in suggest.go starts earning its keep.
+// The control below is over the FORM, not over the `+`, and that is the
+// only honest control available here: unlike its two siblings, this term
+// does NOT flip when the `+` is removed. The EXISTS is correlated on
+// concept_id = tc.id, so the space comparison is not a join term the planner
+// can promote to a driver — verified against the real 2.2 GB index
+// (out/hostus-deploy-v3.4.0-alpha.0.sqlite, no sqlite_stat1): identical plan
+// with and without it, both probing the concept_id index. A `+`-based
+// t.Fatal control would therefore pin a false claim.
+//
+// What IS true and worth pinning: written as a plain JOIN instead of a
+// correlated EXISTS, the very same filter DOES flip onto the primary-key
+// autoindex on this database. That is what the control asserts, and it makes
+// the negative assertion above non-vacuous — it shows the bad plan is
+// reachable from here, one refactor away.
+//
+// (The control binds the same args in the same order even though the JOIN
+// moves the space placeholder ahead of the WHERE ones: with no ANALYZE
+// statistics, SQLite's plan for these terms depends on their shape and on
+// the available indexes, not on the bound values.)
 func TestSuggestQueryPlanDoesNotScanNameSpaceEntry(t *testing.T) {
 	db := openSeededSuggestDB(t)
 	seedInulaHomonyms(t, db)
@@ -147,6 +153,24 @@ func TestSuggestQueryPlanDoesNotScanNameSpaceEntry(t *testing.T) {
 	}
 	if !strings.Contains(plan, "idx_name_space_entry_concept_id") {
 		t.Errorf("suggest plan does not probe idx_name_space_entry_concept_id for the require_target_space EXISTS:\n%s", plan)
+	}
+
+	// KONTROLLE über die FORM: dieselbe Bedingung als gewöhnlicher JOIN MUSS
+	// auf den PK-Autoindex kippen, sonst beweist die Assertion oben nichts.
+	existsClause := ` AND EXISTS (
+			SELECT 1 FROM name_space_entry nse
+			WHERE nse.concept_id = tc.id AND +nse.space = ?
+		)`
+	if !strings.Contains(query, existsClause) {
+		t.Fatalf("suggest query no longer contains the require_target_space EXISTS in the expected form — control cannot be built:\n%s", query)
+	}
+	joined := strings.Replace(query, existsClause, "", 1)
+	joined = strings.Replace(joined,
+		"JOIN name an ON an.id = tc.accepted_name",
+		"JOIN name an ON an.id = tc.accepted_name\n\t\tJOIN name_space_entry nse ON nse.concept_id = tc.id AND nse.space = ?", 1)
+	controlPlan := explainPlan(t, db, joined, args)
+	if !strings.Contains(controlPlan, "sqlite_autoindex_name_space_entry_1") {
+		t.Fatalf("control (JOIN form) plan does not use the primary-key autoindex — the assertion above proves nothing on this database:\n%s", controlPlan)
 	}
 }
 

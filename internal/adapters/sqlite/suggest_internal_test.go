@@ -425,7 +425,7 @@ func seedInulaHomonyms(t *testing.T, db *DB) {
 		hirtaL := domain.Name{ID: "n-inula-hirta-l", Canonical: "Inula hirta", Authorship: "L.", Rank: domain.RankSpecies}
 		britannica := species("n-pentanema-britannica", "Pentanema britannica")
 		hirtaPollich := domain.Name{ID: "n-inula-hirta-pollich", Canonical: "Inula hirta", Authorship: "Pollich", Rank: domain.RankSpecies}
-		variety := species("n-inula-hirta-var-hirtella", "Inula hirta var. hirtella")
+		variety := domain.Name{ID: "n-inula-hirta-var-hirtella", Canonical: "Inula hirta var. hirtella", Rank: domain.RankVariety}
 
 		for _, n := range []domain.Name{hirtum, hirtaL, britannica, hirtaPollich, variety} {
 			mustTx(t, tx.UpsertName(n))
@@ -440,7 +440,10 @@ func seedInulaHomonyms(t *testing.T, db *DB) {
 			{"wcvp:concept:pentanema-britannica", britannica, &hirtaPollich},
 			{"wcvp:concept:inula-hirta-var", variety, nil},
 		} {
-			concept := domain.Concept{ID: c.id, BackboneID: "wcvp", AcceptedName: c.accepted, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+			// The concept's rank mirrors its accepted name's, as it does in
+			// every ingest: hard-coding RankSpecies here would label the
+			// variety a species and quietly mislead a future Ranks test.
+			concept := domain.Concept{ID: c.id, BackboneID: "wcvp", AcceptedName: c.accepted, Rank: c.accepted.Rank, Status: domain.StatusAccepted}
 			mustTx(t, tx.UpsertConcept(concept))
 			mustTx(t, tx.LinkName(concept.ID, c.accepted.ID, "accepted", nil))
 			if c.synonym != nil {
@@ -605,6 +608,118 @@ func TestSuggest_TargetSpaceHitOnlyForTheSpaceNameMatchingTheQuery(t *testing.T)
 		if it.TargetSpaceHit {
 			t.Errorf("concept %q: TargetSpaceHit = true without a requested target space, want false", id)
 		}
+	}
+}
+
+// TestSuggest_MatchedNameIsDeterministicBetweenSameCanonicalAuthors pins the
+// tie-break the first three ORDER BY keys of matchedNameQuery cannot make:
+// TWO names of ONE concept, same role, same canonical, differing only in
+// authorship — which is what a homonym IS, and what 5,784 (concept_id, role,
+// canonical_fold) groups of the production index look like. Nothing but
+// authorship (then name id) separates them, so without those keys the answer
+// is rowid order and flips with any plan or build change, while the console
+// column "Treffer-Name" claims to name THE author of the hit.
+//
+// The name ids are chosen so the WRONG answer comes first without the fix:
+// the query reaches concept_name through its (concept_id, name_id) covering
+// index, so the un-fixed ORDER BY (stable up to name id) hands back
+// "…-1" = "Sm.", while authorship ASC must pick "A.Gray". Verified: with the
+// last two ORDER BY keys removed, this test fails. Naming them by author
+// instead would have made "a…gray" sort first by id too and the test would
+// have passed by luck on the broken code.
+func TestSuggest_MatchedNameIsDeterministicBetweenSameCanonicalAuthors(t *testing.T) {
+	db := openTestDB(t)
+	const conceptID = "wcvp:concept:pentanema-duplicatum"
+
+	bv := domain.BackboneVersion{ID: "wcvp", Version: "v1", IngestedAt: "2026-09-14T00:00:00Z", ManifestSHA: "x"}
+	ingestVia(t, db, bv, func(tx output.IngestTx) {
+		accepted := species("n-pentanema-duplicatum", "Pentanema duplicatum")
+		later := domain.Name{ID: "n-inula-duplicata-1", Canonical: "Inula duplicata", Authorship: "Sm.", Rank: domain.RankSpecies}
+		earlier := domain.Name{ID: "n-inula-duplicata-2", Canonical: "Inula duplicata", Authorship: "A.Gray", Rank: domain.RankSpecies}
+		for _, n := range []domain.Name{accepted, later, earlier} {
+			mustTx(t, tx.UpsertName(n))
+		}
+		c := domain.Concept{ID: conceptID, BackboneID: "wcvp", AcceptedName: accepted, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+		mustTx(t, tx.UpsertConcept(c))
+		mustTx(t, tx.LinkName(c.ID, accepted.ID, "accepted", nil))
+		mustTx(t, tx.LinkName(c.ID, later.ID, "synonym", nil))
+		mustTx(t, tx.LinkName(c.ID, earlier.ID, "synonym", nil))
+	})
+
+	want := domain.MatchedName{Canonical: "Inula duplicata", Authorship: "A.Gray", Role: "synonym"}
+	for run := 1; run <= 3; run++ {
+		items, err := db.Suggest(context.Background(), "Inula duplicata", output.SuggestOpts{Limit: 10})
+		if err != nil {
+			t.Fatalf("Suggest (run %d): unexpected error: %v", run, err)
+		}
+		found := false
+		for _, it := range items {
+			if it.ConceptID != conceptID {
+				continue
+			}
+			found = true
+			if it.MatchedName != want {
+				t.Errorf("run %d: MatchedName = %+v, want %+v (authorship ASC decides between two same-canonical synonyms)", run, it.MatchedName, want)
+			}
+		}
+		if !found {
+			t.Fatalf("run %d: Suggest returned no item for %q", run, conceptID)
+		}
+	}
+}
+
+// TestSuggest_TargetSpaceHitSurvivesDifferentAggregateMarkerSpelling pins
+// that TargetSpaceHit is decided by the NAME, not by which aggregate marker
+// a name space happens to spell. The spaces genuinely disagree — measured on
+// the production index, eurosl and floraveg write "… aggr." while germansl
+// writes "… agg." — so comparing the raw canonical forms made every
+// aggregate query against eurosl miss, and with it the spec's decisive
+// ranking criterion, for the whole page (ResolveTargetSpace answers "" for
+// concepts without an aggregate entry on an aggregate query). Both sides go
+// through StripAggregateMarkers, exactly as ftsPrefixToken and
+// nameStartFilter already do.
+func TestSuggest_TargetSpaceHitSurvivesDifferentAggregateMarkerSpelling(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	const conceptID = "wcvp:concept:achillea-millefolium"
+
+	bv := domain.BackboneVersion{ID: "wcvp", Version: "v1", IngestedAt: "2026-09-14T00:00:00Z", ManifestSHA: "x"}
+	ingestVia(t, db, bv, func(tx output.IngestTx) {
+		accepted := species("n-achillea-millefolium", "Achillea millefolium")
+		mustTx(t, tx.UpsertName(accepted))
+		c := domain.Concept{ID: conceptID, BackboneID: "wcvp", AcceptedName: accepted, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+		mustTx(t, tx.UpsertConcept(c))
+		mustTx(t, tx.LinkName(c.ID, accepted.ID, "accepted", nil))
+	})
+
+	tx, err := db.BeginIngest(ctx, domain.BackboneVersion{ID: "eurosl-src", Version: "v1", IngestedAt: "2026-09-14T00:00:00Z", ManifestSHA: "y"})
+	mustTx(t, err)
+	mustTx(t, tx.UpsertNameSpace(domain.NameSpaceMeta{ID: "eurosl", Version: "v1", ManifestSHA: "y", Redistribution: domain.RedistributionUnknown}))
+	// eurosl's own spelling: "aggr.", while the caller below types "agg.".
+	mustTx(t, tx.AddNameSpaceEntry(conceptID, domain.NameSpaceEntry{
+		Space: "eurosl", ExtID: "e-1", Name: "Achillea millefolium aggr.", Status: "accepted", Aggregate: true,
+	}))
+	mustTx(t, tx.Commit())
+
+	items, err := db.Suggest(ctx, "Achillea millefolium agg.", output.SuggestOpts{Limit: 10, TargetSpace: "eurosl"})
+	if err != nil {
+		t.Fatalf("Suggest: unexpected error: %v", err)
+	}
+	found := false
+	for _, it := range items {
+		if it.ConceptID != conceptID {
+			continue
+		}
+		found = true
+		if it.TargetSpaceName != "Achillea millefolium aggr." {
+			t.Fatalf("TargetSpaceName = %q, want eurosl's own aggregate spelling — fixture no longer exercises the marker mismatch", it.TargetSpaceName)
+		}
+		if !it.TargetSpaceHit {
+			t.Errorf("TargetSpaceHit = false for query %q against space name %q, want true (the marker spelling must not decide)", "Achillea millefolium agg.", it.TargetSpaceName)
+		}
+	}
+	if !found {
+		t.Fatalf("Suggest returned no item for %q", conceptID)
 	}
 }
 

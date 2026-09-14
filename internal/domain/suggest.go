@@ -21,7 +21,7 @@ type SuggestItem struct {
 	InArea       bool
 	// ExactHit is true when the concept carries a name whose canonicalized
 	// form EQUALS the canonicalized query (not merely starts with it). It is
-	// the query-independent signal PrefixHit can't be once match_mode
+	// the match_mode-independent signal PrefixHit can't be once match_mode
 	// widens beyond name_start: a caller who typed the full name wants no
 	// longer match ranked ahead of it.
 	ExactHit bool
@@ -78,8 +78,9 @@ type MatchedName struct {
 	Role string
 }
 
-// rankOrder assigns the ordinal used by RankOrderPriority/RankSuggestions priority
-// step 4: species before subspecies before variety before form, with
+// rankOrder assigns the ordinal used by RankOrderPriority/RankSuggestions
+// priority step 6 (see RankSuggestions' doc comment): species before
+// subspecies before variety before form, with
 // FAMILY and GENUS ranked ahead of all of those (broader ranks first). The
 // nothotaxon (hybrid) ranks are placed directly after their non-hybrid
 // counterpart (nothosubsp. after subspecies, nothovar. after subvariety,
@@ -149,9 +150,9 @@ var rankOrder = map[Rank]int{
 const unknownRankOrder = 35
 
 // RankOrderPriority returns the ordinal used to compare Ranks for suggest
-// ranking (§B.1 step 4): the general-to-specific ordering documented on
-// rankOrder above, with RankOther/any unrecognized Rank sorting after all
-// of them (unknownRankOrder).
+// ranking (RankSuggestions' priority step 6): the general-to-specific
+// ordering documented on rankOrder above, with RankOther/any unrecognized
+// Rank sorting after all of them (unknownRankOrder).
 func RankOrderPriority(r Rank) int {
 	if order, ok := rankOrder[r]; ok {
 		return order

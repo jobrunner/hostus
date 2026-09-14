@@ -5,6 +5,24 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [3.5.0-alpha.0](https://github.com/jobrunner/hostus/compare/v3.4.1-alpha.0...v3.5.0-alpha.0) (2026-09-14)
+
+
+### Features
+
+* **domain:** Exakt- und Zielraum-Treffer als führende Suggest-Ranking-Kriterien ([f1488ce](https://github.com/jobrunner/hostus/commit/f1488ce81898a3a001b1965d541f53e4eeec5b62))
+* **http:** require_target_space, Gebietsvalidierung und matched_name im Suggest ([20d0088](https://github.com/jobrunner/hostus/commit/20d00886b816880dbed8993fe7579b466b5b6534))
+* **sqlite:** Exakt-/Zielraum-Signale, Treffer-Name und Namensraum-Filter für Suggest ([0d3d66e](https://github.com/jobrunner/hostus/commit/0d3d66e338b11a069260120d7d65deac100f544d))
+* **ui:** Rang-Filter, Namensraum-Pflicht und Treffer-Name in der Suggest-Konsole ([2068b0d](https://github.com/jobrunner/hostus/commit/2068b0dc83b7a1860626b10bd2fb640b153598dc))
+
+
+### Bug Fixes
+
+* **domain:** pin exact/target-space precedence over PrefixHit, fix stale docs ([b7a3640](https://github.com/jobrunner/hostus/commit/b7a36402bdced2b6bbc991187a7a2746e1a4c862))
+* **http:** Gebiets-Fehlermeldung praezisieren, Alias-Sonderfall und Suggest-Parameter dokumentieren ([0878f03](https://github.com/jobrunner/hostus/commit/0878f03354f5beffad3be4b2a1ad250a1997e6f8))
+* **sqlite:** Aggregat-Zielraumnamen, eine statt drei Namens-Unterabfragen, Areas-Cache ([c0c4a90](https://github.com/jobrunner/hostus/commit/c0c4a90d7e3013f047fa65fbcb2b3f4ac6f549d8))
+* **suggest:** Filter, die filtern — und ein Ranking, das den gesuchten Treffer nach oben bringt ([53e890d](https://github.com/jobrunner/hostus/commit/53e890d98978473afec39ea3fdc9346d740b7dfa))
+
 ## [3.4.1-alpha.0](https://github.com/jobrunner/hostus/compare/v3.4.0-alpha.0...v3.4.1-alpha.0) (2026-09-14)
 
 

@@ -5,6 +5,16 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [3.4.1-alpha.0](https://github.com/jobrunner/hostus/compare/v3.4.0-alpha.0...v3.4.1-alpha.0) (2026-09-14)
+
+
+### Bug Fixes
+
+* **http:** CORS-Preflight beantworten — POST-Endpunkte browser-tauglich ([1eb2031](https://github.com/jobrunner/hostus/commit/1eb2031137881adff03a8a2839b9fa280257b2d5))
+* **http:** CORS-Preflight beantworten statt 405 (POST-Endpunkte browser-tauglich) ([f0ef499](https://github.com/jobrunner/hostus/commit/f0ef4991fc977deeeed8a21bdbe600df9c2c378f))
+* **http:** CORS-Review-Runde 1 — Case-Insensitivität, Preflight nur für existierende Pfade, 405 rate-limited ([48eb38f](https://github.com/jobrunner/hostus/commit/48eb38f43415d70b461b84cf7c6211e76f0c995b))
+* **http:** CORS-Review-Runde 2 — Origin mit Pfadanteil ablehnen, Kardinalitäts-Kommentar und Port-Doku korrigieren ([a265fac](https://github.com/jobrunner/hostus/commit/a265fac129e46dd638d8128df7c4d389c05e99e9))
+
 ## [Unreleased]
 
 ### Added

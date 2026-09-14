@@ -6,6 +6,61 @@ import (
 	"github.com/jobrunner/hostus/internal/domain"
 )
 
+// TestRankSuggestions_TargetSpaceHitBeatsBetterScore pins the measured
+// Inula-hirta case: both concepts carry the queried name (Inula hirta L.
+// for Pentanema hirtum, Inula hirta Pollich for P. britannica), so the
+// exact-hit key ties and the target-space key decides. Before this key
+// existed, bm25 alone ordered them and put britannica — whose eurosl name
+// is "Inula britannica", i.e. NOT what was typed — first.
+func TestRankSuggestions_TargetSpaceHitBeatsBetterScore(t *testing.T) {
+	britannica := domain.SuggestItem{
+		ConceptID: "wcvp:concept:3217682", Canonical: "Pentanema britannica",
+		Rank: domain.RankSpecies, Status: domain.StatusAccepted,
+		ExactHit: true, TargetSpaceHit: false, PrefixHit: true, Score: 1.0,
+	}
+	hirtum := domain.SuggestItem{
+		ConceptID: "wcvp:concept:3217689", Canonical: "Pentanema hirtum",
+		Rank: domain.RankSpecies, Status: domain.StatusAccepted,
+		ExactHit: true, TargetSpaceHit: true, PrefixHit: true, Score: 2.0,
+	}
+
+	got := domain.RankSuggestions([]domain.SuggestItem{britannica, hirtum})
+
+	if got[0].ConceptID != hirtum.ConceptID {
+		t.Fatalf("first = %q, want the target-space hit %q", got[0].ConceptID, hirtum.ConceptID)
+	}
+}
+
+// TestRankSuggestions_ExactHitBeatsBetterScore isolates the new leading
+// criterion (ExactHit) over Score: the exact hit has a worse (higher)
+// score, but must still win, since a caller who typed the full name wants
+// no longer match ahead of it.
+func TestRankSuggestions_ExactHitBeatsBetterScore(t *testing.T) {
+	items := []domain.SuggestItem{
+		{ConceptID: "a", ExactHit: false, PrefixHit: true, InArea: true, Status: domain.StatusAccepted, Rank: domain.RankSpecies, Score: 0.1},
+		{ConceptID: "b", ExactHit: true, PrefixHit: true, InArea: true, Status: domain.StatusAccepted, Rank: domain.RankSpecies, Score: 0.9},
+	}
+	got := domain.RankSuggestions(items)
+	if got[0].ConceptID != "b" {
+		t.Fatalf("exact hit must outrank a better score: %v", got)
+	}
+}
+
+// TestRankSuggestions_ExistingOrderUnchangedWhenNewFieldsEqual guards that
+// the two new criteria (ExactHit, TargetSpaceHit) do not disturb the
+// pre-existing priority chain (PrefixHit, InArea, accepted, rank order,
+// score) when both new fields are equal across items.
+func TestRankSuggestions_ExistingOrderUnchangedWhenNewFieldsEqual(t *testing.T) {
+	items := []domain.SuggestItem{
+		{ConceptID: "a", ExactHit: true, TargetSpaceHit: true, PrefixHit: false, InArea: true, Status: domain.StatusAccepted, Rank: domain.RankSpecies, Score: 0.1},
+		{ConceptID: "b", ExactHit: true, TargetSpaceHit: true, PrefixHit: true, InArea: false, Status: domain.StatusSynonym, Rank: domain.RankForm, Score: 0.9},
+	}
+	got := domain.RankSuggestions(items)
+	if got[0].ConceptID != "b" {
+		t.Fatalf("with new fields equal, PrefixHit must still outrank in_area: %v", got)
+	}
+}
+
 // TestRankSuggestions_InAreaBeatsAccepted is the brief's pinned regression:
 // in_area (priority 2) must dominate accepted-vs-synonym (priority 3), even
 // though the out-of-area item is accepted and has a "better" (lower) score.

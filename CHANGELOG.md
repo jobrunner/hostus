@@ -5,6 +5,23 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [3.6.0-alpha.0](https://github.com/jobrunner/hostus/compare/v3.5.0-alpha.0...v3.6.0-alpha.0) (2026-09-15)
+
+
+### Features
+
+* **domain:** disqualifizierte Treffer-Namen im Suggest-Ranking abwerten ([cb15660](https://github.com/jobrunner/hostus/commit/cb15660efcac753096c9822bece5a8eab7d52c92))
+* **http,ui:** nomenklatorischen Status des Treffer-Namens ausliefern und kennzeichnen ([45f4ebb](https://github.com/jobrunner/hostus/commit/45f4ebb0f74492224a1b61f91651eb94918d57c6))
+* **sqlite:** nom_status des Treffer-Namens lesen, klassifizieren und bevorzugen ([60dd97b](https://github.com/jobrunner/hostus/commit/60dd97b2ae4ace89f014fa9593a454aa2bd201da))
+* **suggest:** nomenklatorisch unbrauchbare Namen abwerten und kennzeichnen ([e9ecce0](https://github.com/jobrunner/hostus/commit/e9ecce023a94f8eaaec39b82e06e453def29c18e))
+
+
+### Bug Fixes
+
+* **domain:** review-fixes fuer Suggest-Ranking-Test und Nummerierung ([5b1b8d7](https://github.com/jobrunner/hostus/commit/5b1b8d77635906d992e408b022eb8b6bc255f5f5))
+* **sqlite:** Disqualifikations-Stufe nur innerhalb derselben Exaktheitsklasse ([f2a48d6](https://github.com/jobrunner/hostus/commit/f2a48d68042191352b068a92651b591967f9ae31))
+* **suggest:** veroeffentlichte Messwerte korrigieren, Badge-Text schaerfen ([c7b5ed0](https://github.com/jobrunner/hostus/commit/c7b5ed0f7060244d24a105d948196957ddec1978))
+
 ## [3.5.0-alpha.0](https://github.com/jobrunner/hostus/compare/v3.4.1-alpha.0...v3.5.0-alpha.0) (2026-09-14)
 
 

@@ -80,6 +80,20 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   vollständige Kette PlantNet → `POST /v1/match` (xref) → situs-Traits, mit
   dem verifizierten IPNI-ID-Format, den Grenzfällen (Synonym-IPNI-IDs,
   außereuropäische Taxa, unbekannte IDs) und der Abgrenzung zu FloraVeg.
+* **Suggest:** `matched_name` nennt zusätzlich den nomenklatorischen Status
+  des auslösenden Namens: `nom_status` (normalisierte WCVP-Zelle, `omitempty`)
+  und `nom_status_judgement` (`absent`/`acceptable`/`disqualifying`/
+  `unclassified`, **immer** vorhanden — „nichts erfasst" ist nicht „geprüft
+  und sauber"). Benennung und Aufteilung wie beim Synonym-Endpunkt, damit für
+  dasselbe Quellfeld nicht zwei Vokabulare zu lernen sind. Ist gar kein
+  auslösender Name bestimmbar (`match_mode=anywhere`), fehlt das ganze
+  `matched_name`-Objekt: ohne Namen gibt es nichts zu beurteilen.
+* **Testkonsole:** In der Spalte „Treffer-Name" kennzeichnet ein Badge
+  **„disqualifiziert"** einen Namen mit disqualifizierendem Status; der
+  Tooltip zeigt ihn im Wortlaut (z. B. „nom. illeg. homonym. post."). Die
+  Zeile wird abgewertet und gekennzeichnet, **nie ausgeblendet** — wer den
+  Namen in älterer Literatur findet, muss nachschlagen können, was aus ihm
+  geworden ist.
 * **CORS:** `cors.allowed_origins` versteht Subdomain-Wildcards
   (`https://*.example.com`). Platzhalter ist nur das Host-Label — Schema und
   Port müssen exakt passen, sodass weder `http://sub.example.com` noch
@@ -101,6 +115,18 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   hirtum*, das in eurosl genau den gesuchten Namen trägt. Mit den neuen
   Ranking-Kriterien und `require_target_space` sind es 2 statt 9 Zeilen, und
   *Pentanema hirtum* steht vorn.
+* **Suggest-Reihenfolge:** Ein nomenklatorisch ungültiger Name stand vor dem
+  gültigen gleicher Schreibweise. Für `q=Inula hirta` mit
+  `entry_backbone=wcvp` und **ohne** `target_space` führte *Pentanema
+  britannica* — getroffen über „Inula hirta Pollich", ein späteres
+  illegitimes Homonym (`nom. illeg. homonym. post.`) — vor *Pentanema
+  hirtum*, das über „Inula hirta L." getroffen wird. Neues Ranking-Kriterium
+  direkt hinter dem Exakt-Treffer: ein disqualifizierter Treffer-Name
+  verliert gegen einen ohne Befund. Nur `disqualifying` wertet ab, nicht
+  `unclassified` („sensu auct.", „fossil name") — Unsicherheit ist kein
+  Mangel. Gemessen an der Produktions-DB betrifft das **28.233**
+  Schreibweisen, unter denen ein disqualifizierter **und** ein statusfreier
+  Name existieren.
 * **CORS-Preflight:** `OPTIONS` auf die POST-Endpunkte `/v1/match` und
   `/v1/translate` wurde mit einem nackten 405 ohne CORS-Header beantwortet,
   weil gorilla/mux `Use`-Middleware nur für *gematchte* Routen ausführt — ein

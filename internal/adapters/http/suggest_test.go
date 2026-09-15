@@ -1,6 +1,7 @@
 package httpx_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,8 @@ import (
 	"testing"
 
 	httpx "github.com/jobrunner/hostus/internal/adapters/http"
+	"github.com/jobrunner/hostus/internal/domain"
+	"github.com/jobrunner/hostus/internal/ports/output"
 )
 
 type suggestItemResponse struct {
@@ -22,9 +25,11 @@ type suggestItemResponse struct {
 	InArea       bool    `json:"in_area"`
 	Score        float64 `json:"score"`
 	MatchedName  *struct {
-		Canonical  string `json:"canonical"`
-		Authorship string `json:"authorship"`
-		Role       string `json:"role"`
+		Canonical          string `json:"canonical"`
+		Authorship         string `json:"authorship"`
+		Role               string `json:"role"`
+		NomStatus          string `json:"nom_status"`
+		NomStatusJudgement string `json:"nom_status_judgement"`
 	} `json:"matched_name"`
 }
 
@@ -517,6 +522,206 @@ func TestSuggest_MatchedNameIsRendered(t *testing.T) {
 	}
 	if coryn.MatchedName.Role != "accepted" {
 		t.Errorf("matched_name.role = %q, want %q", coryn.MatchedName.Role, "accepted")
+	}
+}
+
+// stubSuggestRepo is a minimal output.Repository that hands handleSuggest a
+// fixed candidate list, so a test can pin the wire rendering of a
+// domain.MatchedName the WCVP sample fixture does not contain (a later
+// illegitimate homonym) without seeding a second corpus. It embeds a nil
+// output.Repository: any method beyond the two application.Suggest needs
+// panics rather than silently answering.
+type stubSuggestRepo struct {
+	output.Repository
+	items []domain.SuggestItem
+}
+
+func (s stubSuggestRepo) Suggest(context.Context, string, output.SuggestOpts) ([]domain.SuggestItem, error) {
+	return s.items, nil
+}
+
+func (s stubSuggestRepo) BackboneVersions(context.Context) ([]domain.BackboneVersion, error) {
+	return []domain.BackboneVersion{{ID: "wcvp", Version: "2026-06-15"}}, nil
+}
+
+// suggestRawMatchedName returns results[0].matched_name as a raw key set, so
+// a test can assert a key is ABSENT — which a decode into a struct cannot
+// distinguish from an empty string.
+func suggestRawMatchedName(t *testing.T, body []byte) (map[string]json.RawMessage, bool) {
+	t.Helper()
+	var decoded struct {
+		Results []map[string]json.RawMessage `json:"results"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("decoding response: %v (body: %s)", err, body)
+	}
+	if len(decoded.Results) == 0 {
+		t.Fatalf("results = empty, want one candidate (body: %s)", body)
+	}
+	raw, ok := decoded.Results[0]["matched_name"]
+	if !ok {
+		return nil, false
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatalf("decoding matched_name: %v (body: %s)", err, body)
+	}
+	return fields, true
+}
+
+// TestSuggest_MatchedNameRendersNomStatusJudgement asserts the verdict is on
+// the wire even for a name the source recorded nothing about: the judgement
+// then reads `absent` and nom_status is omitted. The pair is the point —
+// "nothing was recorded" must be readable as such, not as "checked and found
+// clean" (see matchedNameDTO, which inherits synonymDetailDTO's rationale).
+func TestSuggest_MatchedNameRendersNomStatusJudgement(t *testing.T) {
+	repo := seededRepo(t)
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/suggest?q="+url.QueryEscape("Corynephorus canescens"), nil)
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	raw := append([]byte(nil), rr.Body.Bytes()...)
+	got := decodeJSON[suggestResponse](t, rr.Body)
+	coryn := findSuggestResult(got.Results, corynephorusConceptID)
+	if coryn == nil {
+		t.Fatalf("results = %+v, want an entry for %q", got.Results, corynephorusConceptID)
+	}
+	if coryn.MatchedName == nil {
+		t.Fatal("matched_name is absent, want the triggering name")
+	}
+	if coryn.MatchedName.NomStatusJudgement != "absent" {
+		t.Errorf("matched_name.nom_status_judgement = %q, want %q",
+			coryn.MatchedName.NomStatusJudgement, "absent")
+	}
+
+	fields, ok := suggestRawMatchedName(t, raw)
+	if !ok {
+		t.Fatal("matched_name is absent from the raw response, want the object")
+	}
+	if _, present := fields["nom_status"]; present {
+		t.Errorf("matched_name.nom_status is present (%s), want it omitted when the source recorded nothing",
+			fields["nom_status"])
+	}
+	if _, present := fields["nom_status_judgement"]; !present {
+		t.Error("matched_name.nom_status_judgement is absent, want it rendered always")
+	}
+}
+
+// TestSuggest_DisqualifiedMatchedNameRendersBothFields is the reported case:
+// "Inula hirta Pollich" is a later illegitimate homonym of Inula hirta L.
+// The response must say so — the raw status AND the verdict derived from it,
+// since the ranking demotes the row on exactly that ground and a demotion
+// without a visible reason is indistinguishable from a broken sort.
+func TestSuggest_DisqualifiedMatchedNameRendersBothFields(t *testing.T) {
+	repo := stubSuggestRepo{items: []domain.SuggestItem{{
+		ConceptID: "wcvp:concept:1",
+		Display:   "Pentanema britannicum (L.) D.Gut.Larr.",
+		Canonical: "Pentanema britannicum",
+		Rank:      domain.RankSpecies,
+		Status:    domain.StatusAccepted,
+		MatchedName: domain.MatchedName{
+			Canonical:          "Inula hirta",
+			Authorship:         "Pollich",
+			Role:               "synonym",
+			NomStatus:          "nom. illeg. homonym. post.",
+			NomStatusJudgement: domain.JudgementDisqualifying,
+		},
+		MatchedNameDisqualified: true,
+	}}}
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/suggest?q="+url.QueryEscape("Inula hirta"), nil)
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	got := decodeJSON[suggestResponse](t, rr.Body)
+	if len(got.Results) != 1 {
+		t.Fatalf("results = %+v, want exactly one candidate", got.Results)
+	}
+	matched := got.Results[0].MatchedName
+	if matched == nil {
+		t.Fatal("matched_name is absent, want the triggering name")
+	}
+	if matched.NomStatus != "nom. illeg. homonym. post." {
+		t.Errorf("matched_name.nom_status = %q, want %q", matched.NomStatus, "nom. illeg. homonym. post.")
+	}
+	if matched.NomStatusJudgement != "disqualifying" {
+		t.Errorf("matched_name.nom_status_judgement = %q, want %q", matched.NomStatusJudgement, "disqualifying")
+	}
+}
+
+// TestSuggest_NoMatchedNameOmitsTheWholeObject pins the decision left open by
+// the adapter task: where no name of the concept could be identified as the
+// trigger (match_mode=anywhere), domain.MatchedName stays zero — including an
+// EMPTY judgement, which is not domain.JudgementAbsent but "not computed".
+// Rather than invent a verdict about a name nobody named, the whole object is
+// omitted: a judgement needs something to judge.
+func TestSuggest_NoMatchedNameOmitsTheWholeObject(t *testing.T) {
+	repo := stubSuggestRepo{items: []domain.SuggestItem{{
+		ConceptID: "wcvp:concept:1",
+		Display:   "Pentanema hirtum (L.) D.Gut.Larr.",
+		Canonical: "Pentanema hirtum",
+		Rank:      domain.RankSpecies,
+		Status:    domain.StatusAccepted,
+	}}}
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/suggest?q=hirt&match_mode=anywhere", nil)
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if fields, ok := suggestRawMatchedName(t, rr.Body.Bytes()); ok {
+		t.Errorf("matched_name is present (%v), want the whole object omitted when no triggering name was determined", fields)
+	}
+}
+
+// TestSuggest_PresentMatchedNameNeverRendersAnEmptyJudgement is the other
+// half of that decision: once there IS a name, the wire must carry a verdict
+// about it, never `"nom_status_judgement": ""`. A named name with nothing
+// recorded IS domain.JudgementAbsent, so the empty verdict normalizes there.
+func TestSuggest_PresentMatchedNameNeverRendersAnEmptyJudgement(t *testing.T) {
+	repo := stubSuggestRepo{items: []domain.SuggestItem{{
+		ConceptID: "wcvp:concept:1",
+		Display:   "Pentanema hirtum (L.) D.Gut.Larr.",
+		Canonical: "Pentanema hirtum",
+		Rank:      domain.RankSpecies,
+		Status:    domain.StatusAccepted,
+		MatchedName: domain.MatchedName{
+			Canonical:  "Inula hirta",
+			Authorship: "L.",
+			Role:       "synonym",
+		},
+	}}}
+	r := httpx.NewRouter(httpx.Deps{Repo: repo})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/suggest?q="+url.QueryEscape("Inula hirta"), nil)
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	got := decodeJSON[suggestResponse](t, rr.Body)
+	if len(got.Results) != 1 {
+		t.Fatalf("results = %+v, want exactly one candidate", got.Results)
+	}
+	matched := got.Results[0].MatchedName
+	if matched == nil {
+		t.Fatal("matched_name is absent, want the triggering name")
+	}
+	if matched.NomStatusJudgement != "absent" {
+		t.Errorf("matched_name.nom_status_judgement = %q, want %q", matched.NomStatusJudgement, "absent")
 	}
 }
 

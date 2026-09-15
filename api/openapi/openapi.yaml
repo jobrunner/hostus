@@ -212,12 +212,14 @@ paths:
         Liefert Autosuggest-Kandidaten für ein Frontend-Eingabefeld: ein
         FTS5-Präfix-Treffer über den lokalen Index, optional nach
         Referenzgebiet und Rang gefiltert, priorisiert (exakter Namenstreffer
-        vor bloßem Präfixtreffer, Treffer im angefragten target_space vor
-        übrigen, Präfix-Treffer vor Nicht-Treffer, im Gebiet vor nicht im
-        Gebiet, akzeptiert vor Synonym, breitere vor feineren Rängen,
-        bm25-Score aufsteigend) und auf `limit` gekürzt. Die ersten beiden
-        Kriterien entscheiden Homonyme: welcher Name den Treffer ausgelöst
-        hat, steht in `matched_name`.
+        vor bloßem Präfixtreffer, nomenklatorisch gültiger Treffer-Name vor
+        disqualifiziertem, Treffer im angefragten target_space vor übrigen,
+        Präfix-Treffer vor Nicht-Treffer, im Gebiet vor nicht im Gebiet,
+        akzeptiert vor Synonym, breitere vor feineren Rängen, bm25-Score
+        aufsteigend) und auf `limit` gekürzt. Die ersten drei Kriterien
+        entscheiden Homonyme: welcher Name den Treffer ausgelöst hat, steht in
+        `matched_name` — samt `nom_status_judgement`, das die Abwertung
+        begründet.
       tags:
         - taxa
       parameters:
@@ -1841,7 +1843,7 @@ components:
             „keine Angabe“). Immer `false` ohne `area`-Parameter.
         matched_name:
           type: object
-          required: [canonical, authorship, role]
+          required: [canonical, authorship, role, nom_status_judgement]
           description: >-
             Der Name, der DIESEN Treffer ausgelöst hat — nicht zwingend der
             akzeptierte Name des Konzepts in `canonical`/`display`. Bei einem
@@ -1850,7 +1852,8 @@ components:
             und sind ohne dieses Feld nicht auseinanderzuhalten. Fehlt, wenn
             der auslösende Name nicht bestimmt werden konnte (z. B. bei
             `match_mode=anywhere`, wo ein Treffer mitten in einem Namen
-            liegen kann).
+            liegen kann) — dann gibt es auch keinen Namen, über den ein
+            nomenklatorisches Urteil möglich wäre.
           properties:
             canonical:
               type: string
@@ -1865,6 +1868,29 @@ components:
               type: string
               description: '`accepted` oder `synonym` — die Rolle des treffenden Namens im Konzept.'
               example: synonym
+            nom_status:
+              type: string
+              description: >-
+                Nomenklatorischer Status des treffenden Namens aus der Quelle
+                (WCVP `nom_status`, normalisiert). Fehlt, wenn die Quelle
+                nichts erfasst hat — dieselbe Aufteilung wie bei
+                `SynonymDetail`, damit man für dasselbe Feld nicht zwei
+                Vokabulare lernen muss.
+              example: nom. illeg. homonym. post.
+            nom_status_judgement:
+              type: string
+              description: >-
+                Urteil zu `nom_status`: `absent` (nichts erfasst),
+                `acceptable`, `disqualifying` oder `unclassified`. IMMER
+                vorhanden, auch ohne `nom_status` — „nichts erfasst" ist
+                nicht „geprüft und sauber". `disqualifying` ist der Grund,
+                aus dem die Zeile im Ranking hinter einen gültigen Treffer
+                rutscht (Kriterium 2): „Inula hirta Pollich" ist ein späteres
+                illegitimes Homonym. Die Zeile wird abgewertet und
+                gekennzeichnet, nie ausgeblendet — wer den Namen in älterer
+                Literatur findet, muss nachschlagen können, was aus ihm
+                geworden ist.
+              example: disqualifying
         target_space_name:
           type: string
           description: >-

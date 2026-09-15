@@ -905,6 +905,111 @@ func TestSuggest_LegitimateNameWinsTheMatchedNameSelection(t *testing.T) {
 	}
 }
 
+// TestSuggest_ExactDisqualifiedNameBeatsMerePrefixName pins the BOUNDARY the
+// disqualification step must not cross. The step sits BELOW exact equality, so
+// it may only break ties among names of the SAME exactness — never let a
+// merely-prefix name displace an exact one.
+//
+// The first version of this code got that backwards and skipped disqualified
+// rows outright, which on this fixture answered with the variety: the caller
+// typed a name IN FULL and was shown a longer, different name, while ExactHit
+// still reported true — an answer contradicting itself. And since the shown
+// name then looked clean, MatchedNameDisqualified went false and the whole new
+// ranking step stopped firing for the concept, i.e. the reported bug survived
+// untouched. Measured on the production index, 3,810 concepts carry such a
+// pair (always "species + infraspecific taxon"); this fixture is one of them,
+// wcvp:concept:100405.
+//
+// Every other test in this file uses fixtures where BOTH candidate names equal
+// the query, so none of them can see this case — which is exactly why the bug
+// passed a green suite (and a mutation run with "Not covered: 0": a MISSING
+// condition is not a mutation target).
+func TestSuggest_ExactDisqualifiedNameBeatsMerePrefixName(t *testing.T) {
+	db := openTestDB(t)
+	const conceptID = "wcvp:concept:houstonia-angustifolia"
+
+	bv := domain.BackboneVersion{ID: "wcvp", Version: "v1", IngestedAt: "2026-09-15T00:00:00Z", ManifestSHA: "x"}
+	ingestVia(t, db, bv, func(tx output.IngestTx) {
+		// The valid name is the merely-longer one, the illegitimate name the
+		// one the caller actually typed — the constellation that makes the
+		// two keys disagree.
+		variety := domain.Name{ID: "n-houstonia-var", Canonical: "Houstonia angustifolia var. rigidiuscula", Authorship: "A.Gray", Rank: domain.RankVariety}
+		illegitimate := domain.Name{ID: "n-houstonia-pursh", Canonical: "Houstonia angustifolia", Authorship: "Pursh", Rank: domain.RankSpecies, NomStatus: illegitimateHomonymStatus}
+		for _, n := range []domain.Name{variety, illegitimate} {
+			mustTx(t, tx.UpsertName(n))
+		}
+		c := domain.Concept{ID: conceptID, BackboneID: "wcvp", AcceptedName: variety, Rank: domain.RankVariety, Status: domain.StatusAccepted}
+		mustTx(t, tx.UpsertConcept(c))
+		mustTx(t, tx.LinkName(c.ID, variety.ID, "accepted", nil))
+		mustTx(t, tx.LinkName(c.ID, illegitimate.ID, "synonym", nil))
+	})
+
+	it := suggestOne(t, db, "Houstonia angustifolia", conceptID)
+	want := domain.MatchedName{
+		Canonical: "Houstonia angustifolia", Authorship: "Pursh", Role: "synonym",
+		NomStatus: illegitimateHomonymNormalized, NomStatusJudgement: domain.JudgementDisqualifying,
+	}
+	if it.MatchedName != want {
+		t.Errorf("MatchedName = %+v, want %+v (the EXACT name wins even though it is disqualified — the step ranks below exactness)", it.MatchedName, want)
+	}
+	if !it.MatchedNameDisqualified {
+		t.Errorf("MatchedNameDisqualified = false, want true (the selected name IS illegitimate; hiding that disables the ranking step)")
+	}
+	if !it.ExactHit {
+		t.Fatalf("ExactHit = false — fixture no longer exercises the exact/prefix boundary")
+	}
+}
+
+// TestSuggest_ValidExactNameWinsOverBothItsRivals combines the two halves the
+// previous two tests pin separately, because the rule decides over a SEQUENCE
+// of rows and two-candidate fixtures cannot show that the two keys compose:
+// one concept, THREE matching names spanning BOTH exactness classes.
+//
+// The row order makes both keys act: the disqualified exact name comes first
+// (authorship A before B) and must yield to the valid exact name (same class,
+// the step applies), which must then survive the valid prefix name (different
+// class, the step must not reach across).
+//
+// HONEST SCOPE — measured, not assumed: this test does NOT catch a missing
+// exactness guard. Once a valid row exists in the exact class, the buggy
+// "skip every disqualified row" rule lands on the same name, because it stops
+// replacing as soon as the incumbent is valid; verified by removing the guard,
+// this test stays green. The guard is pinned by
+// TestSuggest_ExactDisqualifiedNameBeatsMerePrefixName, whose exact class is
+// disqualified THROUGHOUT — which is what forces the broken rule across the
+// class boundary. What this test adds is the composition the two-candidate
+// fixtures cannot show: the step firing inside a class and the class boundary
+// holding, in one row sequence. A rule without the step at all picks A.Auct.
+// and fails here.
+func TestSuggest_ValidExactNameWinsOverBothItsRivals(t *testing.T) {
+	db := openTestDB(t)
+	const conceptID = "wcvp:concept:pentanema-triplex"
+
+	bv := domain.BackboneVersion{ID: "wcvp", Version: "v1", IngestedAt: "2026-09-15T00:00:00Z", ManifestSHA: "x"}
+	ingestVia(t, db, bv, func(tx output.IngestTx) {
+		variety := domain.Name{ID: "n-inula-triplex-var", Canonical: "Inula triplex var. minor", Authorship: "Hook.", Rank: domain.RankVariety}
+		illegitimate := domain.Name{ID: "n-inula-triplex-a", Canonical: "Inula triplex", Authorship: "A.Auct.", Rank: domain.RankSpecies, NomStatus: illegitimateHomonymStatus}
+		valid := domain.Name{ID: "n-inula-triplex-b", Canonical: "Inula triplex", Authorship: "B.Auct.", Rank: domain.RankSpecies}
+		for _, n := range []domain.Name{variety, illegitimate, valid} {
+			mustTx(t, tx.UpsertName(n))
+		}
+		c := domain.Concept{ID: conceptID, BackboneID: "wcvp", AcceptedName: variety, Rank: domain.RankVariety, Status: domain.StatusAccepted}
+		mustTx(t, tx.UpsertConcept(c))
+		mustTx(t, tx.LinkName(c.ID, variety.ID, "accepted", nil))
+		mustTx(t, tx.LinkName(c.ID, illegitimate.ID, "synonym", nil))
+		mustTx(t, tx.LinkName(c.ID, valid.ID, "synonym", nil))
+	})
+
+	it := suggestOne(t, db, "Inula triplex", conceptID)
+	want := domain.MatchedName{Canonical: "Inula triplex", Authorship: "B.Auct.", Role: "synonym", NomStatusJudgement: domain.JudgementAbsent}
+	if it.MatchedName != want {
+		t.Errorf("MatchedName = %+v, want %+v (valid beats disqualified WITHIN the exact class, and the exact class beats the prefix one)", it.MatchedName, want)
+	}
+	if it.MatchedNameDisqualified {
+		t.Errorf("MatchedNameDisqualified = true, want false")
+	}
+}
+
 // TestSuggest_ConservedNameIsNotDemotedByHavingAStatus guards the trap the
 // plan names explicitly: "carries a nom_status" is NOT "is disqualified".
 // ", nom. cons." is a CONSERVED name — the strongest possible statement that

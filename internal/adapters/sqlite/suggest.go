@@ -193,6 +193,13 @@ func (db *DB) Suggest(ctx context.Context, q string, opts output.SuggestOpts) ([
 // made deterministic. Nothing is lost: the query has no LIMIT, so every
 // candidate row of a concept reaches Go.
 //
+// What the Go side must NOT read into this order: that scanning it and taking
+// the first non-disqualified row reproduces the full ordering. It does not.
+// This ORDER BY ranks a less exact row BEHIND a more exact one, so "the next
+// row" can belong to a different exactness class, and a key that sits below
+// exactness may not decide between classes. attachMatchedNames therefore
+// compares exactness explicitly before applying it — see the guard there.
+//
 // The LIKE term needs no unary-+ guard: SQLite's LIKE optimization only
 // applies to a column with COLLATE NOCASE (or with case_sensitive_like ON),
 // and canonical_fold has neither, so idx_name_canonical_fold is not a
@@ -268,6 +275,7 @@ func (db *DB) attachMatchedNames(ctx context.Context, items []domain.SuggestItem
 			// no rule claims it" — "sensu auct.", "fossil name") are
 			// uncertainty, and uncertainty must not read as a defect.
 			name:         name,
+			exact:        exact == 1,
 			disqualified: verdict.Judgement == domain.JudgementDisqualifying,
 		}
 
@@ -277,14 +285,28 @@ func (db *DB) attachMatchedNames(ctx context.Context, items []domain.SuggestItem
 			continue
 		}
 		// Rows arrive in matchedNameQuery's order, so the FIRST row already
-		// wins every key except the disqualification one. Applying that key
-		// is therefore a single rule: a disqualified incumbent yields to the
-		// first valid row behind it, and nothing else ever displaces an
-		// incumbent. Because the missing key sits directly BELOW exact
-		// equality, skipping disqualified rows this way is exactly the full
-		// ordering — among the non-disqualified rows the earliest one is
-		// still the most exact, then accepted, then canonical/authorship/id.
-		if previous.disqualified && !candidate.disqualified {
+		// wins every key except the disqualification one, and applying that
+		// key means letting a disqualified incumbent yield to the first valid
+		// row behind it.
+		//
+		// THE EQUALITY GUARD IS THE WHOLE POINT, not a micro-optimization.
+		// Because the disqualification key sits BELOW exact equality, it may
+		// only break ties WITHIN one exactness class — it must never let a
+		// merely-prefix row displace an exact one. "Behind" in this row order
+		// also means "less exact", so without the guard an exact but
+		// illegitimate name loses to a longer, valid one: the caller typed a
+		// name in full and is shown a different, longer name, while
+		// SuggestItem.ExactHit still says true — an answer contradicting
+		// itself. Worse, the displaced row's defect vanishes with it
+		// (MatchedNameDisqualified goes false), so RankSuggestions' new
+		// priority 2 never fires and the concept reached through the
+		// illegitimate name keeps its place. Measured on the production
+		// index: 3,810 concepts carry such a pair, all of the shape
+		// "species + infraspecific taxon" — e.g. wcvp:concept:100405, where
+		// "Houstonia angustifolia Pursh" (nom. illeg.) is exact and
+		// "Houstonia angustifolia var. rigidiuscula A.Gray" is a prefix.
+		// That is the reported Inula hirta bug itself, 3,810 times over.
+		if previous.exact == candidate.exact && previous.disqualified && !candidate.disqualified {
 			matched[conceptID] = candidate
 		}
 	}
@@ -303,8 +325,21 @@ func (db *DB) attachMatchedNames(ctx context.Context, items []domain.SuggestItem
 // matchedNameChoice is one candidate for a concept's "Treffer-Name", carrying
 // the judgement-derived flag alongside the name so the selection loop compares
 // booleans instead of re-classifying rows it has already judged.
+//
+// exact mirrors the query's exact_name column. It is kept even though the row
+// ORDER already encodes it, because the selection has to ask whether two rows
+// are in the SAME exactness class — a question an ordering cannot answer once
+// you are holding only one row from it (see the guard in attachMatchedNames).
+//
+// EQUIVALENT MUTANT (documented, not a test gap): gremlins reports a LIVED
+// CONDITIONALS_NEGATION for the `exact == 1` that fills this field. exact is
+// read ONLY through `previous.exact == candidate.exact`, and complementing
+// both sides of an equality leaves it unchanged — so the field is really a
+// class LABEL, whose polarity no test can observe. Anyone who later reads
+// exact as a standalone predicate makes that mutant real and must kill it.
 type matchedNameChoice struct {
 	name         domain.MatchedName
+	exact        bool
 	disqualified bool
 }
 

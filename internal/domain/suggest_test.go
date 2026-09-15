@@ -62,7 +62,7 @@ func TestRankSuggestions_ExistingOrderUnchangedWhenNewFieldsEqual(t *testing.T) 
 }
 
 // TestRankSuggestions_ExactHitBeatsPrefixHit pins that ExactHit (priority 1)
-// outranks PrefixHit (priority 3) even when PrefixHit DIFFERS between the
+// outranks PrefixHit (priority 4) even when PrefixHit DIFFERS between the
 // two items — unlike TestRankSuggestions_ExactHitBeatsBetterScore, which
 // keeps PrefixHit true on both sides and so cannot catch the two leading
 // keys being reordered relative to PrefixHit. This is the scenario Task 2
@@ -80,7 +80,7 @@ func TestRankSuggestions_ExactHitBeatsPrefixHit(t *testing.T) {
 }
 
 // TestRankSuggestions_TargetSpaceHitBeatsPrefixHit pins that TargetSpaceHit
-// (priority 2) outranks PrefixHit (priority 3) with PrefixHit differing
+// (priority 3) outranks PrefixHit (priority 4) with PrefixHit differing
 // between items and ExactHit tied, so only the ExactHit/TargetSpaceHit vs.
 // PrefixHit ordering can make this pass.
 func TestRankSuggestions_TargetSpaceHitBeatsPrefixHit(t *testing.T) {
@@ -95,7 +95,7 @@ func TestRankSuggestions_TargetSpaceHitBeatsPrefixHit(t *testing.T) {
 }
 
 // TestRankSuggestions_InAreaBeatsAccepted is the brief's pinned regression:
-// in_area (priority 4) must dominate accepted-vs-synonym (priority 5), even
+// in_area (priority 5) must dominate accepted-vs-synonym (priority 6), even
 // though the out-of-area item is accepted and has a "better" (lower) score.
 func TestRankSuggestions_InAreaBeatsAccepted(t *testing.T) {
 	items := []domain.SuggestItem{
@@ -108,8 +108,8 @@ func TestRankSuggestions_InAreaBeatsAccepted(t *testing.T) {
 	}
 }
 
-// TestRankSuggestions_PrefixHitBeatsInArea isolates priority 3 (PrefixHit)
-// over priority 4 (InArea): the non-prefix-hit item is in_area, accepted,
+// TestRankSuggestions_PrefixHitBeatsInArea isolates priority 4 (PrefixHit)
+// over priority 5 (InArea): the non-prefix-hit item is in_area, accepted,
 // lower rank order, and better score — yet must still lose.
 func TestRankSuggestions_PrefixHitBeatsInArea(t *testing.T) {
 	items := []domain.SuggestItem{
@@ -122,8 +122,8 @@ func TestRankSuggestions_PrefixHitBeatsInArea(t *testing.T) {
 	}
 }
 
-// TestRankSuggestions_AcceptedBeatsRankOrder isolates priority 5 (accepted
-// status) over priority 6 (rank order): the synonym item has a better
+// TestRankSuggestions_AcceptedBeatsRankOrder isolates priority 6 (accepted
+// status) over priority 7 (rank order): the synonym item has a better
 // (lower) rank order and score, but must still lose to the accepted item.
 func TestRankSuggestions_AcceptedBeatsRankOrder(t *testing.T) {
 	items := []domain.SuggestItem{
@@ -136,8 +136,8 @@ func TestRankSuggestions_AcceptedBeatsRankOrder(t *testing.T) {
 	}
 }
 
-// TestRankSuggestions_RankOrderBeatsScore isolates priority 6 (rank order)
-// over priority 7 (score): the higher-rank-order item has a better (lower)
+// TestRankSuggestions_RankOrderBeatsScore isolates priority 7 (rank order)
+// over priority 8 (score): the higher-rank-order item has a better (lower)
 // score, but must still lose to the lower-rank-order item.
 func TestRankSuggestions_RankOrderBeatsScore(t *testing.T) {
 	items := []domain.SuggestItem{
@@ -150,7 +150,7 @@ func TestRankSuggestions_RankOrderBeatsScore(t *testing.T) {
 	}
 }
 
-// TestRankSuggestions_ScoreAscending isolates priority 7: with all higher
+// TestRankSuggestions_ScoreAscending isolates priority 8: with all higher
 // keys equal, lower Score (SQLite bm25: lower = more relevant) wins.
 func TestRankSuggestions_ScoreAscending(t *testing.T) {
 	items := []domain.SuggestItem{
@@ -252,32 +252,41 @@ func TestRankSuggestions_LegitimacyOutranksTargetSpaceHit(t *testing.T) {
 // decision 2: of the four NomStatusJudgement values, only
 // JudgementDisqualifying may down-rank a candidate. JudgementAbsent (nothing
 // recorded), JudgementAcceptable (e.g. nom. cons.) and JudgementUnclassified
-// (e.g. "sensu auct.", "fossil name" — cases where the existing rule table
-// deliberately withholds a verdict rather than treat uncertainty as a
-// defect) must all map to MatchedNameDisqualified == false, exactly as the
-// adapter would derive it from MatchedName.NomStatusJudgement. Three items
-// differing only in that derived bool must keep their input order.
+// (e.g. "sensu auct." — 1.117 names, "fossil name" — 274 names; cases where
+// the existing rule table deliberately withholds a verdict rather than treat
+// uncertainty as a defect) must all leave MatchedNameDisqualified false.
+//
+// Deliberately does NOT set MatchedNameDisqualified from the judgement
+// itself (j == domain.JudgementDisqualifying): RankSuggestions only ever
+// reads the bool, so deriving it from the judgement under test would only
+// pin the test's own arithmetic, not the adapter's real mapping — the bug
+// this guards against is the adapter deriving the bool wrong (e.g. "true
+// unless absent/acceptable"), which a self-derived bool can never catch. The
+// candidate is placed BEFORE an absent reference item with identical other
+// fields, so a wrongly-disqualifying implementation measurably reorders
+// them; placing it after (as an earlier revision of this test did) leaves
+// JudgementUnclassified free to slide to the back on its own and hides
+// exactly that bug.
 func TestRankSuggestions_OnlyDisqualifyingJudgementLowersRank(t *testing.T) {
-	judgements := []domain.NomStatusJudgement{
+	for _, j := range []domain.NomStatusJudgement{
 		domain.JudgementAbsent, domain.JudgementAcceptable, domain.JudgementUnclassified,
-	}
-	ids := []string{"absent", "acceptable", "unclassified"}
-	items := make([]domain.SuggestItem, len(judgements))
-	for i, j := range judgements {
-		items[i] = domain.SuggestItem{
-			ConceptID: ids[i], Rank: domain.RankSpecies, Status: domain.StatusAccepted, ExactHit: true,
-			MatchedNameDisqualified: j == domain.JudgementDisqualifying,
-			MatchedName:             domain.MatchedName{NomStatusJudgement: j},
-			Score:                   1.0,
-		}
-	}
-
-	got := domain.RankSuggestions(items)
-
-	for i, want := range ids {
-		if got[i].ConceptID != want {
-			t.Fatalf("order changed: got %v, want input order preserved %v (no non-disqualifying judgement may down-rank)", got, ids)
-		}
+	} {
+		t.Run(string(j), func(t *testing.T) {
+			// candidate FIRST: any implementation that treats j as a defect
+			// moves it behind the reference and flips this order.
+			items := []domain.SuggestItem{
+				{ConceptID: "candidate", Rank: domain.RankSpecies, Status: domain.StatusAccepted,
+					ExactHit: true, Score: 1.0,
+					MatchedName: domain.MatchedName{NomStatusJudgement: j}},
+				{ConceptID: "reference", Rank: domain.RankSpecies, Status: domain.StatusAccepted,
+					ExactHit: true, Score: 1.0,
+					MatchedName: domain.MatchedName{NomStatusJudgement: domain.JudgementAbsent}},
+			}
+			if got := domain.RankSuggestions(items); got[0].ConceptID != "candidate" {
+				t.Fatalf("%s down-ranked the candidate: got %q first — only "+
+					"JudgementDisqualifying may lower rank", j, got[0].ConceptID)
+			}
+		})
 	}
 }
 

@@ -29,13 +29,16 @@ type SuggestItem struct {
 	// AND this concept's name in that space (see TargetSpaceName) matches
 	// the query (exact, else prefix). Without a requested target_space it
 	// is false for every item and therefore has no effect on ordering —
-	// there is nothing for it to prefer. It is the decisive criterion for
-	// the "Inula hirta" homonym: Inula hirta L. (a WCVP synonym of
-	// Pentanema hirtum) IS the eurosl name, while Inula hirta Pollich (a
-	// synonym of Pentanema britannica) matches only in WCVP — britannica's
-	// eurosl name is "Inula britannica". Both concepts are taxonomically
-	// correct hits; this only decides which one serves the caller's
-	// declared target space first.
+	// there is nothing for it to prefer. It decides between two candidates
+	// that are BOTH nomenclaturally valid hits (MatchedNameDisqualified
+	// false on both, see that field and RankSuggestions priority 2) which
+	// one serves the caller's declared target space first — e.g. two
+	// legitimate synonyms of the queried spelling, only one of which also
+	// has an entry in the requested space. The "Inula hirta" homonym case —
+	// "Inula hirta Pollich" vs. the legitimate "Inula hirta L." — is decided
+	// one priority earlier, by MatchedNameDisqualified, precisely because it
+	// is reported without a target_space, where this field ties at false for
+	// every item and cannot decide anything.
 	TargetSpaceHit bool
 	// MatchedNameDisqualified is true when MatchedName.NomStatusJudgement ==
 	// JudgementDisqualifying — the name that triggered this hit is
@@ -101,7 +104,7 @@ type MatchedName struct {
 }
 
 // rankOrder assigns the ordinal used by RankOrderPriority/RankSuggestions
-// priority step 6 (see RankSuggestions' doc comment): species before
+// priority step 7 (see RankSuggestions' doc comment): species before
 // subspecies before variety before form, with
 // FAMILY and GENUS ranked ahead of all of those (broader ranks first). The
 // nothotaxon (hybrid) ranks are placed directly after their non-hybrid
@@ -172,7 +175,7 @@ var rankOrder = map[Rank]int{
 const unknownRankOrder = 35
 
 // RankOrderPriority returns the ordinal used to compare Ranks for suggest
-// ranking (RankSuggestions' priority step 6): the general-to-specific
+// ranking (RankSuggestions' priority step 7): the general-to-specific
 // ordering documented on rankOrder above, with RankOther/any unrecognized
 // Rank sorting after all of them (unknownRankOrder).
 func RankOrderPriority(r Rank) int {

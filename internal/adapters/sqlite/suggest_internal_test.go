@@ -410,6 +410,13 @@ func TestSuggest_InAreaCandidateSurvivesFetchBudgetOverflow(t *testing.T) {
 //   - pentanema-britannica:  accepted "Pentanema britannica",  synonym "Inula hirta Pollich"
 //   - inula-hirta-var:       accepted "Inula hirta var. hirtella" (prefix, never equal)
 //
+// "Inula hirta Pollich" carries WCVP's real nom_status cell
+// (illegitimateHomonymStatus) while "Inula hirta L." carries none — the
+// asymmetry the 2026-09-15 spec ranks on. It is part of the SHARED fixture
+// rather than a private one because it is not an extra case bolted onto the
+// homonym: it is what makes the pair a homonym in the first place, and a
+// fixture that left it out showed two names that look equally valid.
+//
 // The eurosl name space is seeded on the first two only: "Inula hirta" for
 // pentanema-hirtum (the target-space hit the spec wants ranked first) and
 // "Inula britannica" for pentanema-britannica (an entry that exists but does
@@ -424,7 +431,7 @@ func seedInulaHomonyms(t *testing.T, db *DB) {
 		hirtum := species("n-pentanema-hirtum", "Pentanema hirtum")
 		hirtaL := domain.Name{ID: "n-inula-hirta-l", Canonical: "Inula hirta", Authorship: "L.", Rank: domain.RankSpecies}
 		britannica := species("n-pentanema-britannica", "Pentanema britannica")
-		hirtaPollich := domain.Name{ID: "n-inula-hirta-pollich", Canonical: "Inula hirta", Authorship: "Pollich", Rank: domain.RankSpecies}
+		hirtaPollich := domain.Name{ID: "n-inula-hirta-pollich", Canonical: "Inula hirta", Authorship: "Pollich", Rank: domain.RankSpecies, NomStatus: illegitimateHomonymStatus}
 		variety := domain.Name{ID: "n-inula-hirta-var-hirtella", Canonical: "Inula hirta var. hirtella", Rank: domain.RankVariety}
 
 		for _, n := range []domain.Name{hirtum, hirtaL, britannica, hirtaPollich, variety} {
@@ -568,9 +575,9 @@ func TestSuggest_MatchedNameCarriesAuthorshipOfTheHit(t *testing.T) {
 		conceptID string
 		want      domain.MatchedName
 	}{
-		{"wcvp:concept:pentanema-hirtum", domain.MatchedName{Canonical: "Inula hirta", Authorship: "L.", Role: "synonym"}},
-		{"wcvp:concept:pentanema-britannica", domain.MatchedName{Canonical: "Inula hirta", Authorship: "Pollich", Role: "synonym"}},
-		{"wcvp:concept:inula-hirta-var", domain.MatchedName{Canonical: "Inula hirta var. hirtella", Authorship: "", Role: "accepted"}},
+		{"wcvp:concept:pentanema-hirtum", domain.MatchedName{Canonical: "Inula hirta", Authorship: "L.", Role: "synonym", NomStatusJudgement: domain.JudgementAbsent}},
+		{"wcvp:concept:pentanema-britannica", domain.MatchedName{Canonical: "Inula hirta", Authorship: "Pollich", Role: "synonym", NomStatus: illegitimateHomonymNormalized, NomStatusJudgement: domain.JudgementDisqualifying}},
+		{"wcvp:concept:inula-hirta-var", domain.MatchedName{Canonical: "Inula hirta var. hirtella", Authorship: "", Role: "accepted", NomStatusJudgement: domain.JudgementAbsent}},
 	}
 	for _, tc := range cases {
 		it, ok := got[tc.conceptID]
@@ -646,7 +653,7 @@ func TestSuggest_MatchedNameIsDeterministicBetweenSameCanonicalAuthors(t *testin
 		mustTx(t, tx.LinkName(c.ID, earlier.ID, "synonym", nil))
 	})
 
-	want := domain.MatchedName{Canonical: "Inula duplicata", Authorship: "A.Gray", Role: "synonym"}
+	want := domain.MatchedName{Canonical: "Inula duplicata", Authorship: "A.Gray", Role: "synonym", NomStatusJudgement: domain.JudgementAbsent}
 	for run := 1; run <= 3; run++ {
 		items, err := db.Suggest(context.Background(), "Inula duplicata", output.SuggestOpts{Limit: 10})
 		if err != nil {
@@ -790,6 +797,208 @@ func TestSuggest_TargetSpaceHitSurvivesDifferentAggregateMarkerSpelling(t *testi
 	if !found {
 		t.Fatalf("Suggest returned no item for %q", conceptID)
 	}
+}
+
+// illegitimateHomonymStatus is WCVP's raw nom_status cell for "Inula hirta
+// Pollich", copied verbatim from the production index (leading ", " and all —
+// 99,111 of 99,252 populated cells start that way, which is exactly what
+// domain.NormalizeNomStatus strips). illegitimateHomonymNormalized is what
+// that function makes of it, and therefore what MatchedName.NomStatus must
+// carry: the adapter stores the NORMALIZED form, never the raw cell.
+const (
+	illegitimateHomonymStatus     = ", nom. illeg. homonym. post."
+	illegitimateHomonymNormalized = "nom. illeg. homonym. post."
+)
+
+// TestSuggest_MatchedNameCarriesNomStatusJudgement pins that the adapter does
+// not merely COPY nom_status through but classifies it via
+// domain.ClassifyNomStatus — the single rule table, shared with the synonym
+// endpoint — and derives SuggestItem.MatchedNameDisqualified from that verdict.
+// "Inula hirta Pollich" is the reported case: a later illegitimate homonym of
+// Pentanema britannica that ranked as an equal of the valid "Inula hirta L."
+// because nothing in the suggest path had ever looked at its status.
+func TestSuggest_MatchedNameCarriesNomStatusJudgement(t *testing.T) {
+	db := openTestDB(t)
+	seedInulaHomonyms(t, db)
+
+	got := suggestByID(t, db, output.SuggestOpts{Limit: 10})
+
+	it, ok := got["wcvp:concept:pentanema-britannica"]
+	if !ok {
+		t.Fatalf("Suggest did not return the concept carrying the illegitimate homonym (got %v)", conceptIDsList(itemsOf(got)))
+	}
+	if it.MatchedName.NomStatus != illegitimateHomonymNormalized {
+		t.Errorf("MatchedName.NomStatus = %q, want %q (normalized, not the raw cell %q)", it.MatchedName.NomStatus, illegitimateHomonymNormalized, illegitimateHomonymStatus)
+	}
+	if it.MatchedName.NomStatusJudgement != domain.JudgementDisqualifying {
+		t.Errorf("MatchedName.NomStatusJudgement = %q, want %q", it.MatchedName.NomStatusJudgement, domain.JudgementDisqualifying)
+	}
+	if !it.MatchedNameDisqualified {
+		t.Errorf("MatchedNameDisqualified = false, want true (derived from the disqualifying judgement)")
+	}
+}
+
+// TestSuggest_MatchedNameWithoutNomStatusIsAbsentNotDisqualified pins the
+// distinction the domain layer makes deliberately: nothing recorded is
+// JudgementAbsent, NOT a clean bill of health and NOT a defect. "Inula hirta
+// L." — the valid name, which WCVP leaves status-free — must therefore keep
+// MatchedNameDisqualified false, and its empty NomStatus must come with an
+// explicit verdict rather than the zero value of the judgement type.
+func TestSuggest_MatchedNameWithoutNomStatusIsAbsentNotDisqualified(t *testing.T) {
+	db := openTestDB(t)
+	seedInulaHomonyms(t, db)
+
+	got := suggestByID(t, db, output.SuggestOpts{Limit: 10})
+
+	it, ok := got["wcvp:concept:pentanema-hirtum"]
+	if !ok {
+		t.Fatalf("Suggest did not return the concept carrying the valid name (got %v)", conceptIDsList(itemsOf(got)))
+	}
+	if it.MatchedName.NomStatus != "" {
+		t.Errorf("MatchedName.NomStatus = %q, want %q (WCVP records nothing for this name)", it.MatchedName.NomStatus, "")
+	}
+	if it.MatchedName.NomStatusJudgement != domain.JudgementAbsent {
+		t.Errorf("MatchedName.NomStatusJudgement = %q, want %q (absent is a verdict, not a missing one)", it.MatchedName.NomStatusJudgement, domain.JudgementAbsent)
+	}
+	if it.MatchedNameDisqualified {
+		t.Errorf("MatchedNameDisqualified = true, want false (no status recorded is not a defect)")
+	}
+}
+
+// TestSuggest_LegitimateNameWinsTheMatchedNameSelection pins the spec's fifth
+// decision where it actually bites: ONE concept carrying TWO names that both
+// satisfy the query, one of them disqualified. The console shows a single
+// "Treffer-Name", so the choice is not cosmetic — naming the illegitimate one
+// tells the operator the concept was reached through a name they must not use.
+//
+// The authorships are chosen so the WRONG answer wins without the fix: the
+// remaining tie-breaks are authorship then id, and "A.Auct." sorts before
+// "Z.Auct." — so a selection that ignores the judgement picks the
+// illegitimate name. With the fix, the disqualified first row is REPLACED by
+// the valid later one.
+func TestSuggest_LegitimateNameWinsTheMatchedNameSelection(t *testing.T) {
+	db := openTestDB(t)
+	const conceptID = "wcvp:concept:pentanema-selectum"
+
+	bv := domain.BackboneVersion{ID: "wcvp", Version: "v1", IngestedAt: "2026-09-15T00:00:00Z", ManifestSHA: "x"}
+	ingestVia(t, db, bv, func(tx output.IngestTx) {
+		accepted := species("n-pentanema-selectum", "Pentanema selectum")
+		illegitimate := domain.Name{ID: "n-inula-selecta-1", Canonical: "Inula selecta", Authorship: "A.Auct.", Rank: domain.RankSpecies, NomStatus: illegitimateHomonymStatus}
+		valid := domain.Name{ID: "n-inula-selecta-2", Canonical: "Inula selecta", Authorship: "Z.Auct.", Rank: domain.RankSpecies}
+		for _, n := range []domain.Name{accepted, illegitimate, valid} {
+			mustTx(t, tx.UpsertName(n))
+		}
+		c := domain.Concept{ID: conceptID, BackboneID: "wcvp", AcceptedName: accepted, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+		mustTx(t, tx.UpsertConcept(c))
+		mustTx(t, tx.LinkName(c.ID, accepted.ID, "accepted", nil))
+		mustTx(t, tx.LinkName(c.ID, illegitimate.ID, "synonym", nil))
+		mustTx(t, tx.LinkName(c.ID, valid.ID, "synonym", nil))
+	})
+
+	it := suggestOne(t, db, "Inula selecta", conceptID)
+	want := domain.MatchedName{Canonical: "Inula selecta", Authorship: "Z.Auct.", Role: "synonym", NomStatusJudgement: domain.JudgementAbsent}
+	if it.MatchedName != want {
+		t.Errorf("MatchedName = %+v, want %+v (the valid name wins over the illegitimate one despite sorting later)", it.MatchedName, want)
+	}
+	if it.MatchedNameDisqualified {
+		t.Errorf("MatchedNameDisqualified = true, want false (the SELECTED name is valid)")
+	}
+}
+
+// TestSuggest_ConservedNameIsNotDemotedByHavingAStatus guards the trap the
+// plan names explicitly: "carries a nom_status" is NOT "is disqualified".
+// ", nom. cons." is a CONSERVED name — the strongest possible statement that
+// the name is to be used — and the 1,237 names carrying it must not be pushed
+// behind a status-free name the way an illegitimate one is.
+//
+// The fixture makes the two rules disagree: the conserved name is the
+// concept's ACCEPTED name (the higher-precedence role), the status-free name
+// a synonym that sorts earlier by canonical/authorship only if the role key is
+// overridden. A coarse has_nom_status sort key applied as if it were the
+// verdict — the shortcut this test exists to forbid — demotes the conserved
+// accepted name and picks the synonym.
+func TestSuggest_ConservedNameIsNotDemotedByHavingAStatus(t *testing.T) {
+	db := openTestDB(t)
+	const conceptID = "wcvp:concept:inula-conservata"
+
+	bv := domain.BackboneVersion{ID: "wcvp", Version: "v1", IngestedAt: "2026-09-15T00:00:00Z", ManifestSHA: "x"}
+	ingestVia(t, db, bv, func(tx output.IngestTx) {
+		conserved := domain.Name{ID: "n-inula-conservata-acc", Canonical: "Inula conservata", Authorship: "L.", Rank: domain.RankSpecies, NomStatus: ", nom. cons."}
+		plain := domain.Name{ID: "n-inula-conservata-syn", Canonical: "Inula conservata", Authorship: "A.Auct.", Rank: domain.RankSpecies}
+		for _, n := range []domain.Name{conserved, plain} {
+			mustTx(t, tx.UpsertName(n))
+		}
+		c := domain.Concept{ID: conceptID, BackboneID: "wcvp", AcceptedName: conserved, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+		mustTx(t, tx.UpsertConcept(c))
+		mustTx(t, tx.LinkName(c.ID, conserved.ID, "accepted", nil))
+		mustTx(t, tx.LinkName(c.ID, plain.ID, "synonym", nil))
+	})
+
+	it := suggestOne(t, db, "Inula conservata", conceptID)
+	want := domain.MatchedName{Canonical: "Inula conservata", Authorship: "L.", Role: "accepted", NomStatus: "nom. cons.", NomStatusJudgement: domain.JudgementAcceptable}
+	if it.MatchedName != want {
+		t.Errorf("MatchedName = %+v, want %+v (a conserved name keeps its accepted-before-synonym precedence)", it.MatchedName, want)
+	}
+	if it.MatchedNameDisqualified {
+		t.Errorf("MatchedNameDisqualified = true, want false (nom. cons. is acceptable, not a defect)")
+	}
+}
+
+// TestSuggest_UnclassifiedStatusIsNotTreatedAsDisqualified guards the SECOND
+// judgement that is easily mistaken for a defect, and the more dangerous one:
+// JudgementUnclassified. ", sensu auct." (1,117 names) and "fossil name" (274)
+// are cases where the rule table WITHHOLDS a verdict — taxonomic uncertainty
+// about which plant the name is applied to, not a flaw in how the name was
+// published. A derivation written as "anything not provably clean is
+// suspicious" would demote them, and unlike the acceptable case nothing in the
+// domain suite currently catches that; see this task's report.
+//
+// Same two-name shape as the conserved test, so it pins the selection as well
+// as the flag: the uncertain name is the ACCEPTED one and must keep that
+// precedence over the status-free synonym.
+func TestSuggest_UnclassifiedStatusIsNotTreatedAsDisqualified(t *testing.T) {
+	db := openTestDB(t)
+	const conceptID = "wcvp:concept:inula-incerta"
+
+	bv := domain.BackboneVersion{ID: "wcvp", Version: "v1", IngestedAt: "2026-09-15T00:00:00Z", ManifestSHA: "x"}
+	ingestVia(t, db, bv, func(tx output.IngestTx) {
+		uncertain := domain.Name{ID: "n-inula-incerta-acc", Canonical: "Inula incerta", Authorship: "L.", Rank: domain.RankSpecies, NomStatus: ", sensu auct."}
+		plain := domain.Name{ID: "n-inula-incerta-syn", Canonical: "Inula incerta", Authorship: "A.Auct.", Rank: domain.RankSpecies}
+		for _, n := range []domain.Name{uncertain, plain} {
+			mustTx(t, tx.UpsertName(n))
+		}
+		c := domain.Concept{ID: conceptID, BackboneID: "wcvp", AcceptedName: uncertain, Rank: domain.RankSpecies, Status: domain.StatusAccepted}
+		mustTx(t, tx.UpsertConcept(c))
+		mustTx(t, tx.LinkName(c.ID, uncertain.ID, "accepted", nil))
+		mustTx(t, tx.LinkName(c.ID, plain.ID, "synonym", nil))
+	})
+
+	it := suggestOne(t, db, "Inula incerta", conceptID)
+	want := domain.MatchedName{Canonical: "Inula incerta", Authorship: "L.", Role: "accepted", NomStatus: "sensu auct.", NomStatusJudgement: domain.JudgementUnclassified}
+	if it.MatchedName != want {
+		t.Errorf("MatchedName = %+v, want %+v (an unjudged status keeps its accepted-before-synonym precedence)", it.MatchedName, want)
+	}
+	if it.MatchedNameDisqualified {
+		t.Errorf("MatchedNameDisqualified = true, want false (withheld verdict is uncertainty, not a nomenclatural defect)")
+	}
+}
+
+// suggestOne runs Suggest for q and returns the single item for conceptID,
+// failing the test if the concept is missing — the shape the per-fixture tests
+// above need and suggestByID (fixed to inulaHirtaQuery) cannot give them.
+func suggestOne(t *testing.T, db *DB, q, conceptID string) domain.SuggestItem {
+	t.Helper()
+	items, err := db.Suggest(context.Background(), q, output.SuggestOpts{Limit: 10})
+	if err != nil {
+		t.Fatalf("Suggest(%q): unexpected error: %v", q, err)
+	}
+	for _, it := range items {
+		if it.ConceptID == conceptID {
+			return it
+		}
+	}
+	t.Fatalf("Suggest(%q) returned no item for %q (got %v)", q, conceptID, conceptIDsList(items))
+	return domain.SuggestItem{}
 }
 
 func itemsOf(byID map[string]domain.SuggestItem) []domain.SuggestItem {

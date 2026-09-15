@@ -5,6 +5,13 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [3.6.0](https://github.com/jobrunner/hostus/compare/v3.6.0-alpha.0...v3.6.0) (2026-09-15)
+
+
+### Miscellaneous Chores
+
+* stabile Versionen ohne -alpha-Suffix ([107ce82](https://github.com/jobrunner/hostus/commit/107ce82ba6084c337a7400146b99bc3a17b7cc46))
+
 ## [3.6.0-alpha.0](https://github.com/jobrunner/hostus/compare/v3.5.0-alpha.0...v3.6.0-alpha.0) (2026-09-15)
 
 

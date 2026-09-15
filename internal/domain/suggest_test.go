@@ -62,7 +62,7 @@ func TestRankSuggestions_ExistingOrderUnchangedWhenNewFieldsEqual(t *testing.T) 
 }
 
 // TestRankSuggestions_ExactHitBeatsPrefixHit pins that ExactHit (priority 1)
-// outranks PrefixHit (priority 3) even when PrefixHit DIFFERS between the
+// outranks PrefixHit (priority 4) even when PrefixHit DIFFERS between the
 // two items — unlike TestRankSuggestions_ExactHitBeatsBetterScore, which
 // keeps PrefixHit true on both sides and so cannot catch the two leading
 // keys being reordered relative to PrefixHit. This is the scenario Task 2
@@ -80,7 +80,7 @@ func TestRankSuggestions_ExactHitBeatsPrefixHit(t *testing.T) {
 }
 
 // TestRankSuggestions_TargetSpaceHitBeatsPrefixHit pins that TargetSpaceHit
-// (priority 2) outranks PrefixHit (priority 3) with PrefixHit differing
+// (priority 3) outranks PrefixHit (priority 4) with PrefixHit differing
 // between items and ExactHit tied, so only the ExactHit/TargetSpaceHit vs.
 // PrefixHit ordering can make this pass.
 func TestRankSuggestions_TargetSpaceHitBeatsPrefixHit(t *testing.T) {
@@ -95,7 +95,7 @@ func TestRankSuggestions_TargetSpaceHitBeatsPrefixHit(t *testing.T) {
 }
 
 // TestRankSuggestions_InAreaBeatsAccepted is the brief's pinned regression:
-// in_area (priority 4) must dominate accepted-vs-synonym (priority 5), even
+// in_area (priority 5) must dominate accepted-vs-synonym (priority 6), even
 // though the out-of-area item is accepted and has a "better" (lower) score.
 func TestRankSuggestions_InAreaBeatsAccepted(t *testing.T) {
 	items := []domain.SuggestItem{
@@ -108,8 +108,8 @@ func TestRankSuggestions_InAreaBeatsAccepted(t *testing.T) {
 	}
 }
 
-// TestRankSuggestions_PrefixHitBeatsInArea isolates priority 3 (PrefixHit)
-// over priority 4 (InArea): the non-prefix-hit item is in_area, accepted,
+// TestRankSuggestions_PrefixHitBeatsInArea isolates priority 4 (PrefixHit)
+// over priority 5 (InArea): the non-prefix-hit item is in_area, accepted,
 // lower rank order, and better score — yet must still lose.
 func TestRankSuggestions_PrefixHitBeatsInArea(t *testing.T) {
 	items := []domain.SuggestItem{
@@ -122,8 +122,8 @@ func TestRankSuggestions_PrefixHitBeatsInArea(t *testing.T) {
 	}
 }
 
-// TestRankSuggestions_AcceptedBeatsRankOrder isolates priority 5 (accepted
-// status) over priority 6 (rank order): the synonym item has a better
+// TestRankSuggestions_AcceptedBeatsRankOrder isolates priority 6 (accepted
+// status) over priority 7 (rank order): the synonym item has a better
 // (lower) rank order and score, but must still lose to the accepted item.
 func TestRankSuggestions_AcceptedBeatsRankOrder(t *testing.T) {
 	items := []domain.SuggestItem{
@@ -136,8 +136,8 @@ func TestRankSuggestions_AcceptedBeatsRankOrder(t *testing.T) {
 	}
 }
 
-// TestRankSuggestions_RankOrderBeatsScore isolates priority 6 (rank order)
-// over priority 7 (score): the higher-rank-order item has a better (lower)
+// TestRankSuggestions_RankOrderBeatsScore isolates priority 7 (rank order)
+// over priority 8 (score): the higher-rank-order item has a better (lower)
 // score, but must still lose to the lower-rank-order item.
 func TestRankSuggestions_RankOrderBeatsScore(t *testing.T) {
 	items := []domain.SuggestItem{
@@ -150,7 +150,7 @@ func TestRankSuggestions_RankOrderBeatsScore(t *testing.T) {
 	}
 }
 
-// TestRankSuggestions_ScoreAscending isolates priority 7: with all higher
+// TestRankSuggestions_ScoreAscending isolates priority 8: with all higher
 // keys equal, lower Score (SQLite bm25: lower = more relevant) wins.
 func TestRankSuggestions_ScoreAscending(t *testing.T) {
 	items := []domain.SuggestItem{
@@ -200,6 +200,100 @@ func TestRankSuggestions_Empty(t *testing.T) {
 	got := domain.RankSuggestions(nil)
 	if len(got) != 0 {
 		t.Fatalf("expected empty result, got %v", got)
+	}
+}
+
+// TestRankSuggestions_DisqualifiedMatchedNameLosesToLegitimate pins the
+// reported Inula-hirta case as the user hits it: entry_backbone=wcvp and NO
+// target_space, so the target-space key cannot decide. "Inula hirta Pollich"
+// is a later illegitimate homonym (WCVP nom_status ", nom. illeg. homonym.
+// post.") of Pentanema britannica; "Inula hirta L." is the legitimate name
+// of Pentanema hirtum. Before this key existed, bm25 alone ordered them.
+func TestRankSuggestions_DisqualifiedMatchedNameLosesToLegitimate(t *testing.T) {
+	britannica := domain.SuggestItem{
+		ConceptID: "wcvp:concept:3217682", Rank: domain.RankSpecies, Status: domain.StatusAccepted,
+		ExactHit: true, MatchedNameDisqualified: true, PrefixHit: true, Score: 1.0,
+	}
+	hirtum := domain.SuggestItem{
+		ConceptID: "wcvp:concept:3217689", Rank: domain.RankSpecies, Status: domain.StatusAccepted,
+		ExactHit: true, MatchedNameDisqualified: false, PrefixHit: true, Score: 2.0,
+	}
+
+	got := domain.RankSuggestions([]domain.SuggestItem{britannica, hirtum})
+
+	if got[0].ConceptID != hirtum.ConceptID {
+		t.Fatalf("first = %q, want the legitimate name %q", got[0].ConceptID, hirtum.ConceptID)
+	}
+}
+
+// TestRankSuggestions_LegitimacyOutranksTargetSpaceHit pins the POSITION of
+// the new key: it sits ahead of TargetSpaceHit, so a disqualified name does
+// not win just because it happens to be the spelling used in the requested
+// space. Both keys differ between the items — otherwise swapping them would
+// leave this test green and pin nothing.
+func TestRankSuggestions_LegitimacyOutranksTargetSpaceHit(t *testing.T) {
+	disqualifiedInSpace := domain.SuggestItem{
+		ConceptID: "a", Rank: domain.RankSpecies, Status: domain.StatusAccepted, ExactHit: true,
+		MatchedNameDisqualified: true, TargetSpaceHit: true, Score: 0.1,
+	}
+	legitimateOutsideSpace := domain.SuggestItem{
+		ConceptID: "b", Rank: domain.RankSpecies, Status: domain.StatusAccepted, ExactHit: true,
+		MatchedNameDisqualified: false, TargetSpaceHit: false, Score: 0.9,
+	}
+
+	got := domain.RankSuggestions([]domain.SuggestItem{disqualifiedInSpace, legitimateOutsideSpace})
+
+	if got[0].ConceptID != "b" {
+		t.Fatalf("first = %q, want the legitimate name %q", got[0].ConceptID, "b")
+	}
+}
+
+// TestRankSuggestions_OnlyDisqualifyingJudgementLowersRank guards Spec
+// decision 2: of the four NomStatusJudgement values, only
+// JudgementDisqualifying may down-rank a candidate. JudgementAbsent (nothing
+// recorded), JudgementAcceptable (e.g. nom. cons.) and JudgementUnclassified
+// (e.g. "sensu auct." — 1.117 names, "fossil name" — 274 names; cases where
+// the existing rule table deliberately withholds a verdict rather than treat
+// uncertainty as a defect) must all leave MatchedNameDisqualified false.
+//
+// Deliberately does NOT set MatchedNameDisqualified from the judgement
+// itself (j == domain.JudgementDisqualifying): deriving it here would pin
+// the test's own arithmetic instead of the rule.
+//
+// What this test can and cannot promise, measured rather than assumed: it
+// lives in package domain and never executes adapter code, so it does NOT
+// catch an adapter that maps the judgement wrong (e.g. "true unless absent
+// or acceptable"). Breaking that mapping on purpose leaves this package —
+// and internal/adapters/http — entirely green; only the sqlite package's
+// TestSuggest_ConservedNameIsNotDemotedByHavingAStatus and
+// TestSuggest_UnclassifiedStatusIsNotTreatedAsDisqualified go red, which is
+// where that guard actually lives. The promise HERE is narrower and still
+// worth having: RankSuggestions must never start reading NomStatusJudgement
+// on its own and turn a judgement into a rank penalty behind the adapter's
+// back. The candidate sits BEFORE an absent reference item with identical
+// other fields, so such an implementation measurably reorders them; placing
+// it after (as an earlier revision did) let JudgementUnclassified slide to
+// the back on its own and hid exactly that.
+func TestRankSuggestions_OnlyDisqualifyingJudgementLowersRank(t *testing.T) {
+	for _, j := range []domain.NomStatusJudgement{
+		domain.JudgementAbsent, domain.JudgementAcceptable, domain.JudgementUnclassified,
+	} {
+		t.Run(string(j), func(t *testing.T) {
+			// candidate FIRST: any implementation that treats j as a defect
+			// moves it behind the reference and flips this order.
+			items := []domain.SuggestItem{
+				{ConceptID: "candidate", Rank: domain.RankSpecies, Status: domain.StatusAccepted,
+					ExactHit: true, Score: 1.0,
+					MatchedName: domain.MatchedName{NomStatusJudgement: j}},
+				{ConceptID: "reference", Rank: domain.RankSpecies, Status: domain.StatusAccepted,
+					ExactHit: true, Score: 1.0,
+					MatchedName: domain.MatchedName{NomStatusJudgement: domain.JudgementAbsent}},
+			}
+			if got := domain.RankSuggestions(items); got[0].ConceptID != "candidate" {
+				t.Fatalf("%s down-ranked the candidate: got %q first — only "+
+					"JudgementDisqualifying may lower rank", j, got[0].ConceptID)
+			}
+		})
 	}
 }
 

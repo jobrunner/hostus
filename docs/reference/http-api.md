@@ -500,25 +500,44 @@ Die Priorisierung, höchste Priorität zuerst:
 
 1. **Exakter Namenstreffer** vor bloßem Präfixtreffer — wer den vollen Namen
    tippt, will keinen längeren.
-2. **Treffer im angefragten `target_space`** vor Kandidaten, die die Anfrage
+2. **Nomenklatorisch gültiger Treffer-Name** vor disqualifiziertem: ein
+   Kandidat, dessen auslösender Name einen disqualifizierenden `nom_status`
+   trägt (`matched_name.nom_status_judgement: disqualifying`, etwa ein
+   späteres illegitimes Homonym), verliert gegen einen, dessen Name keinen
+   trägt. Nur `disqualifying` wertet ab — `absent`, `acceptable` und
+   `unclassified` (z. B. „sensu auct.", „fossil name") nicht: Unsicherheit ist
+   kein Mangel.
+3. **Treffer im angefragten `target_space`** vor Kandidaten, die die Anfrage
    nur über einen Namen außerhalb dieses Raums erfüllen. Ohne `target_space`
    ist das Kriterium für jede Zeile gleich und damit wirkungslos.
-3. Präfix-Treffer vor Nicht-Treffer (unterscheidet nur bei
+4. Präfix-Treffer vor Nicht-Treffer (unterscheidet nur bei
    `match_mode=anywhere`; im Standardmodus ist jeder Kandidat ein
    Präfix-Treffer).
-4. Im angefragten Gebiet vor nicht im Gebiet.
-5. Akzeptiert vor Synonym.
-6. Breitere vor feineren Rängen (FAMILY/GENUS vor SPECIES vor
+5. Im angefragten Gebiet vor nicht im Gebiet.
+6. Akzeptiert vor Synonym.
+7. Breitere vor feineren Rängen (FAMILY/GENUS vor SPECIES vor
    SUBSPECIES/VARIETY/FORM).
-7. bm25-Score aufsteigend (niedriger ist relevanter).
+8. bm25-Score aufsteigend (niedriger ist relevanter).
 
-Die Kriterien 1 und 2 entscheiden den häufigsten Ärgerfall, das Homonym:
+Die Kriterien 1 bis 3 entscheiden den häufigsten Ärgerfall, das Homonym:
 `Inula hirta L.` gehört zu *Pentanema hirtum*, `Inula hirta Pollich` zu
 *Pentanema britannica*. Beide Kandidaten tragen den getippten Namen exakt,
-Kriterium 1 ist also unentschieden — den Ausschlag gibt, dass *P. hirtum* in
-Euro+Med ebenfalls „Inula hirta" heißt, *P. britannica* dort aber „Inula
-britannica". Welcher Name den Treffer ausgelöst hat, steht in
-`matched_name` samt Autorschaft.
+Kriterium 1 ist also unentschieden — den Ausschlag gibt schon Kriterium 2:
+Pollichs Name ist ein **späteres illegitimes Homonym** (WCVP-`nom_status`
+„nom. illeg. homonym. post."), ungültig genau deshalb, weil `Inula hirta L.`
+bereits existierte. Das steht als `matched_name.nom_status` /
+`nom_status_judgement: disqualifying` in der Antwort und wirkt auch dann,
+wenn gar kein `target_space` angefragt wurde — genau der Fall, in dem
+Kriterium 3 bei jeder Zeile gleich ausfällt. Ist ein `target_space` dabei,
+zeigt Kriterium 3 zusätzlich in dieselbe Richtung: *P. hirtum* heißt in
+Euro+Med ebenfalls „Inula hirta", *P. britannica* dort „Inula britannica".
+
+Abgewertet heißt **nicht** ausgeblendet: die Zeile bleibt in der Liste,
+gekennzeichnet. Wer den Namen in älterer Literatur findet, muss nachschlagen
+können, was aus ihm geworden ist. Im gemessenen Index gibt es rund **32.000**
+Schreibweisen, unter denen ein disqualifizierter **und** ein nicht
+disqualifizierter Name existieren — genau die Lage, in der dieses Kriterium
+die Reihenfolge entscheidet.
 
 `target_space_name` ist die Schreibweise des Concepts im angefragten
 `target_space`. Das Feld ist nur vorhanden, wenn ein Zielraum angefragt wurde
@@ -555,7 +574,8 @@ GET /v1/suggest?q=coryn&area=AUT
       "matched_name": {
         "canonical": "Corynephorus canescens",
         "authorship": "(L.) P.Beauv.",
-        "role": "accepted"
+        "role": "accepted",
+        "nom_status_judgement": "absent"
       }
     }
   ]
@@ -570,7 +590,19 @@ ohne dieses Feld in der Liste nicht auseinanderzuhalten. `role` sagt
 `accepted` oder `synonym`, `authorship` kann leer sein, wenn die Quelle
 keines führt. Das Feld fehlt, wenn der auslösende Name nicht bestimmt werden
 konnte (möglich bei `match_mode=anywhere`, wo ein Treffer mitten in einem
-Namen liegen kann).
+Namen liegen kann) — dann gibt es auch keinen Namen, über den ein
+nomenklatorisches Urteil möglich wäre, weshalb das ganze Objekt entfällt
+statt ein leeres Urteil zu tragen.
+
+`matched_name.nom_status` ist der nomenklatorische Status dieses Namens aus
+der Quelle (WCVP, normalisiert) und fehlt, wenn nichts erfasst ist;
+`matched_name.nom_status_judgement` ist das daraus abgeleitete Urteil
+(`absent`, `acceptable`, `disqualifying`, `unclassified`) und ist **immer**
+vorhanden — „nichts erfasst" ist nicht „geprüft und sauber". Die Aufteilung
+ist dieselbe wie bei den Synonymen (siehe `nom_status` im Synonym-Endpunkt),
+damit für dasselbe Quellfeld nicht zwei Vokabulare zu lernen sind.
+`disqualifying` ist zugleich die Begründung für Ranking-Kriterium 2: bei
+`Inula hirta Pollich` steht dort „nom. illeg. homonym. post.".
 
 `vernacular_de` ist Teil der DTO, wird aber nur ausgeliefert, wenn ein
 deutscher Trivialname für das Concept ingestiert wurde (`omitempty`).

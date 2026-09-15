@@ -59,14 +59,35 @@ type suggestItemDTO struct {
 }
 
 // matchedNameDTO is suggestItemDTO.MatchedName's nested object: the name
-// behind the hit. Every field is required on the wire — when there is no
-// matched name at all the whole object is absent, so a present object
-// always carries all three (authorship and role can legitimately be empty
+// behind the hit. Every field but nom_status is required on the wire — when
+// there is no matched name at all the whole object is absent, so a present
+// object always carries them (authorship and role can legitimately be empty
 // strings for a name the backbone stored without them).
+//
+// nom_status/nom_status_judgement are named and split exactly as in
+// synonymDetailDTO (see its doc comment for why the judgement is rendered
+// ALWAYS while the raw cell is omitempty): both endpoints answer the same
+// question about the same WCVP column, and a client should not have to learn
+// two vocabularies for it.
+//
+// This pair is what makes the ranking legible. domain.RankSuggestions
+// priority 2 demotes a candidate whose triggering name is disqualifying —
+// "Inula hirta Pollich", a later illegitimate homonym, loses to "Inula hirta
+// L." — and a demotion with no visible reason is indistinguishable from a
+// broken sort. The row is never hidden: whoever meets the name in older
+// literature must still be able to look up what became of it.
 type matchedNameDTO struct {
 	Canonical  string `json:"canonical"`
 	Authorship string `json:"authorship"`
 	Role       string `json:"role"`
+	// NomStatus is the normalized raw WCVP nom_status cell, omitted when the
+	// source recorded nothing — rendering "" would claim the cell held an
+	// empty value.
+	NomStatus string `json:"nom_status,omitempty"`
+	// NomStatusJudgement is domain.ClassifyNomStatus' verdict, always
+	// present: `absent` ("nothing recorded") is an answer, and leaving the
+	// key out would let a client read it as "checked and found clean".
+	NomStatusJudgement string `json:"nom_status_judgement"`
 }
 
 // suggestResponseDTO is the GET /v1/suggest response envelope, per spec
@@ -105,13 +126,30 @@ func suggestResponseToDTO(resp application.SuggestResponse) suggestResponseDTO {
 // matchedNameToDTO renders the triggering name, or nil when there is none
 // to render. An empty Canonical is domain.MatchedName's documented "could
 // not be determined" state (see its doc comment), and an object whose only
-// content is three empty strings would claim to answer "which name matched?"
+// content is empty strings would claim to answer "which name matched?"
 // while saying nothing.
+//
+// That state also carries an empty NomStatusJudgement — "not computed",
+// which is NOT domain.JudgementAbsent. Omitting the whole object resolves
+// it: there is no name, so there is nothing to judge, and the response makes
+// no claim either way. Once a name IS present, the judgement is mandatory,
+// so an unset one normalizes to JudgementAbsent — for a named name, "nothing
+// recorded" is precisely what that verdict says.
 func matchedNameToDTO(n domain.MatchedName) *matchedNameDTO {
 	if n.Canonical == "" {
 		return nil
 	}
-	return &matchedNameDTO{Canonical: n.Canonical, Authorship: n.Authorship, Role: n.Role}
+	judgement := n.NomStatusJudgement
+	if judgement == "" {
+		judgement = domain.JudgementAbsent
+	}
+	return &matchedNameDTO{
+		Canonical:          n.Canonical,
+		Authorship:         n.Authorship,
+		Role:               n.Role,
+		NomStatus:          n.NomStatus,
+		NomStatusJudgement: string(judgement),
+	}
 }
 
 // attachSuggestSec fills each result's Sec {id,title} for a sec-bearing

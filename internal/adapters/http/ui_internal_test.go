@@ -254,6 +254,24 @@ func TestUISuggestSendsTheFilterParameters(t *testing.T) {
 	}
 }
 
+// TestUIMarksADisqualifiedMatchedName pins the visible half of the new
+// ranking criterion: the row that got demoted must SAY why, in the
+// Treffer-Name column, with the raw status as its tooltip. A row that drops
+// without a reason is indistinguishable from a broken sort — and the row is
+// only marked, never hidden, since a name found in older literature must
+// stay lookup-able.
+func TestUIMarksADisqualifiedMatchedName(t *testing.T) {
+	for _, want := range []string{
+		`matched.nom_status_judgement === "disqualifying"`,
+		`badge("nicht verwendbar", "bad")`,
+		`nomBadge.title = matched.nom_status`,
+	} {
+		if !strings.Contains(uiAppJS, want) {
+			t.Errorf("app.js does not mark a disqualified matched name: %q missing", want)
+		}
+	}
+}
+
 // TestUIDoesNotCacheAPIResponses pins the instrument's core promise: what
 // the page shows is what the API just answered.
 func TestUIDoesNotCacheAPIResponses(t *testing.T) {

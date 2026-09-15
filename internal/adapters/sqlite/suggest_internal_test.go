@@ -916,7 +916,7 @@ func TestSuggest_LegitimateNameWinsTheMatchedNameSelection(t *testing.T) {
 // still reported true — an answer contradicting itself. And since the shown
 // name then looked clean, MatchedNameDisqualified went false and the whole new
 // ranking step stopped firing for the concept, i.e. the reported bug survived
-// untouched. Measured on the production index, 3,810 concepts carry such a
+// untouched. Measured on the production index, 3,327 concepts carry such a
 // pair (always "species + infraspecific taxon"); this fixture is one of them,
 // wcvp:concept:100405.
 //

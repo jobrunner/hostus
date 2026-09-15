@@ -35,11 +35,17 @@ Gemessen an der Produktions-DB (v3.4.0-alpha.0):
 | Messung | Wert |
 |---|---|
 | Namen mit irgendeinem `nom_status` | 99.252 |
-| davon disqualifizierte Synonyme in WCVP | 73.266 |
-| Schreibweisen, unter denen ein disqualifizierter **und** ein statusfreier Name existiert | **28.233** |
+| davon disqualifizierte Synonym-Zeilen in WCVP | 89.836 |
+| Schreibweisen, unter denen ein disqualifizierter **und** ein nicht-disqualifizierter Name existiert | **31.970** |
 
-Die letzte Zeile ist die eigentliche Verwechslungslage: 28.233-mal steht ein
-ungültiger Name neben einem gültigen gleicher Schreibweise.
+Die letzte Zeile ist die eigentliche Verwechslungslage: rund 32.000-mal steht
+ein ungültiger Name neben einem brauchbaren gleicher Schreibweise.
+
+Alle drei Werte sind mit `domain.ClassifyNomStatus` selbst gemessen, nicht mit
+einer Token-Näherung — eine erste Schätzung über `LIKE '%illeg%'` lag um rund
+20 % zu niedrig, weil sie `nom. nud.`, `not validly publ.`, `orth. var.`,
+`pro syn.` und `nom. rej.` nicht mitzählte. Gezählt werden nur Namen, die an
+einem Konzept hängen (nur solche können im Suggest auftauchen).
 
 ## Entscheidungen
 

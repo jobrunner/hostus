@@ -257,16 +257,23 @@ func TestRankSuggestions_LegitimacyOutranksTargetSpaceHit(t *testing.T) {
 // uncertainty as a defect) must all leave MatchedNameDisqualified false.
 //
 // Deliberately does NOT set MatchedNameDisqualified from the judgement
-// itself (j == domain.JudgementDisqualifying): RankSuggestions only ever
-// reads the bool, so deriving it from the judgement under test would only
-// pin the test's own arithmetic, not the adapter's real mapping — the bug
-// this guards against is the adapter deriving the bool wrong (e.g. "true
-// unless absent/acceptable"), which a self-derived bool can never catch. The
-// candidate is placed BEFORE an absent reference item with identical other
-// fields, so a wrongly-disqualifying implementation measurably reorders
-// them; placing it after (as an earlier revision of this test did) leaves
-// JudgementUnclassified free to slide to the back on its own and hides
-// exactly that bug.
+// itself (j == domain.JudgementDisqualifying): deriving it here would pin
+// the test's own arithmetic instead of the rule.
+//
+// What this test can and cannot promise, measured rather than assumed: it
+// lives in package domain and never executes adapter code, so it does NOT
+// catch an adapter that maps the judgement wrong (e.g. "true unless absent
+// or acceptable"). Breaking that mapping on purpose leaves this package —
+// and internal/adapters/http — entirely green; only the sqlite package's
+// TestSuggest_ConservedNameIsNotDemotedByHavingAStatus and
+// TestSuggest_UnclassifiedStatusIsNotTreatedAsDisqualified go red, which is
+// where that guard actually lives. The promise HERE is narrower and still
+// worth having: RankSuggestions must never start reading NomStatusJudgement
+// on its own and turn a judgement into a rank penalty behind the adapter's
+// back. The candidate sits BEFORE an absent reference item with identical
+// other fields, so such an implementation measurably reorders them; placing
+// it after (as an earlier revision did) let JudgementUnclassified slide to
+// the back on its own and hid exactly that.
 func TestRankSuggestions_OnlyDisqualifyingJudgementLowersRank(t *testing.T) {
 	for _, j := range []domain.NomStatusJudgement{
 		domain.JudgementAbsent, domain.JudgementAcceptable, domain.JudgementUnclassified,

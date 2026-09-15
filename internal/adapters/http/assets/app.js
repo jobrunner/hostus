@@ -135,7 +135,7 @@
     accepted: "Ob das Konzept selbst der akzeptierte Name ist (ja) oder ein Synonym, das auf ein akzeptiertes Konzept aufgeloest wurde.",
     in_area: "Positiver Verbreitungsbeleg fuers Gebiet: „ja“, wenn das Konzept selbst dort verbreitet ist ODER derselbe Name bei WCVP (der Verbreitungs-Autoritaet, akzeptiert oder Synonym) dort vorkommt. Sonst „keine Angabe“ — Verbreitung ist Praesenz-Daten, ein fehlender Eintrag ist keine belegte Abwesenheit (deshalb nie „nein“). Ohne area-Parameter immer „keine Angabe“.",
     score: "Roher SQLite-FTS5-bm25()-Wert des Treffers. Niedriger = relevanter (ein Distanzmass, keine Aehnlichkeit).",
-    matched_name: "Der Name, der den Treffer AUSGELOEST hat, mit Autorschaft und Rolle (akzeptiert/Synonym). Er weicht vom angezeigten Namen ab, wenn der Treffer ueber ein Synonym kam — und er ist das einzige Merkmal, das Homonyme auseinanderhaelt: „Inula hirta L.“ gegenueber „Inula hirta Pollich“ fuehren zu zwei verschiedenen Konzepten. Bleibt leer, wenn der Dienst den ausloesenden Namen nicht bestimmen konnte. Das Badge „disqualifiziert“ heisst: dieser Name traegt einen disqualifizierenden nomenklatorischen Status (Tooltip zeigt ihn im Wortlaut, z. B. „nom. illeg. homonym. post.“) und die Zeile wird deshalb abgewertet — abgewertet, nicht ausgeblendet: wer den Namen in aelterer Literatur findet, muss nachschlagen koennen, was aus ihm geworden ist.",
+    matched_name: "Der Name, der den Treffer AUSGELOEST hat, mit Autorschaft und Rolle (akzeptiert/Synonym). Er weicht vom angezeigten Namen ab, wenn der Treffer ueber ein Synonym kam — und er ist das einzige Merkmal, das Homonyme auseinanderhaelt: „Inula hirta L.“ gegenueber „Inula hirta Pollich“ fuehren zu zwei verschiedenen Konzepten. Bleibt leer, wenn der Dienst den ausloesenden Namen nicht bestimmen konnte. Das Badge „nicht verwendbar“ heisst: dieser Name traegt einen disqualifizierenden nomenklatorischen Status (Tooltip zeigt ihn im Wortlaut, z. B. „nom. illeg. homonym. post.“) und die Zeile wird deshalb abgewertet — abgewertet, nicht ausgeblendet: wer den Namen in aelterer Literatur findet, muss nachschlagen koennen, was aus ihm geworden ist.",
     prefix: "Ob der ANGEZEIGTE (akzeptierte) Name mit deiner Eingabe BEGINNT (links-verankert, normalisiert). \u201enein\u201c = der Treffer kam ueber einen anderen indexierten Namen: ein Synonym, eine Aggregat-Schreibweise oder einen spaeteren Token.",
     aggregate: "Das Konzept wurde ueber eine Aggregat-Schreibweise (agg./aggr./s.l.) getroffen. Da FloraVeg-Aggregate auf die Nominatart zeigen, wird die Nominatart mit diesem Badge angezeigt.",
     sec: "sec.-Referenzraum (\u201esecundum\u201c): die Flora/Checkliste, deren Umschreibung dieses Konzept meint. Unterscheidet gleichnamige CDM-Konzepte (Common Data Model, die Cybertaxonomy-/EDIT-Plattform mit den Wisskirchen-Konzeptbeziehungen) voneinander. Hat ein Konzept keinen sec.-Raum, steht dort die Herkunft: WCVP (World Checklist of Vascular Plants) als Backbone-Konzept, oder CDM (ohne sec.) bei den seltenen CDM-Konzepten ohne sec.",
@@ -410,8 +410,21 @@
         // ausgeblendet: wer den Namen in aelterer Literatur findet, muss
         // nachschlagen koennen, was aus ihm geworden ist.
         if (matched.nom_status_judgement === "disqualifying") {
-          var nomBadge = badge("disqualifiziert", "bad");
-          if (matched.nom_status) { nomBadge.title = matched.nom_status; }
+          // "nicht verwendbar" statt "ungueltig"/"illegitim": ein Wort muss
+          // hier fuenf nomenklatorisch verschiedene Klassen abdecken. Ein
+          // nom. illeg. ist wirksam publiziert, aber illegitim; ein nom. nud.
+          // ist gar nicht wirksam publiziert; eine orth. var. ist ueberhaupt
+          // kein Name, sondern ein Schreibfehler; ein nom. rej. ist legitim
+          // und trotzdem verworfen. Jedes Wort, das die URSACHE benennt, ist
+          // damit fuer mindestens eine Klasse falsch — wahr ueber alle ist
+          // nur die FOLGE: als korrekter Name eines Taxons nicht benutzbar.
+          // Die Ursache steht im Tooltip, der API-Wert (disqualifying) dort
+          // ebenfalls, damit die Bruecke zum Feld nom_status_judgement
+          // sichtbar bleibt.
+          var nomBadge = badge("nicht verwendbar", "bad");
+          nomBadge.title = matched.nom_status
+            ? matched.nom_status + " — nomenklatorisch nicht verwendbar (nom_status_judgement: disqualifying)"
+            : "nomenklatorisch nicht verwendbar (nom_status_judgement: disqualifying)";
           matchedTd.appendChild(document.createTextNode(" "));
           matchedTd.appendChild(nomBadge);
         }

@@ -534,10 +534,10 @@ Euro+Med ebenfalls „Inula hirta", *P. britannica* dort „Inula britannica".
 
 Abgewertet heißt **nicht** ausgeblendet: die Zeile bleibt in der Liste,
 gekennzeichnet. Wer den Namen in älterer Literatur findet, muss nachschlagen
-können, was aus ihm geworden ist. Im gemessenen Index gibt es **28.233**
-Schreibweisen, unter denen ein disqualifizierter **und** ein statusfreier Name
-existieren — genau die Lage, in der dieses Kriterium die Reihenfolge
-entscheidet.
+können, was aus ihm geworden ist. Im gemessenen Index gibt es rund **32.000**
+Schreibweisen, unter denen ein disqualifizierter **und** ein nicht
+disqualifizierter Name existieren — genau die Lage, in der dieses Kriterium
+die Reihenfolge entscheidet.
 
 `target_space_name` ist die Schreibweise des Concepts im angefragten
 `target_space`. Das Feld ist nur vorhanden, wenn ein Zielraum angefragt wurde

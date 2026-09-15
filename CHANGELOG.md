@@ -124,9 +124,9 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   direkt hinter dem Exakt-Treffer: ein disqualifizierter Treffer-Name
   verliert gegen einen ohne Befund. Nur `disqualifying` wertet ab, nicht
   `unclassified` („sensu auct.", „fossil name") — Unsicherheit ist kein
-  Mangel. Gemessen an der Produktions-DB betrifft das **28.233**
-  Schreibweisen, unter denen ein disqualifizierter **und** ein statusfreier
-  Name existieren.
+  Mangel. Gemessen an der Produktions-DB betrifft das rund **32.000**
+  Schreibweisen, unter denen ein disqualifizierter **und** ein nicht
+  disqualifizierter Name existieren.
 * **CORS-Preflight:** `OPTIONS` auf die POST-Endpunkte `/v1/match` und
   `/v1/translate` wurde mit einem nackten 405 ohne CORS-Header beantwortet,
   weil gorilla/mux `Use`-Middleware nur für *gematchte* Routen ausführt — ein

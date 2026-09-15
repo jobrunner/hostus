@@ -263,7 +263,7 @@ func TestUISuggestSendsTheFilterParameters(t *testing.T) {
 func TestUIMarksADisqualifiedMatchedName(t *testing.T) {
 	for _, want := range []string{
 		`matched.nom_status_judgement === "disqualifying"`,
-		`badge("disqualifiziert", "bad")`,
+		`badge("nicht verwendbar", "bad")`,
 		`nomBadge.title = matched.nom_status`,
 	} {
 		if !strings.Contains(uiAppJS, want) {

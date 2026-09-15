@@ -301,11 +301,12 @@ func (db *DB) attachMatchedNames(ctx context.Context, items []domain.SuggestItem
 		// (MatchedNameDisqualified goes false), so RankSuggestions' new
 		// priority 2 never fires and the concept reached through the
 		// illegitimate name keeps its place. Measured on the production
-		// index: 3,810 concepts carry such a pair, all of the shape
-		// "species + infraspecific taxon" — e.g. wcvp:concept:100405, where
-		// "Houstonia angustifolia Pursh" (nom. illeg.) is exact and
-		// "Houstonia angustifolia var. rigidiuscula A.Gray" is a prefix.
-		// That is the reported Inula hirta bug itself, 3,810 times over.
+		// index with domain.ClassifyNomStatus: 3,327 concepts carry such a
+		// pair (10,233 pairs in total), all of the shape "species +
+		// infraspecific taxon" — e.g. wcvp:concept:100405, where "Houstonia
+		// angustifolia Pursh" (nom. illeg.) is exact and "Houstonia
+		// angustifolia var. rigidiuscula A.Gray" is a prefix. That is the
+		// reported Inula hirta bug itself, on 3,327 concepts.
 		if previous.exact == candidate.exact && previous.disqualified && !candidate.disqualified {
 			matched[conceptID] = candidate
 		}

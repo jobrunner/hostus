@@ -203,6 +203,84 @@ func TestRankSuggestions_Empty(t *testing.T) {
 	}
 }
 
+// TestRankSuggestions_DisqualifiedMatchedNameLosesToLegitimate pins the
+// reported Inula-hirta case as the user hits it: entry_backbone=wcvp and NO
+// target_space, so the target-space key cannot decide. "Inula hirta Pollich"
+// is a later illegitimate homonym (WCVP nom_status ", nom. illeg. homonym.
+// post.") of Pentanema britannica; "Inula hirta L." is the legitimate name
+// of Pentanema hirtum. Before this key existed, bm25 alone ordered them.
+func TestRankSuggestions_DisqualifiedMatchedNameLosesToLegitimate(t *testing.T) {
+	britannica := domain.SuggestItem{
+		ConceptID: "wcvp:concept:3217682", Rank: domain.RankSpecies, Status: domain.StatusAccepted,
+		ExactHit: true, MatchedNameDisqualified: true, PrefixHit: true, Score: 1.0,
+	}
+	hirtum := domain.SuggestItem{
+		ConceptID: "wcvp:concept:3217689", Rank: domain.RankSpecies, Status: domain.StatusAccepted,
+		ExactHit: true, MatchedNameDisqualified: false, PrefixHit: true, Score: 2.0,
+	}
+
+	got := domain.RankSuggestions([]domain.SuggestItem{britannica, hirtum})
+
+	if got[0].ConceptID != hirtum.ConceptID {
+		t.Fatalf("first = %q, want the legitimate name %q", got[0].ConceptID, hirtum.ConceptID)
+	}
+}
+
+// TestRankSuggestions_LegitimacyOutranksTargetSpaceHit pins the POSITION of
+// the new key: it sits ahead of TargetSpaceHit, so a disqualified name does
+// not win just because it happens to be the spelling used in the requested
+// space. Both keys differ between the items — otherwise swapping them would
+// leave this test green and pin nothing.
+func TestRankSuggestions_LegitimacyOutranksTargetSpaceHit(t *testing.T) {
+	disqualifiedInSpace := domain.SuggestItem{
+		ConceptID: "a", Rank: domain.RankSpecies, Status: domain.StatusAccepted, ExactHit: true,
+		MatchedNameDisqualified: true, TargetSpaceHit: true, Score: 0.1,
+	}
+	legitimateOutsideSpace := domain.SuggestItem{
+		ConceptID: "b", Rank: domain.RankSpecies, Status: domain.StatusAccepted, ExactHit: true,
+		MatchedNameDisqualified: false, TargetSpaceHit: false, Score: 0.9,
+	}
+
+	got := domain.RankSuggestions([]domain.SuggestItem{disqualifiedInSpace, legitimateOutsideSpace})
+
+	if got[0].ConceptID != "b" {
+		t.Fatalf("first = %q, want the legitimate name %q", got[0].ConceptID, "b")
+	}
+}
+
+// TestRankSuggestions_OnlyDisqualifyingJudgementLowersRank guards Spec
+// decision 2: of the four NomStatusJudgement values, only
+// JudgementDisqualifying may down-rank a candidate. JudgementAbsent (nothing
+// recorded), JudgementAcceptable (e.g. nom. cons.) and JudgementUnclassified
+// (e.g. "sensu auct.", "fossil name" — cases where the existing rule table
+// deliberately withholds a verdict rather than treat uncertainty as a
+// defect) must all map to MatchedNameDisqualified == false, exactly as the
+// adapter would derive it from MatchedName.NomStatusJudgement. Three items
+// differing only in that derived bool must keep their input order.
+func TestRankSuggestions_OnlyDisqualifyingJudgementLowersRank(t *testing.T) {
+	judgements := []domain.NomStatusJudgement{
+		domain.JudgementAbsent, domain.JudgementAcceptable, domain.JudgementUnclassified,
+	}
+	ids := []string{"absent", "acceptable", "unclassified"}
+	items := make([]domain.SuggestItem, len(judgements))
+	for i, j := range judgements {
+		items[i] = domain.SuggestItem{
+			ConceptID: ids[i], Rank: domain.RankSpecies, Status: domain.StatusAccepted, ExactHit: true,
+			MatchedNameDisqualified: j == domain.JudgementDisqualifying,
+			MatchedName:             domain.MatchedName{NomStatusJudgement: j},
+			Score:                   1.0,
+		}
+	}
+
+	got := domain.RankSuggestions(items)
+
+	for i, want := range ids {
+		if got[i].ConceptID != want {
+			t.Fatalf("order changed: got %v, want input order preserved %v (no non-disqualifying judgement may down-rank)", got, ids)
+		}
+	}
+}
+
 func TestRankOrderPriority(t *testing.T) {
 	tests := []struct {
 		rank domain.Rank

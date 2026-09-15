@@ -37,8 +37,18 @@ type SuggestItem struct {
 	// correct hits; this only decides which one serves the caller's
 	// declared target space first.
 	TargetSpaceHit bool
-	PrefixHit      bool
-	Score          float64
+	// MatchedNameDisqualified is true when MatchedName.NomStatusJudgement ==
+	// JudgementDisqualifying — the name that triggered this hit is
+	// nomenclaturally invalid (e.g. a later illegitimate homonym), not merely
+	// unrecorded or unclassified. It is DERIVED, not computed here: the
+	// adapter sets it when it resolves MatchedName, so RankSuggestions can
+	// stay a pure comparison over booleans. See RankSuggestions' doc comment,
+	// priority 2 — this is the "Inula hirta" case: "Inula hirta Pollich"
+	// carries WCVP nom_status ", nom. illeg. homonym. post." while
+	// "Inula hirta L." carries none, and the two must not rank as equals.
+	MatchedNameDisqualified bool
+	PrefixHit               bool
+	Score                   float64
 	// Aggregate is true when this concept was reached via an AGGREGATE
 	// name-space alias (e.g. FloraVeg's "Achillea millefolium aggr."), so a
 	// client can badge the hit as an aggregate. It is MAX(is_aggregate) over
@@ -76,6 +86,18 @@ type MatchedName struct {
 	Authorship string
 	// Role is "accepted" or "synonym".
 	Role string
+	// NomStatus is the NORMALIZED (see NormalizeNomStatus) raw WCVP
+	// nom_status cell for this name. Empty means "nothing recorded" — the
+	// same absence NomStatusJudgement distinguishes from a verified-clean
+	// status via JudgementAbsent, so an empty NomStatus does NOT imply the
+	// name is fine, only that nothing was written down.
+	NomStatus string
+	// NomStatusJudgement is the ClassifyNomStatus verdict for NomStatus. It
+	// is ALWAYS set, never a zero value standing in for "not computed":
+	// JudgementAbsent is itself a judgement ("nothing recorded"), not a
+	// missing one. SuggestItem.MatchedNameDisqualified is derived from this
+	// field by the adapter (== JudgementDisqualifying).
+	NomStatusJudgement NomStatusJudgement
 }
 
 // rankOrder assigns the ordinal used by RankOrderPriority/RankSuggestions
@@ -162,20 +184,34 @@ func RankOrderPriority(r Rank) int {
 
 // RankSuggestions returns a new, stably-sorted copy of items ordered by the
 // autosuggest priority (originally §B.1, extended by the 2026-09-14
-// suggest-filter-und-ranking spec with the two leading criteria below),
-// highest priority first:
+// suggest-filter-und-ranking spec with two leading criteria, and by the
+// 2026-09-15 suggest-nomenklatorische-relevanz spec with a third), highest
+// priority first:
 //
 //  1. ExactHit true before false — the concept carries a name whose
 //     canonicalized form equals the canonicalized query, not merely a
 //     prefix of it
-//  2. TargetSpaceHit true before false — only meaningful when a
+//  2. MatchedNameDisqualified false before true — a candidate whose
+//     triggering name is nomenclaturally invalid (JudgementDisqualifying,
+//     e.g. a later illegitimate homonym) loses to one whose triggering name
+//     is not. This sits ahead of TargetSpaceHit deliberately: whether a name
+//     was validly published at all is more fundamental than which namespace
+//     it appears in, and the reported case — "Inula hirta" via
+//     entry_backbone=wcvp with no target_space requested — is exactly the
+//     one where TargetSpaceHit ties (false for every item) and cannot
+//     decide. Only JudgementDisqualifying lowers rank: JudgementAbsent,
+//     JudgementAcceptable and JudgementUnclassified (e.g. "sensu auct.",
+//     "fossil name" — cases the nom_status rule table deliberately withholds
+//     a verdict on) all leave MatchedNameDisqualified false, so uncertainty
+//     is never treated as a defect.
+//  3. TargetSpaceHit true before false — only meaningful when a
 //     SuggestOpts.TargetSpace was requested; without one it is false for
 //     every item and this key is a no-op
-//  3. PrefixHit true before false
-//  4. InArea true before false
-//  5. Status == StatusAccepted before any other status
-//  6. lower RankOrderPriority first (broader/simpler ranks before finer ones)
-//  7. Score ascending (bm25: lower Score means more relevant — see
+//  4. PrefixHit true before false
+//  5. InArea true before false
+//  6. Status == StatusAccepted before any other status
+//  7. lower RankOrderPriority first (broader/simpler ranks before finer ones)
+//  8. Score ascending (bm25: lower Score means more relevant — see
 //     SuggestItem's doc comment on the sign convention)
 //
 // Items that compare equal on every key above keep their relative input
@@ -190,6 +226,9 @@ func RankSuggestions(items []SuggestItem) []SuggestItem {
 
 		if a.ExactHit != b.ExactHit {
 			return a.ExactHit
+		}
+		if a.MatchedNameDisqualified != b.MatchedNameDisqualified {
+			return !a.MatchedNameDisqualified
 		}
 		if a.TargetSpaceHit != b.TargetSpaceHit {
 			return a.TargetSpaceHit

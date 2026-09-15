@@ -76,6 +76,22 @@ Trennung als runnerneutrale Lösung.
 dort vollständig durch) — das ist das eigentliche Entwickler-Gate für diese
 beiden Pakete.
 
+**Warum der Lauf in einer Sandbox stattfindet:** gremlins kopiert für *jeden
+einzelnen Mutanten* das komplette Modulverzeichnis. Es kennt weder
+`.gitignore` noch den Unterschied zwischen Quellcode und Daten — es kopiert
+den Ordner, wie er ist. Wer lokal gebaute Datenbanken in `out/` und
+Spike-Daten in `poc/` liegen hat, kommt damit auf 16 GB pro Mutantenkopie;
+gemessen hat ein solcher Lauf 451 GB Temp-Kopien hinterlassen, und unter dem
+entstehenden Plattendruck meldete gremlins sogar ein **falsches**
+`Not covered: 3` — das Gate wurde also unzuverlässig, nicht nur langsam.
+`make mutation` läuft deshalb seit 2026-09-15 über
+`scripts/mutation-sandbox.sh`: eine `rsync`-Kopie des Arbeitsbaums ohne die
+Datenverzeichnisse (**6,5 MB** statt 16 GB), inklusive nicht committeter und
+unversionierter Dateien — ein `git worktree` wäre hier falsch, weil er den
+letzten Commit statt der laufenden Arbeit prüfen würde. Produktionsdaten
+bleiben unangetastet; welche Pfade ausgenommen sind und warum, steht im
+Skriptkopf.
+
 ## Das ESy-Regelwerk ist nicht ingestiert — `esy_diagnostic_relevance` bleibt `not_determinable` (SP9)
 
 **Stand:** 2026-08-05, Sondierung 2026-08-12 · **Betrifft:** `POST /v1/match`

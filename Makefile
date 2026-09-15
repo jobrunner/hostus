@@ -119,8 +119,13 @@ mutation: ## Mutation-Testing (gremlins) — package-scoped, `Not covered`=0 + M
 	@# folgen und Rechte AUSSERHALB des Repos ändern — nur den Link entfernen.
 	@if [ -L .go ]; then rm -f .go; elif [ -d .go ]; then chmod -R u+w .go 2>/dev/null || true; rm -rf .go; fi
 	@command -v gremlins >/dev/null 2>&1 || $(GO) install github.com/go-gremlins/gremlins/cmd/gremlins@v0.5.1
+	@# Der Lauf geht durch scripts/mutation-sandbox.sh: gremlins' Kopie-pro-Mutant
+	@# nimmt sonst alles mit, was neben dem Code liegt — lokal sind das 16 GB
+	@# (out/ 8,5 GB, poc/ 6,5 GB) statt 5,6 MB. Drei Läufe hatten so schon 451 GB
+	@# hinterlassen und die Platte gefüllt; unter dem Druck meldete ein Lauf sogar
+	@# ein falsches `Not covered: 3`. Begründung und Ausnahmeliste im Skriptkopf.
 	@out=$$(mktemp); rc=$$(mktemp); \
-	{ gremlins unleash --dry-run=false $(if $(MUTATION_WORKERS),--workers $(MUTATION_WORKERS),) $(if $(PKG),$(PKG),./...); echo $$? >"$$rc"; } | tee "$$out"; \
+	{ scripts/mutation-sandbox.sh unleash --dry-run=false $(if $(MUTATION_WORKERS),--workers $(MUTATION_WORKERS),) $(if $(PKG),$(PKG),./...); echo $$? >"$$rc"; } | tee "$$out"; \
 	status=$$(cat "$$rc"); \
 	notcovered=$$(sed -n 's/.*Not covered: \([0-9][0-9]*\).*/\1/p' "$$out" | tail -1); \
 	killed=$$(sed -n 's/.*Killed: \([0-9][0-9]*\).*/\1/p' "$$out" | tail -1); \

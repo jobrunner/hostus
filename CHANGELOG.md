@@ -35,6 +35,19 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Changed
+
+* **Tooling:** `make mutation` läuft über `scripts/mutation-sandbox.sh` in
+  einer schlanken `rsync`-Kopie des Arbeitsbaums statt im Arbeitsbaum selbst.
+  gremlins kopiert pro Mutant das ganze Modulverzeichnis und kennt dabei
+  weder `.gitignore` noch den Unterschied zwischen Code und Daten — mit
+  lokalen Datenbanken in `out/` und Spike-Daten in `poc/` waren das 16 GB je
+  Kopie statt 6,5 MB. Gemessen hinterließen drei Läufe 451 GB, ein Lauf
+  füllte die Platte, und unter diesem Druck meldete gremlins ein falsches
+  `Not covered: 3`. Die Kopie enthält auch nicht committete und
+  unversionierte Dateien, prüft also die laufende Arbeit und nicht den
+  letzten Commit.
+
 ### Added
 
 * **Suggest:** `require_target_space=true` schränkt die Trefferliste auf

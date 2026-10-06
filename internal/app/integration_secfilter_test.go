@@ -63,11 +63,11 @@ func firstResult(t *testing.T, got map[string]any) map[string]any {
 }
 
 // TestIntegration_SecFilterAndSecOutput drives the SP5 lever end to end over
-// real HTTP: a name shared across WCVP + two CDM sec spaces is ambiguous
-// without a filter, resolves to the WCVP concept with entry_backbone=wcvp and
-// to one CDM concept with entry_sec; /v1/concept and /v1/suggest carry `sec`
-// for the CDM concept and not the WCVP one; and /v1/translate verbatim with
-// entry_sec translates over the seeded relation.
+// real HTTP: a name shared across WCVP + two CDM sec spaces resolves to the
+// WCVP concept both without a filter and with entry_backbone=wcvp, and to one
+// CDM concept with entry_sec; /v1/concept and /v1/suggest carry `sec` for the
+// CDM concept and not the WCVP one; and /v1/translate verbatim with entry_sec
+// translates over the seeded relation.
 func TestIntegration_SecFilterAndSecOutput(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "hostus.sqlite")
@@ -88,11 +88,24 @@ func TestIntegration_SecFilterAndSecOutput(t *testing.T) {
 	defer ts.Close()
 	client := ts.Client()
 
-	// (a) no filter -> ambiguous across WCVP + 2 CDM -> unresolvable.
-	amb := firstResult(t, postJSON(t, client, ts.URL+"/v1/match",
+	// (a) no filter -> the WCVP concept, NOT an ambiguity across WCVP + 2 CDM.
+	//
+	// This assertion was inverted once. It originally pinned "unresolvable",
+	// which is what the unfiltered match answered while sec.-space concepts
+	// still counted as rival claimants on the spelling. That turned out to be
+	// the defect, not the contract: a sec. reference is an attribution detail
+	// of a separate concept SOURCE, so loading CDM made ordinary names stop
+	// resolving for every caller who never asked about sec. spaces at all.
+	// application.preferGenuineClaimants fixed it on the serving path, and
+	// this assertion is now its end-to-end guard — drop that preference and
+	// the three claimants are tied again.
+	un := firstResult(t, postJSON(t, client, ts.URL+"/v1/match",
 		`{"names":[{"id":"1","verbatim":"Festuca ovina L."}]}`))
-	if amb["match_type"] != "unresolvable" {
-		t.Errorf("no filter: match_type = %v, want unresolvable", amb["match_type"])
+	if un["match_type"] != "exact_author" {
+		t.Errorf("no filter: match_type = %v, want exact_author", un["match_type"])
+	}
+	if un["concept_id"] != festucaOvinaConceptID {
+		t.Errorf("no filter: concept_id = %v, want the WCVP concept %s", un["concept_id"], festucaOvinaConceptID)
 	}
 
 	// (b) entry_backbone=wcvp -> the WCVP concept, exact.

@@ -113,6 +113,10 @@ func OpenPool(path string, maxConns int) (*DB, error) {
 		_ = sqlDB.Close()
 		return nil, err
 	}
+	if err := migrateNameSpaceEntryRank(context.Background(), sqlDB); err != nil {
+		_ = sqlDB.Close()
+		return nil, err
+	}
 	if err := migrateTaxonConceptClassification(context.Background(), sqlDB); err != nil {
 		_ = sqlDB.Close()
 		return nil, err
@@ -601,6 +605,17 @@ func migrateXrefSourceColumn(ctx context.Context, sqlDB *sql.DB) error {
 // determinate.
 func migrateNameSpaceEntryStatus(ctx context.Context, sqlDB *sql.DB) error {
 	return addColumnIfMissing(ctx, sqlDB, "name_space_entry", "status", "TEXT NOT NULL DEFAULT ''")
+}
+
+// migrateNameSpaceEntryRank adds name_space_entry.rank for exactly the reason
+// migrateNameSpaceEntryStatus adds status, and with the same consequence:
+// existing rows keep ” — "rank not recorded" — which
+// domain.ResolveTargetSpace reads as "unknown" and stands its congruence rule
+// down for, rather than filtering every candidate away. Only a re-ingest
+// fills it, and only then does a species stop resolving to one of its own
+// subspecies.
+func migrateNameSpaceEntryRank(ctx context.Context, sqlDB *sql.DB) error {
+	return addColumnIfMissing(ctx, sqlDB, "name_space_entry", "rank", "TEXT NOT NULL DEFAULT ''")
 }
 
 // migrateTaxonConceptClassification adds taxon_concept.family/order_name/

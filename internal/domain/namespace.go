@@ -87,6 +87,18 @@ type NameSpaceEntry struct {
 	// Absence is information here: empty means "no normalisation was
 	// needed", never "unknown".
 	Resolution string
+	// Rank is the space's OWN rank for this spelling, normalised through
+	// ParseRankLenient at ingest (the source vocabularies disagree: Euro+Med
+	// writes "Subspecies", GermanSL "SSP", WCVP "subsp.").
+	//
+	// It is what keeps a target-space name rank-determinate. Status alone
+	// cannot: a space accepts a species AND its subspecies, so several
+	// entries attached to one concept are equally accepted and the pick among
+	// them fell to ext_id order — which answered a plain Bromus erectus with
+	// "Bromopsis erecta subsp. permixta". The zero value means the entry
+	// predates this field; see ResolveTargetSpace for what that falls back
+	// to.
+	Rank Rank
 }
 
 // AggregatePolicy is UC4's tri-state answer to "can coverage assigned to an
@@ -164,29 +176,53 @@ type TargetSpaceChoice struct {
 	Status string
 }
 
+// TargetSpaceQuery is what ResolveTargetSpace knows about the concept being
+// translated, as opposed to the candidate spellings it chooses among. It is a
+// struct rather than a pair of parameters because the two fields answer
+// unrelated questions and read as nothing at a call site — ResolveTargetSpace
+// (true, false, entries) says neither which flag is which nor what either
+// means.
+type TargetSpaceQuery struct {
+	// IsAggregate says whether the verbatim the caller matched carried an
+	// aggregate marker (see IsAggregateName). It selects UC4's aggregate
+	// branch, which is a different question from rank congruence: an
+	// aggregate query wants the collective spelling even though its rank
+	// matches no plain species.
+	IsAggregate bool
+	// SourceRank is the rank of the concept being translated, normalised to
+	// hostus' own vocabulary. The zero value — and RankOther, which
+	// ParseRankLenient returns for the empty string — both mean "unknown"
+	// and stand the congruence rule down rather than filtering every
+	// candidate away.
+	SourceRank Rank
+}
+
 // ResolveTargetSpace decides, for one matched concept, the ESy-compatible name
-// the target space uses and the AggregatePolicy that applies. queryIsAggregate
-// says whether the verbatim the caller matched carried an aggregate marker
-// (see IsAggregateName); entries are that concept's spellings in the target
-// space (see NameSpaceEntry), already ordered by the repository.
+// the target space uses and the AggregatePolicy that applies. query describes
+// the concept being translated (see TargetSpaceQuery); entries are that
+// concept's spellings in the target space (see NameSpaceEntry), already
+// ordered by the repository.
 //
 // The rules mirror AggregatePolicy's three states exactly:
 //
-//   - queryIsAggregate and an aggregate-marked entry exists -> that spelling +
+//   - query.IsAggregate and an aggregate-marked entry exists -> that spelling +
 //     Known.
-//   - queryIsAggregate and NO aggregate-marked entry exists -> "" + Unresolvable.
+//   - query.IsAggregate and NO aggregate-marked entry exists -> "" + Unresolvable.
 //     No name is handed back: offering the microspecies spelling here is
 //     precisely the false "not met" the source document warns against.
-//   - not queryIsAggregate -> the nominate (non-aggregate) spelling if any,
-//     else the first spelling, else ""; policy is the zero value (absent).
-func ResolveTargetSpace(queryIsAggregate bool, entries []NameSpaceEntry) (TargetSpaceChoice, AggregatePolicy) {
-	if queryIsAggregate {
-		if e, ok := pickSpelling(entries, true); ok {
+//   - otherwise -> the nominate (non-aggregate) spelling if any, else the
+//     first spelling, else ""; policy is the zero value (absent).
+//
+// Within either branch the candidates are narrowed by rank congruence before
+// the accepted-preference runs — see rankCongruent.
+func ResolveTargetSpace(query TargetSpaceQuery, entries []NameSpaceEntry) (TargetSpaceChoice, AggregatePolicy) {
+	if query.IsAggregate {
+		if e, ok := pickSpelling(entries, true, query.SourceRank); ok {
 			return TargetSpaceChoice{Name: e.Name, ExtID: e.ExtID, Status: e.Status}, AggregatePolicyKnown
 		}
 		return TargetSpaceChoice{}, AggregatePolicyUnresolvable
 	}
-	if e, ok := pickSpelling(entries, false); ok {
+	if e, ok := pickSpelling(entries, false, query.SourceRank); ok {
 		return TargetSpaceChoice{Name: e.Name, ExtID: e.ExtID, Status: e.Status}, ""
 	}
 	if len(entries) > 0 {
@@ -218,30 +254,141 @@ func ResolveTargetSpace(queryIsAggregate bool, entries []NameSpaceEntry) (Target
 // DIRECTLY by name. Direct name evidence must win; within either tier the
 // existing ext_id order (the order entries already arrives in) is
 // unchanged. See whole-branch review 2026-09-13, I3.
-func pickSpelling(entries []NameSpaceEntry, aggregate bool) (NameSpaceEntry, bool) {
-	var first, closedAccepted NameSpaceEntry
-	found, foundClosedAccepted := false, false
+//
+// RANK CONGRUENCE (see rankCongruent) splits each of those tiers in two,
+// below the accepted/direct distinctions rather than above them. It has to
+// be below: a space's accepted spelling is a nomenclatural fact, while
+// congruence only separates candidates the earlier rules left tied — which
+// is exactly the Bromus erectus case, where Euro+Med accepts the species AND
+// nine of its subspecies and ext_id order decided among them.
+func pickSpelling(entries []NameSpaceEntry, aggregate bool, sourceRank Rank) (NameSpaceEntry, bool) {
+	var best NameSpaceEntry
+	bestTier, found := 0, false
 	for _, e := range entries {
 		if e.Aggregate != aggregate {
 			continue
 		}
-		if e.AcceptedInSpace() {
-			if strings.Contains(e.Resolution, ResolutionSourceSynonymyClosure) {
-				if !foundClosedAccepted {
-					closedAccepted, foundClosedAccepted = e, true
-				}
-				continue
+		tier := spellingTier(e, rankCongruent(sourceRank, e.Rank))
+		if !found || tier < bestTier {
+			best, bestTier, found = e, tier, true
+		}
+	}
+	return best, found
+}
+
+// spellingTier scores one candidate spelling: lower wins, and ties keep the
+// order entries arrived in (pickSpelling only replaces on a STRICTLY better
+// tier). The six values are the three preferences in priority order —
+// accepted over not, direct over closure-attached, rank-congruent over not.
+func spellingTier(e NameSpaceEntry, congruent bool) int {
+	const (
+		tierAcceptedDirectCongruent = iota
+		tierAcceptedDirect
+		tierAcceptedClosedCongruent
+		tierAcceptedClosed
+		tierCongruent
+		tierAny
+	)
+	if e.AcceptedInSpace() {
+		if strings.Contains(e.Resolution, ResolutionSourceSynonymyClosure) {
+			if congruent {
+				return tierAcceptedClosedCongruent
 			}
-			return e, true
+			return tierAcceptedClosed
 		}
-		if !found {
-			first, found = e, true
+		if congruent {
+			return tierAcceptedDirectCongruent
 		}
+		return tierAcceptedDirect
 	}
-	if foundClosedAccepted {
-		return closedAccepted, true
+	if congruent {
+		return tierCongruent
 	}
-	return first, found
+	return tierAny
+}
+
+// rankCongruent reports whether an entry's rank is compatible with the rank of
+// the concept being translated.
+//
+// Compatibility is decided in CLASSES, never by equality. Two checklists
+// disagreeing on whether a taxon is a subspecies or a variety is a taxonomic
+// opinion, not an error, and demanding equality would reject the only sensible
+// spelling on offer. What must not happen is a species resolving to one of its
+// own subspecies — a different taxon, silently narrower than what the caller
+// matched.
+//
+// An unknown rank on EITHER side — the zero value, or RankOther, which
+// ParseRankLenient returns for the empty string and for the long tail of
+// exotic ranks — stands the rule down and reports true. Entries ingested
+// before NameSpaceEntry.Rank existed carry none, and filtering them all away
+// would answer nothing at all where the index previously answered something;
+// re-ingest is what makes the rule bite.
+func rankCongruent(source, entry Rank) bool {
+	sc, ec := rankClassOf(source), rankClassOf(entry)
+	if sc == rankClassUnknown || ec == rankClassUnknown {
+		return true
+	}
+	return sc == ec
+}
+
+// rankClass is the coarse grouping rankCongruent compares in: everything
+// finer than the species, the species itself, and everything above it.
+type rankClass int
+
+const (
+	rankClassUnknown rankClass = iota
+	rankClassInfraspecific
+	rankClassSpecies
+	rankClassSupraspecific
+)
+
+// rankClasses maps every Rank with a settled position relative to the species
+// to its class. A lookup table rather than a switch for the same reason
+// canonicalRanks is one — and because an exhaustive switch over Rank would
+// have to name all ~45 constants to satisfy the linter, which buys nothing
+// here: a rank absent from these tables is exactly the "unknown" case
+// rankClassOf already has an answer for.
+//
+// The collective ranks (SPECIES_AGGREGATE, COLL_SPECIES) count as
+// species-level: an aggregate stands in for a species, never for a subspecies
+// of one. Which spelling an aggregate QUERY gets is a separate question,
+// answered by ResolveTargetSpace's aggregate branch before this ever runs.
+//
+// RankOther and the empty Rank are deliberately in NEITHER table: both mean
+// the rank is not determinable, and a lookup miss is how rankClassOf reports
+// that.
+var speciesRanks = map[Rank]struct{}{
+	RankSpecies: {}, RankSpeciesAggregate: {}, RankCollSpecies: {},
+}
+
+var infraspecificRanks = map[Rank]struct{}{
+	RankSubspecies: {}, RankVariety: {}, RankSubvariety: {},
+	RankForm: {}, RankSubform: {},
+	RankNothosubspecies: {}, RankNothovariety: {}, RankNothoform: {},
+	RankSubspeciesGroup: {}, RankProles: {}, RankRace: {}, RankConvar: {},
+	RankGrex: {}, RankUnrankedInfraspecific: {},
+}
+
+var supraspecificRanks = map[Rank]struct{}{
+	RankGenus: {}, RankGenusAggregate: {}, RankSubgenus: {},
+	RankSection: {}, RankSubsection: {}, RankSeries: {},
+	RankUnrankedInfrageneric: {},
+	RankFamily:               {}, RankSubfamily: {}, RankTribe: {},
+	RankOrder: {}, RankSuperorder: {}, RankClass: {}, RankSubclass: {},
+	RankPhylum: {}, RankSubdivision: {}, RankInformalClade: {}, RankRoot: {},
+}
+
+func rankClassOf(r Rank) rankClass {
+	if _, ok := speciesRanks[r]; ok {
+		return rankClassSpecies
+	}
+	if _, ok := infraspecificRanks[r]; ok {
+		return rankClassInfraspecific
+	}
+	if _, ok := supraspecificRanks[r]; ok {
+		return rankClassSupraspecific
+	}
+	return rankClassUnknown
 }
 
 // IsAggregateName reports whether a verbatim name denotes an AGGREGATE — a

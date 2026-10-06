@@ -410,6 +410,18 @@ POST /v1/match
   Schreibweise hat, **insbesondere bei `aggregate_policy: unresolvable`**: dort
   wird bewusst kein Name geliefert, weil die Kleinart als Aggregatnamen
   anzubieten genau die falsche „nicht erfüllt"-Antwort wäre.
+
+  Unter mehreren Schreibweisen desselben Concepts gewinnt die im Zielraum
+  **akzeptierte**, und darunter die **rangkongruente**: Zu einer Art wird nie
+  eine ihrer Unterarten geliefert. Ein Zielraum akzeptiert beides
+  nebeneinander — Euro+Med führt unter *Bromopsis erecta* die Art und neun
+  Unterarten, alle `accepted` —, sodass ohne diese Regel die Reihenfolge der
+  Quell-IDs entschied und ein schlichtes *Bromus erectus* als *Bromopsis
+  erecta subsp. permixta* beantwortet wurde. Verglichen wird grob
+  (unterartlich / artlich / übergeordnet), nicht auf Ranggleichheit: dass ein
+  Zielraum eine Varietät als Unterart führt, ist eine taxonomische Auffassung,
+  kein Fehler. Einträge aus einem Ingest vor Einführung der Rang-Spalte tragen
+  keinen Rang; für sie setzt die Regel aus, bis neu ingestiert wurde.
 - `target_space_ext_id` — die Quell-ID des Namensraum-Eintrags hinter
   `target_space_name` (`name_space_entry.ext_id`) — für `target_space: eurosl`
   die Euro+Med-PlantBase-TaxonUsage-UUID, ein stabiler Schlüssel für externe

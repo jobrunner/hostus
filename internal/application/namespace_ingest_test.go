@@ -1115,7 +1115,7 @@ func TestIngestNameSpace_TieBrokenAcceptedSpellingWinsTargetSpaceChoice(t *testi
 		t.Fatalf("NameSpaceEntries(a1) = %v, %v — want both entries on the tie-broken bearer", entries, err)
 	}
 
-	choice, policy := domain.ResolveTargetSpace(false, entries)
+	choice, policy := domain.ResolveTargetSpace(domain.TargetSpaceQuery{}, entries)
 	if choice.Name != "Abies alba" {
 		t.Errorf("ResolveTargetSpace name = %q, want %q (the tie-broken, source-accepted spelling)", choice.Name, "Abies alba")
 	}
@@ -1219,7 +1219,7 @@ func TestIngestNameSpace_SourceSynonymyClosesUnattachedAccepted(t *testing.T) {
 	// Habitatus-Gewinn: with the accepted eurosl entry now present,
 	// ResolveTargetSpace picks "Inula hirta" (Status accepted), not the
 	// merely-synonym "Pentanema hirtum" entry.
-	choice, policy := domain.ResolveTargetSpace(false, entries)
+	choice, policy := domain.ResolveTargetSpace(domain.TargetSpaceQuery{}, entries)
 	if choice.Name != "Inula hirta" {
 		t.Errorf("ResolveTargetSpace name = %q, want %q (the closed, source-accepted spelling)", choice.Name, "Inula hirta")
 	}

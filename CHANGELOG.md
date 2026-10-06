@@ -21,6 +21,17 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   Defekt behoben (sec.-Raum-Konzepte zählen nicht als zweiter Anwärter); der
   Test stand seither gegen die eigene Entscheidung. Er pinnt jetzt die
   Claimant-Präferenz ende-zu-ende.
+* **domain,sqlite,application:** Zielnamen rangkongruent wählen — eine Art
+  löste auf eine ihrer eigenen Unterarten auf, weil ein Namensraum beide als
+  `accepted` führt und unter ihnen die Reihenfolge der Quell-IDs entschied
+  (`/v1/translate` beantwortete *Bromus erectus* mit *Bromopsis erecta subsp.
+  permixta*). `name_space_entry` trägt jetzt den Rang der Quelle; er wird beim
+  Ingest normalisiert übernommen und geht der ext_id-Ordnung vor.
+
+  **Wirkt erst nach einem Re-Ingest der Namensräume.** Bestehende Indizes
+  bekommen die Spalte beim Start migriert, ihre Zeilen tragen aber keinen
+  Rang, und für rangfreie Einträge setzt die Regel aus — bis dahin bleibt das
+  Verhalten unverändert.
 
 ### Documentation
 

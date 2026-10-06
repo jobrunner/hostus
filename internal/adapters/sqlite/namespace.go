@@ -35,9 +35,9 @@ func (t *ingestTx) UpsertNameSpace(meta domain.NameSpaceMeta) error {
 // match) is stored as NULL, not as ”.
 func (t *ingestTx) AddNameSpaceEntry(conceptID string, e domain.NameSpaceEntry) error {
 	_, err := t.tx.ExecContext(t.ctx, `
-		INSERT OR REPLACE INTO name_space_entry (space, ext_id, concept_id, name, aggregate, resolution, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		e.Space, e.ExtID, conceptID, e.Name, boolToInt(e.Aggregate), nullString(e.Resolution), e.Status,
+		INSERT OR REPLACE INTO name_space_entry (space, ext_id, concept_id, name, aggregate, resolution, status, rank)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.Space, e.ExtID, conceptID, e.Name, boolToInt(e.Aggregate), nullString(e.Resolution), e.Status, string(e.Rank),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: adding name space entry %s:%s for concept %q: %w", e.Space, e.ExtID, conceptID, err)
@@ -360,14 +360,20 @@ func (db *DB) NameSpaceEntries(ctx context.Context, conceptID string, spaces []s
 			e          domain.NameSpaceEntry
 			aggregate  int
 			resolution sql.NullString
+			rank       string
 		)
-		if err := rows.Scan(&e.Space, &e.ExtID, &e.Name, &aggregate, &resolution, &e.Status); err != nil {
+		if err := rows.Scan(&e.Space, &e.ExtID, &e.Name, &aggregate, &resolution, &e.Status, &rank); err != nil {
 			return nil, fmt.Errorf("sqlite: scanning name space entry for concept %q: %w", conceptID, err)
 		}
 		e.Aggregate = aggregate != 0
 		// A NULL resolution is the ordinary exact match and maps back to the
 		// empty string, exactly as AddNameSpaceEntry wrote it.
 		e.Resolution = resolution.String
+		// '' stays the zero Rank — "not recorded", which ResolveTargetSpace
+		// reads as unknown. It is NOT parsed back through ParseRankLenient:
+		// the ingest already normalised it, and re-parsing would turn a
+		// legacy empty value into RankOther, a different statement.
+		e.Rank = domain.Rank(rank)
 		out = append(out, e)
 	}
 	if err := rows.Err(); err != nil {
@@ -382,7 +388,7 @@ func (db *DB) NameSpaceEntries(ctx context.Context, conceptID string, spaces []s
 // spaces at most), the same trade-off traitsQuery makes for its vocab list.
 func nameSpaceEntriesQuery(conceptID string, spaces []string) (string, []any) {
 	query := `
-		SELECT space, ext_id, name, aggregate, resolution, status
+		SELECT space, ext_id, name, aggregate, resolution, status, rank
 		FROM name_space_entry
 		WHERE concept_id = ?`
 	args := []any{conceptID}

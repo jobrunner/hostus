@@ -256,8 +256,10 @@ check: fmt vet lint test ## Alle Qualitätsprüfungen (vor Commit)
 # ein binärloser Compile-Check via `go build ./...`.
 #
 # `test-integration` gehört dazu, seit es NICHT dazugehörte: die Tests hinter
-# dem `integration`-Build-Tag liefen weder hier noch in der CI, nur der Linter
-# fasste sie an (--build-tags integration prüft Lint, nicht Verhalten).
+# dem `integration`-Build-Tag liefen weder hier noch in der CI. Angefasst hat
+# sie nur `lint-go` von HIER aus (--build-tags integration) — und das prüft
+# Lint, nicht Verhalten; in der CI setzt der Lint-Job keine Build-Tags, dort
+# waren die Dateien also komplett unsichtbar.
 # TestIntegration_SecFilterAndSecOutput war dadurch fünf Wochen rot, ohne dass
 # ein grünes `verify` davon wusste — ein Grün, das eine ganze Testklasse nicht
 # ausführt, ist kein Grün.

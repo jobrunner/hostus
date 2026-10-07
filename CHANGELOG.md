@@ -11,7 +11,8 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 * **ci,build:** Integrationstests laufen in `make verify` und in der CI mit.
   Sie hingen hinter dem `integration`-Build-Tag und wurden nirgends
-  ausgeführt — nur der Linter fasste sie an.
+  ausgeführt — in der CI fasste sie nicht einmal der Linter an (dessen
+  Aufruf dort keine Build-Tags setzt), nur ein lokales `make lint`.
   `TestIntegration_SecFilterAndSecOutput` war dadurch fünf Wochen rot, hinter
   einer grünen Pipeline.
 * **test(app):** Zusicherung (a) in `TestIntegration_SecFilterAndSecOutput`

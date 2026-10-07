@@ -122,10 +122,12 @@ jobs:
 
       # Tests behind the `integration` build tag are NOT part of the run above:
       # without -tags=integration they do not even compile into the test
-      # binary. Until this step existed, nothing in CI executed them — only
-      # golangci-lint parsed them (--build-tags integration), which checks lint
-      # and not behavior. TestIntegration_SecFilterAndSecOutput was red for
-      # five weeks behind a green pipeline as a result.
+      # binary. Until this step existed, NOTHING in CI touched them — not even
+      # the Lint job: its golangci-lint-action passes only --timeout=5m and
+      # .golangci.yml sets no build tags, so these files were invisible there
+      # too. Only a local `make lint` adds --build-tags integration, and that
+      # checks lint rather than behavior. TestIntegration_SecFilterAndSecOutput
+      # was red for five weeks behind a green pipeline as a result.
       #
       # Run as its own step rather than by adding the tag above, so the
       # coverage profile and its ratchet keep measuring exactly the same set of

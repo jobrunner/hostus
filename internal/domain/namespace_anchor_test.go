@@ -6,7 +6,7 @@ import (
 	"github.com/jobrunner/hostus/internal/domain"
 )
 
-// brmousErectusEntries is the real eurosl 2024-11-03 situation for WCVP's
+// bromusErectusEntries is the real eurosl 2024-11-03 situation for WCVP's
 // Bromus erectus concept, reduced to the entries that decide the answer.
 // Measured on a full ingest (2026-10-07): the crosswalk attaches THIRTY eurosl
 // entries to this one concept, eight of them status "accepted" and belonging

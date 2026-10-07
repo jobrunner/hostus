@@ -38,10 +38,12 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   permixta*). `name_space_entry` trägt jetzt den Rang der Quelle; er wird beim
   Ingest normalisiert übernommen und geht der ext_id-Ordnung vor.
 
-  **Wirkt erst nach einem Re-Ingest der Namensräume.** Bestehende Indizes
-  bekommen die Spalte beim Start migriert, ihre Zeilen tragen aber keinen
-  Rang, und für rangfreie Einträge setzt die Regel aus — bis dahin bleibt das
-  Verhalten unverändert.
+  **Beides wirkt erst nach einem Re-Ingest der Namensräume.** Bestehende
+  Indizes bekommen beim Start *beide* Spalten migriert (`rank` und
+  `accepted_name`), ihre Zeilen tragen aber weder Rang noch Synonymie-Angabe,
+  und für solche Einträge setzen Rangregel wie Anker aus. Bis zum Re-Ingest
+  bleibt das Verhalten unverändert — insbesondere liefert `Bromus erectus`
+  direkt nach dem Upgrade weiterhin den alten Namen.
 
 ### Documentation
 

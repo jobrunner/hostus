@@ -411,17 +411,36 @@ POST /v1/match
   wird bewusst kein Name geliefert, weil die Kleinart als Aggregatnamen
   anzubieten genau die falsche „nicht erfüllt"-Antwort wäre.
 
-  Unter mehreren Schreibweisen desselben Concepts gewinnt die im Zielraum
-  **akzeptierte**, und darunter die **rangkongruente**: Zu einer Art wird nie
-  eine ihrer Unterarten geliefert. Ein Zielraum akzeptiert beides
-  nebeneinander — Euro+Med führt unter *Bromopsis erecta* die Art und neun
-  Unterarten, alle `accepted` —, sodass ohne diese Regel die Reihenfolge der
-  Quell-IDs entschied und ein schlichtes *Bromus erectus* als *Bromopsis
-  erecta subsp. permixta* beantwortet wurde. Verglichen wird grob
-  (unterartlich / artlich / übergeordnet), nicht auf Ranggleichheit: dass ein
-  Zielraum eine Varietät als Unterart führt, ist eine taxonomische Auffassung,
-  kein Fehler. Einträge aus einem Ingest vor Einführung der Rang-Spalte tragen
-  keinen Rang; für sie setzt die Regel aus, bis neu ingestiert wurde.
+  Ein Concept trägt oft mehrere Schreibweisen desselben Raums — Euro+Med führt
+  unter *Bromopsis erecta* die Art und neun Unterarten, alle `accepted`. Welche
+  davon geliefert wird, entscheidet sich in dieser Reihenfolge:
+
+  1. **Die eigene Schreibweise des Quellconcepts**, wenn der Zielraum sie
+     führt. Ist sie dort selbst akzeptiert, ist sie die Antwort; ist sie ein
+     Synonym, wird der Angabe des Raums zu seinem eigenen akzeptierten Taxon
+     gefolgt. Euro+Med führt *Bromus erectus* als Synonym von *Bromopsis
+     erecta* — und genau das ist die Antwort. Das ist Quellevidenz und schlägt
+     deshalb alle folgenden Regeln.
+  2. **Akzeptiert vor Synonym**, und darunter direkt zugeordnet vor über die
+     Synonymie-Hülle angehängt.
+  3. **Rangkongruenz**: Unter gleich akzeptierten Kandidaten gewinnt der
+     rangpassende. Verglichen wird grob (unterartlich / artlich /
+     übergeordnet), nicht auf Ranggleichheit — dass ein Zielraum eine Varietät
+     als Unterart führt, ist eine taxonomische Auffassung, kein Fehler.
+  4. Zuletzt die Reihenfolge der Quell-IDs. Bevor es die Regeln 1 und 3 gab,
+     entschied sie allein, und ein schlichtes *Bromus erectus* wurde als
+     *Bromopsis erecta subsp. permixta* beantwortet.
+
+  Die Reihenfolge ist zu beachten: Regel 2 steht **über** Regel 3, eine Art
+  kann also eine akzeptierte Unterart zurückbekommen, wenn der rangpassende
+  Kandidat lediglich ein Synonym ist. Und bricht die Kette in Regel 1 — der
+  Raum führt die Schreibweise als Synonym eines Taxons, das an diesem Concept
+  nicht hängt —, wird die Synonym-Schreibweise **nicht** zurückgegeben, sondern
+  auf Regel 2 zurückgefallen.
+
+  Einträge aus einem Ingest vor Einführung der Spalten `rank`/`accepted_name`
+  tragen diese Angaben nicht; für sie setzen Regel 1 und 3 aus, bis neu
+  ingestiert wurde.
 - `target_space_ext_id` — die Quell-ID des Namensraum-Eintrags hinter
   `target_space_name` (`name_space_entry.ext_id`) — für `target_space: eurosl`
   die Euro+Med-PlantBase-TaxonUsage-UUID, ein stabiler Schlüssel für externe

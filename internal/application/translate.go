@@ -461,6 +461,7 @@ func translateToNameSpace(ctx context.Context, repo output.Repository, req Trans
 	choice, policy := domain.ResolveTargetSpace(domain.TargetSpaceQuery{
 		IsAggregate: sourceIsAggregate,
 		SourceRank:  source.Rank,
+		SourceName:  source.AcceptedName.Canonical,
 	}, entries)
 	return TranslateResult{
 		Source:         source,

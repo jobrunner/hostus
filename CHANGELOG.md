@@ -21,6 +21,16 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   Defekt behoben (sec.-Raum-Konzepte zählen nicht als zweiter Anwärter); der
   Test stand seither gegen die eigene Entscheidung. Er pinnt jetzt die
   Claimant-Präferenz ende-zu-ende.
+* **domain,sqlite,application:** Zielnamen über die quelleigene Synonymie
+  verankern. Rang und Status reichen nicht: ein Namensraum akzeptiert mehrere
+  Schreibweisen desselben Rangs, die zu VERSCHIEDENEN Taxa gehören (gemessen:
+  1.362 Konzepte auf dem echten eurosl-Index), und darunter entschied weiter
+  die ext_id-Reihenfolge — `Bromus erectus` wurde dadurch zu `Bromopsis
+  zangezura`. Der Namensraum führt die Schreibweise des Quellkonzepts aber
+  meist selbst und nennt dort sein eigenes akzeptiertes Taxon;
+  `name_space_entry.accepted_name` trägt diese Angabe jetzt, und die Auflösung
+  folgt ihr vor allen Rangregeln. Am echten Index belegt: `Bromus erectus` →
+  `Bromopsis erecta`.
 * **domain,sqlite,application:** Zielnamen rangkongruent wählen — eine Art
   löste auf eine ihrer eigenen Unterarten auf, weil ein Namensraum beide als
   `accepted` führt und unter ihnen die Reihenfolge der Quell-IDs entschied

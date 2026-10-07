@@ -35,9 +35,9 @@ func (t *ingestTx) UpsertNameSpace(meta domain.NameSpaceMeta) error {
 // match) is stored as NULL, not as ”.
 func (t *ingestTx) AddNameSpaceEntry(conceptID string, e domain.NameSpaceEntry) error {
 	_, err := t.tx.ExecContext(t.ctx, `
-		INSERT OR REPLACE INTO name_space_entry (space, ext_id, concept_id, name, aggregate, resolution, status, rank)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.Space, e.ExtID, conceptID, e.Name, boolToInt(e.Aggregate), nullString(e.Resolution), e.Status, string(e.Rank),
+		INSERT OR REPLACE INTO name_space_entry (space, ext_id, concept_id, name, aggregate, resolution, status, rank, accepted_name)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.Space, e.ExtID, conceptID, e.Name, boolToInt(e.Aggregate), nullString(e.Resolution), e.Status, string(e.Rank), e.AcceptedName,
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: adding name space entry %s:%s for concept %q: %w", e.Space, e.ExtID, conceptID, err)
@@ -362,7 +362,7 @@ func (db *DB) NameSpaceEntries(ctx context.Context, conceptID string, spaces []s
 			resolution sql.NullString
 			rank       string
 		)
-		if err := rows.Scan(&e.Space, &e.ExtID, &e.Name, &aggregate, &resolution, &e.Status, &rank); err != nil {
+		if err := rows.Scan(&e.Space, &e.ExtID, &e.Name, &aggregate, &resolution, &e.Status, &rank, &e.AcceptedName); err != nil {
 			return nil, fmt.Errorf("sqlite: scanning name space entry for concept %q: %w", conceptID, err)
 		}
 		e.Aggregate = aggregate != 0
@@ -388,7 +388,7 @@ func (db *DB) NameSpaceEntries(ctx context.Context, conceptID string, spaces []s
 // spaces at most), the same trade-off traitsQuery makes for its vocab list.
 func nameSpaceEntriesQuery(conceptID string, spaces []string) (string, []any) {
 	query := `
-		SELECT space, ext_id, name, aggregate, resolution, status, rank
+		SELECT space, ext_id, name, aggregate, resolution, status, rank, accepted_name
 		FROM name_space_entry
 		WHERE concept_id = ?`
 	args := []any{conceptID}

@@ -279,6 +279,13 @@ CREATE TABLE IF NOT EXISTS name_space_entry (
   -- among them fell to ext_id order — which answered a plain Bromus erectus
   -- with 'Bromopsis erecta subsp. permixta'. '' = ingested before this column.
   rank         TEXT NOT NULL DEFAULT '',
+  -- the name the space itself files this spelling under (its own
+  -- accepted_taxon column, a NAME not an id); '' when the entry IS the
+  -- accepted one. Status and rank narrow a concept's pool of spellings but
+  -- cannot separate several the space accepts at the same rank under
+  -- DIFFERENT taxa (measured: 1.362 concepts on the real eurosl index) —
+  -- this column is how the space's own synonymy settles it.
+  accepted_name TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (space, ext_id)
 );
 

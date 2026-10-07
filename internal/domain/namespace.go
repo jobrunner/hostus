@@ -99,6 +99,17 @@ type NameSpaceEntry struct {
 	// predates this field; see ResolveTargetSpace for what that falls back
 	// to.
 	Rank Rank
+	// AcceptedName is the name the space itself files this spelling under — its
+	// own accepted_taxon column, a NAME string rather than an id, and empty
+	// when the entry IS the accepted one.
+	//
+	// It is what makes a target-space name determinate when status and rank
+	// have both run out: a concept can carry several entries the space accepts,
+	// at the same rank, belonging to DIFFERENT taxa (measured: 1.362 concepts
+	// on the real eurosl index). Ranking that pool cannot pick the right one —
+	// but the space usually spells the source concept itself and says, right
+	// here, which of its taxa that spelling belongs to.
+	AcceptedName string
 }
 
 // AggregatePolicy is UC4's tri-state answer to "can coverage assigned to an
@@ -195,6 +206,12 @@ type TargetSpaceQuery struct {
 	// and stand the congruence rule down rather than filtering every
 	// candidate away.
 	SourceRank Rank
+	// SourceName is the accepted canonical name of the concept being
+	// translated. It is the key to the strongest evidence available: if the
+	// space spells this name itself, that entry says — in the space's own
+	// data — which of its taxa the concept belongs to. Empty stands the
+	// anchor down and leaves the ranked preferences to decide.
+	SourceName string
 }
 
 // ResolveTargetSpace decides, for one matched concept, the ESy-compatible name
@@ -213,16 +230,18 @@ type TargetSpaceQuery struct {
 //   - otherwise -> the nominate (non-aggregate) spelling if any, else the
 //     first spelling, else ""; policy is the zero value (absent).
 //
-// Within either branch the candidates are narrowed by rank congruence before
-// the accepted-preference runs — see rankCongruent.
+// Within either branch the source's OWN spelling is looked for first (see
+// anchoredSpelling); only when the space does not spell it, or files it under
+// a taxon whose accepted entry is not attached here, do the ranked
+// preferences decide — accepted over synonym, then rank-congruent over not.
 func ResolveTargetSpace(query TargetSpaceQuery, entries []NameSpaceEntry) (TargetSpaceChoice, AggregatePolicy) {
 	if query.IsAggregate {
-		if e, ok := pickSpelling(entries, true, query.SourceRank); ok {
+		if e, ok := pickWithAnchor(entries, true, query); ok {
 			return TargetSpaceChoice{Name: e.Name, ExtID: e.ExtID, Status: e.Status}, AggregatePolicyKnown
 		}
 		return TargetSpaceChoice{}, AggregatePolicyUnresolvable
 	}
-	if e, ok := pickSpelling(entries, false, query.SourceRank); ok {
+	if e, ok := pickWithAnchor(entries, false, query); ok {
 		return TargetSpaceChoice{Name: e.Name, ExtID: e.ExtID, Status: e.Status}, ""
 	}
 	if len(entries) > 0 {
@@ -230,6 +249,78 @@ func ResolveTargetSpace(query TargetSpaceQuery, entries []NameSpaceEntry) (Targe
 		return TargetSpaceChoice{Name: e.Name, ExtID: e.ExtID, Status: e.Status}, ""
 	}
 	return TargetSpaceChoice{}, ""
+}
+
+// pickWithAnchor is ResolveTargetSpace's choice for one aggregate branch: the
+// anchored answer when the space's own data settles it, else the ranked one.
+func pickWithAnchor(entries []NameSpaceEntry, aggregate bool, query TargetSpaceQuery) (NameSpaceEntry, bool) {
+	if e, ok := anchoredSpelling(entries, aggregate, query.SourceName); ok {
+		return e, true
+	}
+	return pickSpelling(entries, aggregate, query.SourceRank)
+}
+
+// anchoredSpelling answers from the target space's own statement about the
+// source concept's spelling, rather than by ranking the candidate pool.
+//
+// Why it has to come first: status and rank both narrow the pool, but neither
+// SEPARATES entries that are equally accepted at the same rank and belong to
+// different taxa of that space. Measured on the real eurosl index
+// (2026-10-07), 1.362 concepts carry such a pool; the WCVP Bromus erectus
+// concept carries thirty eurosl entries, eight of them accepted. Ranking them
+// picked "Bromopsis erecta subsp. permixta" before the rank fix and
+// "Bromopsis zangezura" after it — both merely the lowest ext_id of their
+// tier, neither the right taxon.
+//
+// The space itself knows the answer. Euro+Med spells "Bromus erectus" and
+// files it as a synonym of Bromopsis erecta, so the chain is:
+//
+//	source concept's name -> the space's entry of that spelling
+//	                      -> that entry's own accepted_taxon
+//	                      -> the accepted entry carrying that name
+//
+// Two deliberate refusals. A spelling the space accepts outright ends the
+// chain there (no hop). And when the hop finds no attached entry — the space
+// files the name under a taxon this concept did not crosswalk onto — the
+// anchor reports nothing instead of handing back the SYNONYM's spelling:
+// a name the space explicitly does not accept is not "the name in that
+// space", and the ranked fallback at least answers with one it does.
+//
+// aggregate is honored so the anchor never reaches across UC4's split; the
+// comparison runs through Canonicalize, like every other name comparison here.
+func anchoredSpelling(entries []NameSpaceEntry, aggregate bool, sourceName string) (NameSpaceEntry, bool) {
+	wanted := Canonicalize(sourceName)
+	if wanted == "" {
+		return NameSpaceEntry{}, false
+	}
+	for _, e := range entries {
+		if e.Aggregate != aggregate || Canonicalize(e.Name) != wanted {
+			continue
+		}
+		if e.AcceptedInSpace() {
+			return e, true
+		}
+		return acceptedEntryNamed(entries, aggregate, e.AcceptedName)
+	}
+	return NameSpaceEntry{}, false
+}
+
+// acceptedEntryNamed finds the entry the space accepts under name, which is
+// the far end of anchoredSpelling's synonymy hop. It insists on
+// AcceptedInSpace: the hop exists to reach the space's accepted spelling, and
+// landing on a second synonym would answer the question with the thing it was
+// asked to resolve.
+func acceptedEntryNamed(entries []NameSpaceEntry, aggregate bool, name string) (NameSpaceEntry, bool) {
+	wanted := Canonicalize(name)
+	if wanted == "" {
+		return NameSpaceEntry{}, false
+	}
+	for _, e := range entries {
+		if e.Aggregate == aggregate && e.AcceptedInSpace() && Canonicalize(e.Name) == wanted {
+			return e, true
+		}
+	}
+	return NameSpaceEntry{}, false
 }
 
 // pickSpelling returns the entry to report among those matching aggregate,

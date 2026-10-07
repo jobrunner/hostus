@@ -100,3 +100,68 @@ func seedRankedEntries(t *testing.T, db *DB) {
 		t.Fatalf("Commit: unexpected error: %v", err)
 	}
 }
+
+// TestNameSpaceEntries_RoundTripsTheAcceptedName pins the storage half of the
+// anchor. domain.anchoredSpelling follows the space's own synonymy from the
+// source's spelling to the taxon that space files it under; without the
+// accepted_taxon column surviving write→read, that hop has nothing to follow
+// and the pick falls back to ranking a pool that cannot be ranked correctly.
+func TestNameSpaceEntries_RoundTripsTheAcceptedName(t *testing.T) {
+	db := openSeededDB(t)
+	seedAnchoredEntries(t, db)
+
+	got, err := db.NameSpaceEntries(context.Background(), corynephorusID, []string{"eurosl"})
+	if err != nil {
+		t.Fatalf("NameSpaceEntries: unexpected error: %v", err)
+	}
+	want := map[string]string{
+		"39477ce7": "",                 // the accepted entry files itself under nothing
+		"ebf08a09": "Bromopsis erecta", // the synonym names its taxon
+	}
+	if len(got) != len(want) {
+		t.Fatalf("NameSpaceEntries = %d entries, want %d (%+v)", len(got), len(want), got)
+	}
+	for _, e := range got {
+		if e.AcceptedName != want[e.ExtID] {
+			t.Errorf("entry %s accepted_name = %q, want %q", e.ExtID, e.AcceptedName, want[e.ExtID])
+		}
+	}
+}
+
+// seedAnchoredEntries writes the two eurosl rows the anchor turns on: the
+// accepted species and the Bromus spelling that space files under it.
+func seedAnchoredEntries(t *testing.T, db *DB) {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := db.BeginIngest(ctx, seedBackboneVersion)
+	if err != nil {
+		t.Fatalf("BeginIngest: unexpected error: %v", err)
+	}
+	if err := tx.UpsertNameSpace(domain.NameSpaceMeta{
+		ID: "eurosl", Version: "2024-11-03",
+		SourceURL:   "https://example.org/eurosl",
+		ManifestSHA: "deadbeef", Redistribution: domain.RedistributionUnknown,
+	}); err != nil {
+		t.Fatalf("UpsertNameSpace: unexpected error: %v", err)
+	}
+	entries := []domain.NameSpaceEntry{
+		{
+			Space: "eurosl", ExtID: "39477ce7", Name: "Bromopsis erecta",
+			Status: "accepted", Rank: domain.RankSpecies,
+		},
+		{
+			Space: "eurosl", ExtID: "ebf08a09", Name: "Bromus erectus",
+			Status: "synonymobjective", Rank: domain.RankSpecies,
+			AcceptedName: "Bromopsis erecta",
+		},
+	}
+	for _, e := range entries {
+		if err := tx.AddNameSpaceEntry(corynephorusID, e); err != nil {
+			t.Fatalf("AddNameSpaceEntry(%s): unexpected error: %v", e.ExtID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: unexpected error: %v", err)
+	}
+}

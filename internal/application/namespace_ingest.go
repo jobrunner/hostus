@@ -326,6 +326,11 @@ func writeNameSpaceRow(
 		// backbone ingest, nothing here reports the original spelling, and
 		// NameSpaceEntry.Rank is only ever compared, never displayed.
 		Rank: nameSpaceRank(row.Rank),
+		// ...and the space's own synonymy link, which until now lived only as
+		// closeSynonymyGroups' in-run grouping key. It is what lets a reader
+		// walk from the source concept's own spelling to the taxon this space
+		// files it under — the evidence neither status nor rank carries.
+		AcceptedName: row.AcceptedTaxon,
 	}
 	if err := tx.AddNameSpaceEntry(res.conceptID, entry); err != nil {
 		return fmt.Errorf("application: writing name space entry %s:%s for concept %q: %w", meta.ID, row.SourceID, res.conceptID, err)

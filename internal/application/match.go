@@ -341,6 +341,13 @@ type MatchResult struct {
 	// not a field of the match result, and the HTTP layer has no business
 	// rendering it.
 	conceptRank domain.Rank
+	// conceptName is the resolved concept's accepted canonical name, carried
+	// alongside conceptRank and for the same reason: domain.ResolveTargetSpace
+	// needs it to look for the target space's own spelling of THIS concept.
+	// Deliberately the concept's name and not reqs[i].Verbatim — the caller's
+	// spelling may be a synonym, and the anchor asks what the space calls the
+	// concept, not what the caller typed.
+	conceptName string
 
 	// Classification and AggregateResolution are populated by
 	// matchNamesFiltered (Task 10), so BOTH MatchNames and MatchInSpace carry
@@ -437,6 +444,7 @@ func matchNamesFiltered(ctx context.Context, repo output.Repository, reqs []Matc
 			}
 			res.Classification = domain.Classification{Family: concept.Family, OrderName: concept.OrderName, ClassName: concept.ClassName}
 			res.conceptRank = concept.Rank
+			res.conceptName = concept.AcceptedName.Canonical
 			if domain.IsAggregateName(req.Verbatim) || isCollectiveRank(concept.Rank) {
 				canonical, _ := splitVerbatim(req.Verbatim)
 				res.AggregateResolution, err = buildAggregateResolution(ctx, repo, canonical, res.ConceptID)
@@ -677,6 +685,7 @@ func MatchInSpace(ctx context.Context, repo output.Repository, reqs []MatchReque
 		choice, policy := domain.ResolveTargetSpace(domain.TargetSpaceQuery{
 			IsAggregate: isAggregate(canonical),
 			SourceRank:  results[i].conceptRank,
+			SourceName:  results[i].conceptName,
 		}, entries)
 		results[i].TargetSpaceName = choice.Name
 		results[i].TargetSpaceExtID = choice.ExtID

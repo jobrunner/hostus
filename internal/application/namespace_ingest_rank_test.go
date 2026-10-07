@@ -101,3 +101,32 @@ func TestIngestNameSpace_RanklessSourceStaysUnknown(t *testing.T) {
 		t.Errorf("rank = %q, want the zero value for a source row that names no rank", got)
 	}
 }
+
+// TestIngestNameSpace_CarriesTheSourceAcceptedName pins the last field the
+// anchor needs. NameRow has carried AcceptedTaxon since the synonymy-closure
+// pass, but only as an in-run grouping key — it was never written onto the
+// entry, so nothing downstream could follow the space's own synonymy.
+func TestIngestNameSpace_CarriesTheSourceAcceptedName(t *testing.T) {
+	repo := seededMatchRepo(t)
+	ctx := context.Background()
+
+	src := sliceRowSource{{
+		Taxon: "Festuca ovina", SourceID: "5647", Status: "synonymobjective",
+		Rank: "Species", AcceptedTaxon: "Festuca guestfalica",
+	}}
+
+	if _, err := application.IngestNameSpace(ctx, repo, src, floravegMeta); err != nil {
+		t.Fatalf("IngestNameSpace: unexpected error: %v", err)
+	}
+
+	entries, err := repo.NameSpaceEntries(ctx, festucaOvinaConceptID, []string{"floraveg"})
+	if err != nil {
+		t.Fatalf("NameSpaceEntries: unexpected error: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("no floraveg entries stored for the Festuca ovina concept")
+	}
+	if got := entries[0].AcceptedName; got != "Festuca guestfalica" {
+		t.Errorf("accepted_name = %q, want the source's own accepted_taxon", got)
+	}
+}

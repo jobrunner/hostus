@@ -841,7 +841,11 @@ func (db *DB) attachTargetSpaceNames(ctx context.Context, items []domain.Suggest
 	// gaining a second meaning.
 	for i := range items {
 		conceptEntries := entries[items[i].ConceptID]
-		query := domain.TargetSpaceQuery{IsAggregate: queryIsAggregate, SourceRank: items[i].Rank}
+		query := domain.TargetSpaceQuery{
+			IsAggregate: queryIsAggregate,
+			SourceRank:  items[i].Rank,
+			SourceName:  items[i].Canonical,
+		}
 		choice, _ := domain.ResolveTargetSpace(query, conceptEntries)
 		if choice.Name == "" { // ONLY when the space offered no aggregate name
 			query.IsAggregate = false

@@ -117,6 +117,10 @@ func OpenPool(path string, maxConns int) (*DB, error) {
 		_ = sqlDB.Close()
 		return nil, err
 	}
+	if err := migrateNameSpaceEntryAcceptedName(context.Background(), sqlDB); err != nil {
+		_ = sqlDB.Close()
+		return nil, err
+	}
 	if err := migrateTaxonConceptClassification(context.Background(), sqlDB); err != nil {
 		_ = sqlDB.Close()
 		return nil, err
@@ -616,6 +620,15 @@ func migrateNameSpaceEntryStatus(ctx context.Context, sqlDB *sql.DB) error {
 // subspecies.
 func migrateNameSpaceEntryRank(ctx context.Context, sqlDB *sql.DB) error {
 	return addColumnIfMissing(ctx, sqlDB, "name_space_entry", "rank", "TEXT NOT NULL DEFAULT ''")
+}
+
+// migrateNameSpaceEntryAcceptedName adds name_space_entry.accepted_name for
+// the same reason as the two migrations above, with the same consequence:
+// existing rows keep ”, domain.anchoredSpelling finds no synonymy to follow
+// for them, and the ranked preferences decide as they did before. Only a
+// re-ingest fills it.
+func migrateNameSpaceEntryAcceptedName(ctx context.Context, sqlDB *sql.DB) error {
+	return addColumnIfMissing(ctx, sqlDB, "name_space_entry", "accepted_name", "TEXT NOT NULL DEFAULT ''")
 }
 
 // migrateTaxonConceptClassification adds taxon_concept.family/order_name/

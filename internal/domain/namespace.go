@@ -466,10 +466,21 @@ func rankCongruence(source, entry Rank) rankCongruenceClass {
 		return rankCongruenceUnknown
 	}
 	ec := rankClassOf(entry)
+
+	// The two comparisons are HOISTED out of the switch for the same reason
+	// ClassifyNomStatus' are (see synonym.go): Go's coverage model ends the
+	// enclosing basic block at a switch statement's opening brace, so a
+	// condition written inside a `case` arm sits in no counted block at all.
+	// `make mutation` reported both as NOT COVERED mutants here, which no test
+	// could have fixed. As plain assignments they are covered, mutated and
+	// killed; the case arms are then bare identifiers carrying no mutants.
+	entryRankUnknown := ec == rankClassUnknown
+	sameClass := sc == ec
+
 	switch {
-	case ec == rankClassUnknown:
+	case entryRankUnknown:
 		return rankCongruenceUnknown
-	case sc == ec:
+	case sameClass:
 		return rankCongruenceMatches
 	default:
 		return rankCongruenceConflicts

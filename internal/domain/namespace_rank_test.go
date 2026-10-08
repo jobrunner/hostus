@@ -162,3 +162,71 @@ func TestResolveTargetSpace_AggregateRuleIsUntouchedByRank(t *testing.T) {
 		t.Errorf("policy = %q, want %q", policy, domain.AggregatePolicyKnown)
 	}
 }
+
+// TestResolveTargetSpace_KnownCongruenceBeatsAnUnknownRank pins that an
+// unknown rank does not TIE with a known-congruent one.
+//
+// The first cut of this rule had rankCongruent report true whenever either
+// side's rank was unknown, which reads as "stand the rule down" but is not
+// what it does: it puts the unknown-rank entry in the SAME preferred tier as
+// an entry whose rank is known to match, so ext_id order decides between them
+// again — the very arbitrariness the rank evidence was added to remove.
+//
+// A mixed pool is a real state, not a hypothetical one: a legacy row carries
+// no rank at all until re-ingest, and only one name space may have been
+// re-ingested. So congruence is three-valued — known-congruent before
+// unknown before known-incongruent — and an entry with evidence outranks one
+// without.
+func TestResolveTargetSpace_KnownCongruenceBeatsAnUnknownRank(t *testing.T) {
+	entries := []domain.NameSpaceEntry{
+		// Legacy row: ingested before the rank column existed. Sorts first.
+		{Space: "eurosl", ExtID: "a-legacy", Name: "Bromopsis erecta subsp. permixta", Status: "accepted"},
+		// Re-ingested row, rank known and congruent with the source.
+		{Space: "eurosl", ExtID: "b-known", Name: "Bromopsis erecta", Status: "accepted", Rank: domain.RankSpecies},
+	}
+	query := domain.TargetSpaceQuery{SourceRank: domain.RankSpecies}
+
+	choice, _ := domain.ResolveTargetSpace(query, entries)
+
+	if choice.Name != "Bromopsis erecta" {
+		t.Errorf("name = %q, want the entry whose rank is KNOWN to match over the rank-less one", choice.Name)
+	}
+}
+
+// TestResolveTargetSpace_UnknownRankStillBeatsAKnownMismatch pins the other
+// end of the same three-valued order: no evidence is worse than matching
+// evidence, but better than evidence that actively contradicts. A rank-less
+// entry must therefore still win over one known to be of the wrong rank —
+// otherwise the migration story breaks, and a legacy pool holding one
+// subspecies with a known rank would answer nothing sensible at all.
+func TestResolveTargetSpace_UnknownRankStillBeatsAKnownMismatch(t *testing.T) {
+	entries := []domain.NameSpaceEntry{
+		{Space: "eurosl", ExtID: "a-known-wrong", Name: "Bromopsis erecta subsp. permixta", Status: "accepted", Rank: domain.RankSubspecies},
+		{Space: "eurosl", ExtID: "b-legacy", Name: "Bromopsis erecta", Status: "accepted"},
+	}
+	query := domain.TargetSpaceQuery{SourceRank: domain.RankSpecies}
+
+	choice, _ := domain.ResolveTargetSpace(query, entries)
+
+	if choice.Name != "Bromopsis erecta" {
+		t.Errorf("name = %q, want the rank-less entry over one known to be of the wrong rank", choice.Name)
+	}
+}
+
+// TestResolveTargetSpace_UnknownSourceRankTiesEveryEntry pins the guard on the
+// other side: when the SOURCE rank is unknown there is nothing to be congruent
+// WITH, so no entry may be preferred on rank grounds — not even one carrying a
+// rank. Separating them would dress the absence of a comparison basis as a
+// judgement.
+func TestResolveTargetSpace_UnknownSourceRankTiesEveryEntry(t *testing.T) {
+	entries := []domain.NameSpaceEntry{
+		{Space: "eurosl", ExtID: "a-first", Name: "Bromopsis erecta subsp. permixta", Status: "accepted", Rank: domain.RankSubspecies},
+		{Space: "eurosl", ExtID: "b-second", Name: "Bromopsis erecta", Status: "accepted", Rank: domain.RankSpecies},
+	}
+
+	choice, _ := domain.ResolveTargetSpace(domain.TargetSpaceQuery{}, entries)
+
+	if choice.Name != "Bromopsis erecta subsp. permixta" {
+		t.Errorf("name = %q, want the first entry — an unknown source rank must not rank anything", choice.Name)
+	}
+}

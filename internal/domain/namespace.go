@@ -374,9 +374,9 @@ func acceptedEntryNamed(entries []NameSpaceEntry, aggregate bool, name string) (
 // existing ext_id order (the order entries already arrives in) is
 // unchanged. See whole-branch review 2026-09-13, I3.
 //
-// RANK CONGRUENCE (see rankCongruent) splits each of those tiers in two,
-// below the accepted/direct distinctions rather than above them. It has to
-// be below: a space's accepted spelling is a nomenclatural fact, while
+// RANK CONGRUENCE (see rankCongruence) subdivides each of those tiers, below
+// the accepted/direct distinctions rather than above them. It has to be
+// below: a space's accepted spelling is a nomenclatural fact, while
 // congruence only separates candidates the earlier rules left tied — which
 // is exactly the Bromus erectus case, where Euro+Med accepts the species AND
 // nine of its subspecies and ext_id order decided among them.
@@ -387,7 +387,7 @@ func pickSpelling(entries []NameSpaceEntry, aggregate bool, sourceRank Rank) (Na
 		if e.Aggregate != aggregate {
 			continue
 		}
-		tier := spellingTier(e, rankCongruent(sourceRank, e.Rank))
+		tier := spellingTier(e, rankCongruence(sourceRank, e.Rank))
 		if !found || tier < bestTier {
 			best, bestTier, found = e, tier, true
 		}
@@ -397,37 +397,45 @@ func pickSpelling(entries []NameSpaceEntry, aggregate bool, sourceRank Rank) (Na
 
 // spellingTier scores one candidate spelling: lower wins, and ties keep the
 // order entries arrived in (pickSpelling only replaces on a STRICTLY better
-// tier). The six values are the three preferences in priority order —
-// accepted over not, direct over closure-attached, rank-congruent over not.
-func spellingTier(e NameSpaceEntry, congruent bool) int {
+// tier).
+//
+// Two independent preferences, applied in this order: the nomenclatural one
+// (accepted over not, and within accepted, directly matched over
+// closure-attached) and then the rank one. The rank preference is three-valued
+// rather than a flag — see rankCongruence for why an unknown rank must NOT tie
+// with a known-matching one — so each nomenclatural class spans three
+// consecutive scores and the arithmetic keeps that readable instead of
+// enumerating nine constants.
+func spellingTier(e NameSpaceEntry, congruence rankCongruenceClass) int {
 	const (
-		tierAcceptedDirectCongruent = iota
-		tierAcceptedDirect
-		tierAcceptedClosedCongruent
-		tierAcceptedClosed
-		tierCongruent
-		tierAny
+		classAcceptedDirect = iota
+		classAcceptedClosed
+		classOther
 	)
+	class := classOther
 	if e.AcceptedInSpace() {
+		class = classAcceptedDirect
 		if strings.Contains(e.Resolution, ResolutionSourceSynonymyClosure) {
-			if congruent {
-				return tierAcceptedClosedCongruent
-			}
-			return tierAcceptedClosed
+			class = classAcceptedClosed
 		}
-		if congruent {
-			return tierAcceptedDirectCongruent
-		}
-		return tierAcceptedDirect
 	}
-	if congruent {
-		return tierCongruent
-	}
-	return tierAny
+	return class*3 + int(congruence)
 }
 
-// rankCongruent reports whether an entry's rank is compatible with the rank of
-// the concept being translated.
+// rankCongruenceClass orders candidates by what their rank says about them:
+// evidence that matches, no evidence, evidence that contradicts. The values
+// are used as an offset by spellingTier, so the order of the constants IS the
+// preference.
+type rankCongruenceClass int
+
+const (
+	rankCongruenceMatches rankCongruenceClass = iota
+	rankCongruenceUnknown
+	rankCongruenceConflicts
+)
+
+// rankCongruence reports how an entry's rank relates to the rank of the
+// concept being translated.
 //
 // Compatibility is decided in CLASSES, never by equality. Two checklists
 // disagreeing on whether a taxon is a subspecies or a variety is a taxonomic
@@ -436,21 +444,39 @@ func spellingTier(e NameSpaceEntry, congruent bool) int {
 // own subspecies — a different taxon, silently narrower than what the caller
 // matched.
 //
-// An unknown rank on EITHER side — the zero value, or RankOther, which
+// An unknown rank on the ENTRY — the zero value, or RankOther, which
 // ParseRankLenient returns for the empty string and for the long tail of
-// exotic ranks — stands the rule down and reports true. Entries ingested
-// before NameSpaceEntry.Rank existed carry none, and filtering them all away
-// would answer nothing at all where the index previously answered something;
-// re-ingest is what makes the rule bite.
-func rankCongruent(source, entry Rank) bool {
-	sc, ec := rankClassOf(source), rankClassOf(entry)
-	if sc == rankClassUnknown || ec == rankClassUnknown {
-		return true
+// exotic ranks — is its own class, deliberately NOT folded into "matches".
+// Reporting it as a match reads like standing the rule down, but does
+// something else: it puts an entry carrying no evidence in the same preferred
+// tier as one whose rank is known to fit, so ext_id order decides between them
+// again. Mixed pools are a real state — a legacy row has no rank until
+// re-ingest, and only one space may have been re-ingested — and in one of
+// those the rank-less row would beat a known-fitting one just by sorting
+// first. It still outranks a known mismatch, so a wholly legacy pool keeps
+// answering exactly as it did.
+//
+// An unknown SOURCE rank is different: there is nothing to be congruent with,
+// so every entry reports Unknown and none is preferred on rank grounds.
+// Separating them would present the absence of a comparison basis as a
+// judgement.
+func rankCongruence(source, entry Rank) rankCongruenceClass {
+	sc := rankClassOf(source)
+	if sc == rankClassUnknown {
+		return rankCongruenceUnknown
 	}
-	return sc == ec
+	ec := rankClassOf(entry)
+	switch {
+	case ec == rankClassUnknown:
+		return rankCongruenceUnknown
+	case sc == ec:
+		return rankCongruenceMatches
+	default:
+		return rankCongruenceConflicts
+	}
 }
 
-// rankClass is the coarse grouping rankCongruent compares in: everything
+// rankClass is the coarse grouping rankCongruence compares in: everything
 // finer than the species, the species itself, and everything above it.
 type rankClass int
 

@@ -807,3 +807,94 @@ func TestTranslate_WCVPTargetFromNativeNameSpaceConceptIsNotFound(t *testing.T) 
 		t.Errorf("error = %v, want domain.ErrNotFound", err)
 	}
 }
+
+// TestTranslate_NameSpaceTargetPassesSourceRankAndNameToTheResolver pins the
+// hand-off this function makes to domain.ResolveTargetSpace, which no existing
+// test made decisive: every other name-space translation test offers a single
+// eligible spelling, so they stay green even if SourceRank or SourceName is
+// dropped from the query.
+//
+// That is precisely the wiring failure that left /v1/suggest broken while
+// /v1/translate already answered correctly — the domain rules were right and
+// the caller simply never handed them their evidence. One endpoint per
+// regression, then.
+//
+// The entries are the real Bromus erectus shape: two spellings the space
+// accepts at different ranks (so SourceRank decides between them) plus the
+// synonym carrying the source concept's own name (so SourceName decides
+// over both). Expected answer is the anchored species.
+func TestTranslate_NameSpaceTargetPassesSourceRankAndNameToTheResolver(t *testing.T) {
+	repo := translateRepo()
+	repo.nameSpaces = []domain.NameSpaceMeta{{ID: "eurosl"}}
+	repo.nameSpaceEntries = map[string][]domain.NameSpaceEntry{
+		"cdm:concept:roth": {
+			// Sorts first and would win on ext_id order alone.
+			{
+				Space: "eurosl", ExtID: "a-subsp", Name: "Piceopsis alba subsp. permixta",
+				Status: domain.NameSpaceStatusAccepted, Rank: domain.RankSubspecies,
+			},
+			// Rank-congruent and accepted, but a different taxon: this is what
+			// comes back when SourceName is lost but SourceRank survives.
+			{
+				Space: "eurosl", ExtID: "b-other", Name: "Piceopsis aliena",
+				Status: domain.NameSpaceStatusAccepted, Rank: domain.RankSpecies,
+			},
+			// The anchor: the space's own spelling of the source concept.
+			{
+				Space: "eurosl", ExtID: "c-anchor", Name: "Abies alba",
+				Status: "synonymobjective", Rank: domain.RankSpecies,
+				AcceptedName: "Piceopsis alba",
+			},
+			{
+				Space: "eurosl", ExtID: "d-accepted", Name: "Piceopsis alba",
+				Status: domain.NameSpaceStatusAccepted, Rank: domain.RankSpecies,
+			},
+		},
+	}
+
+	res := translate(t, repo, application.TranslateRequest{ConceptID: "cdm:concept:roth", TargetSec: "eurosl"})
+
+	if res.NameSpaceTranslation == nil {
+		t.Fatal("NameSpaceTranslation = nil, want set")
+	}
+	if got := res.NameSpaceTranslation.Name; got != "Piceopsis alba" {
+		t.Errorf("Name = %q, want the anchored species %q (%q means SourceName never arrived, %q means neither field did)",
+			got, "Piceopsis alba", "Piceopsis aliena", "Piceopsis alba subsp. permixta")
+	}
+}
+
+// TestTranslate_NameSpaceTargetPassesSourceRankWhenNoAnchorExists is the
+// companion of the test above, and it exists because that one does NOT pin
+// SourceRank: the anchor runs first, so dropping the rank from the query
+// leaves it green. Verified by sabotage — only removing SourceName made it
+// fail.
+//
+// Here the space does not spell the source concept at all, so the anchor
+// stands down and the rank is the only thing separating two equally accepted
+// candidates. Drop SourceRank and the subspecies wins on ext_id order.
+func TestTranslate_NameSpaceTargetPassesSourceRankWhenNoAnchorExists(t *testing.T) {
+	repo := translateRepo()
+	repo.nameSpaces = []domain.NameSpaceMeta{{ID: "eurosl"}}
+	repo.nameSpaceEntries = map[string][]domain.NameSpaceEntry{
+		"cdm:concept:roth": {
+			{
+				Space: "eurosl", ExtID: "a-subsp", Name: "Piceopsis alba subsp. permixta",
+				Status: domain.NameSpaceStatusAccepted, Rank: domain.RankSubspecies,
+			},
+			{
+				Space: "eurosl", ExtID: "b-species", Name: "Piceopsis alba",
+				Status: domain.NameSpaceStatusAccepted, Rank: domain.RankSpecies,
+			},
+		},
+	}
+
+	res := translate(t, repo, application.TranslateRequest{ConceptID: "cdm:concept:roth", TargetSec: "eurosl"})
+
+	if res.NameSpaceTranslation == nil {
+		t.Fatal("NameSpaceTranslation = nil, want set")
+	}
+	if got := res.NameSpaceTranslation.Name; got != "Piceopsis alba" {
+		t.Errorf("Name = %q, want the rank-congruent species %q — %q is what ext_id order answers when SourceRank never arrives",
+			got, "Piceopsis alba", "Piceopsis alba subsp. permixta")
+	}
+}

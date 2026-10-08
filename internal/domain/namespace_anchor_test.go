@@ -168,3 +168,93 @@ func TestResolveTargetSpace_AnchorRespectsTheAggregateBranch(t *testing.T) {
 		t.Errorf("policy = %q, want %q", policy, domain.AggregatePolicyKnown)
 	}
 }
+
+// TestResolveTargetSpace_DanglingAnchorDoesNotHideALaterValidOne pins that the
+// anchor inspects EVERY row carrying the source spelling instead of stopping at
+// the first. A space may hold the same spelling twice under different ids — the
+// entry is keyed by (Space, ExtID), not by name — and the rows arrive in ext_id
+// order, so stopping early let an arbitrary one decide. Worse, a first row
+// whose hop dangles suppressed a later row whose hop resolves.
+//
+// Measured honestly: the real eurosl/floraveg/germansl indexes carry ZERO
+// concepts with a repeated spelling today (2026-10-07). This rule is therefore
+// precaution, not a fix for observed data — but the order it removes from the
+// decision was never evidence, and a name list is re-harvested.
+func TestResolveTargetSpace_DanglingAnchorDoesNotHideALaterValidOne(t *testing.T) {
+	entries := []domain.NameSpaceEntry{
+		{
+			Space: "eurosl", ExtID: "a-dangling", Name: "Bromus erectus",
+			Status: "synonym", Rank: domain.RankSpecies, AcceptedName: "Bromopsis nowhere",
+		},
+		{
+			Space: "eurosl", ExtID: "b-resolving", Name: "Bromus erectus",
+			Status: "synonymobjective", Rank: domain.RankSpecies, AcceptedName: "Bromopsis erecta",
+		},
+		// Deliberately rank-INcongruent, with a congruent decoy beside it:
+		// otherwise the ranked fallback would answer "Bromopsis erecta" as
+		// well and this test would pass without the anchor ever working.
+		{Space: "eurosl", ExtID: "c-accepted", Name: "Bromopsis erecta", Status: "accepted", Rank: domain.RankSubspecies},
+		{Space: "eurosl", ExtID: "d-decoy", Name: "Bromopsis aliena", Status: "accepted", Rank: domain.RankSpecies},
+	}
+	query := domain.TargetSpaceQuery{SourceName: "Bromus erectus", SourceRank: domain.RankSpecies}
+
+	choice, _ := domain.ResolveTargetSpace(query, entries)
+
+	if choice.Name != "Bromopsis erecta" {
+		t.Errorf("name = %q, want the anchor whose hop resolves rather than the first one listed (the ranked fallback would answer %q)",
+			choice.Name, "Bromopsis aliena")
+	}
+}
+
+// TestResolveTargetSpace_ConflictingAnchorsFallBackRatherThanGuess pins the
+// other half: when two rows carry the source spelling and their hops resolve to
+// DIFFERENT accepted entries, the space is telling us two incompatible things.
+// Picking either by ext_id order would dress an arbitrary choice as source
+// evidence, which is the very defect the anchor exists to end — so the anchor
+// stands down and the ranked preferences decide.
+func TestResolveTargetSpace_ConflictingAnchorsFallBackRatherThanGuess(t *testing.T) {
+	entries := []domain.NameSpaceEntry{
+		{
+			Space: "eurosl", ExtID: "a-one", Name: "Bromus erectus",
+			Status: "synonym", Rank: domain.RankSpecies, AcceptedName: "Bromopsis erecta",
+		},
+		{
+			Space: "eurosl", ExtID: "b-two", Name: "Bromus erectus",
+			Status: "synonym", Rank: domain.RankSpecies, AcceptedName: "Bromopsis zangezura",
+		},
+		{Space: "eurosl", ExtID: "c-sub", Name: "Bromopsis erecta", Status: "accepted", Rank: domain.RankSubspecies},
+		{Space: "eurosl", ExtID: "d-zan", Name: "Bromopsis zangezura", Status: "accepted", Rank: domain.RankSpecies},
+	}
+	query := domain.TargetSpaceQuery{SourceName: "Bromus erectus", SourceRank: domain.RankSpecies}
+
+	choice, _ := domain.ResolveTargetSpace(query, entries)
+
+	// The ranked fallback: among the two accepted entries the rank-congruent
+	// one wins. That it coincides with one of the conflicting hops is beside
+	// the point — it is reached by the ranked rules, not by picking a hop.
+	if choice.Name != "Bromopsis zangezura" {
+		t.Errorf("name = %q, want the ranked fallback when two anchors disagree", choice.Name)
+	}
+}
+
+// TestResolveTargetSpace_AcceptedAnchorWinsOverASiblingSynonymRow pins the
+// precedence among several rows of the source spelling: one the space accepts
+// outright is stronger evidence than a sibling row that only points elsewhere,
+// regardless of which sorts first.
+func TestResolveTargetSpace_AcceptedAnchorWinsOverASiblingSynonymRow(t *testing.T) {
+	entries := []domain.NameSpaceEntry{
+		{
+			Space: "eurosl", ExtID: "a-synonym", Name: "Festuca ovina",
+			Status: "synonym", Rank: domain.RankSpecies, AcceptedName: "Festuca guestfalica",
+		},
+		{Space: "eurosl", ExtID: "b-accepted", Name: "Festuca ovina", Status: "accepted", Rank: domain.RankSpecies},
+		{Space: "eurosl", ExtID: "c-other", Name: "Festuca guestfalica", Status: "accepted", Rank: domain.RankSpecies},
+	}
+	query := domain.TargetSpaceQuery{SourceName: "Festuca ovina", SourceRank: domain.RankSpecies}
+
+	choice, _ := domain.ResolveTargetSpace(query, entries)
+
+	if choice.Name != "Festuca ovina" {
+		t.Errorf("name = %q, want the row the space accepts outright", choice.Name)
+	}
+}

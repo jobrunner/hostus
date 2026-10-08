@@ -288,11 +288,32 @@ func pickWithAnchor(entries []NameSpaceEntry, aggregate bool, query TargetSpaceQ
 //
 // aggregate is honored so the anchor never reaches across UC4's split; the
 // comparison runs through Canonicalize, like every other name comparison here.
+//
+// EVERY row carrying the spelling is inspected, never just the first. Entries
+// are keyed by (Space, ExtID), so a space may hold one spelling twice under
+// different ids, and they arrive in ext_id order — stopping early would let
+// that order decide, which is the kind of arbitrary pick the anchor exists to
+// replace. Worse, a first row whose hop dangles would suppress a later row
+// whose hop resolves. The three outcomes:
+//
+//   - any row the space accepts outright -> that row (strongest, no hop);
+//   - otherwise the hops that resolve, but only if they AGREE — two rows of
+//     the same spelling pointing at different accepted taxa is the space
+//     telling us two incompatible things, and choosing between them by ext_id
+//     would dress an arbitrary pick as source evidence;
+//   - otherwise nothing, leaving the ranked preferences to answer.
+//
+// Measured honestly: no concept on the real eurosl/floraveg/germansl indexes
+// carries a repeated spelling today (2026-10-07), so this is precaution rather
+// than a fix for observed data. It costs one pass and removes an input order
+// from a decision that order was never evidence for.
 func anchoredSpelling(entries []NameSpaceEntry, aggregate bool, sourceName string) (NameSpaceEntry, bool) {
 	wanted := Canonicalize(sourceName)
 	if wanted == "" {
 		return NameSpaceEntry{}, false
 	}
+	var hopped NameSpaceEntry
+	found := false
 	for _, e := range entries {
 		if e.Aggregate != aggregate || Canonicalize(e.Name) != wanted {
 			continue
@@ -300,9 +321,16 @@ func anchoredSpelling(entries []NameSpaceEntry, aggregate bool, sourceName strin
 		if e.AcceptedInSpace() {
 			return e, true
 		}
-		return acceptedEntryNamed(entries, aggregate, e.AcceptedName)
+		target, ok := acceptedEntryNamed(entries, aggregate, e.AcceptedName)
+		if !ok {
+			continue
+		}
+		if found && target.ExtID != hopped.ExtID {
+			return NameSpaceEntry{}, false
+		}
+		hopped, found = target, true
 	}
-	return NameSpaceEntry{}, false
+	return hopped, found
 }
 
 // acceptedEntryNamed finds the entry the space accepts under name, which is

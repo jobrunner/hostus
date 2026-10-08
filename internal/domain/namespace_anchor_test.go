@@ -258,3 +258,57 @@ func TestResolveTargetSpace_AcceptedAnchorWinsOverASiblingSynonymRow(t *testing.
 		t.Errorf("name = %q, want the row the space accepts outright", choice.Name)
 	}
 }
+
+// TestResolveTargetSpace_DirectAnchorNeedsNoNewColumns pins the one part of
+// this change that takes effect WITHOUT a re-ingest, and it exists because the
+// rollout note first claimed the opposite.
+//
+// AcceptedInSpace() reads only Status, which shipped long before Rank and
+// AcceptedName. So when a legacy row carries the source concept's own spelling
+// and the space accepts it, the anchor returns it the moment the new binary
+// starts — no new column involved. Measured on the real eurosl index
+// (2026-10-07): 2.732 concepts hold several directly accepted entries, and for
+// 1.303 of them this changes the answer away from the lowest ext_id
+// immediately.
+//
+// That is an improvement, not a regression — the space's own spelling of the
+// concept beats a row that merely sorts first — and gating it would withhold
+// 1.303 correct answers for nothing, with no reliable marker to gate on
+// (an accepted row legitimately has an empty accepted_name, and rank may be
+// RankOther). It is documented as an exception instead; the synonym HOP, which
+// is what the Bromus erectus case needs, genuinely waits for accepted_name.
+func TestResolveTargetSpace_DirectAnchorNeedsNoNewColumns(t *testing.T) {
+	// A legacy pool: status present, rank and accepted_name empty throughout.
+	entries := []domain.NameSpaceEntry{
+		{Space: "eurosl", ExtID: "a-first", Name: "Bromopsis erecta subsp. permixta", Status: "accepted"},
+		{Space: "eurosl", ExtID: "b-source", Name: "Festuca ovina", Status: "accepted"},
+	}
+	query := domain.TargetSpaceQuery{SourceName: "Festuca ovina", SourceRank: domain.RankSpecies}
+
+	choice, _ := domain.ResolveTargetSpace(query, entries)
+
+	if choice.Name != "Festuca ovina" {
+		t.Errorf("name = %q, want the space's own accepted spelling of the source concept — the direct anchor needs no re-ingest", choice.Name)
+	}
+}
+
+// TestResolveTargetSpace_SynonymHopDoesWaitForReIngest is the counterpart that
+// keeps the rollout note honest in the other direction: the hop reads
+// AcceptedName, so on a legacy row it finds nothing and the ranked
+// preferences answer — which is exactly why Bromus erectus keeps returning
+// the old name until the name spaces are re-ingested.
+func TestResolveTargetSpace_SynonymHopDoesWaitForReIngest(t *testing.T) {
+	// The Bromus pool as a LEGACY index holds it: no rank, no accepted_name.
+	entries := []domain.NameSpaceEntry{
+		{Space: "eurosl", ExtID: "10d4f969", Name: "Bromopsis erecta subsp. permixta", Status: "accepted"},
+		{Space: "eurosl", ExtID: "39477ce7", Name: "Bromopsis erecta", Status: "accepted"},
+		{Space: "eurosl", ExtID: "ebf08a09", Name: "Bromus erectus", Status: "synonymobjective"},
+	}
+	query := domain.TargetSpaceQuery{SourceName: "Bromus erectus", SourceRank: domain.RankSpecies}
+
+	choice, _ := domain.ResolveTargetSpace(query, entries)
+
+	if choice.Name != "Bromopsis erecta subsp. permixta" {
+		t.Errorf("name = %q, want the pre-re-ingest answer — without accepted_name the hop has nothing to follow", choice.Name)
+	}
+}

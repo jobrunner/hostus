@@ -307,6 +307,21 @@ func pickWithAnchor(entries []NameSpaceEntry, aggregate bool, query TargetSpaceQ
 // carries a repeated spelling today (2026-10-07), so this is precaution rather
 // than a fix for observed data. It costs one pass and removes an input order
 // from a decision that order was never evidence for.
+//
+// ROLLOUT, and the one exception to "nothing changes before re-ingest": the
+// accepted-outright branch tests AcceptedInSpace, which reads only Status —
+// shipped long before Rank and AcceptedName. A LEGACY row therefore anchors
+// the moment this code runs, with no new column involved. Measured on the real
+// eurosl index: 2.732 concepts hold several directly accepted entries, and for
+// 1.303 of them this moves the answer off the lowest ext_id immediately.
+//
+// That is deliberate. The space's own accepted spelling of the concept is
+// better evidence than a row that merely sorts first, so withholding it would
+// keep 1.303 answers wrong for no gain — and there is nothing sound to gate on
+// anyway: an accepted row legitimately carries an empty AcceptedName, and Rank
+// may be RankOther. The synonym HOP is the part that genuinely waits for
+// AcceptedName, which is why the reported Bromus erectus case keeps answering
+// the old name until the name spaces are re-ingested.
 func anchoredSpelling(entries []NameSpaceEntry, aggregate bool, sourceName string) (NameSpaceEntry, bool) {
 	wanted := Canonicalize(sourceName)
 	if wanted == "" {

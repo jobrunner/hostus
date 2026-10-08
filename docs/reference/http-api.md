@@ -439,8 +439,14 @@ POST /v1/match
   auf Regel 2 zurückgefallen.
 
   Einträge aus einem Ingest vor Einführung der Spalten `rank`/`accepted_name`
-  tragen diese Angaben nicht; für sie setzen Regel 1 und 3 aus, bis neu
-  ingestiert wurde.
+  tragen diese Angaben nicht. Für sie setzen Regel 3 und der **Synonym-Teil**
+  von Regel 1 aus, bis neu ingestiert wurde — nicht aber Regel 1 als ganze:
+  Ihr erster Zweig („der Raum akzeptiert die Schreibweise des Quellconcepts
+  selbst") prüft nur Name und `status`, die beide längst vorhanden sind, und
+  greift darum sofort. Ein Teil der Zielraum-Namen kann sich also direkt mit
+  dem Upgrade ändern, vor jedem Re-Ingest; gemessen auf dem echten
+  eurosl-Index betrifft das 1.303 Concepts. Die Änderung geht dabei stets von
+  der Reihenfolge der Quell-IDs hin zur eigenen Schreibweise des Concepts.
 - `target_space_ext_id` — die Quell-ID des Namensraum-Eintrags hinter
   `target_space_name` (`name_space_entry.ext_id`) — für `target_space: eurosl`
   die Euro+Med-PlantBase-TaxonUsage-UUID, ein stabiler Schlüssel für externe

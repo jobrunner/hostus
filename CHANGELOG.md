@@ -38,12 +38,21 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   permixta*). `name_space_entry` trägt jetzt den Rang der Quelle; er wird beim
   Ingest normalisiert übernommen und geht der ext_id-Ordnung vor.
 
-  **Beides wirkt erst nach einem Re-Ingest der Namensräume.** Bestehende
-  Indizes bekommen beim Start *beide* Spalten migriert (`rank` und
-  `accepted_name`), ihre Zeilen tragen aber weder Rang noch Synonymie-Angabe,
-  und für solche Einträge setzen Rangregel wie Anker aus. Bis zum Re-Ingest
-  bleibt das Verhalten unverändert — insbesondere liefert `Bromus erectus`
-  direkt nach dem Upgrade weiterhin den alten Namen.
+  **Überwiegend wirkt das erst nach einem Re-Ingest der Namensräume.**
+  Bestehende Indizes bekommen beim Start beide Spalten migriert (`rank` und
+  `accepted_name`), ihre Zeilen tragen aber weder Rang noch Synonymie-Angabe;
+  für solche Einträge setzen die Rangregel und der Synonymie-Sprung des
+  Ankers aus. `Bromus erectus` liefert direkt nach dem Upgrade deshalb
+  weiterhin den alten Namen — dieser Fall braucht den Sprung.
+
+  **Eine Ausnahme wirkt sofort:** Führt der Zielraum die Schreibweise des
+  Quellkonzepts selbst und akzeptiert sie, greift der Anker ohne neue Spalte,
+  denn das prüft nur den längst vorhandenen `status`. Gemessen auf dem echten
+  eurosl-Index: 2.732 Konzepte tragen mehrere direkt akzeptierte Einträge, bei
+  1.303 davon ändert sich die Antwort unmittelbar — weg von der kleinsten
+  Quell-ID, hin zur eigenen Schreibweise des Konzepts. Das ist beabsichtigt
+  (die Schreibweise des Raums ist der bessere Beleg als eine Zeile, die bloß
+  vorne steht), aber es ist eine Verhaltensänderung schon beim Upgrade.
 
 ### Documentation
 

@@ -115,12 +115,22 @@ func TestSuggest_TargetSpacePrefersDirectOverClosureAttached(t *testing.T) {
 	got, err := db.Suggest(ctx, "Zzqaaa", output.SuggestOpts{Limit: 20, TargetSpace: "eurosl"})
 	mustTx(t, err)
 
+	// The found guard is not ceremony: without it this test passes while
+	// asserting nothing at all, because a loop over an empty or
+	// differently-keyed result set simply never runs its body. A green test
+	// that exercises no code is worse than a missing one — it reports
+	// coverage it does not have.
+	found := false
 	for _, it := range got {
 		if it.ConceptID != "wcvp:concept:zzq-a" {
 			continue
 		}
+		found = true
 		if it.TargetSpaceName != "Zzq directum" {
 			t.Errorf("TargetSpaceName = %q, want the DIRECTLY matched entry over the closure-attached one", it.TargetSpaceName)
 		}
+	}
+	if !found {
+		t.Fatal("the seeded concept did not come back from Suggest at all")
 	}
 }

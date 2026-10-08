@@ -35,6 +35,12 @@ func addFloraVegNameSpace(t *testing.T, src *sqlite.DB, conceptID string) {
 	if err := tx.AddNameSpaceEntry(conceptID, domain.NameSpaceEntry{
 		Space: "floraveg", ExtID: "5648", Name: "Festuca ovina aggr.",
 		Aggregate: true, Resolution: string(domain.RuleAggregateToNominate),
+		// Status, Rank and AcceptedName are seeded NON-EMPTY on purpose: they
+		// are what domain.ResolveTargetSpace decides on, and an offline bundle
+		// that silently dropped them would answer differently from the server
+		// it was exported from — with no error anywhere to show it.
+		Status: "accepted", Rank: domain.RankSpeciesAggregate,
+		AcceptedName: "Festuca ovina",
 	}); err != nil {
 		t.Fatalf("AddNameSpaceEntry: unexpected error: %v", err)
 	}
@@ -109,15 +115,26 @@ func TestExportBundle_ForceIncludeRestrictedNameSpace_SucceedsAndRecordsSource(t
 			version, sha, redistribution, "2023-01-03", "cafebabe", "unknown")
 	}
 
-	var name, resolution string
+	var name, resolution, status, rank, acceptedName string
 	var aggregate int
-	if err := raw.QueryRow(`SELECT name, aggregate, resolution FROM name_space_entry WHERE space = 'floraveg' AND ext_id = '5648'`).
-		Scan(&name, &aggregate, &resolution); err != nil {
+	if err := raw.QueryRow(`
+		SELECT name, aggregate, resolution, status, rank, accepted_name
+		FROM name_space_entry WHERE space = 'floraveg' AND ext_id = '5648'`).
+		Scan(&name, &aggregate, &resolution, &status, &rank, &acceptedName); err != nil {
 		t.Fatalf("reading name_space_entry from the bundle: unexpected error: %v", err)
 	}
 	if name != "Festuca ovina aggr." || aggregate != 1 || resolution != string(domain.RuleAggregateToNominate) {
 		t.Errorf("bundle name_space_entry = (%q, %d, %q), want (%q, 1, %q)",
 			name, aggregate, resolution, "Festuca ovina aggr.", domain.RuleAggregateToNominate)
+	}
+	// The resolver's own evidence, asserted separately: a column the bundle
+	// copy forgets costs no error and shows no visible defect — the offline
+	// bundle simply starts answering a different name than the server it was
+	// exported from. That is the class of loss this project counts rather
+	// than absorbs.
+	if status != "accepted" || rank != string(domain.RankSpeciesAggregate) || acceptedName != "Festuca ovina" {
+		t.Errorf("bundle resolver evidence = (status %q, rank %q, accepted_name %q), want (%q, %q, %q)",
+			status, rank, acceptedName, "accepted", domain.RankSpeciesAggregate, "Festuca ovina")
 	}
 }
 

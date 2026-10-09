@@ -40,19 +40,18 @@ type CrosswalkCollision struct {
 // handoff between two services run by the same operator, not a
 // distribution to a third party (spec, owner decision 2026-08-29).
 func ExportCrosswalk(ctx context.Context, dbPath, outDir string) (ExportCrosswalkReport, error) {
-	// sqlite.Open CREATES the file (and applies schema.sql) when dbPath does
-	// not exist yet — see its doc comment — so a typo'd --db is never
-	// "unopenable" from Open's point of view, only silently empty. Stat it
-	// first so a nonexistent database aborts with a named error instead of
-	// producing two empty CSVs and exiting 0 (spec's error table: "DB nicht
-	// lesbar -> Fehler, Befehl bricht ab").
-	if _, err := os.Stat(dbPath); err != nil {
-		return ExportCrosswalkReport{}, fmt.Errorf("app: database %q does not exist: %w", dbPath, err)
-	}
-
-	src, err := sqlite.Open(dbPath)
+	// OpenExisting, not Open: Open CREATES the file (and applies schema.sql)
+	// when dbPath does not exist, so a typo'd --db is never "unopenable" from
+	// its point of view, only silently empty — two header-only CSVs and exit 0
+	// (spec's error table: "DB nicht lesbar -> Fehler, Befehl bricht ab").
+	//
+	// This was an os.Stat before the open until issue #82's review: that
+	// closed the common case but left a window, since a file removed between
+	// check and open was simply recreated by the writable open. OpenExisting
+	// makes the requirement part of the open itself — see its doc comment.
+	src, err := sqlite.OpenExisting(dbPath)
 	if err != nil {
-		return ExportCrosswalkReport{}, fmt.Errorf("app: opening database %q: %w", dbPath, err)
+		return ExportCrosswalkReport{}, fmt.Errorf("app: opening database %q: %w", dbPath, describeOpenFailure(dbPath, err))
 	}
 	defer func() { _ = src.Close() }()
 

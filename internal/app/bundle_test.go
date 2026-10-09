@@ -120,3 +120,41 @@ func TestBundle_RefusesNameSpaceByDefault(t *testing.T) {
 		t.Errorf("forced bundle NameSpaces = %+v, want exactly floraveg", spaces)
 	}
 }
+
+// TestBundle_NonexistentDatabaseFile_ReportsNamedError pins the gap
+// TestBundle_UnopenableDatabase_ReportsNamedError misses, and it is the gap
+// issue #82 reports: a --db path in an EXISTING directory that simply has no
+// file at that name yet.
+//
+// sqlite.Open CREATES the file and applies schema.sql for a path that does
+// not exist (internal/adapters/sqlite/db.go) — by design, because the ingest
+// path needs exactly that. So a typo'd --db is never "unopenable" from Open's
+// point of view: `hostus bundle` silently produced a fresh empty database,
+// exported a technically valid but contentless bundle from it, and exited 0.
+//
+// The same defect was found and fixed for `hostus export-crosswalk` in PR #81
+// (TestExportCrosswalk_NonexistentDatabaseFile_ReportsNamedError); this is
+// its counterpart, written because the fix there was scoped to that command.
+func TestBundle_NonexistentDatabaseFile_ReportsNamedError(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "typo.sqlite") // dir exists, file does not
+	out := filepath.Join(t.TempDir(), "bundle.sqlite")
+
+	report, err := app.Bundle(context.Background(), dbPath, out, sqlite.BundleOpts{SnapshotVersion: "v1"})
+	if err == nil {
+		t.Fatalf("app.Bundle(%q): want an error, got nil (report=%+v)", dbPath, report)
+	}
+	if !strings.Contains(err.Error(), dbPath) {
+		t.Errorf("app.Bundle error = %q, want it to mention %q", err.Error(), dbPath)
+	}
+	if report.Concepts != 0 {
+		t.Errorf("report.Concepts = %d, want 0 on the error path", report.Concepts)
+	}
+	// The two silent side effects the issue is actually about: the database
+	// that was never there, and the empty bundle written from it.
+	if _, statErr := os.Stat(dbPath); statErr == nil {
+		t.Errorf("app.Bundle must not create the missing database %q", dbPath)
+	}
+	if _, statErr := os.Stat(out); statErr == nil {
+		t.Errorf("app.Bundle must not write the bundle %q when the source database is missing", out)
+	}
+}

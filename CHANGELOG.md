@@ -5,6 +5,33 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [Unreleased]
+
+### Bug Fixes
+
+* **app:** `hostus bundle` bricht bei fehlender Quell-Datenbank ab, statt
+  still eine leere anzulegen. `sqlite.Open` erzeugt eine nicht vorhandene
+  Datei und wendet das Schema darauf an — für den Ingest richtig, hier
+  fatal: Ein vertippter `--db`-Pfad meldete „Bundle complete
+  (concepts=0 names=0 areas=0)", schrieb zwei Dateien à 233 KB und endete
+  mit Exit 0 ([#82](https://github.com/jobrunner/hostus/issues/82)).
+* **sqlite:** Neuer Einstiegspunkt `OpenExisting` öffnet eine vorhandene
+  Datenbank über SQLites `mode=rw` und kann keine anlegen. `bundle` und
+  `export-crosswalk` nutzen ihn; `ingest` behält `Open`, dort ist das
+  Anlegen der Zweck. Ersetzt die vorgelagerte `os.Stat`-Prüfung, die ein
+  Zeitfenster offen ließ: Verschwand die Datei zwischen Prüfung und
+  Öffnen, legte der schreibende Open sie neu an und der stille Pfad war
+  zurück.
+* **sqlite:** Der Datenbankpfad wird prozentkodiert in die DSN gesetzt.
+  SQLite liest eine `file:`-URI selbst, also beendete ein `?` in einem
+  völlig zulässigen Dateinamen den Pfad und begann die Parameterliste —
+  `frage?zeichen.sqlite` öffnete und **legte** `frage` an, ohne dass
+  `mode=rw` noch galt. `#` wirkte über die Fragment-Syntax genauso. Ein
+  `%` im Pfad brach `Open` sogar vollständig („invalid URL escape"), ein
+  Mangel, den die einfache Zeichenkettenverkettung von Beginn an trug.
+  `:memory:` behält die alte Schreibweise und wird von `OpenExisting`
+  abgelehnt.
+
 ## [3.6.1](https://github.com/jobrunner/hostus/compare/v3.6.0...v3.6.1) (2026-10-09)
 
 

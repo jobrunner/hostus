@@ -5,6 +5,19 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [3.6.1](https://github.com/jobrunner/hostus/compare/v3.6.0...v3.6.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **ci,test:** Integrationstests ausführen und veraltete Zusicherung umdrehen ([8c5c6ff](https://github.com/jobrunner/hostus/commit/8c5c6ffff0af39ee04dd5194a8a8c08f657837da))
+* **domain,sqlite,application:** Zielnamen rangkongruent wählen ([95ac3dd](https://github.com/jobrunner/hostus/commit/95ac3dde70a8cc0f47a300ca466a94a907d5133d))
+* **domain,sqlite,application:** Zielnamen über die quelleigene Synonymie verankern ([81b5bc4](https://github.com/jobrunner/hostus/commit/81b5bc476edd6b920e49f51d156286ec93e3fd6a))
+* **domain:** Anker über alle Zeilen der Quellschreibweise entscheiden ([759aa2c](https://github.com/jobrunner/hostus/commit/759aa2c1c175d2fa212f523f4737eebaa0c6dffe))
+* **domain:** Switch-Bedingungen in rankCongruence hochziehen ([0b7891f](https://github.com/jobrunner/hostus/commit/0b7891f080e88e79cd10691427ebbf9445b398be))
+* **domain:** unbekannten Rang als eigene Stufe führen, nicht als Treffer ([bf0b951](https://github.com/jobrunner/hostus/commit/bf0b95168096f02ca2da0092866f5f04f7827fbe))
+* **sqlite:** Suggest-Pfad löst mit derselben Evidenz auf wie Translate ([6f74255](https://github.com/jobrunner/hostus/commit/6f7425574804786e990bf8cb8bea8d0666954475))
+
 ## [Unreleased]
 
 ### Bug Fixes

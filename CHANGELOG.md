@@ -5,6 +5,19 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [Unreleased]
+
+### Bug Fixes
+
+* **app:** `hostus bundle` bricht bei fehlender Quell-Datenbank ab, statt
+  still eine leere anzulegen. `sqlite.Open` erzeugt eine nicht vorhandene
+  Datei und wendet das Schema darauf an — für den Ingest richtig, hier
+  fatal: Ein vertippter `--db`-Pfad meldete „Bundle complete
+  (concepts=0 names=0 areas=0)", schrieb zwei Dateien à 233 KB und endete
+  mit Exit 0. Jetzt prüft `app.Bundle` die Existenz vorab und nennt den
+  Pfad im Fehler, wie `app.ExportCrosswalk` es seit PR #81 tut
+  ([#82](https://github.com/jobrunner/hostus/issues/82)).
+
 ## [3.6.1](https://github.com/jobrunner/hostus/compare/v3.6.0...v3.6.1) (2026-10-09)
 
 

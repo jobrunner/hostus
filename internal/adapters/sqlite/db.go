@@ -113,6 +113,14 @@ func OpenPool(path string, maxConns int) (*DB, error) {
 		_ = sqlDB.Close()
 		return nil, err
 	}
+	if err := migrateNameSpaceEntryRank(context.Background(), sqlDB); err != nil {
+		_ = sqlDB.Close()
+		return nil, err
+	}
+	if err := migrateNameSpaceEntryAcceptedName(context.Background(), sqlDB); err != nil {
+		_ = sqlDB.Close()
+		return nil, err
+	}
 	if err := migrateTaxonConceptClassification(context.Background(), sqlDB); err != nil {
 		_ = sqlDB.Close()
 		return nil, err
@@ -595,12 +603,32 @@ func migrateXrefSourceColumn(ctx context.Context, sqlDB *sql.DB) error {
 // a database at all, since the embedded schema now declares the column and
 // CREATE TABLE IF NOT EXISTS never adds a column to an existing table.
 //
-// Existing rows keep ” — "status not recorded" — which ResolveTargetSpace
+// Existing rows keep the empty string — "status not recorded" — which ResolveTargetSpace
 // treats as "fall back to the previous behavior", not as "not accepted". Only
 // a re-ingest fills it, and only then do target-space names become
 // determinate.
 func migrateNameSpaceEntryStatus(ctx context.Context, sqlDB *sql.DB) error {
 	return addColumnIfMissing(ctx, sqlDB, "name_space_entry", "status", "TEXT NOT NULL DEFAULT ''")
+}
+
+// migrateNameSpaceEntryRank adds name_space_entry.rank for exactly the reason
+// migrateNameSpaceEntryStatus adds status, and with the same consequence:
+// existing rows keep the empty string — "rank not recorded" — which
+// domain.ResolveTargetSpace reads as "unknown" and stands its congruence rule
+// down for, rather than filtering every candidate away. Only a re-ingest
+// fills it, and only then does a species stop resolving to one of its own
+// subspecies.
+func migrateNameSpaceEntryRank(ctx context.Context, sqlDB *sql.DB) error {
+	return addColumnIfMissing(ctx, sqlDB, "name_space_entry", "rank", "TEXT NOT NULL DEFAULT ''")
+}
+
+// migrateNameSpaceEntryAcceptedName adds name_space_entry.accepted_name for
+// the same reason as the two migrations above, with the same consequence:
+// existing rows keep the empty string, domain.anchoredSpelling finds no synonymy to follow
+// for them, and the ranked preferences decide as they did before. Only a
+// re-ingest fills it.
+func migrateNameSpaceEntryAcceptedName(ctx context.Context, sqlDB *sql.DB) error {
+	return addColumnIfMissing(ctx, sqlDB, "name_space_entry", "accepted_name", "TEXT NOT NULL DEFAULT ''")
 }
 
 // migrateTaxonConceptClassification adds taxon_concept.family/order_name/
@@ -868,7 +896,7 @@ type nameCanonicalPair struct {
 // reports the accepted name's own canonical/rank/status; indexing the
 // synonym text here is what makes it findABLE at all).
 //
-// Known limitation: fts_name is a contentless FTS5 table (content=”,
+// Known limitation: fts_name is a contentless FTS5 table (content set to the empty string,
 // schema.sql), and contentless tables reject plain DELETE ("cannot DELETE
 // from contentless fts5 table") unless the table opts into
 // contentless_delete=1, which schema.sql does not set. Finalize therefore

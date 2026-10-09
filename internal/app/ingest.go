@@ -165,6 +165,7 @@ func (s nameSpaceRowSource) Rows() []application.NameRow {
 			Taxon:         r.Taxon,
 			SourceID:      r.SourceID,
 			Status:        r.Status,
+			Rank:          r.Rank,
 			AcceptedTaxon: r.AcceptedTaxon,
 			Family:        family,
 			OrderName:     order,

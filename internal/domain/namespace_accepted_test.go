@@ -19,7 +19,7 @@ func TestResolveTargetSpace_PrefersTheAcceptedSpelling(t *testing.T) {
 		{Space: "eurosl", ExtID: "2", Name: "Hyssopus officinalis", Status: "accepted"},
 		{Space: "eurosl", ExtID: "3", Name: "Hyssopus pubescens", Status: "synonymobjective"},
 	}
-	choice, _ := domain.ResolveTargetSpace(false, entries)
+	choice, _ := domain.ResolveTargetSpace(domain.TargetSpaceQuery{}, entries)
 	if choice.Name != "Hyssopus officinalis" {
 		t.Errorf("name = %q, want the accepted spelling regardless of entry order", choice.Name)
 	}
@@ -33,7 +33,7 @@ func TestResolveTargetSpace_FallsBackWhenNoStatusIsKnown(t *testing.T) {
 		{Space: "eurosl", ExtID: "1", Name: "Hyssopus ruber"},
 		{Space: "eurosl", ExtID: "2", Name: "Hyssopus officinalis"},
 	}
-	if choice, _ := domain.ResolveTargetSpace(false, entries); choice.Name != "Hyssopus ruber" {
+	if choice, _ := domain.ResolveTargetSpace(domain.TargetSpaceQuery{}, entries); choice.Name != "Hyssopus ruber" {
 		t.Errorf("name = %q, want the first entry as before when no status is known", choice.Name)
 	}
 }
@@ -47,7 +47,7 @@ func TestResolveTargetSpace_AggregateStillWinsForAnAggregateQuery(t *testing.T) 
 		{Space: "floraveg", ExtID: "1", Name: "Festuca ovina", Status: "accepted"},
 		{Space: "floraveg", ExtID: "2", Name: "Festuca ovina aggr.", Aggregate: true, Status: "synonym"},
 	}
-	choice, policy := domain.ResolveTargetSpace(true, entries)
+	choice, policy := domain.ResolveTargetSpace(domain.TargetSpaceQuery{IsAggregate: true}, entries)
 	if choice.Name != "Festuca ovina aggr." {
 		t.Errorf("name = %q, want the aggregate spelling for an aggregate query", choice.Name)
 	}
@@ -64,7 +64,7 @@ func TestResolveTargetSpace_AcceptedAggregateWinsAmongAggregates(t *testing.T) {
 		{Space: "floraveg", ExtID: "1", Name: "Festuca ovina s. l.", Aggregate: true, Status: "synonym"},
 		{Space: "floraveg", ExtID: "2", Name: "Festuca ovina aggr.", Aggregate: true, Status: "accepted"},
 	}
-	if choice, _ := domain.ResolveTargetSpace(true, entries); choice.Name != "Festuca ovina aggr." {
+	if choice, _ := domain.ResolveTargetSpace(domain.TargetSpaceQuery{IsAggregate: true}, entries); choice.Name != "Festuca ovina aggr." {
 		t.Errorf("name = %q, want the accepted aggregate spelling", choice.Name)
 	}
 }
@@ -88,7 +88,7 @@ func TestResolveTargetSpace_DirectAcceptedEntryOutranksClosedOne(t *testing.T) {
 		// Lexicographically LARGER ext_id, but a DIRECT name match.
 		{Space: "eurosl", ExtID: "2-direct", Name: "Pentanema hirtum", Status: "accepted"},
 	}
-	choice, _ := domain.ResolveTargetSpace(false, entries)
+	choice, _ := domain.ResolveTargetSpace(domain.TargetSpaceQuery{}, entries)
 	if choice.Name != "Pentanema hirtum" {
 		t.Errorf("name = %q, want the DIRECT accepted entry, not the closed one", choice.Name)
 	}
@@ -108,7 +108,7 @@ func TestResolveTargetSpace_ClosedAcceptedEntryStillWinsWithNoDirectOne(t *testi
 		{Space: "eurosl", ExtID: "1", Name: "Pentanema hirtum", Status: "synonymobjective"},
 		{Space: "eurosl", ExtID: "2", Name: "Inula hirta", Status: "accepted", Resolution: "source_synonymy_closure"},
 	}
-	choice, _ := domain.ResolveTargetSpace(false, entries)
+	choice, _ := domain.ResolveTargetSpace(domain.TargetSpaceQuery{}, entries)
 	if choice.Name != "Inula hirta" {
 		t.Errorf("name = %q, want the closed accepted entry (no direct one exists)", choice.Name)
 	}

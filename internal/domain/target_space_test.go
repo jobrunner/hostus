@@ -123,7 +123,7 @@ func TestResolveTargetSpace(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			gotChoice, gotPolicy := domain.ResolveTargetSpace(tc.isAggregate, tc.entries)
+			gotChoice, gotPolicy := domain.ResolveTargetSpace(domain.TargetSpaceQuery{IsAggregate: tc.isAggregate}, tc.entries)
 			if gotChoice != tc.wantChoice {
 				t.Errorf("choice = %+v, want %+v", gotChoice, tc.wantChoice)
 			}

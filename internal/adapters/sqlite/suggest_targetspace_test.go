@@ -139,7 +139,7 @@ func TestSuggest_TargetSpaceAgreesWithTheMatchResolver(t *testing.T) {
 
 	stored, err := db.NameSpaceEntries(ctx, "wcvp:concept:zzq-a", []string{"floraveg"})
 	mustTx(t, err)
-	choiceViaMatch, _ := domain.ResolveTargetSpace(false, stored)
+	choiceViaMatch, _ := domain.ResolveTargetSpace(domain.TargetSpaceQuery{}, stored)
 	viaMatch := choiceViaMatch.Name
 
 	got, err := db.Suggest(ctx, "Zzq", output.SuggestOpts{Limit: 20, TargetSpace: "floraveg"})

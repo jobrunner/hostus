@@ -410,6 +410,43 @@ POST /v1/match
   Schreibweise hat, **insbesondere bei `aggregate_policy: unresolvable`**: dort
   wird bewusst kein Name geliefert, weil die Kleinart als Aggregatnamen
   anzubieten genau die falsche „nicht erfüllt"-Antwort wäre.
+
+  Ein Concept trägt oft mehrere Schreibweisen desselben Raums — Euro+Med führt
+  unter *Bromopsis erecta* die Art und neun Unterarten, alle `accepted`. Welche
+  davon geliefert wird, entscheidet sich in dieser Reihenfolge:
+
+  1. **Die eigene Schreibweise des Quellconcepts**, wenn der Zielraum sie
+     führt. Ist sie dort selbst akzeptiert, ist sie die Antwort; ist sie ein
+     Synonym, wird der Angabe des Raums zu seinem eigenen akzeptierten Taxon
+     gefolgt. Euro+Med führt *Bromus erectus* als Synonym von *Bromopsis
+     erecta* — und genau das ist die Antwort. Das ist Quellevidenz und schlägt
+     deshalb alle folgenden Regeln.
+  2. **Akzeptiert vor Synonym**, und darunter direkt zugeordnet vor über die
+     Synonymie-Hülle angehängt.
+  3. **Rangkongruenz**: Unter gleich akzeptierten Kandidaten gewinnt der
+     rangpassende. Verglichen wird grob (unterartlich / artlich /
+     übergeordnet), nicht auf Ranggleichheit — dass ein Zielraum eine Varietät
+     als Unterart führt, ist eine taxonomische Auffassung, kein Fehler.
+  4. Zuletzt die Reihenfolge der Quell-IDs. Bevor es die Regeln 1 und 3 gab,
+     entschied sie allein, und ein schlichtes *Bromus erectus* wurde als
+     *Bromopsis erecta subsp. permixta* beantwortet.
+
+  Die Reihenfolge ist zu beachten: Regel 2 steht **über** Regel 3, eine Art
+  kann also eine akzeptierte Unterart zurückbekommen, wenn der rangpassende
+  Kandidat lediglich ein Synonym ist. Und bricht die Kette in Regel 1 — der
+  Raum führt die Schreibweise als Synonym eines Taxons, das an diesem Concept
+  nicht hängt —, wird die Synonym-Schreibweise **nicht** zurückgegeben, sondern
+  auf Regel 2 zurückgefallen.
+
+  Einträge aus einem Ingest vor Einführung der Spalten `rank`/`accepted_name`
+  tragen diese Angaben nicht. Für sie setzen Regel 3 und der **Synonym-Teil**
+  von Regel 1 aus, bis neu ingestiert wurde — nicht aber Regel 1 als ganze:
+  Ihr erster Zweig („der Raum akzeptiert die Schreibweise des Quellconcepts
+  selbst") prüft nur Name und `status`, die beide längst vorhanden sind, und
+  greift darum sofort. Ein Teil der Zielraum-Namen kann sich also direkt mit
+  dem Upgrade ändern, vor jedem Re-Ingest; gemessen auf dem echten
+  eurosl-Index betrifft das 1.303 Concepts. Die Änderung geht dabei stets von
+  der Reihenfolge der Quell-IDs hin zur eigenen Schreibweise des Concepts.
 - `target_space_ext_id` — die Quell-ID des Namensraum-Eintrags hinter
   `target_space_name` (`name_space_entry.ext_id`) — für `target_space: eurosl`
   die Euro+Med-PlantBase-TaxonUsage-UUID, ein stabiler Schlüssel für externe

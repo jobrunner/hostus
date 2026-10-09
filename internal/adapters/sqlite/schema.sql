@@ -272,6 +272,20 @@ CREATE TABLE IF NOT EXISTS name_space_entry (
   -- determinate: a space maps many of its names onto ONE concept, so without
   -- it any pick among them is arbitrary. '' = ingested before this column.
   status       TEXT NOT NULL DEFAULT '',
+  -- the space's OWN rank for this spelling, normalised to hostus' vocabulary
+  -- at ingest (the sources disagree: Euro+Med 'Subspecies', GermanSL 'SSP').
+  -- Status alone cannot keep a target-space name determinate, because a space
+  -- accepts a species AND its subspecies: both are 'accepted', and the pick
+  -- among them fell to ext_id order — which answered a plain Bromus erectus
+  -- with 'Bromopsis erecta subsp. permixta'. '' = ingested before this column.
+  rank         TEXT NOT NULL DEFAULT '',
+  -- the name the space itself files this spelling under (its own
+  -- accepted_taxon column, a NAME not an id); '' when the entry IS the
+  -- accepted one. Status and rank narrow a concept's pool of spellings but
+  -- cannot separate several the space accepts at the same rank under
+  -- DIFFERENT taxa (measured: 1.362 concepts on the real eurosl index) —
+  -- this column is how the space's own synonymy settles it.
+  accepted_name TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (space, ext_id)
 );
 

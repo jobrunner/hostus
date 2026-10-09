@@ -221,3 +221,33 @@ func TestIngestNativeSpace_WritesQualifyingRowsFromRealCSV(t *testing.T) {
 		t.Errorf("concept.Rank = %q, want %q", concept.Rank, domain.RankSpeciesAggregate)
 	}
 }
+
+// TestNameSpaceRowSourceRows_CarriesTheSourceRank pins the last hop of the
+// rank's path from CSV to name_space_entry. namelist.Row has always read the
+// source's rank column; it stopped here, at the bridge into the DTO, which is
+// why domain.ResolveTargetSpace had nothing to be congruent against and a
+// species could resolve to one of its own subspecies.
+//
+// Carried VERBATIM — "Species", not RankSpecies. Normalisation belongs to
+// application.nameSpaceRank, so the lenient parser stays the single place
+// rank vocabularies are reconciled.
+func TestNameSpaceRowSourceRows_CarriesTheSourceRank(t *testing.T) {
+	ds := &namelist.Dataset{
+		Rows: []namelist.Row{
+			{SourceID: "sp-1", Taxon: "Bromopsis erecta", Rank: "Species", Status: "accepted"},
+			{SourceID: "ssp-1", Taxon: "Bromopsis erecta subsp. permixta", Rank: "Subspecies", Status: "accepted"},
+		},
+	}
+
+	rows := nameSpaceRowSource{ds: ds}.Rows()
+
+	if len(rows) != 2 {
+		t.Fatalf("Rows() = %d rows, want 2", len(rows))
+	}
+	want := map[string]string{"sp-1": "Species", "ssp-1": "Subspecies"}
+	for _, r := range rows {
+		if got := r.Rank; got != want[r.SourceID] {
+			t.Errorf("row %s rank = %q, want the source's own %q", r.SourceID, got, want[r.SourceID])
+		}
+	}
+}

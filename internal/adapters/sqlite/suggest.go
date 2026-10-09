@@ -745,8 +745,19 @@ func buildSuggestQuery(q string, opts output.SuggestOpts) (query string, args []
 // explicit TEMP B-TREE sort — semantically identical (still ext_id ASC,
 // so the resolver's tie-break stays deterministic) and confirmed to
 // produce the same row order on the real index.
+//
+// It selects EVERY field domain.ResolveTargetSpace weighs, not just the name.
+// Status, resolution, rank and accepted_name are each a piece of evidence that
+// function reads, and a column omitted here does not degrade the answer
+// visibly — it silently disables the rule that reads it, leaving the endpoint
+// to decide by ext_id order. That is precisely how this path kept answering
+// "Bromopsis erecta subsp. permixta" while /v1/translate, which loads the same
+// rows through NameSpaceEntries, already answered "Bromopsis erecta" from the
+// same database. A field added to domain.NameSpaceEntry has to be added here
+// as well.
 const targetSpaceQuery = `
-	SELECT concept_id, name, aggregate, COALESCE(status, '')
+	SELECT concept_id, ext_id, name, aggregate, COALESCE(status, ''),
+	       COALESCE(resolution, ''), COALESCE(rank, ''), COALESCE(accepted_name, '')
 	FROM name_space_entry
 	WHERE +space = ? AND concept_id IN (SELECT value FROM json_each(?))
 	ORDER BY ext_id ASC`
@@ -796,9 +807,16 @@ func (db *DB) attachTargetSpaceNames(ctx context.Context, items []domain.Suggest
 		var conceptID string
 		var e domain.NameSpaceEntry
 		var aggregate int
-		if err := rows.Scan(&conceptID, &e.Name, &aggregate, &e.Status); err != nil {
+		var rank string
+		if err := rows.Scan(&conceptID, &e.ExtID, &e.Name, &aggregate, &e.Status,
+			&e.Resolution, &rank, &e.AcceptedName); err != nil {
 			return fmt.Errorf("sqlite: scanning target space %q row: %w", space, err)
 		}
+		// Stored already normalised by the ingest, so it is cast rather than
+		// re-parsed — the same rule NameSpaceEntries reads it by, and for the
+		// same reason: re-parsing would turn a legacy empty value into
+		// RankOther, which is a different statement.
+		e.Rank = domain.Rank(rank)
 		e.Space = space
 		e.Aggregate = aggregate != 0
 		entries[conceptID] = append(entries[conceptID], e)
@@ -841,9 +859,15 @@ func (db *DB) attachTargetSpaceNames(ctx context.Context, items []domain.Suggest
 	// gaining a second meaning.
 	for i := range items {
 		conceptEntries := entries[items[i].ConceptID]
-		choice, _ := domain.ResolveTargetSpace(queryIsAggregate, conceptEntries)
+		query := domain.TargetSpaceQuery{
+			IsAggregate: queryIsAggregate,
+			SourceRank:  items[i].Rank,
+			SourceName:  items[i].Canonical,
+		}
+		choice, _ := domain.ResolveTargetSpace(query, conceptEntries)
 		if choice.Name == "" { // ONLY when the space offered no aggregate name
-			choice, _ = domain.ResolveTargetSpace(false, conceptEntries)
+			query.IsAggregate = false
+			choice, _ = domain.ResolveTargetSpace(query, conceptEntries)
 		}
 		items[i].TargetSpaceName = choice.Name
 	}

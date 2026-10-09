@@ -21,6 +21,38 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   Defekt behoben (sec.-Raum-Konzepte zählen nicht als zweiter Anwärter); der
   Test stand seither gegen die eigene Entscheidung. Er pinnt jetzt die
   Claimant-Präferenz ende-zu-ende.
+* **domain,sqlite,application:** Zielnamen über die quelleigene Synonymie
+  verankern. Rang und Status reichen nicht: ein Namensraum akzeptiert mehrere
+  Schreibweisen desselben Rangs, die zu VERSCHIEDENEN Taxa gehören (gemessen:
+  1.362 Konzepte auf dem echten eurosl-Index), und darunter entschied weiter
+  die ext_id-Reihenfolge — `Bromus erectus` wurde dadurch zu `Bromopsis
+  zangezura`. Der Namensraum führt die Schreibweise des Quellkonzepts aber
+  meist selbst und nennt dort sein eigenes akzeptiertes Taxon;
+  `name_space_entry.accepted_name` trägt diese Angabe jetzt, und die Auflösung
+  folgt ihr vor allen Rangregeln. Am echten Index belegt: `Bromus erectus` →
+  `Bromopsis erecta`.
+* **domain,sqlite,application:** Zielnamen rangkongruent wählen — eine Art
+  löste auf eine ihrer eigenen Unterarten auf, weil ein Namensraum beide als
+  `accepted` führt und unter ihnen die Reihenfolge der Quell-IDs entschied
+  (`/v1/translate` beantwortete *Bromus erectus* mit *Bromopsis erecta subsp.
+  permixta*). `name_space_entry` trägt jetzt den Rang der Quelle; er wird beim
+  Ingest normalisiert übernommen und geht der ext_id-Ordnung vor.
+
+  **Überwiegend wirkt das erst nach einem Re-Ingest der Namensräume.**
+  Bestehende Indizes bekommen beim Start beide Spalten migriert (`rank` und
+  `accepted_name`), ihre Zeilen tragen aber weder Rang noch Synonymie-Angabe;
+  für solche Einträge setzen die Rangregel und der Synonymie-Sprung des
+  Ankers aus. `Bromus erectus` liefert direkt nach dem Upgrade deshalb
+  weiterhin den alten Namen — dieser Fall braucht den Sprung.
+
+  **Eine Ausnahme wirkt sofort:** Führt der Zielraum die Schreibweise des
+  Quellkonzepts selbst und akzeptiert sie, greift der Anker ohne neue Spalte,
+  denn das prüft nur den längst vorhandenen `status`. Gemessen auf dem echten
+  eurosl-Index: 2.732 Konzepte tragen mehrere direkt akzeptierte Einträge, bei
+  1.303 davon ändert sich die Antwort unmittelbar — weg von der kleinsten
+  Quell-ID, hin zur eigenen Schreibweise des Konzepts. Das ist beabsichtigt
+  (die Schreibweise des Raums ist der bessere Beleg als eine Zeile, die bloß
+  vorne steht), aber es ist eine Verhaltensänderung schon beim Upgrade.
 
 ### Documentation
 

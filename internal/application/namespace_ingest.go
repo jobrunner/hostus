@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jobrunner/hostus/internal/domain"
 	"github.com/jobrunner/hostus/internal/ports/output"
@@ -15,10 +16,22 @@ import (
 // so application never imports internal/adapters/namelist directly
 // (depguard).
 //
-// Rank is deliberately NOT carried. A name space contributes names, not
-// taxonomy: hostus never builds a concept, a parent chain or a synonymy edge
-// out of one, so a field this use case cannot act on would be a field a
-// reader of the DTO would reasonably expect it to act on.
+// The rule this DTO is cut by: a name space contributes names, not taxonomy.
+// hostus never builds a concept, a parent chain or a synonymy edge out of one,
+// so a field this use case cannot act on would be a field a reader of the DTO
+// would reasonably expect it to act on. Three fields were excluded under that
+// rule and are now carried; each earned it the same way, by deciding WHICH
+// name to report rather than by building an edge.
+//
+// Rank WAS excluded and is now carried, which is the second defect that
+// exclusion invited (Status was the first — see below). It builds nothing; it
+// separates a space's equally ACCEPTED spellings. A space accepts a species
+// AND its subspecies — Euro+Med accepts ten names under Bromopsis erecta, the
+// species plus nine subspecies — so status alone leaves them tied and the pick
+// fell to ext_id order. Measured: /v1/translate answered a plain Bromus
+// erectus with "Bromopsis erecta subsp. permixta", whose TaxonUsageID merely
+// sorts first. Downstream that is a subspecies nobody recorded entering an ESy
+// classification.
 //
 // AcceptedTaxon WAS excluded on the same grounds and is now carried — see
 // its own field comment below and closeSynonymyGroups for why it does not
@@ -39,6 +52,15 @@ type NameRow struct {
 	// Status is the space's own nomenclatural status, verbatim
 	// ("accepted", "synonym", "synonymobjective", ...).
 	Status string
+	// Rank is the space's own rank for this spelling, VERBATIM in the
+	// source's vocabulary ("Species", "Subspecies", "SSP", ...) — normalised
+	// through domain.ParseRankLenient by writeNameSpaceRow, not here, so the
+	// DTO stays a transport shape and the one lenient parser stays the only
+	// place rank vocabularies are reconciled. Empty when the source carries
+	// no rank column at all (euromed's flat listing), which stays the zero
+	// domain.Rank rather than becoming RankOther: "said nothing" and "named
+	// a rank hostus has no constant for" are different statements.
+	Rank string
 	// AcceptedTaxon is the space's own synonymy link, verbatim
 	// (namelist.Row.AcceptedTaxon): a NAME string, not an id, and empty for
 	// the space's own accepted rows (the source CSV convention: measured
@@ -298,6 +320,17 @@ func writeNameSpaceRow(
 		// what made a target-space name arbitrary for every concept a space
 		// maps several of its names onto.
 		Status: row.Status,
+		// ...and dropping the rank left the ACCEPTED ones still tied, which
+		// is how a species came to resolve to one of its own subspecies. The
+		// verbatim return value of ParseRankLenient is discarded: unlike the
+		// backbone ingest, nothing here reports the original spelling, and
+		// NameSpaceEntry.Rank is only ever compared, never displayed.
+		Rank: nameSpaceRank(row.Rank),
+		// ...and the space's own synonymy link, which until now lived only as
+		// closeSynonymyGroups' in-run grouping key. It is what lets a reader
+		// walk from the source concept's own spelling to the taxon this space
+		// files it under — the evidence neither status nor rank carries.
+		AcceptedName: row.AcceptedTaxon,
 	}
 	if err := tx.AddNameSpaceEntry(res.conceptID, entry); err != nil {
 		return fmt.Errorf("application: writing name space entry %s:%s for concept %q: %w", meta.ID, row.SourceID, res.conceptID, err)
@@ -632,4 +665,21 @@ func (t *nameSpaceTally) report(r *NameSpaceIngestReport) {
 	r.SynonymyClosedSample = sortedSample(t.synonymyClosed)
 	r.Concepts = len(t.concepts)
 	r.Normalized = ruleCounts(t.ruleRows, t.ruleTaxa)
+}
+
+// nameSpaceRank normalises one source row's rank into hostus' vocabulary,
+// mapping the absent rank to the zero Rank rather than to RankOther.
+//
+// That distinction is the whole reason this is not a bare ParseRankLenient
+// call: the lenient parser answers RankOther for the empty string, and
+// domain.rankCongruent would then treat "the source named no rank" exactly as
+// it treats "the source named something exotic". Both stand the rule down
+// today, but only one of them is a statement about the data, and the storage
+// layer stores them as different values.
+func nameSpaceRank(verbatim string) domain.Rank {
+	if strings.TrimSpace(verbatim) == "" {
+		return ""
+	}
+	rank, _ := domain.ParseRankLenient(verbatim)
+	return rank
 }

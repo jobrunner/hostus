@@ -230,3 +230,86 @@ func TestMatchInSpace_WithoutSpaceMatchesUnchanged(t *testing.T) {
 		t.Errorf("MatchInSpace(\"\") = %+v, want identical to MatchNames = %+v", withEmpty[0], plain[0])
 	}
 }
+
+// TestMatchInSpace_PassesConceptNameToTheResolver pins the conceptName
+// hand-off from matchNamesFiltered to MatchInSpace. No existing target-space
+// test made it decisive: they all seed a single plain candidate, so the field
+// could be lost entirely and every one of them would stay green.
+//
+// This is the same wiring class that left /v1/suggest answering the wrong name
+// while /v1/translate was already right — the domain rules were correct and the
+// caller never handed them their evidence. So: one regression per endpoint.
+//
+// The entries carry the real Bromus erectus shape. "Corynephorus aliena" is
+// accepted AND rank-congruent, so it is what comes back if conceptName is lost
+// but conceptRank survives; the subspecies sorting first is what comes back if
+// both are lost.
+func TestMatchInSpace_PassesConceptNameToTheResolver(t *testing.T) {
+	repo := seededMatchRepo(t)
+	const corynephorusConceptID = "wcvp:concept:405825"
+	addFloraVeg(t, repo, map[string][]domain.NameSpaceEntry{
+		corynephorusConceptID: {
+			{
+				Space: "floraveg", ExtID: "a-subsp", Name: "Corynephoropsis canescens subsp. permixta",
+				Status: domain.NameSpaceStatusAccepted, Rank: domain.RankSubspecies,
+			},
+			{
+				Space: "floraveg", ExtID: "b-other", Name: "Corynephorus aliena",
+				Status: domain.NameSpaceStatusAccepted, Rank: domain.RankSpecies,
+			},
+			{
+				Space: "floraveg", ExtID: "c-anchor", Name: "Corynephorus canescens",
+				Status: "synonymobjective", Rank: domain.RankSpecies,
+				AcceptedName: "Corynephoropsis canescens",
+			},
+			{
+				Space: "floraveg", ExtID: "d-accepted", Name: "Corynephoropsis canescens",
+				Status: domain.NameSpaceStatusAccepted, Rank: domain.RankSpecies,
+			},
+		},
+	})
+
+	results, err := application.MatchInSpace(context.Background(), repo, []application.MatchRequest{
+		{ID: "1", Verbatim: "Corynephorus canescens"},
+	}, "floraveg", application.MatchFilter{})
+	if err != nil {
+		t.Fatalf("MatchInSpace: unexpected error: %v", err)
+	}
+	if got := results[0].TargetSpaceName; got != "Corynephoropsis canescens" {
+		t.Errorf("TargetSpaceName = %q, want the anchored species %q (%q means conceptName never arrived, %q means neither field did)",
+			got, "Corynephoropsis canescens", "Corynephorus aliena", "Corynephoropsis canescens subsp. permixta")
+	}
+}
+
+// TestMatchInSpace_PassesConceptRankWhenNoAnchorExists is the companion that
+// pins conceptRank, which the test above does NOT: the anchor runs first, so
+// dropping the rank leaves that one green (verified by sabotage). Here the
+// space does not spell the matched concept, the anchor stands down, and the
+// rank is all that separates two equally accepted candidates.
+func TestMatchInSpace_PassesConceptRankWhenNoAnchorExists(t *testing.T) {
+	repo := seededMatchRepo(t)
+	const corynephorusConceptID = "wcvp:concept:405825"
+	addFloraVeg(t, repo, map[string][]domain.NameSpaceEntry{
+		corynephorusConceptID: {
+			{
+				Space: "floraveg", ExtID: "a-subsp", Name: "Corynephoropsis canescens subsp. permixta",
+				Status: domain.NameSpaceStatusAccepted, Rank: domain.RankSubspecies,
+			},
+			{
+				Space: "floraveg", ExtID: "b-species", Name: "Corynephoropsis canescens",
+				Status: domain.NameSpaceStatusAccepted, Rank: domain.RankSpecies,
+			},
+		},
+	})
+
+	results, err := application.MatchInSpace(context.Background(), repo, []application.MatchRequest{
+		{ID: "1", Verbatim: "Corynephorus canescens"},
+	}, "floraveg", application.MatchFilter{})
+	if err != nil {
+		t.Fatalf("MatchInSpace: unexpected error: %v", err)
+	}
+	if got := results[0].TargetSpaceName; got != "Corynephoropsis canescens" {
+		t.Errorf("TargetSpaceName = %q, want the rank-congruent species %q — %q is what ext_id order answers when conceptRank never arrives",
+			got, "Corynephoropsis canescens", "Corynephoropsis canescens subsp. permixta")
+	}
+}

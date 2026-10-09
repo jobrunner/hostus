@@ -14,9 +14,14 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   Datei und wendet das Schema darauf an — für den Ingest richtig, hier
   fatal: Ein vertippter `--db`-Pfad meldete „Bundle complete
   (concepts=0 names=0 areas=0)", schrieb zwei Dateien à 233 KB und endete
-  mit Exit 0. Jetzt prüft `app.Bundle` die Existenz vorab und nennt den
-  Pfad im Fehler, wie `app.ExportCrosswalk` es seit PR #81 tut
-  ([#82](https://github.com/jobrunner/hostus/issues/82)).
+  mit Exit 0 ([#82](https://github.com/jobrunner/hostus/issues/82)).
+* **sqlite:** Neuer Einstiegspunkt `OpenExisting` öffnet eine vorhandene
+  Datenbank über SQLites `mode=rw` und kann keine anlegen. `bundle` und
+  `export-crosswalk` nutzen ihn; `ingest` behält `Open`, dort ist das
+  Anlegen der Zweck. Ersetzt die vorgelagerte `os.Stat`-Prüfung, die ein
+  Zeitfenster offen ließ: Verschwand die Datei zwischen Prüfung und
+  Öffnen, legte der schreibende Open sie neu an und der stille Pfad war
+  zurück.
 
 ## [3.6.1](https://github.com/jobrunner/hostus/compare/v3.6.0...v3.6.1) (2026-10-09)
 

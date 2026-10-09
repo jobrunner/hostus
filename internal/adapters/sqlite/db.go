@@ -69,6 +69,30 @@ var _ output.Repository = (*DB)(nil)
 // snapshot) — stop serve, or lower maxConns, for the duration of a long
 // ingest against a live serve database.
 func OpenPool(path string, maxConns int) (*DB, error) {
+	return openPool(path, maxConns, true)
+}
+
+// OpenExisting opens path like Open, but REFUSES to create it: a path with no
+// file at it is an error, and no database comes into being.
+//
+// Open's auto-create is deliberate and the ingest depends on it — that is the
+// command whose job is to bring the database into existence. For every OTHER
+// command the same helpfulness is a defect: "hostus bundle --db <typo>"
+// invented an empty database, exported a technically valid but contentless
+// bundle from it, and exited 0 (issue #82).
+//
+// The refusal lives in the open itself rather than in an os.Stat before it,
+// because a check-then-open leaves a window: if the file disappears between
+// the two, the writable open recreates it and the silent-empty-bundle path is
+// back. SQLite's own URI mode=rw closes that window — the file is required by
+// the same operation that opens it.
+//
+// Callers that want to tell "not there" from "not readable" can still stat
+// AFTER the failure: at that point the check only describes an open that has
+// already been refused, so it cannot reintroduce the race.
+func OpenExisting(path string) (*DB, error) { return openPool(path, 1, false) }
+
+func openPool(path string, maxConns int, create bool) (*DB, error) {
 	if path == ":memory:" || maxConns < 1 {
 		maxConns = 1
 	}
@@ -82,9 +106,27 @@ func OpenPool(path string, maxConns int) (*DB, error) {
 	// failing immediately. Both are set via the modernc.org/sqlite DSN
 	// shorthand so they apply at connection-open time, before schema.sql
 	// runs any DDL below.
+	//
+	// create=false adds SQLite's own URI mode=rw, which opens an existing
+	// database read-write but never creates one — see OpenExisting for why
+	// that belongs in the open rather than in a preceding stat. It requires
+	// the "file:" URI form; the driver's own underscore-prefixed parameters
+	// ride along unchanged beside it.
 	dsn := path + "?_journal_mode=WAL&_busy_timeout=5000"
+	if !create {
+		dsn = "file:" + path + "?mode=rw&_journal_mode=WAL&_busy_timeout=5000"
+	}
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
+		return nil, fmt.Errorf("sqlite: open %q: %w", path, err)
+	}
+	// sql.Open is lazy — it validates the DSN but connects on first use, so
+	// without this a mode=rw refusal would not surface here but at some later,
+	// unrelated query. Ping forces the connection now, which is also what
+	// turns "the file is missing" into this function's error rather than a
+	// mysterious failure deep in schema application.
+	if err := sqlDB.PingContext(context.Background()); err != nil {
+		_ = sqlDB.Close()
 		return nil, fmt.Errorf("sqlite: open %q: %w", path, err)
 	}
 	sqlDB.SetMaxOpenConns(maxConns)

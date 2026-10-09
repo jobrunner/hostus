@@ -257,6 +257,30 @@ POST /v1/match
 (Liste von Kanonicalnamen) wird nur bei Autor-Mehrdeutigkeit oder bei einem
 Fuzzy-Treffer unterhalb der Schwelle gefüllt.
 
+#### Wer als Anwärter auf einen Namen zählt
+
+Ob ein Name mehrdeutig ist, entscheidet nicht die bloße Zahl der Konzepte,
+die ihn tragen. Ohne gesetzten `entry_backbone`/`entry_sec` gelten zwei
+Klassen nicht als zweiter Anwärter, solange ein echtes Backbone-Konzept
+denselben Namen führt:
+
+- Konzepte in einem **sec.-Referenzraum** (etwa die ~18 Standardlisten-Räume
+  aus CDM). Ein sec.-Bezug ist ein Zuschreibungsdetail einer eigenen
+  Konzeptquelle, kein konkurrierender Anspruch auf die Schreibweise.
+- **Fall-B-native Konzepte** der Namensräume (eurosl/germansl führen eigene
+  Konzepte für Ränge oberhalb der Art).
+
+*Festuca ovina* L. löst deshalb auf das WCVP-Konzept auf, auch wenn daneben
+zwei CDM-Konzepte denselben Namen tragen. Ohne diese Regel hörten gewöhnliche
+Namen auf aufzulösen, sobald CDM oder eurosl geladen ist — und zwar für
+Aufrufer, die nach sec.-Räumen nie gefragt haben.
+
+Die Regel hat einen Rückfall: Trägt **nur** die gefilterte Klasse den Namen,
+bleiben deren Kandidaten erhalten (ein einzelner → Treffer, mehrere → die
+übliche Mehrdeutigkeit). Eine Gattung, die es ausschließlich als natives
+Konzept gibt, löst also weiterhin auf. Mit gesetztem Filter bleibt der Pfad
+unverändert — dann hat der Aufrufer die Klasse ausdrücklich gewählt.
+
 #### `xref`: Auflösung per Fremd-ID statt Verbatim-Name
 
 Statt `verbatim` kann eine Zeile `xref: {authority, id}` tragen — der

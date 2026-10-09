@@ -5,6 +5,30 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [Unreleased]
+
+### Bug Fixes
+
+* **ci,build:** Integrationstests laufen in `make verify` und in der CI mit.
+  Sie hingen hinter dem `integration`-Build-Tag und wurden nirgends
+  ausgeführt — in der CI fasste sie nicht einmal der Linter an (dessen
+  Aufruf dort keine Build-Tags setzt), nur ein lokales `make lint`.
+  `TestIntegration_SecFilterAndSecOutput` war dadurch fünf Wochen rot, hinter
+  einer grünen Pipeline.
+* **test(app):** Zusicherung (a) in `TestIntegration_SecFilterAndSecOutput`
+  umgedreht: Sie verlangte `unresolvable` für einen Namen, den WCVP und zwei
+  CDM-sec.-Räume teilen. Genau dieses Verhalten wurde am 2026-09-01 als
+  Defekt behoben (sec.-Raum-Konzepte zählen nicht als zweiter Anwärter); der
+  Test stand seither gegen die eigene Entscheidung. Er pinnt jetzt die
+  Claimant-Präferenz ende-zu-ende.
+
+### Documentation
+
+* **api:** Dokumentiert, wer als Anwärter auf einen Namen zählt —
+  sec.-Raum- und Fall-B-native Konzepte erzeugen ohne Filter keine
+  Mehrdeutigkeit, solange ein Backbone-Konzept den Namen führt. Sichtbares
+  Verhalten von `/v1/match`, das bisher nirgends beschrieben war.
+
 ## [3.6.0](https://github.com/jobrunner/hostus/compare/v3.6.0-alpha.0...v3.6.0) (2026-09-15)
 
 

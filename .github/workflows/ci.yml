@@ -120,6 +120,21 @@ jobs:
       - name: Coverage floors (ratchet)
         run: ./scripts/coverage-gate.sh coverage.out
 
+      # Tests behind the `integration` build tag are NOT part of the run above:
+      # without -tags=integration they do not even compile into the test
+      # binary. Until this step existed, NOTHING in CI touched them — not even
+      # the Lint job: its golangci-lint-action passes only --timeout=5m and
+      # .golangci.yml sets no build tags, so these files were invisible there
+      # too. Only a local `make lint` adds --build-tags integration, and that
+      # checks lint rather than behavior. TestIntegration_SecFilterAndSecOutput
+      # was red for five weeks behind a green pipeline as a result.
+      #
+      # Run as its own step rather than by adding the tag above, so the
+      # coverage profile and its ratchet keep measuring exactly the same set of
+      # tests they measured before.
+      - name: Run integration tests
+        run: go test -race -tags=integration -run Integration ./...
+
   # =============================================================================
   # Benchmarks. Running them is a hard gate (they must compile + execute — no
   # bit-rot). Timing-regression detection is intentionally NOT a hard gate:

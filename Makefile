@@ -254,10 +254,19 @@ check: fmt vet lint test ## Alle Qualitätsprüfungen (vor Commit)
 # der Compiler entscheidet. Gleiche Schritte wie die CI.
 # Bewusst KEIN Aufruf des `build`-Targets (das schreibt ./hostus); stattdessen
 # ein binärloser Compile-Check via `go build ./...`.
-verify: fmt-check vet lint test arch debt-guard poc-check ## Maßgebliche Grün-Prüfung (gofmt-check+vet+compile+test+lint+arch+debt+poc)
+#
+# `test-integration` gehört dazu, seit es NICHT dazugehörte: die Tests hinter
+# dem `integration`-Build-Tag liefen weder hier noch in der CI. Angefasst hat
+# sie nur `lint-go` von HIER aus (--build-tags integration) — und das prüft
+# Lint, nicht Verhalten; in der CI setzt der Lint-Job keine Build-Tags, dort
+# waren die Dateien also komplett unsichtbar.
+# TestIntegration_SecFilterAndSecOutput war dadurch fünf Wochen rot, ohne dass
+# ein grünes `verify` davon wusste — ein Grün, das eine ganze Testklasse nicht
+# ausführt, ist kein Grün.
+verify: fmt-check vet lint test test-integration arch debt-guard poc-check ## Maßgebliche Grün-Prüfung (gofmt-check+vet+compile+test+integration+lint+arch+debt+poc)
 	@echo "Compile-Check (go build ./...)…"
 	@$(GO) build ./...
-	@echo "\n✅ verify bestanden — Compile/Test/Lint/Format/Arch/Debt/poc grün."
+	@echo "\n✅ verify bestanden — Compile/Test/Integration/Lint/Format/Arch/Debt/poc grün."
 
 # poc/ ist ein eigenes Go-Modul (github.com/jobrunner/hostus-poc) mit den
 # Messharnessen, die die Zahlen in docs/research/ erzeugen. verify hat es bisher

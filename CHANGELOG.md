@@ -22,6 +22,15 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   Zeitfenster offen ließ: Verschwand die Datei zwischen Prüfung und
   Öffnen, legte der schreibende Open sie neu an und der stille Pfad war
   zurück.
+* **sqlite:** Der Datenbankpfad wird prozentkodiert in die DSN gesetzt.
+  SQLite liest eine `file:`-URI selbst, also beendete ein `?` in einem
+  völlig zulässigen Dateinamen den Pfad und begann die Parameterliste —
+  `frage?zeichen.sqlite` öffnete und **legte** `frage` an, ohne dass
+  `mode=rw` noch galt. `#` wirkte über die Fragment-Syntax genauso. Ein
+  `%` im Pfad brach `Open` sogar vollständig („invalid URL escape"), ein
+  Mangel, den die einfache Zeichenkettenverkettung von Beginn an trug.
+  `:memory:` behält die alte Schreibweise und wird von `OpenExisting`
+  abgelehnt.
 
 ## [3.6.1](https://github.com/jobrunner/hostus/compare/v3.6.0...v3.6.1) (2026-10-09)
 

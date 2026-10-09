@@ -72,3 +72,93 @@ func TestOpenExisting_ExistingDatabaseOpensAndReads(t *testing.T) {
 		t.Errorf("version = %q, want %q", version, "v1")
 	}
 }
+
+// TestOpenExisting_PathWithURIMetacharacters pins the hole the first mode=rw
+// implementation left: the path was pasted into a "file:" URI unescaped.
+//
+// SQLite parses such a URI itself, so a '?' in a legitimate filename ends the
+// path and starts the query string — "file:/dir/frage?zeichen.sqlite?mode=rw"
+// opens "/dir/frage", with "zeichen.sqlite" as a nonsense parameter and NO
+// mode=rw in force. Measured before the fix: the open succeeded and created
+// "/dir/frage", which is precisely the empty-database behavior this guard
+// exists to prevent. '#' does the same via fragment syntax, and a literal '%'
+// would be read as the start of an escape.
+//
+// Filenames like these are unusual but perfectly legal on every filesystem
+// hostus runs on, and the failure is silent — the worst combination.
+func TestOpenExisting_PathWithURIMetacharacters(t *testing.T) {
+	for _, name := range []string{
+		"frage?zeichen.sqlite",
+		"raute#test.sqlite",
+		"prozent%3Fliteral.sqlite",
+		"alle?drei#zusammen%.sqlite",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, name)
+
+			assertRefusesAndCreatesNothing(t, dir, path)
+			assertOpensTheSameFile(t, path)
+		})
+	}
+}
+
+// TestOpenExisting_RejectsInMemory pins that ":memory:" is refused rather than
+// quietly honored. Through a "file:" URI it opens a fresh in-memory database
+// — no file, no error, and nothing of the ingested data the caller asked to
+// bundle. "Open an existing database" has no meaning for a target that is
+// created empty by definition, so saying so beats answering with an empty one.
+func TestOpenExisting_RejectsInMemory(t *testing.T) {
+	db, err := OpenExisting(":memory:")
+	if err == nil {
+		_ = db.Close()
+		t.Fatal("OpenExisting(\":memory:\") = nil error, want a refusal")
+	}
+	if !strings.Contains(err.Error(), ":memory:") {
+		t.Errorf("error = %q, want it to name the rejected target", err.Error())
+	}
+}
+
+// assertRefusesAndCreatesNothing is the missing-file half: the open must fail
+// and the directory must stay empty — not even a truncated path may appear,
+// which is what a split URI would produce.
+func assertRefusesAndCreatesNothing(t *testing.T, dir, path string) {
+	t.Helper()
+	db, err := OpenExisting(path)
+	if err == nil {
+		_ = db.Close()
+		t.Fatalf("OpenExisting(%q) = nil error, want a refusal", path)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading %q: %v", dir, err)
+	}
+	if len(entries) == 0 {
+		return
+	}
+	created := make([]string, 0, len(entries))
+	for _, e := range entries {
+		created = append(created, e.Name())
+	}
+	t.Errorf("OpenExisting created %v in %q — the URI was split and mode=rw lost", created, dir)
+}
+
+// assertOpensTheSameFile is the present-file half: escaping has to address the
+// file the caller named, not an encoded neighbor of it.
+func assertOpensTheSameFile(t *testing.T, path string) {
+	t.Helper()
+	seed, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open (to create the fixture): %v", err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatalf("closing the fixture: %v", err)
+	}
+	reopened, err := OpenExisting(path)
+	if err != nil {
+		t.Fatalf("OpenExisting on the existing %q: %v", path, err)
+	}
+	if err := reopened.Close(); err != nil {
+		t.Fatalf("closing: %v", err)
+	}
+}

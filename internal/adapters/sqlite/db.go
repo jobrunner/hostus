@@ -90,10 +90,51 @@ func OpenPool(path string, maxConns int) (*DB, error) {
 // Callers that want to tell "not there" from "not readable" can still stat
 // AFTER the failure: at that point the check only describes an open that has
 // already been refused, so it cannot reintroduce the race.
-func OpenExisting(path string) (*DB, error) { return openPool(path, 1, false) }
+func OpenExisting(path string) (*DB, error) {
+	// ":memory:" is created empty by definition, so "open the existing one"
+	// has nothing to mean. Through a file: URI it would quietly hand back a
+	// fresh, empty in-memory database — the very answer this function exists
+	// to refuse, just without a file to show for it.
+	if path == inMemoryPath {
+		return nil, fmt.Errorf("sqlite: %q is not an existing database", inMemoryPath)
+	}
+	return openPool(path, 1, false)
+}
+
+const inMemoryPath = ":memory:"
+
+// sqliteDSN builds the driver DSN for path.
+//
+// The path is PERCENT-ENCODED into a file: URI, because SQLite parses that
+// URI itself: an unescaped '?' in a perfectly legal filename ends the path
+// and starts the query string, '#' starts a fragment, and '%' begins an
+// escape. Measured before this was fixed: a database named "frage?zeichen.
+// sqlite" opened — and CREATED — "frage" instead, with mode=rw silently not
+// in force, which is exactly the empty-database failure OpenExisting exists
+// to prevent. A path containing '%' failed outright with "invalid URL
+// escape", a defect the plain concatenation carried from the start.
+//
+// '%' is replaced first and the replacer applies each rule once per
+// position, so an encoded sequence is never re-encoded.
+//
+// ":memory:" keeps the old non-URI spelling: it is not a path, and the file:
+// form opens a DIFFERENT thing (a URI in-memory database, with its own
+// sharing semantics). OpenExisting rejects it outright; Open keeps supporting
+// it for the ":memory:" tests, exactly as before.
+func sqliteDSN(path string, create bool) string {
+	const params = "_journal_mode=WAL&_busy_timeout=5000"
+	if path == inMemoryPath {
+		return path + "?" + params
+	}
+	escaped := strings.NewReplacer("%", "%25", "?", "%3F", "#", "%23").Replace(path)
+	if create {
+		return "file:" + escaped + "?" + params
+	}
+	return "file:" + escaped + "?mode=rw&" + params
+}
 
 func openPool(path string, maxConns int, create bool) (*DB, error) {
-	if path == ":memory:" || maxConns < 1 {
+	if path == inMemoryPath || maxConns < 1 {
 		maxConns = 1
 	}
 	// journal_mode=WAL lets a concurrent READER (e.g. serve's Suggest/Match
@@ -107,16 +148,12 @@ func openPool(path string, maxConns int, create bool) (*DB, error) {
 	// shorthand so they apply at connection-open time, before schema.sql
 	// runs any DDL below.
 	//
-	// create=false adds SQLite's own URI mode=rw, which opens an existing
-	// database read-write but never creates one — see OpenExisting for why
-	// that belongs in the open rather than in a preceding stat. It requires
-	// the "file:" URI form; the driver's own underscore-prefixed parameters
-	// ride along unchanged beside it.
-	dsn := path + "?_journal_mode=WAL&_busy_timeout=5000"
-	if !create {
-		dsn = "file:" + path + "?mode=rw&_journal_mode=WAL&_busy_timeout=5000"
-	}
-	sqlDB, err := sql.Open("sqlite", dsn)
+	// create=false additionally sets SQLite's own URI mode=rw, which opens an
+	// existing database read-write but never creates one — see OpenExisting
+	// for why that belongs in the open rather than in a preceding stat. How
+	// the path is escaped into that URI is sqliteDSN's business, and not a
+	// detail: getting it wrong silently defeats mode=rw.
+	sqlDB, err := sql.Open("sqlite", sqliteDSN(path, create))
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: open %q: %w", path, err)
 	}

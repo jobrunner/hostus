@@ -5,6 +5,16 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [3.6.2](https://github.com/jobrunner/hostus/compare/v3.6.1...v3.6.2) (2026-10-09)
+
+
+### Bug Fixes
+
+* **app:** bundle bricht bei fehlender Quell-Datenbank ab ([da7a9c4](https://github.com/jobrunner/hostus/commit/da7a9c42dba4220d7f1fb3fcfa07915e847e4333)), closes [#82](https://github.com/jobrunner/hostus/issues/82)
+* **build:** Go-Toolchain auf 1.26.9 und x/net auf v0.60.0 heben ([5564310](https://github.com/jobrunner/hostus/commit/5564310a0f07b3d5b41d663f179215643c11f951)), closes [#136](https://github.com/jobrunner/hostus/issues/136)
+* **sqlite,app:** Existenz der Quell-Datenbank im Open erzwingen ([3ffc6e6](https://github.com/jobrunner/hostus/commit/3ffc6e63498733b82bb857f3502c33543cf66219))
+* **sqlite:** Datenbankpfad prozentkodiert in die DSN setzen ([ea4947b](https://github.com/jobrunner/hostus/commit/ea4947b1d7869af40db1c31bcd659d63ebb2e32f))
+
 ## [Unreleased]
 
 ### Bug Fixes

@@ -12,19 +12,19 @@
         pkgs = nixpkgs.legacyPackages.${system};
 
         # Go Version. nixpkgs' go_1_26 hinkt der oberen Patch-Version hinterher
-        # (aktuell 1.26.3); go.mod verlangt via `toolchain go1.26.6` aber 1.26.6
+        # (aktuell 1.26.3); go.mod verlangt via `toolchain go1.26.9` aber 1.26.9
         # (CVE-Fixes, siehe CHANGELOG). Ohne Override würde `GOTOOLCHAIN=auto`
-        # bei jedem go-Aufruf das 1.26.6-Toolchain nachladen und dabei einen
+        # bei jedem go-Aufruf das 1.26.9-Toolchain nachladen und dabei einen
         # read-only Modul-Cache unter `$PWD/.go` anlegen — den gremlins
         # (mutation testing) pro Mutant mitkopiert, was den Kopiervorgang mit
-        # „permission denied" abbricht. Wir pinnen daher go direkt auf 1.26.6:
+        # „permission denied" abbricht. Wir pinnen daher go direkt auf 1.26.9:
         # kein Toolchain-Re-Exec, kein `$PWD/.go`, und lokal dieselbe Version
         # wie in CI (setup-go via go.mod).
         go = pkgs.go_1_26.overrideAttrs (old: {
-          version = "1.26.6";
+          version = "1.26.9";
           src = pkgs.fetchurl {
-            url = "https://go.dev/dl/go1.26.6.src.tar.gz";
-            hash = "sha256-oHIcVMaIkBRI13rZs+x+p8R0cwdV/4kTgukuy5P/LLE=";
+            url = "https://go.dev/dl/go1.26.9.src.tar.gz";
+            hash = "sha256-lzXX3Ntls10/pXfwQGRzfAO4nPGitx5uaf4vPG+f1Mo=";
           };
         });
 
@@ -74,7 +74,7 @@
             # read-only (Modus 0444); eine Kopie davon innerhalb des Repos brach
             # diesen Kopiervorgang. Ablage unter XDG_CACHE_HOME entspricht zudem
             # dem üblichen Go-Setup.
-            # GOTOOLCHAIN=local: den mit dem Flake gepinnten go (1.26.6, s.o.)
+            # GOTOOLCHAIN=local: den mit dem Flake gepinnten go (1.26.9, s.o.)
             # verwenden und NIEMALS ein Toolchain per go.mod-`toolchain`-Direktive
             # nachladen/hineinspringen. Der Re-Exec in ein heruntergeladenes
             # Toolchain erbt GOPATH/GOMODCACHE NICHT und legt einen read-only

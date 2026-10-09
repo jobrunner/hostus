@@ -9,6 +9,14 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Bug Fixes
 
+* **build:** Go-Toolchain auf 1.26.9 und `golang.org/x/net` auf v0.60.0
+  gehoben. `govulncheck` meldete 12 Advisories der Standardbibliothek
+  (`go1.26.6`), fünf davon zusätzlich in `x/net v0.59.0` — darunter
+  HTTP/2-Server-Abstürze, Verbindungs-Desynchronisation nach CONNECT und
+  Speichererschöpfung über Trailer-Header. Die Aufrufpfade waren real, nicht
+  theoretisch: über den HTTP-Server und die Templates der Testkonsole. Jetzt
+  „No vulnerabilities found" ([#136](https://github.com/jobrunner/hostus/issues/136)).
+
 * **app:** `hostus bundle` bricht bei fehlender Quell-Datenbank ab, statt
   still eine leere anzulegen. `sqlite.Open` erzeugt eine nicht vorhandene
   Datei und wendet das Schema darauf an — für den Ingest richtig, hier
